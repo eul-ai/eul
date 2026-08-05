@@ -7,7 +7,7 @@ Build a **trusted-local, Unix-first coding agent** that borrows Pi's minimal cor
 - One Go executable
 - Line-oriented terminal interface
 - In-memory multi-turn conversation
-- Seven Pi-style coding tools
+- Four minimal Pi-style coding tools
 - OpenAI Responses API
 - Standard library only
 - Compile-time provider pluggability
@@ -37,7 +37,7 @@ Use a plain line REPL based on `bufio.Reader`:
 ```text
 yaah · openai/<model> · /path/to/project
 > fix the failing tests
-[tool] grep "TODO" . — 4 matches
+[tool] bash grep -R "TODO" . — exit 0
 [tool] read app.go
 [tool] bash go test ./... — exit 1
 ...
@@ -59,12 +59,14 @@ For the strictest MVP, begin with non-streaming OpenAI responses. Design the pro
 
 ## 2. Pi-style toolset
 
-Support all seven Pi built-ins:
+Support the minimal four Pi coding tools:
 
-- Default coding tools: `read`, `bash`, `edit`, `write`
-- Focused discovery tools: `grep`, `find`, `ls`
+- `read`
+- `bash`
+- `edit`
+- `write`
 
-The focused tools remain useful even though Bash can cover the same operations: they provide stable schemas, bounded output, normalized results, and fewer quoting problems. Their implementations can evolve independently behind the tool interface.
+Discovery commands such as `grep`, `find`, and `ls` run through `bash` for the MVP. Dedicated focused discovery tools can be added later if stable schemas, normalized results, or fewer quoting problems prove valuable.
 
 All relative paths resolve against the session's fixed working directory.
 
@@ -81,11 +83,12 @@ All relative paths resolve against the session's fixed working directory.
 read(path, offset?, limit?)
 ```
 
-- Read text files initially.
+- Read regular UTF-8 text files initially; reject directories, special files, NUL bytes, and invalid UTF-8.
+- Follow symlinks that resolve to regular files.
 - Use one-based line offsets.
-- Keep the first 2,000 lines or 50 KiB, whichever limit is reached first.
+- Keep the first 2,000 lines or 50 KiB, whichever limit is reached first, without loading an unbounded file into memory.
 - Explicitly report truncation and the next offset where possible.
-- Reject binary files; defer images.
+- Defer images.
 
 ### `write`
 
@@ -93,10 +96,10 @@ read(path, offset?, limit?)
 write(path, content)
 ```
 
-- Create or overwrite a file.
-- Create parent directories.
-- Clearly define behavior around permissions and symlinks.
-- Do not promise cross-platform transactional writes.
+- Create or directly overwrite a regular file and create parent directories.
+- Follow symlinks to regular files; reject dangling symlinks, directories, and special files.
+- Preserve the mode of an existing file. New parent directories use `0777` and new files use `0666`, both subject to the user's umask.
+- Writes are intentionally non-transactional; cancellation can leave a changed or partial file.
 
 ### `edit`
 
@@ -106,8 +109,10 @@ Start with the minimal exact-replacement contract:
 edit(path, oldText, newText)
 ```
 
-- `oldText` must occur exactly once.
+- Operate on regular UTF-8 text files and follow final symlinks to their targets.
+- `oldText` must be nonempty and occur exactly once.
 - Zero or multiple matches leave the file unchanged.
+- Commit a valid replacement through a same-directory temporary file and rename while preserving permission bits. This can change inode metadata and hard-link identity.
 - Pi-style batched, non-overlapping edits can be added later without changing the other tools.
 
 ### `bash`
@@ -124,30 +129,6 @@ bash(command, timeout?)
 - Document that killing the shell may not kill every descendant process.
 
 This makes the initial target macOS/Linux with Bash installed. Windows needs a separate shell contract rather than silently mapping a tool named `bash` to PowerShell or `cmd.exe`.
-
-### `grep`
-
-```text
-grep(pattern, path?, glob?, ignoreCase?, literal?, context?, limit?)
-```
-
-Search file contents and return bounded, structured matches. Keep the implementation behind the tool interface so it can be replaced later without changing the agent or provider layers.
-
-### `find`
-
-```text
-find(pattern, path?, limit?)
-```
-
-Find files and directories and return bounded, deterministic paths. Keep matching and traversal implementation details replaceable.
-
-### `ls`
-
-```text
-ls(path?, limit?)
-```
-
-List directory entries with deterministic, bounded output. Keep filesystem implementation details within the tool.
 
 ### Trust model
 
@@ -184,9 +165,6 @@ tool/
     write.go
     edit.go
     bash.go
-    grep.go
-    find.go
-    ls.go
 
 terminal/
     repl.go
@@ -360,18 +338,18 @@ Exit criteria:
 
 - Duplicate tool names are rejected.
 - Tool definitions and results have deterministic ordering.
-- Head, tail, line, byte, match, and entry limits are independently tested.
+- Head, tail, line, byte, and item limits are independently tested.
 
-### Milestone 3 — Seven tools
+### Milestone 3 — Four core tools
 
-Implement and test all tools with `t.TempDir` and fake command environments.
+Implement and test the four core tools with `t.TempDir` and fake command environments.
 
 Exit criteria:
 
 - `read`, `write`, and `edit` have deterministic failure behavior.
 - Failed edits never modify the file.
 - `bash` reports timeout, cancellation, output, and exit status.
-- `grep`, `find`, and `ls` satisfy their documented contracts.
+- Common discovery workflows remain available through `bash`.
 - Tool implementations can be replaced without changing the agent or provider layers.
 - Every tool result is bounded.
 
@@ -388,7 +366,7 @@ Exit criteria:
 
 ### Milestone 5 — Terminal application
 
-Wire the REPL, configuration, commands, signals, seven tools, and provider.
+Wire the REPL, configuration, commands, signals, four tools, and provider.
 
 Exit criteria:
 
@@ -432,6 +410,7 @@ go list -m all   # only the main module
 - Runtime provider plugins or capability negotiation
 - MCP, subagents, background tools, or parallel tool execution
 - Images and other multimodal content
+- Dedicated `grep`, `find`, or `ls` tools; use `bash` for MVP discovery
 - Built-in Git workflows, LSP integration, or repository indexing
 - Interactive subprocesses
 - Automatic retries after partially visible output or side effects
@@ -440,6 +419,7 @@ go list -m all   # only the main module
 
 ## 9. Future work
 
+- **Focused discovery tools** — Add bounded, structured `grep`, `find`, and `ls` tools if Bash-based discovery proves too error-prone.
 - **Sub-agents** — Child agent sessions with explicit tool/model limits, parent-child coordination, bounded concurrency, cancellation, and isolated or deliberately shared working contexts.
 - **Themes** — Configurable colors and presentation once the terminal layer has a stable rendering abstraction; plain text remains the universal fallback.
 - **LSP** — Optional tools for diagnostics, hover, definitions, references, and symbols by speaking JSON-RPC to externally installed language servers.
