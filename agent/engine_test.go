@@ -124,6 +124,9 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 	if result.Text != "done" {
 		t.Fatalf("result text = %q, want %q", result.Text, "done")
 	}
+	if engine.NeedsReset() {
+		t.Fatal("completed turn unexpectedly requires reset")
+	}
 	if !slices.Equal(result.AssistantMessages, []string{"Checking", "done"}) {
 		t.Fatalf("assistant messages = %q", result.AssistantMessages)
 	}
@@ -307,10 +310,16 @@ func TestEngineHonorsCancellationDuringToolExecution(t *testing.T) {
 		t.Fatal("Run() did not stop after cancellation")
 	}
 
+	if !engine.NeedsReset() {
+		t.Fatal("canceled tool turn does not report required reset")
+	}
 	if _, err := engine.Run(context.Background(), "continue", nil); !errors.Is(err, ErrResetRequired) {
 		t.Fatalf("Run() after canceled tool error = %v, want ErrResetRequired", err)
 	}
 	engine.Reset()
+	if engine.NeedsReset() {
+		t.Fatal("Reset() did not clear required reset state")
+	}
 	result, err := engine.Run(context.Background(), "after reset", nil)
 	if err != nil {
 		t.Fatalf("Run() after Reset() error = %v", err)

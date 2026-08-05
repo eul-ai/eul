@@ -201,6 +201,14 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 	}
 }
 
+// NeedsReset reports whether an incomplete tool turn requires Reset before the
+// next Run. Call it after Run has returned.
+func (e *Engine) NeedsReset() bool {
+	e.runGate <- struct{}{}
+	defer func() { <-e.runGate }()
+	return e.resetRequired
+}
+
 // Reset discards provider continuation state.
 func (e *Engine) Reset() {
 	e.runGate <- struct{}{}
