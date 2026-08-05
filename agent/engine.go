@@ -285,14 +285,16 @@ func cloneSchema(schema JSONSchema) JSONSchema {
 		schema.Items = &items
 	}
 	if schema.AnyOf != nil {
-		schema.AnyOf = make([]JSONSchema, len(schema.AnyOf))
-		for i, item := range schema.AnyOf {
+		anyOf := schema.AnyOf
+		schema.AnyOf = make([]JSONSchema, len(anyOf))
+		for i, item := range anyOf {
 			schema.AnyOf[i] = cloneSchema(item)
 		}
 	}
 	if schema.Properties != nil {
-		schema.Properties = make(map[string]JSONSchema, len(schema.Properties))
-		for name, property := range schema.Properties {
+		properties := schema.Properties
+		schema.Properties = make(map[string]JSONSchema, len(properties))
+		for name, property := range properties {
 			schema.Properties[name] = cloneSchema(property)
 		}
 	}

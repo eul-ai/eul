@@ -433,6 +433,51 @@ func TestEngineReturnsCanceledContextBeforeAcquiringAvailableGate(t *testing.T) 
 	}
 }
 
+func TestEngineDefensivelyCopiesNestedToolSchemas(t *testing.T) {
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			schema := &request.Tools[0].Parameters
+			schema.Required[0] = "changed"
+			schema.AnyOf[0].Type = "number"
+			property := schema.Properties["items"]
+			property.Items.Type = "number"
+			schema.Properties["items"] = property
+			return Response{Text: "first", State: []byte("first")}, nil
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			schema := request.Tools[0].Parameters
+			if !slices.Equal(schema.Required, []string{"items"}) {
+				t.Fatalf("required fields were mutated: %v", schema.Required)
+			}
+			if schema.AnyOf[0].Type != "object" {
+				t.Fatalf("AnyOf was mutated: %+v", schema.AnyOf)
+			}
+			if schema.Properties["items"].Items.Type != "string" {
+				t.Fatalf("Items was mutated: %+v", schema.Properties["items"])
+			}
+			return Response{Text: "second", State: []byte("second")}, nil
+		},
+	}}
+	items := JSONSchema{Type: "array", Items: &JSONSchema{Type: "string"}}
+	toolbox := &fakeToolbox{definitions: []ToolDefinition{{
+		Name: "read",
+		Parameters: JSONSchema{
+			Type:       "object",
+			Required:   []string{"items"},
+			Properties: map[string]JSONSchema{"items": items},
+			AnyOf:      []JSONSchema{{Type: "object"}},
+		},
+	}}}
+	engine := newTestEngine(t, provider, toolbox, Options{})
+
+	if _, err := engine.Run(context.Background(), "first", nil); err != nil {
+		t.Fatalf("first Run() error = %v", err)
+	}
+	if _, err := engine.Run(context.Background(), "second", nil); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+}
+
 func TestNewRejectsDuplicateToolDefinitions(t *testing.T) {
 	provider := &scriptedProvider{t: t}
 	toolbox := &fakeToolbox{definitions: []ToolDefinition{{Name: "read"}, {Name: "read"}}}
