@@ -78,14 +78,14 @@ func (w *Write) Execute(ctx context.Context, arguments json.RawMessage) (agent.T
 		return agent.ToolResult{}, err
 	}
 
-	writeErr := os.WriteFile(path, []byte(*args.Content), 0o666)
+	fileWriteErr := os.WriteFile(path, []byte(*args.Content), 0o666)
 	if contextErr := ctx.Err(); contextErr != nil {
 		result := errorResult(writeToolName, fmt.Errorf("canceled during non-transactional write; file may have changed: %w", contextErr))
 		return result, contextErr
 	}
 
-	if writeErr != nil {
-		return errorResult(writeToolName, writeErr), nil
+	if fileWriteErr != nil {
+		return errorResult(writeToolName, fileWriteErr), nil
 	}
 
 	return successResult(fmt.Sprintf("wrote %d bytes to %s", len(*args.Content), escapeOutputName(w.workspace.display(path)))), nil
