@@ -7,13 +7,17 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
 	"yaah/agent"
+	oauth "yaah/auth/openai"
 	openaiadapter "yaah/provider/openai"
 	"yaah/terminal"
 	"yaah/tool"
@@ -26,7 +30,60 @@ const (
 	exitInterrupted = 130
 )
 
-type providerFactory func(string) (agent.Provider, error)
+type providerConfig struct {
+	apiKey     string
+	codexToken openaiadapter.CodexTokenSource
+}
+
+type providerFactory func(providerConfig) (agent.Provider, error)
+
+type oauthManager interface {
+	Login(context.Context, oauth.LoginMethod, oauth.Interaction) (oauth.Credentials, error)
+	Resolve(context.Context) (oauth.Credentials, error)
+	Logout(context.Context) error
+}
+
+type lazyOAuthManager struct {
+	yaahHome string
+	once     sync.Once
+	manager  *oauth.Manager
+	err      error
+}
+
+func (manager *lazyOAuthManager) get() (*oauth.Manager, error) {
+	manager.once.Do(func() {
+		var path string
+		path, manager.err = oauth.DefaultCredentialPath(manager.yaahHome)
+		if manager.err == nil {
+			manager.manager, manager.err = oauth.NewManager(path, oauth.Options{})
+		}
+	})
+	return manager.manager, manager.err
+}
+
+func (manager *lazyOAuthManager) Login(ctx context.Context, method oauth.LoginMethod, interaction oauth.Interaction) (oauth.Credentials, error) {
+	resolved, err := manager.get()
+	if err != nil {
+		return oauth.Credentials{}, err
+	}
+	return resolved.Login(ctx, method, interaction)
+}
+
+func (manager *lazyOAuthManager) Resolve(ctx context.Context) (oauth.Credentials, error) {
+	resolved, err := manager.get()
+	if err != nil {
+		return oauth.Credentials{}, err
+	}
+	return resolved.Resolve(ctx)
+}
+
+func (manager *lazyOAuthManager) Logout(ctx context.Context) error {
+	resolved, err := manager.get()
+	if err != nil {
+		return err
+	}
+	return resolved.Logout(ctx)
+}
 
 type appRuntime struct {
 	stdin       io.Reader
@@ -37,6 +94,8 @@ type appRuntime struct {
 	getwd       func() (string, error)
 	interrupts  <-chan os.Signal
 	newProvider providerFactory
+	oauth       oauthManager
+	openURL     func(string) error
 }
 
 func main() {
@@ -50,8 +109,13 @@ func main() {
 		environ:    os.Environ,
 		getwd:      os.Getwd,
 		interrupts: interrupts,
-		newProvider: func(apiKey string) (agent.Provider, error) {
-			return openaiadapter.New(apiKey, openaiadapter.Options{})
+		oauth:      &lazyOAuthManager{yaahHome: os.Getenv("YAAH_HOME")},
+		openURL:    openBrowser,
+		newProvider: func(config providerConfig) (agent.Provider, error) {
+			if config.apiKey != "" {
+				return openaiadapter.New(config.apiKey, openaiadapter.Options{})
+			}
+			return openaiadapter.NewCodex(config.codexToken, openaiadapter.Options{})
 		},
 	})
 	signal.Stop(interrupts)
@@ -65,6 +129,14 @@ func run(arguments []string, runtime appRuntime) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return exitFailure
 	}
+	if len(arguments) > 0 {
+		switch arguments[0] {
+		case "login":
+			return runLogin(arguments[1:], runtime)
+		case "logout":
+			return runLogout(arguments[1:], runtime)
+		}
+	}
 
 	modelDefault := runtime.getenv("OPENAI_MODEL")
 	flags := flag.NewFlagSet("yaah", flag.ContinueOnError)
@@ -76,28 +148,45 @@ func run(arguments []string, runtime appRuntime) int {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitSuccess
 		}
-		writeCLIError(runtime.stderr, runtime.getenv("OPENAI_API_KEY"), "usage error: %v", err)
-		writeCLIError(runtime.stderr, "", "Run 'yaah --help' for usage.")
+		writeCLIError(runtime.stderr, []string{runtime.getenv("OPENAI_API_KEY")}, "usage error: %v", err)
+		writeCLIError(runtime.stderr, nil, "Run 'yaah --help' for usage.")
 		return exitUsage
 	}
 	if flags.NArg() > 1 {
-		writeCLIError(runtime.stderr, runtime.getenv("OPENAI_API_KEY"), "usage error: expected at most one prompt argument")
-		writeCLIError(runtime.stderr, "", "Run 'yaah --help' for usage.")
+		writeCLIError(runtime.stderr, []string{runtime.getenv("OPENAI_API_KEY")}, "usage error: expected at most one prompt argument")
+		writeCLIError(runtime.stderr, nil, "Run 'yaah --help' for usage.")
 		return exitUsage
 	}
 
 	apiKey := runtime.getenv("OPENAI_API_KEY")
-	if strings.TrimSpace(apiKey) == "" {
-		writeCLIError(runtime.stderr, "", "OPENAI_API_KEY is required")
-		return exitFailure
+	var (
+		config  providerConfig
+		secrets []string
+	)
+	if strings.TrimSpace(apiKey) != "" {
+		config.apiKey = apiKey
+		secrets = []string{apiKey}
+	} else {
+		ctx, cancel := contextWithInterrupt(runtime.interrupts)
+		credential, err := runtime.oauth.Resolve(ctx)
+		cancel()
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return exitInterrupted
+			}
+			writeCLIError(runtime.stderr, nil, "authentication required: %v", err)
+			return exitFailure
+		}
+		secrets = credential.Secrets()
+		config.codexToken = oauthTokenSource{manager: runtime.oauth, accountID: credential.AccountID}
 	}
 	if err := validateModel(*model); err != nil {
-		writeCLIError(runtime.stderr, apiKey, "%v", err)
+		writeCLIError(runtime.stderr, secrets, "%v", err)
 		return exitFailure
 	}
 	cwd, err := resolveCWD(*cwdFlag, runtime.getwd)
 	if err != nil {
-		writeCLIError(runtime.stderr, apiKey, "%v", err)
+		writeCLIError(runtime.stderr, secrets, "%v", err)
 		return exitFailure
 	}
 
@@ -106,24 +195,24 @@ func run(arguments []string, runtime appRuntime) int {
 	if oneShot {
 		prompt = flags.Arg(0)
 		if strings.TrimSpace(prompt) == "" {
-			writeCLIError(runtime.stderr, apiKey, "one-shot prompt must be nonempty")
+			writeCLIError(runtime.stderr, secrets, "one-shot prompt must be nonempty")
 			return exitUsage
 		}
 	}
 
 	registry, err := buildTools(cwd, environmentWithout(runtime.environ(), "OPENAI_API_KEY"))
 	if err != nil {
-		writeCLIError(runtime.stderr, apiKey, "configure tools: %v", err)
+		writeCLIError(runtime.stderr, secrets, "configure tools: %v", err)
 		return exitFailure
 	}
-	provider, err := runtime.newProvider(apiKey)
+	provider, err := runtime.newProvider(config)
 	if err != nil {
-		writeCLIError(runtime.stderr, apiKey, "configure provider: %v", err)
+		writeCLIError(runtime.stderr, secrets, "configure provider: %v", err)
 		return exitFailure
 	}
 	engine, err := agent.New(provider, registry, agent.Options{Model: *model})
 	if err != nil {
-		writeCLIError(runtime.stderr, apiKey, "configure agent: %v", err)
+		writeCLIError(runtime.stderr, secrets, "configure agent: %v", err)
 		return exitFailure
 	}
 
@@ -134,7 +223,7 @@ func run(arguments []string, runtime appRuntime) int {
 		Model:       *model,
 		CWD:         cwd,
 		Interrupts:  runtime.interrupts,
-		Redact:      []string{apiKey},
+		Redact:      secrets,
 	}
 	var runErr error
 	if oneShot {
@@ -148,15 +237,117 @@ func run(arguments []string, runtime appRuntime) int {
 	if errors.Is(runErr, terminal.ErrInterrupted) || errors.Is(runErr, context.Canceled) {
 		return exitInterrupted
 	}
-	writeCLIError(runtime.stderr, apiKey, "%v", runErr)
+	writeCLIError(runtime.stderr, secrets, "%v", runErr)
 	return exitFailure
+}
+
+type oauthTokenSource struct {
+	manager   oauthManager
+	accountID string
+}
+
+func (source oauthTokenSource) Token(ctx context.Context) (openaiadapter.CodexCredential, error) {
+	credential, err := source.manager.Resolve(ctx)
+	if err != nil {
+		return openaiadapter.CodexCredential{}, err
+	}
+	if credential.AccountID != source.accountID {
+		return openaiadapter.CodexCredential{}, errors.New("OAuth account changed while yaah was running; restart yaah")
+	}
+	return openaiadapter.CodexCredential{AccessToken: credential.AccessToken, AccountID: credential.AccountID}, nil
+}
+
+func runLogin(arguments []string, runtime appRuntime) int {
+	flags := flag.NewFlagSet("yaah login", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	device := flags.Bool("device-auth", false, "use device authorization for headless environments")
+	if err := flags.Parse(arguments); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintln(runtime.stdout, "Usage: yaah login [--device-auth]")
+			return exitSuccess
+		}
+		writeCLIError(runtime.stderr, nil, "usage error: %v", err)
+		writeCLIError(runtime.stderr, nil, "Usage: yaah login [--device-auth]")
+		return exitUsage
+	}
+	if flags.NArg() != 0 {
+		writeCLIError(runtime.stderr, nil, "usage error: yaah login accepts no arguments")
+		return exitUsage
+	}
+	method := oauth.LoginBrowser
+	if *device {
+		method = oauth.LoginDevice
+	}
+	ctx, cancel := contextWithInterrupt(runtime.interrupts)
+	defer cancel()
+	credential, err := runtime.oauth.Login(ctx, method, oauth.Interaction{
+		AuthURL: func(url string) error {
+			fmt.Fprintf(runtime.stderr, "Open this URL to sign in with ChatGPT:\n%s\n", url)
+			if err := runtime.openURL(url); err != nil {
+				fmt.Fprintln(runtime.stderr, "Browser could not be opened automatically; open the URL manually.")
+			}
+			return nil
+		},
+		DeviceCode: func(code oauth.DeviceCode) error {
+			fmt.Fprintf(runtime.stderr, "Open %s and enter code: %s\n", code.VerificationURL, code.UserCode)
+			return nil
+		},
+	})
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return exitInterrupted
+		}
+		writeCLIError(runtime.stderr, credential.Secrets(), "login failed: %v", err)
+		return exitFailure
+	}
+	fmt.Fprintln(runtime.stdout, "Logged in with ChatGPT.")
+	return exitSuccess
+}
+
+func runLogout(arguments []string, runtime appRuntime) int {
+	if len(arguments) == 1 && (arguments[0] == "--help" || arguments[0] == "-h") {
+		fmt.Fprintln(runtime.stdout, "Usage: yaah logout")
+		return exitSuccess
+	}
+	if len(arguments) != 0 {
+		writeCLIError(runtime.stderr, nil, "usage error: yaah logout accepts no arguments")
+		return exitUsage
+	}
+	ctx, cancel := contextWithInterrupt(runtime.interrupts)
+	defer cancel()
+	if err := runtime.oauth.Logout(ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return exitInterrupted
+		}
+		writeCLIError(runtime.stderr, nil, "logout failed: %v", err)
+		return exitFailure
+	}
+	fmt.Fprintln(runtime.stdout, "Logged out.")
+	return exitSuccess
+}
+
+func contextWithInterrupt(interrupts <-chan os.Signal) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	if interrupts == nil {
+		return ctx, cancel
+	}
+	go func() {
+		select {
+		case <-ctx.Done():
+		case _, ok := <-interrupts:
+			if ok {
+				cancel()
+			}
+		}
+	}()
+	return ctx, cancel
 }
 
 func validateRuntime(runtime appRuntime) error {
 	if runtime.stdin == nil || runtime.stdout == nil || runtime.stderr == nil {
 		return errors.New("application streams are required")
 	}
-	if runtime.getenv == nil || runtime.environ == nil || runtime.getwd == nil || runtime.newProvider == nil {
+	if runtime.getenv == nil || runtime.environ == nil || runtime.getwd == nil || runtime.newProvider == nil || runtime.oauth == nil || runtime.openURL == nil {
 		return errors.New("application dependencies are required")
 	}
 	return nil
@@ -238,18 +429,26 @@ func environmentWithout(environment []string, key string) []string {
 
 func writeUsage(output io.Writer) {
 	fmt.Fprintln(output, "Usage: yaah [--model model] [--cwd directory] [prompt]")
+	fmt.Fprintln(output, "       yaah login [--device-auth]")
+	fmt.Fprintln(output, "       yaah logout")
+	fmt.Fprintln(output, "")
+	fmt.Fprintln(output, "Authentication:")
+	fmt.Fprintln(output, "  OPENAI_API_KEY  optional Platform API key; takes precedence over OAuth")
+	fmt.Fprintln(output, "  yaah login      sign in with a ChatGPT subscription")
+	fmt.Fprintln(output, "  YAAH_HOME       optional directory for yaah's auth.json")
 	fmt.Fprintln(output, "")
 	fmt.Fprintln(output, "Configuration:")
-	fmt.Fprintln(output, "  OPENAI_API_KEY  required")
 	fmt.Fprintln(output, "  OPENAI_MODEL    used when --model is omitted")
 	fmt.Fprintln(output, "")
 	fmt.Fprintln(output, "Commands: /help, /clear, /exit")
 }
 
-func writeCLIError(output io.Writer, secret, format string, arguments ...any) {
+func writeCLIError(output io.Writer, secrets []string, format string, arguments ...any) {
 	message := fmt.Sprintf(format, arguments...)
-	if secret != "" {
-		message = strings.ReplaceAll(message, secret, "[REDACTED]")
+	for _, secret := range secrets {
+		if secret != "" {
+			message = strings.ReplaceAll(message, secret, "[REDACTED]")
+		}
 	}
 	message = strings.Map(func(character rune) rune {
 		if unicode.IsControl(character) {
@@ -266,4 +465,20 @@ func writeCLIError(output io.Writer, secret, format string, arguments ...any) {
 		message = message[:end] + "..."
 	}
 	fmt.Fprintf(output, "error: %s\n", message)
+}
+
+func openBrowser(url string) error {
+	var command *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		command = exec.Command("open", url)
+	case "windows":
+		command = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		command = exec.Command("xdg-open", url)
+	}
+	if err := command.Start(); err != nil {
+		return err
+	}
+	return command.Process.Release()
 }

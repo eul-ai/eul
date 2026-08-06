@@ -14,9 +14,44 @@ import (
 	"time"
 
 	"yaah/agent"
+	oauth "yaah/auth/openai"
 )
 
 type providerFunction func(context.Context, agent.Request, agent.TextSink) (agent.Response, error)
+
+type fakeOAuthManager struct {
+	credential      oauth.Credentials
+	resolveErr      error
+	loginErr        error
+	logoutErr       error
+	loginMethod     oauth.LoginMethod
+	logoutCalls     int
+	interactionCall bool
+	resolveCalls    int
+}
+
+func (manager *fakeOAuthManager) Login(_ context.Context, method oauth.LoginMethod, interaction oauth.Interaction) (oauth.Credentials, error) {
+	manager.loginMethod = method
+	if method == oauth.LoginDevice && interaction.DeviceCode != nil {
+		manager.interactionCall = true
+		_ = interaction.DeviceCode(oauth.DeviceCode{VerificationURL: "https://example.test/device", UserCode: "ABCD-EFGH"})
+	}
+	if method == oauth.LoginBrowser && interaction.AuthURL != nil {
+		manager.interactionCall = true
+		_ = interaction.AuthURL("https://example.test/authorize")
+	}
+	return manager.credential, manager.loginErr
+}
+
+func (manager *fakeOAuthManager) Resolve(context.Context) (oauth.Credentials, error) {
+	manager.resolveCalls++
+	return manager.credential, manager.resolveErr
+}
+
+func (manager *fakeOAuthManager) Logout(context.Context) error {
+	manager.logoutCalls++
+	return manager.logoutErr
+}
 
 func (function providerFunction) Generate(ctx context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
 	return function(ctx, request, sink)
@@ -31,8 +66,8 @@ func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 		"OPENAI_API_KEY": "secret-key",
 		"OPENAI_MODEL":   "environment-model",
 	})
-	runtime.newProvider = func(key string) (agent.Provider, error) {
-		factoryKey = key
+	runtime.newProvider = func(config providerConfig) (agent.Provider, error) {
+		factoryKey = config.apiKey
 		return providerFunction(func(_ context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
 			gotRequest = request
 			if err := sink("answer"); err != nil {
@@ -58,6 +93,137 @@ func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 	}
 	if stdout.String() != "answer\n" || strings.Contains(stdout.String(), "secret-key") || strings.Contains(stderr.String(), "secret-key") {
 		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestRunUsesStoredOAuthAndResolvesTokenAtRequestTime(t *testing.T) {
+	cwd := t.TempDir()
+	const access = "oauth-access-secret"
+	const refresh = "oauth-refresh-secret"
+	manager := &fakeOAuthManager{credential: oauth.Credentials{
+		Version: 1, Type: "oauth", AccessToken: access, RefreshToken: refresh, ExpiresAt: time.Now().Add(time.Hour).UnixMilli(), AccountID: "account",
+	}}
+	var stdout, stderr bytes.Buffer
+	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_MODEL": "subscription-model"})
+	runtime.oauth = manager
+	runtime.newProvider = func(config providerConfig) (agent.Provider, error) {
+		if config.apiKey != "" || config.codexToken == nil {
+			t.Fatalf("provider config = %+v", config)
+		}
+		credential, err := config.codexToken.Token(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		if credential.AccessToken != access || credential.AccountID != "account" {
+			t.Fatalf("Codex credential = %+v", credential)
+		}
+		return providerFunction(func(_ context.Context, _ agent.Request, sink agent.TextSink) (agent.Response, error) {
+			if err := sink("oauth answer"); err != nil {
+				return agent.Response{}, err
+			}
+			return agent.Response{Text: "oauth answer"}, nil
+		}), nil
+	}
+	if code := run([]string{"hello"}, runtime); code != exitSuccess {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	if stdout.String() != "oauth answer\n" || strings.Contains(stdout.String()+stderr.String(), access) || strings.Contains(stdout.String()+stderr.String(), refresh) || manager.resolveCalls != 2 {
+		t.Fatalf("stdout=%q stderr=%q resolveCalls=%d", stdout.String(), stderr.String(), manager.resolveCalls)
+	}
+}
+
+func TestOAuthTokenSourceRejectsAccountReplacement(t *testing.T) {
+	manager := &fakeOAuthManager{credential: oauth.Credentials{AccessToken: "access", AccountID: "new-account"}}
+	source := oauthTokenSource{manager: manager, accountID: "original-account"}
+	_, err := source.Token(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "account changed") {
+		t.Fatalf("Token() error = %v", err)
+	}
+}
+
+func TestRunAPIKeyTakesPrecedenceOverStoredOAuth(t *testing.T) {
+	cwd := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_API_KEY": "explicit-key", "OPENAI_MODEL": "model"})
+	manager := &fakeOAuthManager{resolveErr: errors.New("must not resolve")}
+	runtime.oauth = manager
+	runtime.newProvider = func(config providerConfig) (agent.Provider, error) {
+		if config.apiKey != "explicit-key" || config.codexToken != nil {
+			t.Fatalf("provider config = %+v", config)
+		}
+		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+			return agent.Response{}, nil
+		}), nil
+	}
+	if code := run([]string{"prompt"}, runtime); code != exitSuccess || manager.resolveCalls != 0 {
+		t.Fatalf("code=%d resolveCalls=%d stderr=%q", code, manager.resolveCalls, stderr.String())
+	}
+}
+
+func TestRunAPIKeyDoesNotInitializeOAuthConfiguration(t *testing.T) {
+	cwd := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_API_KEY": "explicit-key", "OPENAI_MODEL": "model"})
+	runtime.oauth = &lazyOAuthManager{yaahHome: "relative-path-that-oauth-would-reject"}
+	if code := run([]string{"prompt"}, runtime); code != exitSuccess {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+}
+
+func TestRunLoginAndLogoutCommands(t *testing.T) {
+	cwd := t.TempDir()
+	for _, test := range []struct {
+		name       string
+		arguments  []string
+		wantMethod oauth.LoginMethod
+		wantText   string
+	}{
+		{name: "browser", arguments: []string{"login"}, wantMethod: oauth.LoginBrowser, wantText: "Open this URL"},
+		{name: "device", arguments: []string{"login", "--device-auth"}, wantMethod: oauth.LoginDevice, wantText: "ABCD-EFGH"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			manager := &fakeOAuthManager{credential: oauth.Credentials{AccessToken: "access-secret", RefreshToken: "refresh-secret"}}
+			runtime := testRuntime(cwd, &stdout, &stderr, nil)
+			runtime.oauth = manager
+			if code := run(test.arguments, runtime); code != exitSuccess || manager.loginMethod != test.wantMethod || !manager.interactionCall || !strings.Contains(stderr.String(), test.wantText) || stdout.String() != "Logged in with ChatGPT.\n" {
+				t.Fatalf("code=%d method=%q stdout=%q stderr=%q", code, manager.loginMethod, stdout.String(), stderr.String())
+			}
+			if strings.Contains(stdout.String()+stderr.String(), "access-secret") || strings.Contains(stdout.String()+stderr.String(), "refresh-secret") {
+				t.Fatal("OAuth secret leaked")
+			}
+		})
+	}
+
+	var stdout, stderr bytes.Buffer
+	manager := &fakeOAuthManager{}
+	runtime := testRuntime(cwd, &stdout, &stderr, nil)
+	runtime.oauth = manager
+	if code := run([]string{"logout"}, runtime); code != exitSuccess || manager.logoutCalls != 1 || stdout.String() != "Logged out.\n" {
+		t.Fatalf("code=%d calls=%d stdout=%q stderr=%q", code, manager.logoutCalls, stdout.String(), stderr.String())
+	}
+
+	for _, arguments := range [][]string{{"login", "--help"}, {"logout", "--help"}} {
+		stdout.Reset()
+		stderr.Reset()
+		if code := run(arguments, runtime); code != exitSuccess || !strings.Contains(stdout.String(), "Usage: yaah ") || stderr.Len() != 0 {
+			t.Fatalf("arguments=%v code=%d stdout=%q stderr=%q", arguments, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
+func TestRunLoginRedactsCredentialOnFailure(t *testing.T) {
+	cwd := t.TempDir()
+	const access = "login-access-secret"
+	const refresh = "login-refresh-secret"
+	var stdout, stderr bytes.Buffer
+	runtime := testRuntime(cwd, &stdout, &stderr, nil)
+	runtime.oauth = &fakeOAuthManager{
+		credential: oauth.Credentials{AccessToken: access, RefreshToken: refresh},
+		loginErr:   errors.New("failed " + access + " " + refresh),
+	}
+	if code := run([]string{"login", "--device-auth"}, runtime); code != exitFailure || strings.Contains(stderr.String(), access) || strings.Contains(stderr.String(), refresh) || !strings.Contains(stderr.String(), "[REDACTED]") {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
 }
 
@@ -94,9 +260,9 @@ func TestRunBashEnvironmentExcludesOpenAIKey(t *testing.T) {
 		return []string{"OPENAI_API_KEY=" + key, "KEEP=value", "PATH=" + os.Getenv("PATH")}
 	}
 	providerCalls := 0
-	runtime.newProvider = func(receivedKey string) (agent.Provider, error) {
-		if receivedKey != key {
-			t.Fatalf("provider key = %q", receivedKey)
+	runtime.newProvider = func(config providerConfig) (agent.Provider, error) {
+		if config.apiKey != key {
+			t.Fatalf("provider key = %q", config.apiKey)
 		}
 		return providerFunction(func(_ context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
 			providerCalls++
@@ -144,7 +310,7 @@ func TestRunConfigurationAndUsageErrors(t *testing.T) {
 		want        string
 	}{
 		{name: "help", arguments: []string{"--help"}, wantCode: exitSuccess, want: "Usage:"},
-		{name: "missing key", environment: map[string]string{"OPENAI_MODEL": "model"}, wantCode: exitFailure, want: "OPENAI_API_KEY is required"},
+		{name: "missing authentication", environment: map[string]string{"OPENAI_MODEL": "model"}, wantCode: exitFailure, want: "run 'yaah login'"},
 		{name: "missing model", environment: map[string]string{"OPENAI_API_KEY": "key"}, wantCode: exitFailure, want: "model is required"},
 		{name: "explicit empty model", arguments: []string{"--model="}, environment: map[string]string{"OPENAI_API_KEY": "key", "OPENAI_MODEL": "fallback"}, wantCode: exitFailure, want: "model is required"},
 		{name: "model whitespace", arguments: []string{"--model", "bad model"}, environment: map[string]string{"OPENAI_API_KEY": "key"}, wantCode: exitFailure, want: "must not contain whitespace"},
@@ -186,7 +352,7 @@ func TestRunRedactsProviderSetupErrors(t *testing.T) {
 	const key = "setup-secret"
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_API_KEY": key, "OPENAI_MODEL": "model"})
-	runtime.newProvider = func(string) (agent.Provider, error) {
+	runtime.newProvider = func(providerConfig) (agent.Provider, error) {
 		return nil, errors.New("failed with " + key)
 	}
 	if code := run(nil, runtime); code != exitFailure || strings.Contains(stderr.String(), key) || !strings.Contains(stderr.String(), "[REDACTED]") {
@@ -201,7 +367,7 @@ func TestRunOneShotInterruptReturns130(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_API_KEY": "key", "OPENAI_MODEL": "model"})
 	runtime.interrupts = interrupts
-	runtime.newProvider = func(string) (agent.Provider, error) {
+	runtime.newProvider = func(providerConfig) (agent.Provider, error) {
 		return providerFunction(func(ctx context.Context, _ agent.Request, _ agent.TextSink) (agent.Response, error) {
 			close(started)
 			<-ctx.Done()
@@ -253,10 +419,12 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[strin
 			return result
 		},
 		getwd: func() (string, error) { return cwd, nil },
-		newProvider: func(string) (agent.Provider, error) {
+		newProvider: func(providerConfig) (agent.Provider, error) {
 			return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
 				return agent.Response{}, nil
 			}), nil
 		},
+		oauth:   &fakeOAuthManager{resolveErr: errors.New("oauth: not logged in; run 'yaah login'")},
+		openURL: func(string) error { return nil },
 	}
 }

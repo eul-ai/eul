@@ -24,11 +24,15 @@ yaah --model <model> [--cwd <directory>]
 yaah --model <model> "one-shot prompt"
 ```
 
-Configuration:
+Configuration and authentication:
 
-- `OPENAI_API_KEY` is required.
+- `yaah login` uses browser authorization-code OAuth with PKCE; `yaah login --device-auth` supports headless environments, and `yaah logout` removes yaah's credential.
+- OAuth credentials are stored only in yaah's private `auth.json` (`YAAH_HOME` or the OS user config directory), refreshed before expiry, and never imported from Pi or Codex.
+- A nonblank `OPENAI_API_KEY` takes precedence and retains usage-based Platform API access.
 - `OPENAI_MODEL` or `--model` is required; avoid a stale hard-coded default.
 - The current directory is the default working directory.
+
+ChatGPT OAuth uses the subscription-backed Codex endpoint. OpenAI documents ChatGPT sign-in for Codex, but the direct OAuth client, endpoint, header, and wire details used by independent clients are not a stable public third-party API contract. This compatibility path is therefore experimental and may need updates when Codex changes.
 
 ### Interactive mode
 
@@ -282,7 +286,8 @@ Important rules:
 
 Use the **Responses API**, with:
 
-- `POST /v1/responses`
+- API-key mode: `POST https://api.openai.com/v1/responses` with a non-streaming JSON response.
+- OAuth mode: bounded SSE from `POST https://chatgpt.com/backend-api/codex/responses`, with request-time token refresh and ChatGPT account routing headers.
 - `store: false`
 - Explicit `model`
 - Instructions sent on every request
@@ -296,6 +301,8 @@ The adapter owns all OpenAI DTOs and HTTP details. Inject `http.Client` and base
 
 Handle:
 
+- Browser PKCE and device-code login, private atomic credential storage, refresh-token rotation, and logout
+- Bounded Codex SSE completion responses while retaining the terminal's completed-text behavior
 - Bounded non-2xx response bodies
 - Malformed JSON
 - Missing call IDs
@@ -377,7 +384,7 @@ Exit criteria:
 
 ### Milestone 6 — Hardening
 
-- Add SSE streaming.
+- Add incremental terminal streaming; OAuth currently collects and bounds Codex SSE before delivering completed text.
 - Review resource cleanup and process cancellation.
 - Add an optional credential-gated live smoke test.
 
@@ -415,7 +422,7 @@ go list -m all   # only the main module
 - Interactive subprocesses
 - Automatic retries after partially visible output or side effects
 - Sandbox, container, or comprehensive permission system
-- Model catalogs, OAuth, telemetry, pricing, or usage dashboards
+- Model catalogs, telemetry, pricing, or usage dashboards
 
 ## 9. Future work
 
@@ -431,12 +438,13 @@ go list -m all   # only the main module
 |---|---|
 | Zero dependency | No third-party Go modules; Bash runtime allowed |
 | Platform | macOS/Linux first |
-| OpenAI endpoint | Responses API |
+| OpenAI endpoint | Platform Responses API for API keys; experimental ChatGPT Codex Responses endpoint for OAuth |
 | Streaming | Follow-up milestone; interface ready from day one |
 | Model | Require `--model` or `OPENAI_MODEL` |
 | Safety | Trusted and unsandboxed |
 | Provider plugins | Compile-time adapters only |
 | Sessions | In-memory only; `/clear` resets |
 | Public API | Binary-first; export only deliberate extension points |
+| Authentication | `OPENAI_API_KEY` precedence plus yaah-owned ChatGPT OAuth login/refresh/logout |
 
 This produces a defensible small core without prematurely reproducing Pi's sessions, extensions, TUI, model catalog, compaction, skills, or subagent ecosystem.

@@ -15,13 +15,20 @@ import (
 const continuationStateVersion = 1
 
 type createResponseRequest struct {
-	Model        string            `json:"model"`
-	Instructions string            `json:"instructions"`
-	Input        []json.RawMessage `json:"input"`
-	Tools        []functionTool    `json:"tools"`
-	Store        bool              `json:"store"`
-	Stream       bool              `json:"stream"`
-	Include      []string          `json:"include"`
+	Model             string            `json:"model"`
+	Instructions      string            `json:"instructions"`
+	Input             []json.RawMessage `json:"input"`
+	Tools             []functionTool    `json:"tools"`
+	Store             bool              `json:"store"`
+	Stream            bool              `json:"stream"`
+	Include           []string          `json:"include"`
+	Text              *responseText     `json:"text,omitempty"`
+	ToolChoice        string            `json:"tool_choice,omitempty"`
+	ParallelToolCalls bool              `json:"parallel_tool_calls,omitempty"`
+}
+
+type responseText struct {
+	Verbosity string `json:"verbosity"`
 }
 
 type functionTool struct {
@@ -29,7 +36,7 @@ type functionTool struct {
 	Name        string           `json:"name"`
 	Description string           `json:"description,omitempty"`
 	Parameters  agent.JSONSchema `json:"parameters"`
-	Strict      bool             `json:"strict"`
+	Strict      *bool            `json:"strict"`
 }
 
 type inputMessage struct {
@@ -87,12 +94,13 @@ func buildCreateRequest(request agent.Request, maxStateBytes int) (createRespons
 		if err := validateStrictSchema(definition.Parameters, "parameters"); err != nil {
 			return createResponseRequest{}, nil, fmt.Errorf("tool %q: %w", definition.Name, err)
 		}
+		strict := true
 		tools[i] = functionTool{
 			Type:        "function",
 			Name:        definition.Name,
 			Description: definition.Description,
 			Parameters:  definition.Parameters,
-			Strict:      true,
+			Strict:      &strict,
 		}
 	}
 

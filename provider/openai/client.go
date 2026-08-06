@@ -19,6 +19,7 @@ import (
 
 const (
 	defaultBaseURL          = "https://api.openai.com"
+	defaultCodexBaseURL     = "https://chatgpt.com/backend-api"
 	defaultHTTPTimeout      = 10 * time.Minute
 	defaultMaxRequestBytes  = int64(32 * 1024 * 1024)
 	defaultMaxResponseBytes = int64(16 * 1024 * 1024)
@@ -27,7 +28,7 @@ const (
 )
 
 // Options configures a Client. BaseURL is an API origin or test server URL;
-// /v1/responses is appended to it. Zero size limits use bounded defaults.
+// the mode-specific Responses path is appended to it. Zero size limits use bounded defaults.
 // An injected client with no positive timeout receives the default timeout.
 // Redirects are rejected so the bearer credential is never forwarded.
 type Options struct {
@@ -39,12 +40,31 @@ type Options struct {
 	MaxStateBytes    int
 }
 
-// Client is a non-streaming OpenAI Responses API adapter and implements
-// agent.Provider.
+// CodexCredential is the request-time OAuth access token and ChatGPT account.
+type CodexCredential struct {
+	AccessToken string
+	AccountID   string
+}
+
+// CodexTokenSource refreshes OAuth credentials as needed for every request.
+type CodexTokenSource interface {
+	Token(context.Context) (CodexCredential, error)
+}
+
+// CodexTokenSourceFunc adapts a function to CodexTokenSource.
+type CodexTokenSourceFunc func(context.Context) (CodexCredential, error)
+
+func (function CodexTokenSourceFunc) Token(ctx context.Context) (CodexCredential, error) {
+	return function(ctx)
+}
+
+// Client is an OpenAI Responses API adapter and implements agent.Provider.
 type Client struct {
 	httpClient       *http.Client
 	endpoint         string
 	apiKey           string
+	codexSource      CodexTokenSource
+	codex            bool
 	maxRequestBytes  int64
 	maxResponseBytes int64
 	maxErrorBytes    int64
@@ -53,23 +73,29 @@ type Client struct {
 
 var _ agent.Provider = (*Client)(nil)
 
-// New constructs an OpenAI Responses API client.
+// New constructs a Platform API-key Responses client.
 func New(apiKey string, options Options) (*Client, error) {
-	if strings.TrimSpace(apiKey) == "" {
-		return nil, errors.New("openai: API key is required")
+	if err := validateCredentialValue(apiKey, "API key"); err != nil {
+		return nil, err
 	}
-	if len(apiKey) > 8*1024 {
-		return nil, errors.New("openai: API key is too long")
-	}
-	for _, character := range []byte(apiKey) {
-		if character <= 0x20 || character >= 0x7f {
-			return nil, errors.New("openai: API key contains invalid characters")
-		}
-	}
+	return newClient(apiKey, nil, false, options)
+}
 
+// NewCodex constructs a ChatGPT subscription Responses client.
+func NewCodex(source CodexTokenSource, options Options) (*Client, error) {
+	if source == nil {
+		return nil, errors.New("openai: OAuth token source is required")
+	}
+	return newClient("", source, true, options)
+}
+
+func newClient(apiKey string, source CodexTokenSource, codex bool, options Options) (*Client, error) {
 	baseURL := options.BaseURL
 	if baseURL == "" {
 		baseURL = defaultBaseURL
+		if codex {
+			baseURL = defaultCodexBaseURL
+		}
 	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
@@ -81,7 +107,11 @@ func New(apiKey string, options Options) (*Client, error) {
 	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
 		return nil, errors.New("openai: plaintext HTTP base URLs are allowed only for loopback test servers")
 	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/v1/responses"
+	responsePath := "/v1/responses"
+	if codex {
+		responsePath = "/codex/responses"
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + responsePath
 	parsed.RawPath = ""
 
 	maxRequestBytes := options.MaxRequestBytes
@@ -129,6 +159,8 @@ func New(apiKey string, options Options) (*Client, error) {
 		httpClient:       &httpClientCopy,
 		endpoint:         parsed.String(),
 		apiKey:           apiKey,
+		codexSource:      source,
+		codex:            codex,
 		maxRequestBytes:  maxRequestBytes,
 		maxResponseBytes: maxResponseBytes,
 		maxErrorBytes:    maxErrorBytes,
@@ -145,7 +177,8 @@ func isLoopbackHost(host string) bool {
 	return address != nil && address.IsLoopback()
 }
 
-// Generate makes one non-streaming Responses API request.
+// Generate makes one Responses API request. Codex OAuth uses a bounded SSE
+// response while preserving the provider's completed-response callback behavior.
 func (c *Client) Generate(ctx context.Context, request agent.Request, onText agent.TextSink) (agent.Response, error) {
 	if c == nil {
 		return agent.Response{}, errors.New("openai: client is nil")
@@ -156,28 +189,56 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText age
 	if err := ctx.Err(); err != nil {
 		return agent.Response{}, err
 	}
+	secret, accountID, err := c.resolveAuth(ctx)
+	if err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return agent.Response{}, contextErr
+		}
+		return agent.Response{}, c.wrapfWith(nil, err, "resolve authentication: %v", err)
+	}
+	secrets := []string{secret}
+	if accountID != "" {
+		secrets = append(secrets, accountID)
+	}
 	if requestPayloadExceeds(request, c.maxRequestBytes) {
-		return agent.Response{}, c.errorf("request exceeds %d bytes", c.maxRequestBytes)
+		return agent.Response{}, c.errorfWith(secrets, "request exceeds %d bytes", c.maxRequestBytes)
 	}
 
 	wireRequest, newInputs, err := buildCreateRequest(request, c.maxStateBytes)
 	if err != nil {
-		return agent.Response{}, c.errorf("build request: %v", err)
+		return agent.Response{}, c.errorfWith(secrets, "build request: %v", err)
+	}
+	if c.codex {
+		wireRequest.Stream = true
+		wireRequest.Text = &responseText{Verbosity: "low"}
+		wireRequest.ToolChoice = "auto"
+		wireRequest.ParallelToolCalls = true
+		for index := range wireRequest.Tools {
+			wireRequest.Tools[index].Strict = nil
+		}
 	}
 	requestBody, err := json.Marshal(wireRequest)
 	if err != nil {
-		return agent.Response{}, c.errorf("encode request: %v", err)
+		return agent.Response{}, c.errorfWith(secrets, "encode request: %v", err)
 	}
 	if int64(len(requestBody)) > c.maxRequestBytes {
-		return agent.Response{}, c.errorf("request exceeds %d bytes", c.maxRequestBytes)
+		return agent.Response{}, c.errorfWith(secrets, "request exceeds %d bytes", c.maxRequestBytes)
 	}
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(requestBody))
 	if err != nil {
-		return agent.Response{}, c.errorf("create request: %v", err)
+		return agent.Response{}, c.errorfWith(secrets, "create request: %v", err)
 	}
-	httpRequest.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpRequest.Header.Set("Authorization", "Bearer "+secret)
 	httpRequest.Header.Set("Content-Type", "application/json")
-	httpRequest.Header.Set("Accept", "application/json")
+	if c.codex {
+		httpRequest.Header.Set("Accept", "text/event-stream")
+		httpRequest.Header.Set("chatgpt-account-id", accountID)
+		httpRequest.Header.Set("originator", "yaah")
+		httpRequest.Header.Set("User-Agent", "yaah")
+		httpRequest.Header.Set("OpenAI-Beta", "responses=experimental")
+	} else {
+		httpRequest.Header.Set("Accept", "application/json")
+	}
 
 	httpResponse, err := c.httpClient.Do(httpRequest)
 	if err != nil {
@@ -185,52 +246,58 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText age
 			return agent.Response{}, contextErr
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			return agent.Response{}, c.wrapf(context.DeadlineExceeded, "request failed: %v", err)
+			return agent.Response{}, c.wrapfWith(secrets, context.DeadlineExceeded, "request failed: %v", err)
 		}
 		if errors.Is(err, context.Canceled) {
-			return agent.Response{}, c.wrapf(context.Canceled, "request failed: %v", err)
+			return agent.Response{}, c.wrapfWith(secrets, context.Canceled, "request failed: %v", err)
 		}
-		return agent.Response{}, c.errorf("request failed: %v", err)
+		return agent.Response{}, c.errorfWith(secrets, "request failed: %v", err)
 	}
 	defer httpResponse.Body.Close()
 
 	if httpResponse.StatusCode < 200 || httpResponse.StatusCode >= 300 {
-		return agent.Response{}, c.decodeHTTPError(httpResponse)
+		return agent.Response{}, c.decodeHTTPError(httpResponse, secrets)
 	}
-	body, truncated, err := readBounded(httpResponse.Body, c.maxResponseBytes)
+	var wireResponse createResponseEnvelope
+	if c.codex {
+		wireResponse, err = readCodexSSE(httpResponse.Body, c.maxResponseBytes)
+	} else {
+		var body []byte
+		var truncated bool
+		body, truncated, err = readBounded(httpResponse.Body, c.maxResponseBytes)
+		if err == nil && truncated {
+			return agent.Response{}, c.errorfWith(secrets, "response exceeds %d bytes", c.maxResponseBytes)
+		}
+		if err == nil {
+			wireResponse, err = decodeCreateResponse(body)
+		}
+	}
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return agent.Response{}, contextErr
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			return agent.Response{}, c.wrapf(context.DeadlineExceeded, "read response: %v", err)
+			return agent.Response{}, c.wrapfWith(secrets, context.DeadlineExceeded, "read response: %v", err)
 		}
 		if errors.Is(err, context.Canceled) {
-			return agent.Response{}, c.wrapf(context.Canceled, "read response: %v", err)
+			return agent.Response{}, c.wrapfWith(secrets, context.Canceled, "read response: %v", err)
 		}
-		return agent.Response{}, c.errorf("read response: %v", err)
-	}
-	if truncated {
-		return agent.Response{}, c.errorf("response exceeds %d bytes", c.maxResponseBytes)
-	}
-	wireResponse, err := decodeCreateResponse(body)
-	if err != nil {
-		return agent.Response{}, c.errorf("%v", err)
+		return agent.Response{}, c.errorfWith(secrets, "%v", err)
 	}
 	text, calls, usage, err := normalizeResponse(wireResponse)
 	if err != nil {
-		return agent.Response{}, c.errorf("%v", err)
+		return agent.Response{}, c.errorfWith(secrets, "%v", err)
 	}
 
 	historyLength := len(wireRequest.Input) - len(newInputs)
 	history := wireRequest.Input[:historyLength]
 	state, err := encodeState(history, newInputs, wireResponse.Output, c.maxStateBytes)
 	if err != nil {
-		return agent.Response{}, c.errorf("%v", err)
+		return agent.Response{}, c.errorfWith(secrets, "%v", err)
 	}
 	if text != "" && onText != nil {
 		if err := onText(text); err != nil {
-			return agent.Response{}, c.wrapf(err, "deliver text: %v", err)
+			return agent.Response{}, c.wrapfWith(secrets, err, "deliver text: %v", err)
 		}
 	}
 	return agent.Response{
@@ -241,16 +308,33 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText age
 	}, nil
 }
 
-func (c *Client) decodeHTTPError(response *http.Response) error {
+func (c *Client) resolveAuth(ctx context.Context) (string, string, error) {
+	if !c.codex {
+		return c.apiKey, "", nil
+	}
+	credential, err := c.codexSource.Token(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	if err := validateCredentialValue(credential.AccessToken, "OAuth access token"); err != nil {
+		return "", "", err
+	}
+	if err := validateHeaderValue(credential.AccountID, "ChatGPT account ID", 1024); err != nil {
+		return "", "", err
+	}
+	return credential.AccessToken, credential.AccountID, nil
+}
+
+func (c *Client) decodeHTTPError(response *http.Response, secrets []string) error {
 	body, truncated, err := readBounded(response.Body, c.maxErrorBytes)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return c.wrapf(context.DeadlineExceeded, "HTTP %s; read error response: %v", response.Status, err)
+			return c.wrapfWith(secrets, context.DeadlineExceeded, "HTTP %s; read error response: %v", response.Status, err)
 		}
 		if errors.Is(err, context.Canceled) {
-			return c.wrapf(context.Canceled, "HTTP %s; read error response: %v", response.Status, err)
+			return c.wrapfWith(secrets, context.Canceled, "HTTP %s; read error response: %v", response.Status, err)
 		}
-		return c.errorf("HTTP %s; read error response: %v", response.Status, err)
+		return c.errorfWith(secrets, "HTTP %s; read error response: %v", response.Status, err)
 	}
 	detail := strings.TrimSpace(string(body))
 	if !truncated {
@@ -267,36 +351,71 @@ func (c *Client) decodeHTTPError(response *http.Response) error {
 		detail = "empty error response"
 	}
 	if truncated {
-		detail = redactTruncatedSecretSuffix(detail, c.apiKey)
+		detail = redactTruncatedSecretSuffix(detail, secrets)
 		detail += " [truncated]"
 	}
-	return c.errorf("HTTP %s: %s", response.Status, detail)
+	return c.errorfWith(secrets, "HTTP %s: %s", response.Status, detail)
 }
 
-func redactTruncatedSecretSuffix(text, secret string) string {
-	text = strings.ReplaceAll(text, secret, "[REDACTED]")
-	maximum := min(len(text), len(secret)-1)
-	for length := maximum; length > 0; length-- {
-		if strings.HasSuffix(text, secret[:length]) {
-			return text[:len(text)-length] + "[REDACTED]"
+func redactTruncatedSecretSuffix(text string, secrets []string) string {
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
+		text = strings.ReplaceAll(text, secret, "[REDACTED]")
+		maximum := min(len(text), len(secret)-1)
+		for length := maximum; length > 0; length-- {
+			if strings.HasSuffix(text, secret[:length]) {
+				text = text[:len(text)-length] + "[REDACTED]"
+				break
+			}
 		}
 	}
 	return text
 }
 
-func (c *Client) errorf(format string, arguments ...any) error {
-	return errors.New(c.errorMessage(format, arguments...))
+func (c *Client) errorfWith(secrets []string, format string, arguments ...any) error {
+	return errors.New(c.errorMessage(secrets, format, arguments...))
 }
 
-func (c *Client) wrapf(cause error, format string, arguments ...any) error {
-	return &wrappedError{message: c.errorMessage(format, arguments...), cause: cause}
+func (c *Client) wrapfWith(secrets []string, cause error, format string, arguments ...any) error {
+	return &wrappedError{message: c.errorMessage(secrets, format, arguments...), cause: cause}
 }
 
-func (c *Client) errorMessage(format string, arguments ...any) string {
+func (c *Client) errorMessage(secrets []string, format string, arguments ...any) string {
 	message := fmt.Sprintf(format, arguments...)
-	message = strings.ReplaceAll(message, c.apiKey, "[REDACTED]")
+	for _, secret := range secrets {
+		if secret != "" {
+			message = strings.ReplaceAll(message, secret, "[REDACTED]")
+		}
+	}
 	message = strings.ToValidUTF8(message, "�")
 	return truncateUTF8("openai: "+message, int(c.maxErrorBytes))
+}
+
+func validateCredentialValue(value, name string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("openai: %s is required", name)
+	}
+	if len(value) > 8*1024 {
+		return fmt.Errorf("openai: %s is too long", name)
+	}
+	return validateHeaderValue(value, name, 8*1024)
+}
+
+func validateHeaderValue(value, name string, maximum int) error {
+	if value == "" {
+		return fmt.Errorf("openai: %s is required", name)
+	}
+	if len(value) > maximum {
+		return fmt.Errorf("openai: %s is too long", name)
+	}
+	for _, character := range []byte(value) {
+		if character <= 0x20 || character >= 0x7f {
+			return fmt.Errorf("openai: %s contains invalid characters", name)
+		}
+	}
+	return nil
 }
 
 type wrappedError struct {
