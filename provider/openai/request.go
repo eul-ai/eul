@@ -25,6 +25,16 @@ type createResponseRequest struct {
 	ParallelToolCalls bool               `json:"parallel_tool_calls,omitempty"`
 }
 
+type compactRequest struct {
+	Model             string             `json:"model"`
+	Instructions      string             `json:"instructions,omitempty"`
+	Input             []json.RawMessage  `json:"input"`
+	Tools             []functionTool     `json:"tools"`
+	ParallelToolCalls bool               `json:"parallel_tool_calls"`
+	Reasoning         *responseReasoning `json:"reasoning,omitempty"`
+	Text              *responseText      `json:"text,omitempty"`
+}
+
 type responseText struct {
 	Verbosity string `json:"verbosity"`
 }
@@ -88,6 +98,20 @@ func buildCreateRequest(request agent.Request, maxStateBytes int) (createRespons
 		Stream:       false,
 		Include:      []string{"reasoning.encrypted_content"},
 	}, newItems, nil
+}
+
+func buildCompactRequest(request agent.Request, maxStateBytes int) (compactRequest, error) {
+	createRequest, _, err := buildCreateRequest(request, maxStateBytes)
+	if err != nil {
+		return compactRequest{}, err
+	}
+
+	return compactRequest{
+		Model:        createRequest.Model,
+		Instructions: createRequest.Instructions,
+		Input:        createRequest.Input,
+		Tools:        createRequest.Tools,
+	}, nil
 }
 
 func encodeInputs(inputs []agent.Input) []json.RawMessage {

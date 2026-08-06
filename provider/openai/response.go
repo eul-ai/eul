@@ -19,6 +19,11 @@ type createResponseEnvelope struct {
 	Usage             *responseUsage             `json:"usage"`
 }
 
+type compactResponseEnvelope struct {
+	Output []json.RawMessage `json:"output"`
+	Usage  *responseUsage    `json:"usage"`
+}
+
 type responseError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -68,6 +73,36 @@ func decodeCreateResponse(body []byte) (createResponseEnvelope, error) {
 	for i, item := range response.Output {
 		if err := validateRawObject(item); err != nil {
 			return createResponseEnvelope{}, fmt.Errorf("response output item %d: %w", i, err)
+		}
+	}
+
+	return response, nil
+}
+
+func decodeCompactResponse(body []byte) (compactResponseEnvelope, error) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	var response compactResponseEnvelope
+
+	if err := decoder.Decode(&response); err != nil {
+		return compactResponseEnvelope{}, fmt.Errorf("decode compact response: %w", err)
+	}
+
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return compactResponseEnvelope{}, errors.New("decode compact response: multiple JSON values")
+		}
+		return compactResponseEnvelope{}, fmt.Errorf("decode compact response: %w", err)
+	}
+	if response.Output == nil {
+		return compactResponseEnvelope{}, errors.New("compact response is missing output")
+	}
+	if len(response.Output) == 0 {
+		return compactResponseEnvelope{}, errors.New("compact response output is empty")
+	}
+	for i, item := range response.Output {
+		if err := validateRawObject(item); err != nil {
+			return compactResponseEnvelope{}, fmt.Errorf("compact response output item %d: %w", i, err)
 		}
 	}
 

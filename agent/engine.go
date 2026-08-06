@@ -31,6 +31,7 @@ type Engine struct {
 	maxToolRounds int
 	instructions  string
 	state         []byte
+	contextUsage  Usage
 	resetRequired bool
 }
 
@@ -59,6 +60,7 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 	}
 
 	state := e.state
+	contextUsage := e.contextUsage
 	inputs := []Input{{Kind: InputUser, Text: userText}}
 	var result RunResult
 	toolRounds := 0
@@ -75,6 +77,28 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			Tools:        e.tools.Definitions(),
 			State:        state,
 		}
+		if compactor, canCompact := e.provider.(Compactor); canCompact && compactor.ShouldCompact(request, contextUsage) {
+			if err := emit(sink, Event{Kind: EventCompaction}); err != nil {
+				return RunResult{}, err
+			}
+
+			compacted, err := compactor.Compact(ctx, request)
+			if err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return RunResult{}, ctxErr
+				}
+				return RunResult{}, fmt.Errorf("agent: compact context: %w", err)
+			}
+			if len(compacted.State) == 0 {
+				return RunResult{}, errors.New("agent: compact context: provider returned empty state")
+			}
+
+			state = compacted.State
+			inputs = nil
+			addUsage(&result.Usage, compacted.Usage)
+			request.State = state
+			request.Inputs = nil
+		}
 
 		response, err := e.provider.Generate(ctx, request, func(text string) error {
 			return emit(sink, Event{Kind: EventAssistantText, Text: text})
@@ -89,10 +113,12 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		}
 
 		state = response.State
+		contextUsage = response.Usage
 		addUsage(&result.Usage, response.Usage)
 
 		if len(response.ToolCalls) == 0 {
 			e.state = state
+			e.contextUsage = contextUsage
 			e.resetRequired = false
 			result.Text = response.Text
 			return result, nil
@@ -143,6 +169,7 @@ func (e *Engine) NeedsReset() bool {
 
 func (e *Engine) Reset() {
 	e.state = nil
+	e.contextUsage = Usage{}
 	e.resetRequired = false
 }
 

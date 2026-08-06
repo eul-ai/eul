@@ -48,8 +48,8 @@ Interactive mode supports:
 - EOF to exit
 - Ctrl-C to cancel the active turn or exit while idle
 
-Assistant text is streamed to stdout. Reasoning summaries, tool activity, and
-errors go to stderr. The terminal intentionally has no raw mode, colors,
+Assistant text is streamed to stdout. Reasoning summaries, tool activity,
+compaction notices, and errors go to stderr. The terminal intentionally has no raw mode, colors,
 history, autocomplete, or ANSI rendering.
 
 ## Tools
@@ -106,6 +106,19 @@ the experimental Codex wire contract.
 The engine permits at most 20 tool rounds per user turn. Once tool execution
 has begun, cancellation or an incomplete continuation requires `/clear` before
 another turn so provider state cannot be confused with external side effects.
+
+## Compaction
+
+The engine supports compaction through an optional provider capability and asks
+the provider before each generation. The OpenAI adapter compacts known GPT-5.6
+Codex models at 90% of their 272,000-token context window, including an estimate
+of pending user or tool-result input. Unknown models and providers without
+compaction support continue without automatic compaction.
+
+The OpenAI adapter uses the stateless
+`/codex/responses/compact` endpoint. Its output becomes the canonical opaque
+continuation state; the previous history is not appended or interpreted by the
+agent. Compaction can occur before a new user response or between tool rounds.
 
 ## Authentication
 

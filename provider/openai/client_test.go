@@ -184,6 +184,205 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	}
 }
 
+func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
+	const token = "compact-oauth-token"
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		calls++
+		switch calls {
+		case 1:
+			if request.Method != http.MethodPost || request.URL.Path != "/codex/responses/compact" || request.Header.Get("Accept") != "application/json" {
+				t.Errorf("compact request = %s %s accept=%q", request.Method, request.URL.Path, request.Header.Get("Accept"))
+			}
+			for header, want := range map[string]string{
+				"Authorization":      "Bearer " + token,
+				"chatgpt-account-id": "account",
+				"originator":         "yaah",
+				"User-Agent":         "yaah",
+				"OpenAI-Beta":        "responses=experimental",
+				"Content-Type":       "application/json",
+			} {
+				if got := request.Header.Get(header); got != want {
+					t.Errorf("compact header %s = %q, want %q", header, got, want)
+				}
+			}
+
+			body, err := io.ReadAll(request.Body)
+			if err != nil {
+				t.Error(err)
+			}
+			if strings.Contains(string(body), token) {
+				t.Fatal("compact request body contains OAuth token")
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(body, &fields); err != nil {
+				t.Fatal(err)
+			}
+			for _, forbidden := range []string{"store", "stream", "include", "tool_choice"} {
+				if _, exists := fields[forbidden]; exists {
+					t.Errorf("compact request contains %q: %s", forbidden, body)
+				}
+			}
+			var wire compactRequest
+			if err := json.Unmarshal(body, &wire); err != nil {
+				t.Fatal(err)
+			}
+			if wire.Model != "gpt-5.6-sol" || wire.Instructions != "system" || !wire.ParallelToolCalls || wire.Text == nil || wire.Text.Verbosity != "low" || wire.Reasoning == nil || wire.Reasoning.Effort != "high" || wire.Reasoning.Summary != "auto" || len(wire.Tools) != 1 || len(wire.Input) != 2 {
+				t.Errorf("compact request = %+v", wire)
+			}
+			assertInputItem(t, wire.Input, 0, map[string]string{"type": "message", "role": "assistant"})
+			assertInputItem(t, wire.Input, 1, map[string]string{"role": "user", "content": "pending user"})
+
+			writer.Header().Set("Content-Type", "application/json")
+			writeCompactJSON(t, writer, map[string]any{
+				"object": "response.compaction",
+				"output": []any{
+					map[string]any{"type": "message", "role": "user", "content": "retained user"},
+					map[string]any{"type": "compaction", "encrypted_content": "opaque compact state"},
+				},
+				"usage": map[string]any{"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+			})
+		case 2:
+			if request.URL.Path != "/codex/responses" {
+				t.Errorf("generate path = %q", request.URL.Path)
+			}
+			var wire createResponseRequest
+			if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
+				t.Fatal(err)
+			}
+			if len(wire.Input) != 3 {
+				t.Fatalf("post-compact input count = %d, want 3", len(wire.Input))
+			}
+			assertInputItem(t, wire.Input, 0, map[string]string{"type": "message", "role": "user", "content": "retained user"})
+			assertInputItem(t, wire.Input, 1, map[string]string{"type": "compaction", "encrypted_content": "opaque compact state"})
+			assertInputItem(t, wire.Input, 2, map[string]string{"role": "user", "content": "after compact"})
+			writeJSON(t, writer, map[string]any{
+				"status": "completed",
+				"output": []any{map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "continued"}}}},
+			})
+		default:
+			t.Errorf("unexpected request %d", calls)
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, token, server.URL, Options{ReasoningEffort: "high"})
+	state, err := encodeState(nil, nil, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)}, defaultMaxStateBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compacted, err := client.Compact(context.Background(), agent.Request{
+		Model:        "gpt-5.6-sol",
+		Instructions: "system",
+		State:        state,
+		Inputs:       []agent.Input{{Kind: agent.InputUser, Text: "pending user"}},
+		Tools:        []agent.ToolDefinition{strictTestTool("read")},
+	})
+	if err != nil {
+		t.Fatalf("Compact() error = %v", err)
+	}
+	if compacted.Usage != (agent.Usage{InputTokens: 100, OutputTokens: 20, TotalTokens: 120}) {
+		t.Fatalf("compact usage = %+v", compacted.Usage)
+	}
+	items, err := decodeState(compacted.State, defaultMaxStateBytes)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("compact state items = %d, error = %v", len(items), err)
+	}
+
+	response, err := client.Generate(context.Background(), agent.Request{
+		Model:  "gpt-5.6-sol",
+		State:  compacted.State,
+		Inputs: []agent.Input{{Kind: agent.InputUser, Text: "after compact"}},
+	}, nil, nil)
+	if err != nil || response.Text != "continued" || calls != 2 {
+		t.Fatalf("response = %+v, error = %v, calls = %d", response, err, calls)
+	}
+}
+
+func TestClientRejectsMalformedCompactResponses(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "malformed JSON", body: `{`, want: "decode compact response"},
+		{name: "trailing JSON", body: `{"output":[{}]} {}`, want: "multiple JSON values"},
+		{name: "missing output", body: `{}`, want: "missing output"},
+		{name: "empty output", body: `{"output":[]}`, want: "output is empty"},
+		{name: "non-object output", body: `{"output":[3]}`, want: "must be a JSON object"},
+		{name: "negative usage", body: `{"output":[{}],"usage":{"input_tokens":-1}}`, want: "negative token"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := compactResponseServer(t, http.StatusOK, test.body)
+			defer server.Close()
+			client := newTestClient(t, "key", server.URL, Options{})
+			_, err := client.Compact(context.Background(), baseRequest())
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Compact() error = %v, want containing %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestClientCompactBoundsCancellationAndOptionalUsage(t *testing.T) {
+	t.Run("optional usage", func(t *testing.T) {
+		server := compactResponseServer(t, http.StatusOK, `{"output":[{"type":"compaction","encrypted_content":"opaque"}]}`)
+		defer server.Close()
+		client := newTestClient(t, "key", server.URL, Options{})
+		response, err := client.Compact(context.Background(), baseRequest())
+		if err != nil || response.Usage != (agent.Usage{}) {
+			t.Fatalf("Compact() response = %+v, error = %v", response, err)
+		}
+	})
+
+	t.Run("response bound", func(t *testing.T) {
+		server := compactResponseServer(t, http.StatusOK, strings.Repeat("x", 101))
+		defer server.Close()
+		client := newTestClient(t, "key", server.URL, Options{})
+		client.maxResponseBytes = 100
+		_, err := client.Compact(context.Background(), baseRequest())
+		if err == nil || !strings.Contains(err.Error(), "compact response exceeds 100 bytes") {
+			t.Fatalf("Compact() error = %v", err)
+		}
+	})
+
+	t.Run("request bound", func(t *testing.T) {
+		var calls atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
+		defer server.Close()
+		client := newTestClient(t, "key", server.URL, Options{})
+		client.maxRequestBytes = 100
+		request := baseRequest()
+		request.Inputs[0].Text = strings.Repeat("x", 200)
+		_, err := client.Compact(context.Background(), request)
+		if err == nil || !strings.Contains(err.Error(), "compact request exceeds 100 bytes") || calls.Load() != 0 {
+			t.Fatalf("Compact() error = %v, HTTP calls = %d", err, calls.Load())
+		}
+	})
+
+	t.Run("state bound", func(t *testing.T) {
+		server := compactResponseServer(t, http.StatusOK, `{"output":[{"type":"compaction","encrypted_content":"`+strings.Repeat("x", 200)+`"}]}`)
+		defer server.Close()
+		client := newTestClient(t, "key", server.URL, Options{})
+		client.maxStateBytes = 100
+		_, err := client.Compact(context.Background(), baseRequest())
+		if err == nil || !strings.Contains(err.Error(), "continuation state exceeds 100 bytes") {
+			t.Fatalf("Compact() error = %v", err)
+		}
+	})
+
+	t.Run("pre-canceled", func(t *testing.T) {
+		client := newTestClient(t, "key", "http://127.0.0.1:1", Options{})
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := client.Compact(ctx, baseRequest())
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Compact() error = %v", err)
+		}
+	})
+}
+
 func TestClientStreamsTextDeltas(t *testing.T) {
 	releaseTerminal := make(chan struct{})
 	released := false
@@ -564,6 +763,24 @@ func responseServer(t *testing.T, status int, body string) *httptest.Server {
 			t.Errorf("write response: %v", err)
 		}
 	}))
+}
+
+func compactResponseServer(t *testing.T, status int, body string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(status)
+		if _, err := io.WriteString(writer, body); err != nil {
+			t.Errorf("write compact response: %v", err)
+		}
+	}))
+}
+
+func writeCompactJSON(t *testing.T, writer http.ResponseWriter, value any) {
+	t.Helper()
+	if err := json.NewEncoder(writer).Encode(value); err != nil {
+		t.Errorf("encode compact response: %v", err)
+	}
 }
 
 func writeJSON(t *testing.T, writer http.ResponseWriter, value any) {

@@ -269,6 +269,13 @@ func (r *eventRenderer) render(event agent.Event) error {
 		if text != "" {
 			r.reasoningOpen = !strings.HasSuffix(text, "\n")
 		}
+	case agent.EventCompaction:
+		if err := r.finish(); err != nil {
+			return err
+		}
+		if err := writeOutput(r.errorOutput, "[context] compacting conversation\n"); err != nil {
+			return err
+		}
 	case agent.EventToolStart:
 		if err := r.finish(); err != nil {
 			return err

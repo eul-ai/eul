@@ -1,10 +1,10 @@
-# Automatic compaction plan
+# Automatic compaction
 
-Status: discussion draft. This document proposes architecture and behavior; it does not describe implemented code.
+Status: implemented. This document records the design rationale, behavior, and deferred alternatives.
 
 ## Goal
 
-Add automatic conversation compaction without making the agent engine depend on OpenAI. The engine should decide when a conversation needs compaction and invoke an optional provider capability. The first and only implementation will use OpenAI's stateless `POST /responses/compact` endpoint through the existing ChatGPT/Codex OAuth transport.
+Add automatic conversation compaction without making the agent engine depend on OpenAI. Before each generation, the engine should ask an optional provider capability whether the pending request needs compaction. The first and only implementation will use OpenAI's stateless `POST /responses/compact` endpoint through the existing ChatGPT/Codex OAuth transport.
 
 The first version should:
 
@@ -77,11 +77,12 @@ type CompactResponse struct {
 }
 
 type Compactor interface {
+    ShouldCompact(Request, Usage) bool
     Compact(context.Context, Request) (CompactResponse, error)
 }
 ```
 
-`Engine.New` checks whether its provider also implements `Compactor`. Providers that do not implement it continue to work unchanged.
+At the generation call site, the engine checks whether its provider also implements `Compactor`. Providers that do not implement it continue to work unchanged.
 
 The `Request` passed to `Compact` has the same meaning as a request about to be passed to `Generate`:
 
@@ -89,34 +90,29 @@ The `Request` passed to `Compact` has the same meaning as a request about to be 
 - `Inputs` are pending user or tool-result items not yet represented by that state;
 - model, instructions, and tools are the current generation settings.
 
+`ShouldCompact` receives that pending request and the usage snapshot from the most recent successful generation. The provider owns model context metadata, token-estimation policy, and its threshold.
+
 A successful `Compact` must incorporate both `State` and `Inputs` into the returned canonical `State`. The engine must therefore clear `Inputs` after installing the compacted state so they are not replayed twice.
 
-This contract leaves all provider-specific history decoding, wire items, and canonicalization inside the provider adapter. A future provider can implement the same interface with a local summary, a different endpoint, or its own opaque continuation format.
+This contract leaves provider-specific trigger policy, history decoding, wire items, and canonicalization inside the provider adapter. A future provider can implement the same interface with a local summary, a different endpoint, or its own opaque continuation format.
 
 ## Engine policy and state
 
-Extend `Engine` with the latest active-context token count reported by a completed generation. This is a snapshot, not the sum of request usage across a run.
+Extend `Engine` with the usage reported by the latest completed generation. This is a snapshot, not the sum of usage across a run.
 
 At the top of each generation-loop iteration:
 
 1. Build the request that would normally be sent to `Generate`.
-2. Look up the model context window in `modelContextWindows`.
-3. Estimate the pending input text as `(bytes + 3) / 4` tokens, matching Codex's inexpensive approximation.
-4. Compact when:
+2. Check whether the provider implements `Compactor`.
+3. Call `ShouldCompact` with the pending request and latest generation usage.
+4. If requested, call `Compact` with the complete pending request.
+5. Replace the loop-local state with `CompactResponse.State`, clear pending inputs, add compact-call usage to the run result, and proceed immediately to `Generate`.
 
-   ```text
-   latest response total tokens + estimated pending input tokens >= 90% of context window
-   ```
-
-5. Require non-empty provider state. There is nothing useful to compact before the first response in a conversation.
-6. If the provider implements `Compactor`, call it with the complete pending request.
-7. Replace the loop-local state with `CompactResponse.State`, clear pending inputs, add compact-call usage to the run result, and proceed immediately to `Generate`.
-
-After every successful `Generate`, replace the active-context token snapshot with that response's `Usage.TotalTokens`. Continue summing all generation and compaction usage into `RunResult.Usage` as today.
+After every successful `Generate`, replace the usage snapshot with that response's `Usage`. Continue summing all generation and compaction usage into `RunResult.Usage` as today.
 
 The compact endpoint's `Usage.TotalTokens` measures the work performed by compaction; it is not the size of the resulting context. Do not use it as the new active-context snapshot. The immediately following generation supplies the next authoritative snapshot.
 
-When a run ends normally, commit both continuation state and the latest context-token snapshot to the engine. `Reset` clears both.
+When a run ends normally, commit both continuation state and the latest usage snapshot to the engine. `Reset` clears both.
 
 ### Placement in the tool loop
 
@@ -127,15 +123,19 @@ The top-of-loop check handles both relevant boundaries:
 
 Including pending tool outputs avoids compacting a dangling function call separately from its result.
 
-### Unknown models and missing usage
-
-Automatic compaction is disabled when the model has no context-window metadata or the provider does not implement `Compactor`. This avoids guessing limits or provider capabilities.
-
-OpenAI normally reports usage. If no positive active-context total has ever been reported, do not trigger automatic compaction from a byte-size guess alone.
-
 ## OpenAI implementation
 
 Make `provider/openai.Client` implement `agent.Compactor`.
+
+### Trigger policy
+
+Keep the known model context windows in the OpenAI adapter. `ShouldCompact` requires non-empty continuation state and positive prior usage, estimates pending input text as `(bytes + 3) / 4` tokens, and compacts when:
+
+```text
+latest response total tokens + estimated pending input tokens >= 90% of context window
+```
+
+Unknown models and missing usage disable automatic compaction. This avoids guessing model limits.
 
 ### Endpoint and authentication
 
@@ -229,20 +229,19 @@ Retain the existing continuation-state version and byte bound unless implementat
 Add focused tests for:
 
 - a provider without `Compactor` remaining unchanged;
-- no compaction below the 90% threshold;
-- compaction triggered by the previous token snapshot plus a pending user input estimate;
+- provider policy receiving the pending request and latest usage snapshot;
 - compaction before a tool-continuation generation;
 - compacted state replacing old state and pending inputs being consumed exactly once;
 - final high usage causing compaction at the beginning of the next `Run`;
 - compact-call usage included in `RunResult.Usage` but not used as active-context size;
-- unknown model and missing usage disabling automatic compaction;
-- `Reset` clearing the token snapshot;
+- `Reset` clearing the usage snapshot;
 - compaction error and cancellation atomicity before and after tool execution.
 
 ### OpenAI adapter tests
 
 Add HTTP tests for:
 
+- OpenAI threshold behavior, including pending input estimates, unknown models, and missing usage;
 - exact compact endpoint, OAuth headers, account header, beta header, and JSON accept type;
 - exact request body, including history, pending inputs, instructions, tools, reasoning, and text controls;
 - absence of `store`, `stream`, `include`, and `tool_choice`;
@@ -255,12 +254,12 @@ Run `gofumpt`, focused package tests, `go test ./...`, shuffled tests, vet, stat
 
 ## Implementation sequence
 
-1. Consume `modelContextWindows` in an unexported context-limit helper and remove its reserved-code lint suppression.
-2. Add `agent.Compactor` and `agent.CompactResponse`.
-3. Add the engine token snapshot, pending-input estimate, top-of-loop compaction check, transactional state handling, and tests.
+1. Add `agent.Compactor` and `agent.CompactResponse`.
+2. Add the engine usage snapshot, call-site capability check, transactional state handling, and tests.
+3. Move the known context windows into the OpenAI adapter and implement `Client.ShouldCompact`.
 4. Add the OpenAI compact request/response types and canonical-state encoding.
 5. Add `Client.Compact`, sharing only the small auth/header plumbing that is truly duplicated.
-6. Add OpenAI wire and continuation tests.
+6. Add OpenAI policy, wire, and continuation tests.
 7. Update `README.md` with automatic threshold behavior and the current OpenAI-only implementation.
 
 ## Deferred work

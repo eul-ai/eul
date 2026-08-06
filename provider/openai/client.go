@@ -42,6 +42,7 @@ type CodexTokenSource interface {
 type Client struct {
 	httpClient       *http.Client
 	endpoint         string
+	compactEndpoint  string
 	tokenSource      CodexTokenSource
 	maxRequestBytes  int64
 	maxResponseBytes int64
@@ -50,7 +51,10 @@ type Client struct {
 	reasoningEffort  string
 }
 
-var _ agent.Provider = (*Client)(nil)
+var (
+	_ agent.Provider  = (*Client)(nil)
+	_ agent.Compactor = (*Client)(nil)
+)
 
 var validReasoningEfforts = map[string]struct{}{
 	"":        {},
@@ -84,9 +88,11 @@ func NewCodex(source CodexTokenSource, options Options) (*Client, error) {
 		return http.ErrUseLastResponse
 	}
 
+	endpoint := strings.TrimRight(baseURL, "/") + "/codex/responses"
 	return &Client{
 		httpClient:       httpClient,
-		endpoint:         strings.TrimRight(baseURL, "/") + "/codex/responses",
+		endpoint:         endpoint,
+		compactEndpoint:  endpoint + "/compact",
 		tokenSource:      source,
 		maxRequestBytes:  defaultMaxRequestBytes,
 		maxResponseBytes: defaultMaxResponseBytes,
@@ -101,12 +107,9 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 		return agent.Response{}, err
 	}
 
-	credential, err := c.tokenSource.Token(ctx)
+	credential, err := c.resolveCredential(ctx)
 	if err != nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return agent.Response{}, contextErr
-		}
-		return agent.Response{}, c.wrapf(err, "resolve authentication: %v", err)
+		return agent.Response{}, err
 	}
 
 	wireRequest, newInputs, err := buildCreateRequest(request, c.maxStateBytes)
@@ -130,17 +133,10 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 		return agent.Response{}, c.errorf("request exceeds %d bytes", c.maxRequestBytes)
 	}
 
-	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(requestBody))
+	httpRequest, err := c.newRequest(ctx, c.endpoint, "text/event-stream", requestBody, credential)
 	if err != nil {
 		return agent.Response{}, c.errorf("create request: %v", err)
 	}
-	httpRequest.Header.Set("Authorization", "Bearer "+credential.AccessToken)
-	httpRequest.Header.Set("Content-Type", "application/json")
-	httpRequest.Header.Set("Accept", "text/event-stream")
-	httpRequest.Header.Set("chatgpt-account-id", credential.AccountID)
-	httpRequest.Header.Set("originator", "yaah")
-	httpRequest.Header.Set("User-Agent", "yaah")
-	httpRequest.Header.Set("OpenAI-Beta", "responses=experimental")
 
 	httpResponse, err := c.httpClient.Do(httpRequest)
 	if err != nil {
@@ -201,6 +197,116 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 		State:     state,
 		Usage:     usage,
 	}, nil
+}
+
+func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return agent.CompactResponse{}, err
+	}
+
+	credential, err := c.resolveCredential(ctx)
+	if err != nil {
+		return agent.CompactResponse{}, err
+	}
+
+	wireRequest, err := buildCompactRequest(request, c.maxStateBytes)
+	if err != nil {
+		return agent.CompactResponse{}, c.errorf("build compact request: %v", err)
+	}
+	if c.reasoningEffort != "" {
+		wireRequest.Reasoning = &responseReasoning{Effort: c.reasoningEffort, Summary: "auto"}
+	}
+	wireRequest.Text = &responseText{Verbosity: "low"}
+	wireRequest.ParallelToolCalls = true
+
+	requestBody, err := json.Marshal(wireRequest)
+	if err != nil {
+		return agent.CompactResponse{}, c.errorf("encode compact request: %v", err)
+	}
+	if int64(len(requestBody)) > c.maxRequestBytes {
+		return agent.CompactResponse{}, c.errorf("compact request exceeds %d bytes", c.maxRequestBytes)
+	}
+
+	httpRequest, err := c.newRequest(ctx, c.compactEndpoint, "application/json", requestBody, credential)
+	if err != nil {
+		return agent.CompactResponse{}, c.errorf("create compact request: %v", err)
+	}
+	httpResponse, err := c.httpClient.Do(httpRequest)
+	if err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return agent.CompactResponse{}, contextErr
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return agent.CompactResponse{}, c.wrapf(context.DeadlineExceeded, "compact request failed: %v", err)
+		}
+		if errors.Is(err, context.Canceled) {
+			return agent.CompactResponse{}, c.wrapf(context.Canceled, "compact request failed: %v", err)
+		}
+		return agent.CompactResponse{}, c.errorf("compact request failed: %v", err)
+	}
+	defer httpResponse.Body.Close()
+
+	if httpResponse.StatusCode < 200 || httpResponse.StatusCode >= 300 {
+		return agent.CompactResponse{}, c.decodeHTTPError(httpResponse)
+	}
+
+	responseBody, truncated, err := readBounded(httpResponse.Body, c.maxResponseBytes)
+	if err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return agent.CompactResponse{}, contextErr
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return agent.CompactResponse{}, c.wrapf(context.DeadlineExceeded, "read compact response: %v", err)
+		}
+		if errors.Is(err, context.Canceled) {
+			return agent.CompactResponse{}, c.wrapf(context.Canceled, "read compact response: %v", err)
+		}
+		return agent.CompactResponse{}, c.errorf("read compact response: %v", err)
+	}
+	if truncated {
+		return agent.CompactResponse{}, c.errorf("compact response exceeds %d bytes", c.maxResponseBytes)
+	}
+
+	wireResponse, err := decodeCompactResponse(responseBody)
+	if err != nil {
+		return agent.CompactResponse{}, c.errorf("%v", err)
+	}
+	usage, err := normalizeUsage(wireResponse.Usage)
+	if err != nil {
+		return agent.CompactResponse{}, c.errorf("%v", err)
+	}
+	state, err := encodeState(nil, nil, wireResponse.Output, c.maxStateBytes)
+	if err != nil {
+		return agent.CompactResponse{}, c.errorf("%v", err)
+	}
+
+	return agent.CompactResponse{State: state, Usage: usage}, nil
+}
+
+func (c *Client) resolveCredential(ctx context.Context) (CodexCredential, error) {
+	credential, err := c.tokenSource.Token(ctx)
+	if err == nil {
+		return credential, nil
+	}
+	if contextErr := ctx.Err(); contextErr != nil {
+		return CodexCredential{}, contextErr
+	}
+	return CodexCredential{}, c.wrapf(err, "resolve authentication: %v", err)
+}
+
+func (c *Client) newRequest(ctx context.Context, endpoint, accept string, body []byte, credential CodexCredential) (*http.Request, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Authorization", "Bearer "+credential.AccessToken)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", accept)
+	request.Header.Set("chatgpt-account-id", credential.AccountID)
+	request.Header.Set("originator", "yaah")
+	request.Header.Set("User-Agent", "yaah")
+	request.Header.Set("OpenAI-Beta", "responses=experimental")
+	return request, nil
 }
 
 func (c *Client) decodeHTTPError(response *http.Response) error {

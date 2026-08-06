@@ -5,6 +5,7 @@ type EventKind string
 const (
 	EventAssistantText      EventKind = "assistant_text"
 	EventAssistantReasoning EventKind = "assistant_reasoning"
+	EventCompaction         EventKind = "compaction"
 	EventToolStart          EventKind = "tool_start"
 	EventToolEnd            EventKind = "tool_end"
 )

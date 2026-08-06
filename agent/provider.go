@@ -47,8 +47,18 @@ type Response struct {
 	Usage     Usage
 }
 
+type CompactResponse struct {
+	State []byte
+	Usage Usage
+}
+
 type TextSink func(text string) error
 
 type Provider interface {
 	Generate(ctx context.Context, request Request, onText, onReasoning TextSink) (Response, error)
+}
+
+type Compactor interface {
+	ShouldCompact(Request, Usage) bool
+	Compact(context.Context, Request) (CompactResponse, error)
 }

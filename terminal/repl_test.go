@@ -137,6 +137,7 @@ func TestRunOneShotRendersEventsOnce(t *testing.T) {
 			{Kind: agent.EventAssistantText, Text: "Checking"},
 			{Kind: agent.EventToolStart, Call: agent.ToolCall{Name: "write", Arguments: json.RawMessage(`{"path":"file.txt","content":"value"}`)}},
 			{Kind: agent.EventToolEnd, Result: agent.ToolResult{Tool: "write", IsError: true, Output: "write failed"}},
+			{Kind: agent.EventCompaction},
 			{Kind: agent.EventAssistantText, Text: "Done"},
 		}
 		for _, event := range events {
@@ -153,7 +154,7 @@ func TestRunOneShotRendersEventsOnce(t *testing.T) {
 	if stdout.String() != "Checking\nDone\n" {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "Assessing change\n") || !strings.Contains(stderr.String(), "[tool] write file.txt") || strings.Contains(stderr.String(), "content") || !strings.Contains(stderr.String(), "write — error") {
+	if !strings.Contains(stderr.String(), "Assessing change\n") || !strings.Contains(stderr.String(), "[tool] write file.txt") || strings.Contains(stderr.String(), "content") || !strings.Contains(stderr.String(), "write — error") || !strings.Contains(stderr.String(), "[context] compacting conversation") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

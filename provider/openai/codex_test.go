@@ -266,8 +266,8 @@ func TestCodexDefaultEndpointAndRedirects(t *testing.T) {
 	defaultClient, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
 		return CodexCredential{AccessToken: "token", AccountID: "account"}, nil
 	}), Options{})
-	if err != nil || defaultClient.endpoint != "https://chatgpt.com/backend-api/codex/responses" {
-		t.Fatalf("default endpoint=%q error=%v", defaultClient.endpoint, err)
+	if err != nil || defaultClient.endpoint != "https://chatgpt.com/backend-api/codex/responses" || defaultClient.compactEndpoint != "https://chatgpt.com/backend-api/codex/responses/compact" {
+		t.Fatalf("default endpoints=%q %q error=%v", defaultClient.endpoint, defaultClient.compactEndpoint, err)
 	}
 
 	destinationCalls := 0

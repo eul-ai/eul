@@ -37,6 +37,20 @@ func (p *scriptedProvider) Generate(ctx context.Context, request Request, onText
 	return step(ctx, request, onText)
 }
 
+type compactingProvider struct {
+	Provider
+	shouldCompact func(Request, Usage) bool
+	compact       func(context.Context, Request) (CompactResponse, error)
+}
+
+func (p *compactingProvider) ShouldCompact(request Request, usage Usage) bool {
+	return p.shouldCompact != nil && p.shouldCompact(request, usage)
+}
+
+func (p *compactingProvider) Compact(ctx context.Context, request Request) (CompactResponse, error) {
+	return p.compact(ctx, request)
+}
+
 type fakeToolbox struct {
 	definitions []ToolDefinition
 	execute     func(context.Context, ToolCall) (ToolResult, error)
@@ -154,6 +168,160 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 
 	if next.Text != "next answer" {
 		t.Fatalf("second result text = %q", next.Text)
+	}
+}
+
+func TestEngineCompactsBeforeNextUserGeneration(t *testing.T) {
+	scripted := &scriptedProvider{t: t, steps: []providerStep{
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			assertUserInput(t, request, "first")
+			return Response{Text: "first answer", State: []byte("full state"), Usage: Usage{InputTokens: 90, OutputTokens: 9, TotalTokens: 99}}, nil
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if string(request.State) != "compact state" || len(request.Inputs) != 0 {
+				t.Fatalf("request after compaction = %+v", request)
+			}
+			return Response{Text: "second answer", State: []byte("next state"), Usage: Usage{InputTokens: 20, OutputTokens: 3, TotalTokens: 23}}, nil
+		},
+	}}
+	compactCalls := 0
+	provider := &compactingProvider{
+		Provider: scripted,
+		shouldCompact: func(request Request, usage Usage) bool {
+			return string(request.State) == "full state" && usage.TotalTokens == 99
+		},
+		compact: func(_ context.Context, request Request) (CompactResponse, error) {
+			compactCalls++
+			if string(request.State) != "full state" {
+				t.Fatalf("compact state = %q", request.State)
+			}
+			assertUserInput(t, request, "next")
+			return CompactResponse{State: []byte("compact state"), Usage: Usage{InputTokens: 100, OutputTokens: 5, TotalTokens: 105}}, nil
+		},
+	}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+
+	if _, err := engine.Run(context.Background(), "first", discardEvents); err != nil {
+		t.Fatalf("first Run() error = %v", err)
+	}
+	var events []Event
+	result, err := engine.Run(context.Background(), "next", func(event Event) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	if result.Text != "second answer" || result.Usage != (Usage{InputTokens: 120, OutputTokens: 8, TotalTokens: 128}) || compactCalls != 1 {
+		t.Fatalf("result = %+v, compact calls = %d", result, compactCalls)
+	}
+	if got := eventKinds(events); !slices.Equal(got, []EventKind{EventCompaction}) {
+		t.Fatalf("event kinds = %v", got)
+	}
+}
+
+func TestEngineCompactsToolContinuation(t *testing.T) {
+	scripted := &scriptedProvider{t: t, steps: []providerStep{
+		func(context.Context, Request, TextSink) (Response, error) {
+			return Response{
+				ToolCalls: []ToolCall{{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{}`)}},
+				State:     []byte("tool call state"),
+				Usage:     Usage{TotalTokens: 100},
+			}, nil
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if string(request.State) != "compact tool state" || len(request.Inputs) != 0 {
+				t.Fatalf("tool continuation after compaction = %+v", request)
+			}
+			return Response{Text: "done", State: []byte("done")}, nil
+		},
+	}}
+	provider := &compactingProvider{
+		Provider: scripted,
+		shouldCompact: func(request Request, usage Usage) bool {
+			return string(request.State) == "tool call state" && usage.TotalTokens == 100
+		},
+		compact: func(_ context.Context, request Request) (CompactResponse, error) {
+			if len(request.Inputs) != 1 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].Text != "contents" {
+				t.Fatalf("compact tool request = %+v", request)
+			}
+			return CompactResponse{State: []byte("compact tool state")}, nil
+		},
+	}
+	toolbox := &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
+		return ToolResult{Output: "contents"}, nil
+	}}
+	engine := newTestEngine(t, provider, toolbox, Options{maxToolRounds: 1})
+
+	result, err := engine.Run(context.Background(), "inspect", discardEvents)
+	if err != nil || result.Text != "done" || engine.NeedsReset() {
+		t.Fatalf("result = %+v, error = %v, reset = %v", result, err, engine.NeedsReset())
+	}
+}
+
+func TestEngineCompactionFailureAfterToolRequiresReset(t *testing.T) {
+	compactError := errors.New("compact unavailable")
+	scripted := &scriptedProvider{t: t, steps: []providerStep{
+		func(context.Context, Request, TextSink) (Response, error) {
+			return Response{
+				ToolCalls: []ToolCall{{ID: "call-1", Name: "write", Arguments: json.RawMessage(`{}`)}},
+				State:     []byte("tool call state"),
+				Usage:     Usage{TotalTokens: 100},
+			}, nil
+		},
+	}}
+	provider := &compactingProvider{
+		Provider: scripted,
+		shouldCompact: func(request Request, _ Usage) bool {
+			return string(request.State) == "tool call state"
+		},
+		compact: func(context.Context, Request) (CompactResponse, error) {
+			return CompactResponse{}, compactError
+		},
+	}
+	toolbox := &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
+		return ToolResult{Output: "changed file"}, nil
+	}}
+	engine := newTestEngine(t, provider, toolbox, Options{maxToolRounds: 1})
+
+	_, err := engine.Run(context.Background(), "change", discardEvents)
+	if !errors.Is(err, compactError) || !strings.Contains(err.Error(), "agent: compact context") || !engine.NeedsReset() {
+		t.Fatalf("Run() error = %v, reset = %v", err, engine.NeedsReset())
+	}
+}
+
+func TestEngineResetClearsCompactionUsage(t *testing.T) {
+	scripted := &scriptedProvider{t: t, steps: []providerStep{
+		func(context.Context, Request, TextSink) (Response, error) {
+			return Response{Text: "first", State: []byte("state"), Usage: Usage{TotalTokens: 100}}, nil
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if len(request.State) != 0 {
+				t.Fatalf("state after reset = %q", request.State)
+			}
+			return Response{Text: "second"}, nil
+		},
+	}}
+	provider := &compactingProvider{
+		Provider: scripted,
+		shouldCompact: func(request Request, usage Usage) bool {
+			if len(request.State) == 0 && usage != (Usage{}) {
+				t.Fatalf("usage without state = %+v", usage)
+			}
+			return false
+		},
+		compact: func(context.Context, Request) (CompactResponse, error) {
+			t.Fatal("unexpected compaction")
+			return CompactResponse{}, nil
+		},
+	}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+	if _, err := engine.Run(context.Background(), "first", discardEvents); err != nil {
+		t.Fatal(err)
+	}
+	engine.Reset()
+	if _, err := engine.Run(context.Background(), "second", discardEvents); err != nil {
+		t.Fatal(err)
 	}
 }
 
