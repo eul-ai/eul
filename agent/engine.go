@@ -34,12 +34,8 @@ type Options struct {
 // RunResult is the completed result of one user turn.
 type RunResult struct {
 	// Text is the final, tool-free assistant response.
-	Text string
-	// AssistantMessages preserves text from every provider response in the
-	// turn, including responses that also requested tools.
-	AssistantMessages []string
-	ToolResults       []ToolResult
-	Usage             Usage
+	Text  string
+	Usage Usage
 }
 
 // Engine owns provider conversation state and the provider/tool-call loop.
@@ -149,9 +145,6 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 
 		state = slices.Clone(response.State)
 		addUsage(&result.Usage, response.Usage)
-		if response.Text != "" {
-			result.AssistantMessages = append(result.AssistantMessages, response.Text)
-		}
 
 		if len(response.ToolCalls) == 0 {
 			e.state = state
@@ -189,7 +182,6 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 				return RunResult{}, err
 			}
 
-			result.ToolResults = append(result.ToolResults, toolResult)
 			inputs = append(inputs, Input{
 				Kind:    InputToolResult,
 				Text:    toolResult.Output,

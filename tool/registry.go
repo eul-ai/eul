@@ -41,7 +41,7 @@ func NewRegistry(tools ...Tool) (*Registry, error) {
 		if isNil(registered) {
 			return nil, errors.New("tool: nil tool")
 		}
-		definition := cloneDefinition(registered.Definition())
+		definition := registered.Definition()
 		if strings.TrimSpace(definition.Name) == "" {
 			return nil, errors.New("tool: tool name is required")
 		}
@@ -58,16 +58,12 @@ func NewRegistry(tools ...Tool) (*Registry, error) {
 	return registry, nil
 }
 
-// Definitions returns defensive copies sorted by tool name.
+// Definitions returns definitions sorted by tool name.
 func (r *Registry) Definitions() []agent.ToolDefinition {
 	if r == nil {
 		return nil
 	}
-	definitions := make([]agent.ToolDefinition, len(r.definitions))
-	for i, definition := range r.definitions {
-		definitions[i] = cloneDefinition(definition)
-	}
-	return definitions
+	return slices.Clone(r.definitions)
 }
 
 // Execute dispatches a call to the registered tool with the exact name.
@@ -80,7 +76,7 @@ func (r *Registry) Execute(ctx context.Context, call agent.ToolCall) (agent.Tool
 		return agent.ToolResult{}, fmt.Errorf("%w %q", ErrUnknownTool, call.Name)
 	}
 
-	result, err := registered.Execute(ctx, slices.Clone(call.Arguments))
+	result, err := registered.Execute(ctx, call.Arguments)
 	result.CallID = call.ID
 	result.Tool = call.Name
 	return result, err
@@ -170,37 +166,4 @@ func isNil(value any) bool {
 	default:
 		return false
 	}
-}
-
-func cloneDefinition(definition agent.ToolDefinition) agent.ToolDefinition {
-	definition.PromptGuidelines = slices.Clone(definition.PromptGuidelines)
-	definition.Parameters = cloneSchema(definition.Parameters)
-	return definition
-}
-
-func cloneSchema(schema agent.JSONSchema) agent.JSONSchema {
-	schema.Required = slices.Clone(schema.Required)
-	if schema.AdditionalProperties != nil {
-		value := *schema.AdditionalProperties
-		schema.AdditionalProperties = &value
-	}
-	if schema.Items != nil {
-		items := cloneSchema(*schema.Items)
-		schema.Items = &items
-	}
-	if schema.AnyOf != nil {
-		anyOf := schema.AnyOf
-		schema.AnyOf = make([]agent.JSONSchema, len(anyOf))
-		for i, item := range anyOf {
-			schema.AnyOf[i] = cloneSchema(item)
-		}
-	}
-	if schema.Properties != nil {
-		properties := schema.Properties
-		schema.Properties = make(map[string]agent.JSONSchema, len(properties))
-		for name, property := range properties {
-			schema.Properties[name] = cloneSchema(property)
-		}
-	}
-	return schema
 }

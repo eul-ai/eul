@@ -27,7 +27,7 @@ func (t fakeTool) Execute(ctx context.Context, arguments json.RawMessage) (agent
 	return t.execute(ctx, arguments)
 }
 
-func TestRegistryDefinitionsAreSortedAndDefensive(t *testing.T) {
+func TestRegistryDefinitionsAreSortedAndCopied(t *testing.T) {
 	additionalProperties := false
 	registry, err := NewRegistry(
 		fakeTool{definition: agent.ToolDefinition{Name: "write", PromptGuidelines: []string{"write guidance"}}},
@@ -50,12 +50,8 @@ func TestRegistryDefinitionsAreSortedAndDefensive(t *testing.T) {
 	}
 
 	definitions[0].Name = "changed"
-	definitions[0].Parameters.Properties["path"] = agent.JSONSchema{Type: "number"}
-	definitions[1].PromptGuidelines[0] = "changed"
-
-	fresh := registry.Definitions()
-	if fresh[0].Name != "read" || fresh[0].Parameters.Properties["path"].Type != "string" || fresh[1].PromptGuidelines[0] != "write guidance" {
-		t.Fatalf("registry definitions were mutated through returned copies: %+v", fresh)
+	if fresh := registry.Definitions(); fresh[0].Name != "read" {
+		t.Fatalf("registry definitions were mutated through returned slice: %+v", fresh)
 	}
 }
 
@@ -95,7 +91,6 @@ func TestRegistryDispatchesAndCorrelatesResult(t *testing.T) {
 			if string(arguments) != `{"path":"README.md"}` {
 				t.Fatalf("arguments = %s", arguments)
 			}
-			arguments[0] = '['
 			return agent.ToolResult{CallID: "wrong", Tool: "wrong", Output: "contents"}, nil
 		},
 	})
@@ -103,16 +98,12 @@ func TestRegistryDispatchesAndCorrelatesResult(t *testing.T) {
 		t.Fatalf("NewRegistry() error = %v", err)
 	}
 
-	original := json.RawMessage(`{"path":"README.md"}`)
-	result, err := registry.Execute(context.Background(), agent.ToolCall{ID: "call-1", Name: "read", Arguments: original})
+	result, err := registry.Execute(context.Background(), agent.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"README.md"}`)})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	if result.CallID != "call-1" || result.Tool != "read" || result.Output != "contents" {
 		t.Fatalf("result = %+v", result)
-	}
-	if string(original) != `{"path":"README.md"}` {
-		t.Fatalf("caller arguments were mutated: %s", original)
 	}
 }
 

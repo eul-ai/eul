@@ -28,17 +28,12 @@ const (
 )
 
 // Options configures a Client. BaseURL is an API origin or test server URL;
-// the mode-specific Responses path is appended to it. Zero size limits use bounded defaults.
-// An injected client with no positive timeout receives the default timeout.
-// Redirects are rejected so the bearer credential is never forwarded.
+// the mode-specific Responses path is appended to it. An injected client with
+// no positive timeout receives the default timeout.
 type Options struct {
-	HTTPClient       *http.Client
-	BaseURL          string
-	MaxRequestBytes  int64
-	MaxResponseBytes int64
-	MaxErrorBytes    int64
-	MaxStateBytes    int
-	ReasoningEffort  string
+	HTTPClient      *http.Client
+	BaseURL         string
+	ReasoningEffort string
 }
 
 // CodexCredential is the request-time OAuth access token and ChatGPT account.
@@ -130,36 +125,6 @@ func newClient(apiKey string, source CodexTokenSource, codex bool, options Optio
 	parsed.Path = strings.TrimRight(parsed.Path, "/") + responsePath
 	parsed.RawPath = ""
 
-	maxRequestBytes := options.MaxRequestBytes
-	if maxRequestBytes == 0 {
-		maxRequestBytes = defaultMaxRequestBytes
-	}
-	maxResponseBytes := options.MaxResponseBytes
-	if maxResponseBytes == 0 {
-		maxResponseBytes = defaultMaxResponseBytes
-	}
-	maxErrorBytes := options.MaxErrorBytes
-	if maxErrorBytes == 0 {
-		maxErrorBytes = defaultMaxErrorBytes
-	}
-	maxStateBytes := options.MaxStateBytes
-	if maxStateBytes == 0 {
-		maxStateBytes = defaultMaxStateBytes
-	}
-	maximumInt := int64(^uint(0) >> 1)
-	if maxRequestBytes < 1 || maxRequestBytes >= maximumInt {
-		return nil, errors.New("openai: maximum request bytes must be positive and bounded")
-	}
-	if maxResponseBytes < 1 || maxResponseBytes >= maximumInt {
-		return nil, errors.New("openai: maximum response bytes must be positive and bounded")
-	}
-	if maxErrorBytes < 1 || maxErrorBytes >= maximumInt {
-		return nil, errors.New("openai: maximum error bytes must be positive and bounded")
-	}
-	if maxStateBytes < 1 {
-		return nil, errors.New("openai: maximum state bytes must be positive")
-	}
-
 	httpClient := options.HTTPClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
@@ -177,10 +142,10 @@ func newClient(apiKey string, source CodexTokenSource, codex bool, options Optio
 		apiKey:           apiKey,
 		codexSource:      source,
 		codex:            codex,
-		maxRequestBytes:  maxRequestBytes,
-		maxResponseBytes: maxResponseBytes,
-		maxErrorBytes:    maxErrorBytes,
-		maxStateBytes:    maxStateBytes,
+		maxRequestBytes:  defaultMaxRequestBytes,
+		maxResponseBytes: defaultMaxResponseBytes,
+		maxErrorBytes:    defaultMaxErrorBytes,
+		maxStateBytes:    defaultMaxStateBytes,
 		reasoningEffort:  options.ReasoningEffort,
 	}, nil
 }
@@ -213,10 +178,6 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText age
 		}
 		return agent.Response{}, c.wrapf(err, "resolve authentication: %v", err)
 	}
-	if requestPayloadExceeds(request, c.maxRequestBytes) {
-		return agent.Response{}, c.errorf("request exceeds %d bytes", c.maxRequestBytes)
-	}
-
 	wireRequest, newInputs, err := buildCreateRequest(request, c.maxStateBytes)
 	if err != nil {
 		return agent.Response{}, c.errorf("build request: %v", err)

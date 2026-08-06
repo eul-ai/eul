@@ -127,14 +127,8 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 	if engine.NeedsReset() {
 		t.Fatal("completed turn unexpectedly requires reset")
 	}
-	if !slices.Equal(result.AssistantMessages, []string{"Checking", "done"}) {
-		t.Fatalf("assistant messages = %q", result.AssistantMessages)
-	}
 	if result.Usage != (Usage{InputTokens: 18, OutputTokens: 5, TotalTokens: 23}) {
 		t.Fatalf("usage = %+v", result.Usage)
-	}
-	if len(result.ToolResults) != 1 || result.ToolResults[0].CallID != "call-1" {
-		t.Fatalf("tool results = %+v", result.ToolResults)
 	}
 	wantKinds := []EventKind{EventAssistantText, EventToolStart, EventToolEnd, EventAssistantText}
 	if got := eventKinds(events); !slices.Equal(got, wantKinds) {

@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync"
 	"unicode"
-	"unicode/utf8"
 
 	"yaah/agent"
 	oauth "yaah/auth/openai"
@@ -419,22 +418,7 @@ func environmentWithout(environment []string, key string) []string {
 }
 
 func writeCLIError(output io.Writer, format string, arguments ...any) {
-	message := fmt.Sprintf(format, arguments...)
-	message = strings.Map(func(character rune) rune {
-		if unicode.IsControl(character) {
-			return ' '
-		}
-		return character
-	}, message)
-	message = strings.Join(strings.Fields(message), " ")
-	if len(message) > 1000 {
-		end := 997
-		for end > 0 && !utf8.RuneStart(message[end]) {
-			end--
-		}
-		message = message[:end] + "..."
-	}
-	fmt.Fprintf(output, "error: %s\n", message)
+	fmt.Fprintf(output, "error: "+format+"\n", arguments...)
 }
 
 func openBrowser(url string) error {

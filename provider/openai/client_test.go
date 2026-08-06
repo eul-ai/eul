@@ -315,7 +315,8 @@ func TestClientBoundsHTTPErrors(t *testing.T) {
 	const key = "top-secret-key"
 	server := responseServer(t, http.StatusBadRequest, strings.Repeat(key+" ", 100))
 	defer server.Close()
-	client := newTestClient(t, key, server.URL, Options{MaxErrorBytes: 160})
+	client := newTestClient(t, key, server.URL, Options{})
+	client.maxErrorBytes = 160
 	_, err := client.Generate(context.Background(), baseRequest(), nil)
 	if err == nil {
 		t.Fatal("Generate() succeeded")
@@ -339,7 +340,8 @@ func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
 	t.Run("response", func(t *testing.T) {
 		server := responseServer(t, http.StatusOK, strings.Repeat("x", 101))
 		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{MaxResponseBytes: 100})
+		client := newTestClient(t, "key", server.URL, Options{})
+		client.maxResponseBytes = 100
 		_, err := client.Generate(context.Background(), baseRequest(), nil)
 		if err == nil || !strings.Contains(err.Error(), "response exceeds 100 bytes") {
 			t.Fatalf("Generate() error = %v", err)
@@ -349,7 +351,8 @@ func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
 		var calls atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
 		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{MaxRequestBytes: 100})
+		client := newTestClient(t, "key", server.URL, Options{})
+		client.maxRequestBytes = 100
 		request := baseRequest()
 		request.Inputs[0].Text = strings.Repeat("x", 200)
 		_, err := client.Generate(context.Background(), request, nil)
@@ -362,7 +365,8 @@ func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
 func TestClientRejectsOversizedReturnedStateBeforeTextSink(t *testing.T) {
 	server := responseServer(t, http.StatusOK, `{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"answer"}],"unknown":"`+strings.Repeat("x", 200)+`"}]}`)
 	defer server.Close()
-	client := newTestClient(t, "key", server.URL, Options{MaxStateBytes: 100})
+	client := newTestClient(t, "key", server.URL, Options{})
+	client.maxStateBytes = 100
 	sinkCalled := false
 	_, err := client.Generate(context.Background(), baseRequest(), func(string) error {
 		sinkCalled = true
@@ -487,10 +491,6 @@ func TestNewValidatesConfiguration(t *testing.T) {
 		{name: "base credentials", key: "key", options: Options{BaseURL: "https://user@example.com"}},
 		{name: "plaintext remote base", key: "key", options: Options{BaseURL: "http://example.com"}},
 		{name: "invalid reasoning effort", key: "key", options: Options{ReasoningEffort: "extreme"}},
-		{name: "negative request limit", key: "key", options: Options{MaxRequestBytes: -1}},
-		{name: "negative response limit", key: "key", options: Options{MaxResponseBytes: -1}},
-		{name: "negative error limit", key: "key", options: Options{MaxErrorBytes: -1}},
-		{name: "negative state limit", key: "key", options: Options{MaxStateBytes: -1}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

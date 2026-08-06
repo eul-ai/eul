@@ -1,7 +1,6 @@
 package tool
 
 import (
-	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -13,12 +12,8 @@ const (
 
 // Truncation describes bounded text output.
 type Truncation struct {
-	Text          string
-	Truncated     bool
-	OriginalLines int
-	OriginalBytes int
-	OutputLines   int
-	OutputBytes   int
+	Text      string
+	Truncated bool
 }
 
 // TruncateHead keeps the beginning of text within both limits.
@@ -41,16 +36,6 @@ func TruncateLine(line string, maxBytes int) (string, bool) {
 		return line, false
 	}
 	return prefixBytes(line, maxBytes), true
-}
-
-// LimitMatches preserves match order and reports whether matches were omitted.
-func LimitMatches[T any](matches []T, max int) ([]T, bool) {
-	return limitItems(matches, max)
-}
-
-// LimitEntries preserves entry order and reports whether entries were omitted.
-func LimitEntries[T any](entries []T, max int) ([]T, bool) {
-	return limitItems(entries, max)
 }
 
 func truncateText(text string, maxLines, maxBytes int, head bool) Truncation {
@@ -80,14 +65,7 @@ func truncateText(text string, maxLines, maxBytes int, head bool) Truncation {
 		}
 	}
 
-	return Truncation{
-		Text:          output,
-		Truncated:     len(output) != len(text),
-		OriginalLines: countLines(text),
-		OriginalBytes: len(text),
-		OutputLines:   countLines(output),
-		OutputBytes:   len(output),
-	}
+	return Truncation{Text: output, Truncated: len(output) != len(text)}
 }
 
 func splitLines(text string) []string {
@@ -97,17 +75,6 @@ func splitLines(text string) []string {
 	lines := strings.SplitAfter(text, "\n")
 	if lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
-	}
-	return lines
-}
-
-func countLines(text string) int {
-	if text == "" {
-		return 0
-	}
-	lines := strings.Count(text, "\n")
-	if !strings.HasSuffix(text, "\n") {
-		lines++
 	}
 	return lines
 }
@@ -138,14 +105,4 @@ func suffixBytes(text string, maxBytes int) string {
 		start++
 	}
 	return text[start:]
-}
-
-func limitItems[T any](items []T, max int) ([]T, bool) {
-	if max < 0 {
-		max = 0
-	}
-	if len(items) <= max {
-		return slices.Clone(items), false
-	}
-	return slices.Clone(items[:max]), true
 }

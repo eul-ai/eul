@@ -9,11 +9,13 @@ import (
 )
 
 func TestBuildCreateRequestValidatesInputsAndState(t *testing.T) {
-	pendingState := mustState(t,
+	pendingState := mustState(
+		t,
 		json.RawMessage(`{"role":"user","content":"run"}`),
 		json.RawMessage(`{"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"}`),
 	)
-	resolvedState := mustState(t,
+	resolvedState := mustState(
+		t,
 		json.RawMessage(`{"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"}`),
 		json.RawMessage(`{"type":"function_call_output","call_id":"call_1","output":"ok"}`),
 	)
@@ -29,13 +31,15 @@ func TestBuildCreateRequestValidatesInputsAndState(t *testing.T) {
 		{name: "unknown call", request: agent.Request{Model: "model", State: pendingState, Inputs: []agent.Input{{Kind: agent.InputToolResult, CallID: "other", Tool: "read"}}}, want: "unknown call ID"},
 		{name: "wrong tool", request: agent.Request{Model: "model", State: pendingState, Inputs: []agent.Input{{Kind: agent.InputToolResult, CallID: "call_1", Tool: "bash"}}}, want: "want \"read\""},
 		{name: "missing tool name", request: agent.Request{Model: "model", State: pendingState, Inputs: []agent.Input{{Kind: agent.InputToolResult, CallID: "call_1"}}}, want: "no tool name"},
-		{name: "missing one output", request: agent.Request{Model: "model", State: mustState(t,
+		{name: "missing one output", request: agent.Request{Model: "model", State: mustState(
+			t,
 			json.RawMessage(`{"type":"function_call","call_id":"call_1","name":"read"}`),
 			json.RawMessage(`{"type":"function_call","call_id":"call_2","name":"bash"}`),
 		), Inputs: []agent.Input{{Kind: agent.InputToolResult, CallID: "call_1", Tool: "read"}}}, want: "do not resolve every"},
 		{name: "user while pending", request: agent.Request{Model: "model", State: pendingState, Inputs: []agent.Input{{Kind: agent.InputUser, Text: "next"}}}, want: "unresolved function calls"},
 		{name: "already resolved", request: agent.Request{Model: "model", State: resolvedState, Inputs: []agent.Input{{Kind: agent.InputToolResult, CallID: "call_1", Tool: "read"}}}, want: "unknown call ID"},
-		{name: "duplicate call in state", request: agent.Request{Model: "model", State: mustState(t,
+		{name: "duplicate call in state", request: agent.Request{Model: "model", State: mustState(
+			t,
 			json.RawMessage(`{"type":"function_call","call_id":"call_1","name":"read"}`),
 			json.RawMessage(`{"type":"function_call","call_id":"call_1","name":"read"}`),
 		), Inputs: []agent.Input{{Kind: agent.InputToolResult, CallID: "call_1", Tool: "read"}}}, want: "duplicate continuation"},
@@ -107,59 +111,6 @@ func TestBuildCreateRequestValidatesStrictTools(t *testing.T) {
 	_, _, err = buildCreateRequest(agent.Request{Model: "model", Tools: []agent.ToolDefinition{recursiveTool}}, defaultMaxStateBytes)
 	if err == nil || !strings.Contains(err.Error(), "maximum schema depth") {
 		t.Fatalf("recursive schema error = %v", err)
-	}
-}
-
-func TestRequestPayloadPreflightUpperBoundsEncodedRequest(t *testing.T) {
-	additionalProperties := false
-	requests := []agent.Request{
-		baseRequest(),
-		{
-			Model:        "model<&>",
-			Instructions: "quotes \" slashes \\ controls\n and separators \u2028",
-			Inputs: []agent.Input{
-				{Kind: agent.InputUser, Text: strings.Repeat("<&\n", 50)},
-				{Kind: agent.InputUser, Text: "second"},
-			},
-			Tools: []agent.ToolDefinition{{
-				Name:        "nested",
-				Description: "description <&>",
-				Parameters: agent.JSONSchema{
-					Type: "object",
-					Properties: map[string]agent.JSONSchema{
-						"options": {
-							Type:                 "object",
-							Properties:           map[string]agent.JSONSchema{"limit": {AnyOf: []agent.JSONSchema{{Type: "integer"}, {Type: "null"}}}},
-							Required:             []string{"limit"},
-							AdditionalProperties: &additionalProperties,
-						},
-					},
-					Required:             []string{"options"},
-					AdditionalProperties: &additionalProperties,
-				},
-			}},
-		},
-		{
-			Model: "model",
-			State: mustState(t,
-				json.RawMessage(`{"role":"user","content":"old <&>"}`),
-				json.RawMessage(`{"type":"message","phase":"final_answer","content":[{"type":"output_text","text":"done"}]}`),
-			),
-			Inputs: []agent.Input{{Kind: agent.InputUser, Text: "new"}},
-		},
-	}
-	for i, request := range requests {
-		wire, _, err := buildCreateRequest(request, defaultMaxStateBytes)
-		if err != nil {
-			t.Fatalf("request %d build error = %v", i, err)
-		}
-		encoded, err := json.Marshal(wire)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !requestPayloadExceeds(request, int64(len(encoded))) {
-			t.Fatalf("request %d preflight estimate is below encoded size %d", i, len(encoded))
-		}
 	}
 }
 

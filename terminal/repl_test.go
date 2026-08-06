@@ -66,7 +66,7 @@ func TestRunCommandsFinalLineAndEOF(t *testing.T) {
 				return agent.RunResult{}, err
 			}
 		}
-		return agent.RunResult{Text: "answer", AssistantMessages: []string{"answer"}}, nil
+		return agent.RunResult{Text: "answer"}, nil
 	}}
 	input := strings.NewReader("  \n/help\r\n/clear\nhello")
 	var stdout, stderr bytes.Buffer
@@ -138,7 +138,7 @@ func TestRunOneShotRendersEventsOnce(t *testing.T) {
 				return agent.RunResult{}, err
 			}
 		}
-		return agent.RunResult{Text: "Done", AssistantMessages: []string{"Checking", "Done"}}, nil
+		return agent.RunResult{Text: "Done"}, nil
 	}}
 	var stdout, stderr bytes.Buffer
 	if err := RunOneShot(context.Background(), engine, "prompt", Options{Output: &stdout, ErrorOutput: &stderr}); err != nil {

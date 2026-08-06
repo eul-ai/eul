@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"unicode/utf8"
 
 	"yaah/agent"
 )
@@ -230,127 +229,6 @@ func validateStrictSchemaAt(schema agent.JSONSchema, location string, depth int)
 		}
 	}
 	return nil
-}
-
-// requestPayloadExceeds computes a conservative upper bound without allocating
-// encoded inputs. The exact marshaled length is still checked before HTTP.
-func requestPayloadExceeds(request agent.Request, maximum int64) bool {
-	budget := sizeBudget{remaining: maximum}
-	budget.consume(512)
-	budget.consumeJSONString(request.Model)
-	budget.consumeJSONString(request.Instructions)
-	budget.consumeJSONRawUpper(request.State)
-	for _, input := range request.Inputs {
-		budget.consume(128)
-		budget.consumeJSONString(input.Text)
-		budget.consumeJSONString(input.CallID)
-		if input.IsError {
-			budget.consume(int64(len("[tool error]\n")))
-		}
-	}
-	for _, tool := range request.Tools {
-		budget.consume(256)
-		budget.consumeJSONString(tool.Name)
-		budget.consumeJSONString(tool.Description)
-		consumeSchemaSize(&budget, tool.Parameters, 0)
-	}
-	return budget.exceeded || budget.remaining == 0
-}
-
-type sizeBudget struct {
-	remaining int64
-	exceeded  bool
-}
-
-func (b *sizeBudget) consume(size int64) {
-	if b.exceeded {
-		return
-	}
-	if size >= b.remaining {
-		b.exceeded = true
-		return
-	}
-	b.remaining -= size
-}
-
-func (b *sizeBudget) consumeJSONRawUpper(value []byte) {
-	var size int64
-	for index := 0; index < len(value); index++ {
-		switch value[index] {
-		case '<', '>', '&':
-			size += 6
-		case 0xe2:
-			if index+2 < len(value) && value[index+1] == 0x80 && (value[index+2] == 0xa8 || value[index+2] == 0xa9) {
-				size += 6
-				index += 2
-			} else {
-				size++
-			}
-		default:
-			size++
-		}
-		if size >= b.remaining {
-			b.exceeded = true
-			return
-		}
-	}
-	b.consume(size)
-}
-
-func (b *sizeBudget) consumeJSONString(value string) {
-	var size int64
-	for index := 0; index < len(value); {
-		character := value[index]
-		if character < utf8.RuneSelf {
-			switch character {
-			case '\\', '"', '\b', '\f', '\n', '\r', '\t':
-				size += 2
-			default:
-				if character < 0x20 {
-					size += 6
-				} else if character == '<' || character == '>' || character == '&' {
-					size += 6
-				} else {
-					size++
-				}
-			}
-			index++
-			continue
-		}
-		runeValue, width := utf8.DecodeRuneInString(value[index:])
-		if runeValue == utf8.RuneError && width == 1 || runeValue == '\u2028' || runeValue == '\u2029' {
-			size += 6
-		} else {
-			size += int64(width)
-		}
-		index += width
-	}
-	b.consume(size)
-}
-
-func consumeSchemaSize(budget *sizeBudget, schema agent.JSONSchema, depth int) {
-	if budget.exceeded || depth > 64 {
-		return
-	}
-	budget.consume(256)
-	budget.consumeJSONString(schema.Type)
-	budget.consumeJSONString(schema.Description)
-	for name, property := range schema.Properties {
-		budget.consume(16)
-		budget.consumeJSONString(name)
-		consumeSchemaSize(budget, property, depth+1)
-	}
-	for _, name := range schema.Required {
-		budget.consume(16)
-		budget.consumeJSONString(name)
-	}
-	if schema.Items != nil {
-		consumeSchemaSize(budget, *schema.Items, depth+1)
-	}
-	for _, alternative := range schema.AnyOf {
-		budget.consume(8)
-		consumeSchemaSize(budget, alternative, depth+1)
-	}
 }
 
 func encodeInputs(inputs []agent.Input) ([]json.RawMessage, error) {
