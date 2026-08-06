@@ -46,7 +46,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 			writer.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		for _, field := range []string{"model", "instructions", "input", "tools", "store", "stream", "include"} {
+		for _, field := range []string{"model", "instructions", "input", "tools", "store", "stream", "include", "reasoning"} {
 			if _, exists := rawRequest[field]; !exists {
 				t.Errorf("request %d missing field %q: %s", call, field, body)
 			}
@@ -61,7 +61,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 			writer.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if wire.Model != "test-model" || wire.Instructions != "system instructions" || wire.Store || wire.Stream || !slices.Equal(wire.Include, []string{"reasoning.encrypted_content"}) {
+		if wire.Model != "test-model" || wire.Instructions != "system instructions" || wire.Store || wire.Stream || !slices.Equal(wire.Include, []string{"reasoning.encrypted_content"}) || wire.Reasoning == nil || wire.Reasoning.Effort != "high" || wire.Reasoning.Summary != "auto" {
 			t.Errorf("request %d shape = %+v", call, wire)
 		}
 		if len(wire.Tools) != 2 || wire.Tools[0].Type != "function" || wire.Tools[0].Name != "read" || wire.Tools[1].Name != "bash" || wire.Tools[0].Strict == nil || !*wire.Tools[0].Strict || wire.Tools[1].Strict == nil || !*wire.Tools[1].Strict || wire.Tools[0].Parameters.Type != "object" || wire.Tools[0].Parameters.AdditionalProperties == nil || *wire.Tools[0].Parameters.AdditionalProperties || !slices.Equal(wire.Tools[0].Parameters.Required, []string{"path"}) {
@@ -122,7 +122,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestClient(t, apiKey, server.URL, Options{})
+	client := newTestClient(t, apiKey, server.URL, Options{ReasoningEffort: "high"})
 	tools := []agent.ToolDefinition{strictTestTool("read"), strictTestTool("bash")}
 	var sinkText []string
 	first, err := client.Generate(context.Background(), agent.Request{
@@ -371,6 +371,7 @@ func TestNewValidatesConfiguration(t *testing.T) {
 		{name: "bad base URL", key: "key", options: Options{BaseURL: "://bad"}},
 		{name: "base credentials", key: "key", options: Options{BaseURL: "https://user@example.com"}},
 		{name: "plaintext remote base", key: "key", options: Options{BaseURL: "http://example.com"}},
+		{name: "invalid reasoning effort", key: "key", options: Options{ReasoningEffort: "extreme"}},
 		{name: "negative request limit", key: "key", options: Options{MaxRequestBytes: -1}},
 		{name: "negative response limit", key: "key", options: Options{MaxResponseBytes: -1}},
 		{name: "negative error limit", key: "key", options: Options{MaxErrorBytes: -1}},

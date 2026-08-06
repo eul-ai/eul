@@ -38,6 +38,7 @@ type Options struct {
 	MaxResponseBytes int64
 	MaxErrorBytes    int64
 	MaxStateBytes    int
+	ReasoningEffort  string
 }
 
 // CodexCredential is the request-time OAuth access token and ChatGPT account.
@@ -69,6 +70,7 @@ type Client struct {
 	maxResponseBytes int64
 	maxErrorBytes    int64
 	maxStateBytes    int
+	reasoningEffort  string
 }
 
 var _ agent.Provider = (*Client)(nil)
@@ -90,6 +92,9 @@ func NewCodex(source CodexTokenSource, options Options) (*Client, error) {
 }
 
 func newClient(apiKey string, source CodexTokenSource, codex bool, options Options) (*Client, error) {
+	if err := validateReasoningEffort(options.ReasoningEffort); err != nil {
+		return nil, err
+	}
 	baseURL := options.BaseURL
 	if baseURL == "" {
 		baseURL = defaultBaseURL
@@ -165,6 +170,7 @@ func newClient(apiKey string, source CodexTokenSource, codex bool, options Optio
 		maxResponseBytes: maxResponseBytes,
 		maxErrorBytes:    maxErrorBytes,
 		maxStateBytes:    maxStateBytes,
+		reasoningEffort:  options.ReasoningEffort,
 	}, nil
 }
 
@@ -207,6 +213,9 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText age
 	wireRequest, newInputs, err := buildCreateRequest(request, c.maxStateBytes)
 	if err != nil {
 		return agent.Response{}, c.errorfWith(secrets, "build request: %v", err)
+	}
+	if c.reasoningEffort != "" {
+		wireRequest.Reasoning = &responseReasoning{Effort: c.reasoningEffort, Summary: "auto"}
 	}
 	if c.codex {
 		wireRequest.Stream = true
@@ -391,6 +400,15 @@ func (c *Client) errorMessage(secrets []string, format string, arguments ...any)
 	}
 	message = strings.ToValidUTF8(message, "�")
 	return truncateUTF8("openai: "+message, int(c.maxErrorBytes))
+}
+
+func validateReasoningEffort(effort string) error {
+	switch effort {
+	case "", "none", "minimal", "low", "medium", "high", "xhigh", "max":
+		return nil
+	default:
+		return errors.New("openai: reasoning effort must be one of none, minimal, low, medium, high, xhigh, or max")
+	}
 }
 
 func validateCredentialValue(value, name string) error {

@@ -15,20 +15,26 @@ import (
 const continuationStateVersion = 1
 
 type createResponseRequest struct {
-	Model             string            `json:"model"`
-	Instructions      string            `json:"instructions"`
-	Input             []json.RawMessage `json:"input"`
-	Tools             []functionTool    `json:"tools"`
-	Store             bool              `json:"store"`
-	Stream            bool              `json:"stream"`
-	Include           []string          `json:"include"`
-	Text              *responseText     `json:"text,omitempty"`
-	ToolChoice        string            `json:"tool_choice,omitempty"`
-	ParallelToolCalls bool              `json:"parallel_tool_calls,omitempty"`
+	Model             string             `json:"model"`
+	Instructions      string             `json:"instructions"`
+	Input             []json.RawMessage  `json:"input"`
+	Tools             []functionTool     `json:"tools"`
+	Store             bool               `json:"store"`
+	Stream            bool               `json:"stream"`
+	Include           []string           `json:"include"`
+	Text              *responseText      `json:"text,omitempty"`
+	Reasoning         *responseReasoning `json:"reasoning,omitempty"`
+	ToolChoice        string             `json:"tool_choice,omitempty"`
+	ParallelToolCalls bool               `json:"parallel_tool_calls,omitempty"`
 }
 
 type responseText struct {
 	Verbosity string `json:"verbosity"`
+}
+
+type responseReasoning struct {
+	Effort  string `json:"effort"`
+	Summary string `json:"summary"`
 }
 
 type functionTool struct {

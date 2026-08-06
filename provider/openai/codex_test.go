@@ -46,7 +46,7 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 		if err := json.Unmarshal(body, &wire); err != nil {
 			t.Error(err)
 		}
-		if !wire.Stream || wire.Store || wire.Text == nil || wire.Text.Verbosity != "low" || wire.ToolChoice != "auto" || !wire.ParallelToolCalls {
+		if !wire.Stream || wire.Store || wire.Text == nil || wire.Text.Verbosity != "low" || wire.Reasoning == nil || wire.Reasoning.Effort != "xhigh" || wire.Reasoning.Summary != "auto" || wire.ToolChoice != "auto" || !wire.ParallelToolCalls {
 			t.Errorf("Codex request shape = %+v", wire)
 		}
 		for _, tool := range wire.Tools {
@@ -65,7 +65,7 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
 		sourceCalls++
 		return CodexCredential{AccessToken: token, AccountID: accountID}, nil
-	}), Options{BaseURL: server.URL})
+	}), Options{BaseURL: server.URL, ReasoningEffort: "xhigh"})
 	if err != nil {
 		t.Fatal(err)
 	}

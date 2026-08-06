@@ -20,8 +20,8 @@ Build a **trusted-local, Unix-first coding agent** that borrows Pi's minimal cor
 ### Invocation
 
 ```text
-yaah --model <model> [--cwd <directory>]
-yaah --model <model> "one-shot prompt"
+yaah --model <model> [--effort <level>] [--cwd <directory>]
+yaah --model <model> [--effort <level>] "one-shot prompt"
 ```
 
 Configuration and authentication:
@@ -30,6 +30,7 @@ Configuration and authentication:
 - OAuth credentials are stored only in yaah's private `auth.json` (`YAAH_HOME` or the OS user config directory), refreshed before expiry, and never imported from Pi or Codex.
 - A nonblank `OPENAI_API_KEY` takes precedence and retains usage-based Platform API access.
 - `OPENAI_MODEL` or `--model` is required; avoid a stale hard-coded default.
+- `OPENAI_REASONING_EFFORT` or `--effort` optionally selects `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
 - The current directory is the default working directory.
 
 ChatGPT OAuth uses the subscription-backed Codex endpoint. OpenAI documents ChatGPT sign-in for Codex, but the direct OAuth client, endpoint, header, and wire details used by independent clients are not a stable public third-party API contract. This compatibility path is therefore experimental and may need updates when Codex changes.
@@ -440,7 +441,7 @@ go list -m all   # only the main module
 | Platform | macOS/Linux first |
 | OpenAI endpoint | Platform Responses API for API keys; experimental ChatGPT Codex Responses endpoint for OAuth |
 | Streaming | Follow-up milestone; interface ready from day one |
-| Model | Require `--model` or `OPENAI_MODEL` |
+| Model | Require `--model` or `OPENAI_MODEL`; accept optional `--effort` or `OPENAI_REASONING_EFFORT` |
 | Safety | Trusted and unsandboxed |
 | Provider plugins | Compile-time adapters only |
 | Sessions | In-memory only; `/clear` resets |

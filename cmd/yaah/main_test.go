@@ -62,12 +62,15 @@ func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	var gotRequest agent.Request
 	factoryKey := ""
+	factoryEffort := ""
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{
-		"OPENAI_API_KEY": "secret-key",
-		"OPENAI_MODEL":   "environment-model",
+		"OPENAI_API_KEY":          "secret-key",
+		"OPENAI_MODEL":            "environment-model",
+		"OPENAI_REASONING_EFFORT": "high",
 	})
 	runtime.newProvider = func(config providerConfig) (agent.Provider, error) {
 		factoryKey = config.apiKey
+		factoryEffort = config.reasoningEffort
 		return providerFunction(func(_ context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
 			gotRequest = request
 			if err := sink("answer"); err != nil {
@@ -77,12 +80,12 @@ func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 		}), nil
 	}
 
-	code := run([]string{"--model", "flag-model", "one shot prompt"}, runtime)
+	code := run([]string{"--model", "flag-model", "--effort", "xhigh", "one shot prompt"}, runtime)
 	if code != exitSuccess {
 		t.Fatalf("run() code = %d, stderr = %q", code, stderr.String())
 	}
-	if factoryKey != "secret-key" || gotRequest.Model != "flag-model" || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].Text != "one shot prompt" {
-		t.Fatalf("factory key=%q request=%+v", factoryKey, gotRequest)
+	if factoryKey != "secret-key" || factoryEffort != "xhigh" || gotRequest.Model != "flag-model" || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].Text != "one shot prompt" {
+		t.Fatalf("factory key=%q effort=%q request=%+v", factoryKey, factoryEffort, gotRequest)
 	}
 	names := make([]string, len(gotRequest.Tools))
 	for i, definition := range gotRequest.Tools {
@@ -314,6 +317,7 @@ func TestRunConfigurationAndUsageErrors(t *testing.T) {
 		{name: "missing model", environment: map[string]string{"OPENAI_API_KEY": "key"}, wantCode: exitFailure, want: "model is required"},
 		{name: "explicit empty model", arguments: []string{"--model="}, environment: map[string]string{"OPENAI_API_KEY": "key", "OPENAI_MODEL": "fallback"}, wantCode: exitFailure, want: "model is required"},
 		{name: "model whitespace", arguments: []string{"--model", "bad model"}, environment: map[string]string{"OPENAI_API_KEY": "key"}, wantCode: exitFailure, want: "must not contain whitespace"},
+		{name: "invalid reasoning effort", arguments: []string{"--effort", "extreme"}, environment: map[string]string{"OPENAI_API_KEY": "key", "OPENAI_MODEL": "model"}, wantCode: exitFailure, want: "reasoning effort must be one of"},
 		{name: "extra prompts", arguments: []string{"one", "two"}, environment: map[string]string{"OPENAI_API_KEY": "key", "OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "at most one prompt"},
 		{name: "empty prompt", arguments: []string{""}, environment: map[string]string{"OPENAI_API_KEY": "key", "OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "prompt must be nonempty"},
 		{name: "bad flag", arguments: []string{"--missing"}, wantCode: exitUsage, want: "flag provided but not defined"},

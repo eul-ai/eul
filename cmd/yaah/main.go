@@ -31,8 +31,9 @@ const (
 )
 
 type providerConfig struct {
-	apiKey     string
-	codexToken openaiadapter.CodexTokenSource
+	apiKey          string
+	codexToken      openaiadapter.CodexTokenSource
+	reasoningEffort string
 }
 
 type providerFactory func(providerConfig) (agent.Provider, error)
@@ -112,10 +113,11 @@ func main() {
 		oauth:      &lazyOAuthManager{yaahHome: os.Getenv("YAAH_HOME")},
 		openURL:    openBrowser,
 		newProvider: func(config providerConfig) (agent.Provider, error) {
+			options := openaiadapter.Options{ReasoningEffort: config.reasoningEffort}
 			if config.apiKey != "" {
-				return openaiadapter.New(config.apiKey, openaiadapter.Options{})
+				return openaiadapter.New(config.apiKey, options)
 			}
-			return openaiadapter.NewCodex(config.codexToken, openaiadapter.Options{})
+			return openaiadapter.NewCodex(config.codexToken, options)
 		},
 	})
 	signal.Stop(interrupts)
@@ -139,9 +141,11 @@ func run(arguments []string, runtime appRuntime) int {
 	}
 
 	modelDefault := runtime.getenv("OPENAI_MODEL")
+	effortDefault := runtime.getenv("OPENAI_REASONING_EFFORT")
 	flags := flag.NewFlagSet("yaah", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	model := flags.String("model", modelDefault, "OpenAI model (or OPENAI_MODEL)")
+	effort := flags.String("effort", effortDefault, "reasoning effort (or OPENAI_REASONING_EFFORT)")
 	cwdFlag := flags.String("cwd", "", "fixed working directory")
 	flags.Usage = func() { writeUsage(runtime.stdout) }
 	if err := flags.Parse(arguments); err != nil {
@@ -160,7 +164,7 @@ func run(arguments []string, runtime appRuntime) int {
 
 	apiKey := runtime.getenv("OPENAI_API_KEY")
 	var (
-		config  providerConfig
+		config  = providerConfig{reasoningEffort: *effort}
 		secrets []string
 	)
 	if strings.TrimSpace(apiKey) != "" {
@@ -181,6 +185,10 @@ func run(arguments []string, runtime appRuntime) int {
 		config.codexToken = oauthTokenSource{manager: runtime.oauth, accountID: credential.AccountID}
 	}
 	if err := validateModel(*model); err != nil {
+		writeCLIError(runtime.stderr, secrets, "%v", err)
+		return exitFailure
+	}
+	if err := validateReasoningEffort(*effort); err != nil {
 		writeCLIError(runtime.stderr, secrets, "%v", err)
 		return exitFailure
 	}
@@ -353,6 +361,15 @@ func validateRuntime(runtime appRuntime) error {
 	return nil
 }
 
+func validateReasoningEffort(effort string) error {
+	switch effort {
+	case "", "none", "minimal", "low", "medium", "high", "xhigh", "max":
+		return nil
+	default:
+		return errors.New("reasoning effort must be one of none, minimal, low, medium, high, xhigh, or max")
+	}
+}
+
 func validateModel(model string) error {
 	if strings.TrimSpace(model) == "" {
 		return errors.New("model is required; use --model or OPENAI_MODEL")
@@ -428,7 +445,7 @@ func environmentWithout(environment []string, key string) []string {
 }
 
 func writeUsage(output io.Writer) {
-	fmt.Fprintln(output, "Usage: yaah [--model model] [--cwd directory] [prompt]")
+	fmt.Fprintln(output, "Usage: yaah [--model model] [--effort level] [--cwd directory] [prompt]")
 	fmt.Fprintln(output, "       yaah login [--device-auth]")
 	fmt.Fprintln(output, "       yaah logout")
 	fmt.Fprintln(output, "")
@@ -438,7 +455,8 @@ func writeUsage(output io.Writer) {
 	fmt.Fprintln(output, "  YAAH_HOME       optional directory for yaah's auth.json")
 	fmt.Fprintln(output, "")
 	fmt.Fprintln(output, "Configuration:")
-	fmt.Fprintln(output, "  OPENAI_MODEL    used when --model is omitted")
+	fmt.Fprintln(output, "  OPENAI_MODEL             used when --model is omitted")
+	fmt.Fprintln(output, "  OPENAI_REASONING_EFFORT  none, minimal, low, medium, high, xhigh, or max")
 	fmt.Fprintln(output, "")
 	fmt.Fprintln(output, "Commands: /help, /clear, /exit")
 }
