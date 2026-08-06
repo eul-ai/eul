@@ -77,9 +77,9 @@ func Use(value Thing) int {
 		t.Fatalf("symbols = %s", symbols.Output)
 	}
 
-	valueLine, valueCharacter := sourcePosition(t, source, "return value.Value", "Value")
+	valueLine, _ := sourcePosition(t, source, "return value.Value", "Value")
 	rename := executeLSPTestTool(t, ctx, registry, lspRenameToolName, map[string]any{
-		"path": "sample.go", "line": valueLine, "character": valueCharacter, "newName": "Number",
+		"path": "sample.go", "line": valueLine + 1, "character": 81, "oldName": "Value", "newName": "Number",
 	})
 	if rename.Output != "renamed symbol in 1 files" {
 		t.Fatalf("rename = %s", rename.Output)

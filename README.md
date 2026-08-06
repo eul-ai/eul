@@ -72,8 +72,8 @@ before returning to the model.
 - `lsp_references(path, line, character, includeDeclaration?)` returns reference
   locations.
 - `lsp_symbols(path)` returns document symbols.
-- `lsp_rename(path, line, character, newName)` renames a symbol across the
-  workspace.
+- `lsp_rename(path, line, character, oldName, newName)` resolves the named
+  symbol near the approximate position and renames it across the workspace.
 
 LSP line numbers and UTF-16 character offsets are zero-based. Source-file
 extensions select a language server; currently `.go` files use gopls.

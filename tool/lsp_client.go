@@ -155,6 +155,7 @@ func startLSPSession(ctx context.Context, cwd string, config lspServerConfig) (*
 	documentChanges := true
 	workspaceFolders := true
 	dynamicRegistration := false
+	prepareRename := true
 	rootURI := folder.URI
 	initializeResult, err := server.Initialize(ctx, &protocol.InitializeParams{
 		WorkspaceFoldersInitializeParams: protocol.WorkspaceFoldersInitializeParams{
@@ -173,6 +174,7 @@ func startLSPSession(ctx context.Context, cwd string, config lspServerConfig) (*
 			},
 			TextDocument: &protocol.TextDocumentClientCapabilities{
 				Diagnostic: &protocol.DiagnosticClientCapabilities{DynamicRegistration: &dynamicRegistration},
+				Rename:     &protocol.RenameClientCapabilities{PrepareSupport: &prepareRename},
 			},
 		},
 	})

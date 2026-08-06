@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"go.lsp.dev/protocol"
@@ -66,10 +68,11 @@ var (
 		Description: "Rename the symbol at a source position and apply the language-server workspace edits.",
 		Parameters: strictObject(map[string]agent.JSONSchema{
 			"path":      {Type: "string", Description: "Source file path, relative to the session working directory or absolute."},
-			"line":      {Type: "integer", Description: "Zero-based line number."},
-			"character": {Type: "integer", Description: "Zero-based UTF-16 character offset."},
+			"line":      {Type: "integer", Description: "Approximate zero-based line used to disambiguate oldName."},
+			"character": {Type: "integer", Description: "Approximate zero-based UTF-16 character offset used to disambiguate oldName."},
+			"oldName":   {Type: "string", Description: "Current symbol name."},
 			"newName":   {Type: "string", Description: "New symbol name."},
-		}, "path", "line", "character", "newName"),
+		}, "path", "line", "character", "oldName", "newName"),
 	}
 )
 
@@ -111,6 +114,7 @@ type lspRenameArguments struct {
 	Path      string  `json:"path"`
 	Line      *int    `json:"line"`
 	Character *int    `json:"character"`
+	OldName   *string `json:"oldName"`
 	NewName   *string `json:"newName"`
 }
 
@@ -258,9 +262,12 @@ func (t *lspTool) executeRename(ctx context.Context, arguments json.RawMessage) 
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
-	position, err := validLSPPosition(args.Line, args.Character)
+	hint, err := validLSPPosition(args.Line, args.Character)
 	if err != nil {
 		return agent.ToolResult{}, err
+	}
+	if args.OldName == nil || *args.OldName == "" {
+		return agent.ToolResult{}, errors.New("oldName is required and must be nonempty")
 	}
 	if args.NewName == nil || *args.NewName == "" {
 		return agent.ToolResult{}, errors.New("newName is required and must be nonempty")
@@ -269,10 +276,22 @@ func (t *lspTool) executeRename(ctx context.Context, arguments json.RawMessage) 
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
+	content, err := readLSPDocument(path)
+	if err != nil {
+		return agent.ToolResult{}, err
+	}
+	position, err := resolveLSPRenamePosition(content, hint, *args.OldName)
+	if err != nil {
+		return agent.ToolResult{}, err
+	}
 
 	response, err := t.client.documentRequest(ctx, path, func(ctx context.Context, session *lspSession, document protocol.TextDocumentIdentifier) (any, error) {
+		params := protocol.TextDocumentPositionParams{TextDocument: document, Position: position}
+		if _, err := session.server.PrepareRename(ctx, &protocol.PrepareRenameParams{TextDocumentPositionParams: params}); err != nil {
+			return nil, err
+		}
 		return session.server.Rename(ctx, &protocol.RenameParams{
-			TextDocumentPositionParams: protocol.TextDocumentPositionParams{TextDocument: document, Position: position},
+			TextDocumentPositionParams: params,
 			NewName:                    *args.NewName,
 		})
 	})
@@ -289,6 +308,92 @@ func (t *lspTool) executeRename(ctx context.Context, arguments json.RawMessage) 
 	}
 
 	return successResult(fmt.Sprintf("renamed symbol in %d files", changed)), nil
+}
+
+func resolveLSPRenamePosition(content []byte, hint protocol.Position, oldName string) (protocol.Position, error) {
+	if strings.ContainsAny(oldName, "\r\n") {
+		return protocol.Position{}, errors.New("oldName must be a single-line identifier")
+	}
+
+	var best protocol.Position
+	var bestLineDistance, bestCharacterDistance uint32
+	found := false
+	ambiguous := false
+	for lineNumber, line := range strings.Split(string(content), "\n") {
+		for searchStart := 0; searchStart <= len(line)-len(oldName); {
+			relativeStart := strings.Index(line[searchStart:], oldName)
+			if relativeStart < 0 {
+				break
+			}
+			start := searchStart + relativeStart
+			searchStart = start + len(oldName)
+			if !isIdentifierOccurrence(line, start, searchStart) {
+				continue
+			}
+
+			position := protocol.Position{Line: uint32(lineNumber), Character: utf16Length(line[:start])}
+			lineDistance, characterDistance := lspPositionDistance(hint, position)
+			switch {
+			case !found || lineDistance < bestLineDistance || lineDistance == bestLineDistance && characterDistance < bestCharacterDistance:
+				best = position
+				bestLineDistance = lineDistance
+				bestCharacterDistance = characterDistance
+				found = true
+				ambiguous = false
+			case lineDistance == bestLineDistance && characterDistance == bestCharacterDistance:
+				ambiguous = true
+			}
+		}
+	}
+	if !found {
+		return protocol.Position{}, fmt.Errorf("oldName %q was not found", oldName)
+	}
+	if ambiguous {
+		return protocol.Position{}, fmt.Errorf("oldName %q is ambiguous near %d:%d", oldName, hint.Line, hint.Character)
+	}
+	return best, nil
+}
+
+func isIdentifierOccurrence(line string, start, end int) bool {
+	if start > 0 {
+		previous, _ := utf8.DecodeLastRuneInString(line[:start])
+		if isIdentifierRune(previous) {
+			return false
+		}
+	}
+	if end < len(line) {
+		next, _ := utf8.DecodeRuneInString(line[end:])
+		if isIdentifierRune(next) {
+			return false
+		}
+	}
+	return true
+}
+
+func isIdentifierRune(value rune) bool {
+	return value == '_' || value == '$' || unicode.IsLetter(value) || unicode.IsDigit(value)
+}
+
+func utf16Length(value string) uint32 {
+	var length uint32
+	for _, runeValue := range value {
+		length++
+		if runeValue > 0xffff {
+			length++
+		}
+	}
+	return length
+}
+
+func lspPositionDistance(left, right protocol.Position) (uint32, uint32) {
+	return absoluteDifference(left.Line, right.Line), absoluteDifference(left.Character, right.Character)
+}
+
+func absoluteDifference(left, right uint32) uint32 {
+	if left >= right {
+		return left - right
+	}
+	return right - left
 }
 
 func lspPositionSchema() agent.JSONSchema {
