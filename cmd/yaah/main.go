@@ -137,6 +137,12 @@ func run(arguments []string, runtime appRuntime) int {
 		return exitFailure
 	}
 
+	projectInstructions, err := readProjectInstructions(cwd)
+	if err != nil {
+		writeCLIError(runtime.stderr, "%v", err)
+		return exitFailure
+	}
+
 	prompt := ""
 	oneShot := flags.NArg() == 1
 	if oneShot {
@@ -154,7 +160,10 @@ func run(arguments []string, runtime appRuntime) int {
 		return exitFailure
 	}
 
-	engine := agent.New(provider, registry, agent.Options{Model: *model})
+	engine := agent.New(provider, registry, agent.Options{
+		Model:               *model,
+		ProjectInstructions: projectInstructions,
+	})
 
 	terminalOptions := terminal.Options{
 		Input:       runtime.stdin,
@@ -365,6 +374,18 @@ func resolveCWD(value string, getwd func() (string, error)) (string, error) {
 	}
 
 	return candidate, nil
+}
+
+func readProjectInstructions(cwd string) (string, error) {
+	content, err := os.ReadFile(filepath.Join(cwd, "AGENTS.md"))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read AGENTS.md: %w", err)
+	}
+
+	return string(content), nil
 }
 
 func buildTools(cwd string, environment []string) *tool.Registry {

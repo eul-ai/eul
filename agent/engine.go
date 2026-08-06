@@ -14,8 +14,9 @@ var (
 )
 
 type Options struct {
-	Model         string
-	maxToolRounds int
+	Model               string
+	ProjectInstructions string
+	maxToolRounds       int
 }
 
 type RunResult struct {
@@ -44,7 +45,7 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 		tools:         tools,
 		model:         options.Model,
 		maxToolRounds: maxToolRounds,
-		instructions:  buildSystemPrompt(tools.Definitions()),
+		instructions:  buildSystemPrompt(tools.Definitions(), options.ProjectInstructions),
 	}
 }
 

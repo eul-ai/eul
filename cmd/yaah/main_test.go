@@ -60,6 +60,11 @@ func (function providerFunction) Generate(ctx context.Context, request agent.Req
 
 func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 	cwd := t.TempDir()
+	projectInstructions := "Run focused tests before finishing."
+	if err := os.WriteFile(filepath.Join(cwd, "AGENTS.md"), []byte(projectInstructions), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	var stdout, stderr bytes.Buffer
 	var gotRequest agent.Request
 	factoryKey := ""
@@ -87,6 +92,9 @@ func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 	}
 	if factoryKey != "secret-key" || factoryEffort != "xhigh" || gotRequest.Model != "flag-model" || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].Text != "one shot prompt" {
 		t.Fatalf("factory key=%q effort=%q request=%+v", factoryKey, factoryEffort, gotRequest)
+	}
+	if !strings.HasSuffix(gotRequest.Instructions, projectInstructions) {
+		t.Fatalf("instructions omit AGENTS.md:\n%s", gotRequest.Instructions)
 	}
 	names := make([]string, len(gotRequest.Tools))
 	for i, definition := range gotRequest.Tools {
