@@ -58,6 +58,7 @@ type appRuntime struct {
 func main() {
 	interrupts := make(chan os.Signal, 2)
 	signal.Notify(interrupts, os.Interrupt)
+
 	code := run(os.Args[1:], appRuntime{
 		stdin:      os.Stdin,
 		stdout:     os.Stdout,
@@ -82,6 +83,7 @@ func main() {
 			return openaiadapter.NewCodex(config.codexToken, options)
 		},
 	})
+
 	signal.Stop(interrupts)
 	if code != exitSuccess {
 		os.Exit(code)
@@ -105,6 +107,7 @@ func run(arguments []string, runtime appRuntime) int {
 	model := flags.String("model", modelDefault, "OpenAI model (or OPENAI_MODEL)")
 	effort := flags.String("effort", effortDefault, "reasoning effort (or OPENAI_REASONING_EFFORT)")
 	cwdFlag := flags.String("cwd", "", "fixed working directory")
+
 	if err := flags.Parse(arguments); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitSuccess
@@ -116,27 +119,13 @@ func run(arguments []string, runtime appRuntime) int {
 		return exitUsage
 	}
 
-	apiKey := runtime.getenv("OPENAI_API_KEY")
-	config := providerConfig{reasoningEffort: *effort}
-	if strings.TrimSpace(apiKey) != "" {
-		config.apiKey = apiKey
-	} else {
-		manager, err := runtime.newOAuth()
-		if err != nil {
-			writeCLIError(runtime.stderr, "authentication required: %v", err)
-			return exitFailure
+	config, err := resolveProviderConfig(runtime.getenv("OPENAI_API_KEY"), *effort, runtime)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return exitInterrupted
 		}
-		ctx, cancel := contextWithInterrupt(runtime.interrupts)
-		_, err = manager.Resolve(ctx)
-		cancel()
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return exitInterrupted
-			}
-			writeCLIError(runtime.stderr, "authentication required: %v", err)
-			return exitFailure
-		}
-		config.codexToken = oauthTokenSource{manager: manager}
+		writeCLIError(runtime.stderr, "authentication required: %v", err)
+		return exitFailure
 	}
 	if err := validateModel(*model); err != nil {
 		writeCLIError(runtime.stderr, "%v", err)
@@ -164,6 +153,7 @@ func run(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "configure provider: %v", err)
 		return exitFailure
 	}
+
 	engine := agent.New(provider, registry, agent.Options{Model: *model})
 
 	terminalOptions := terminal.Options{
@@ -174,20 +164,41 @@ func run(arguments []string, runtime appRuntime) int {
 		CWD:         cwd,
 		Interrupts:  runtime.interrupts,
 	}
-	var runErr error
 	if oneShot {
-		runErr = terminal.RunOneShot(context.Background(), engine, prompt, terminalOptions)
-	} else {
-		runErr = terminal.Run(context.Background(), engine, terminalOptions)
+		return finishRun(terminal.RunOneShot(context.Background(), engine, prompt, terminalOptions), runtime.stderr)
 	}
+	return finishRun(terminal.Run(context.Background(), engine, terminalOptions), runtime.stderr)
+}
+
+func finishRun(runErr error, errorOutput io.Writer) int {
 	if runErr == nil {
 		return exitSuccess
 	}
 	if errors.Is(runErr, terminal.ErrInterrupted) || errors.Is(runErr, context.Canceled) {
 		return exitInterrupted
 	}
-	writeCLIError(runtime.stderr, "%v", runErr)
+
+	writeCLIError(errorOutput, "%v", runErr)
 	return exitFailure
+}
+
+func resolveProviderConfig(apiKey, reasoningEffort string, runtime appRuntime) (providerConfig, error) {
+	if strings.TrimSpace(apiKey) != "" {
+		return providerConfig{apiKey: apiKey, reasoningEffort: reasoningEffort}, nil
+	}
+
+	manager, err := runtime.newOAuth()
+	if err != nil {
+		return providerConfig{}, err
+	}
+
+	ctx, cancel := contextWithInterrupt(runtime.interrupts)
+	defer cancel()
+	if _, err := manager.Resolve(ctx); err != nil {
+		return providerConfig{}, err
+	}
+
+	return providerConfig{codexToken: oauthTokenSource{manager: manager}, reasoningEffort: reasoningEffort}, nil
 }
 
 type oauthTokenSource struct {
@@ -199,6 +210,7 @@ func (source oauthTokenSource) Token(ctx context.Context) (openaiadapter.CodexCr
 	if err != nil {
 		return openaiadapter.CodexCredential{}, err
 	}
+
 	return openaiadapter.CodexCredential{AccessToken: credential.AccessToken, AccountID: credential.AccountID}, nil
 }
 
@@ -206,6 +218,7 @@ func runLogin(arguments []string, runtime appRuntime) int {
 	flags := flag.NewFlagSet("yaah login", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
 	device := flags.Bool("device-auth", false, "use device authorization for headless environments")
+
 	if err := flags.Parse(arguments); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitSuccess
@@ -254,6 +267,7 @@ func runLogin(arguments []string, runtime appRuntime) int {
 func runLogout(arguments []string, runtime appRuntime) int {
 	flags := flag.NewFlagSet("yaah logout", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
+
 	if err := flags.Parse(arguments); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitSuccess
@@ -284,15 +298,18 @@ func runLogout(arguments []string, runtime appRuntime) int {
 
 func contextWithInterrupt(interrupts <-chan os.Signal) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
+
 	go func() {
 		select {
 		case <-ctx.Done():
 		case _, ok := <-interrupts:
-			if ok {
-				cancel()
+			if !ok {
+				return
 			}
+			cancel()
 		}
 	}()
+
 	return ctx, cancel
 }
 
@@ -300,11 +317,13 @@ func validateModel(model string) error {
 	if strings.TrimSpace(model) == "" {
 		return errors.New("model is required; use --model or OPENAI_MODEL")
 	}
+
 	if model != strings.TrimSpace(model) || strings.IndexFunc(model, func(character rune) bool {
 		return unicode.IsControl(character) || unicode.IsSpace(character)
 	}) >= 0 {
 		return errors.New("model must not contain whitespace or control characters")
 	}
+
 	return nil
 }
 
@@ -321,20 +340,19 @@ func resolveCWD(value string, getwd func() (string, error)) (string, error) {
 				return "", fmt.Errorf("resolve working directory: %w", err)
 			}
 		}
-		if candidate == "" {
-			candidate = base
-		} else {
-			candidate = filepath.Join(base, candidate)
-		}
+		candidate = filepath.Join(base, candidate)
 	}
+
 	candidate = filepath.Clean(candidate)
 	info, err := os.Stat(candidate)
 	if err != nil {
 		return "", fmt.Errorf("inspect working directory: %w", err)
 	}
+
 	if !info.IsDir() {
 		return "", fmt.Errorf("working directory %q is not a directory", candidate)
 	}
+
 	return candidate, nil
 }
 
@@ -373,6 +391,7 @@ func openBrowser(url string) error {
 	default:
 		command = exec.Command("xdg-open", url)
 	}
+
 	if err := command.Start(); err != nil {
 		return err
 	}

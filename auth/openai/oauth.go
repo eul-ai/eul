@@ -86,10 +86,10 @@ type Manager struct {
 
 // DefaultCredentialPath resolves a yaah-owned auth file without consulting other clients.
 func DefaultCredentialPath(yaahHome string) (string, error) {
+	if yaahHome != "" && !filepath.IsAbs(yaahHome) {
+		return "", errors.New("oauth: YAAH_HOME must be an absolute path")
+	}
 	if yaahHome != "" {
-		if !filepath.IsAbs(yaahHome) {
-			return "", errors.New("oauth: YAAH_HOME must be an absolute path")
-		}
 		return filepath.Join(filepath.Clean(yaahHome), "auth.json"), nil
 	}
 	config, err := os.UserConfigDir()
@@ -613,9 +613,11 @@ func writeCredentials(path string, credential Credentials) error {
 	if err := os.Chmod(directory, 0o700); err != nil {
 		return fmt.Errorf("oauth: secure credential directory: %w", err)
 	}
-	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
+	info, err := os.Lstat(path)
+	if err == nil && !info.Mode().IsRegular() {
 		return errors.New("oauth: credential path is not a regular file")
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("oauth: inspect credential path: %w", err)
 	}
 	encoded, err := json.MarshalIndent(credential, "", "  ")
@@ -679,9 +681,11 @@ func (m *Manager) withFileLock(ctx context.Context, function func() error) error
 		return fmt.Errorf("oauth: secure credential lock: %w", err)
 	}
 	for {
-		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
+		err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
 			break
-		} else if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
 			return fmt.Errorf("oauth: acquire credential lock: %w", err)
 		}
 		if err := m.sleep(ctx, 50*time.Millisecond); err != nil {
@@ -693,10 +697,14 @@ func (m *Manager) withFileLock(ctx context.Context, function func() error) error
 		return err
 	}
 	result := function()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); result == nil && err != nil {
-		return fmt.Errorf("oauth: release credential lock: %w", err)
+	unlockErr := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	if result != nil {
+		return result
 	}
-	return result
+	if unlockErr != nil {
+		return fmt.Errorf("oauth: release credential lock: %w", unlockErr)
+	}
+	return nil
 }
 
 func readBounded(reader io.Reader, maximum int64) ([]byte, bool, error) {

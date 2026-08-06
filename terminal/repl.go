@@ -212,16 +212,15 @@ func runTurn(parent context.Context, engine Engine, prompt string, options Optio
 				return finish(runErr)
 			default:
 			}
-			if !interrupted {
-				interrupted = true
-				cancel()
+			if interrupted {
+				continue
 			}
+			interrupted = true
+			cancel()
 		case <-parentDone:
 			parentDone = nil
-			if !parentCanceled {
-				parentCanceled = true
-				cancel()
-			}
+			parentCanceled = true
+			cancel()
 		}
 	}
 }
@@ -437,19 +436,8 @@ func readLine(reader *bufio.Reader, maximum int) (string, error) {
 	tooLong := false
 	for {
 		fragment, err := reader.ReadSlice('\n')
-		if !tooLong {
-			contentBytes := len(fragment)
-			if len(fragment) > 0 && fragment[len(fragment)-1] == '\n' {
-				contentBytes--
-				if contentBytes > 0 && fragment[contentBytes-1] == '\r' {
-					contentBytes--
-				}
-			}
-			if line.Len()+contentBytes > maximum {
-				tooLong = true
-			} else {
-				line.Write(fragment)
-			}
+		if !tooLong && !writeLineFragment(&line, fragment, maximum) {
+			tooLong = true
 		}
 		if errors.Is(err, bufio.ErrBufferFull) {
 			continue
@@ -470,4 +458,19 @@ func readLine(reader *bufio.Reader, maximum int) (string, error) {
 		}
 		return value, nil
 	}
+}
+
+func writeLineFragment(line *strings.Builder, fragment []byte, maximum int) bool {
+	contentBytes := len(fragment)
+	if len(fragment) > 0 && fragment[len(fragment)-1] == '\n' {
+		contentBytes--
+		if contentBytes > 0 && fragment[contentBytes-1] == '\r' {
+			contentBytes--
+		}
+	}
+	if line.Len()+contentBytes > maximum {
+		return false
+	}
+	line.Write(fragment)
+	return true
 }

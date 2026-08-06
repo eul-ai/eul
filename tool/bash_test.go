@@ -172,9 +172,11 @@ func waitForPath(t *testing.T, path string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		if _, err := os.Stat(path); err == nil {
+		_, err := os.Stat(path)
+		if err == nil {
 			return
-		} else if !os.IsNotExist(err) {
+		}
+		if !os.IsNotExist(err) {
 			t.Fatal(err)
 		}
 		if time.Now().After(deadline) {

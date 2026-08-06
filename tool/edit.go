@@ -105,10 +105,11 @@ func (e *Edit) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	temporaryPath := temporary.Name()
 	committed := false
 	defer func() {
-		if !committed {
-			_ = temporary.Close()
-			_ = os.Remove(temporaryPath)
+		if committed {
+			return
 		}
+		_ = temporary.Close()
+		_ = os.Remove(temporaryPath)
 	}()
 
 	if err := temporary.Chmod(info.Mode()); err != nil {

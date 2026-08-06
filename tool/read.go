@@ -153,12 +153,7 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 			continue
 		}
 		if output.Len()+size > defaultMaxBytes {
-			if len(lineEnds) == 0 {
-				truncatedOutput = boundHead(output.String(), fmt.Sprintf("truncated within line %d; no lossless next offset", lineNumber))
-			} else {
-				completeOutput := output.String()[:lineEnds[len(lineEnds)-1]]
-				truncatedOutput = formatReadTruncation(completeOutput, lineEnds, offset)
-			}
+			truncatedOutput = formatReadByteTruncation(output.String(), lineEnds, offset, lineNumber)
 			if runeValue == '\n' {
 				lineNumber++
 			}
@@ -171,6 +166,13 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 			lineNumber++
 		}
 	}
+}
+
+func formatReadByteTruncation(text string, lineEnds []int, offset, lineNumber int) string {
+	if len(lineEnds) == 0 {
+		return boundHead(text, fmt.Sprintf("truncated within line %d; no lossless next offset", lineNumber))
+	}
+	return formatReadTruncation(text[:lineEnds[len(lineEnds)-1]], lineEnds, offset)
 }
 
 func formatReadTruncation(text string, lineEnds []int, offset int) string {

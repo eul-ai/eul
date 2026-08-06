@@ -41,26 +41,29 @@ func truncateText(text string, maxLines, maxBytes int, head bool) truncation {
 		maxBytes = 0
 	}
 
-	lines := splitLines(text)
-	limited := lines
-	if len(limited) > maxLines {
-		if head {
-			limited = limited[:maxLines]
-		} else {
-			limited = limited[len(limited)-maxLines:]
-		}
-	}
-
-	output := strings.Join(limited, "")
-	if len(output) > maxBytes {
-		if head {
-			output = prefixBytes(output, maxBytes)
-		} else {
-			output = suffixBytes(output, maxBytes)
-		}
-	}
-
+	lines := limitLines(splitLines(text), maxLines, head)
+	output := limitBytes(strings.Join(lines, ""), maxBytes, head)
 	return truncation{text: output, truncated: len(output) != len(text)}
+}
+
+func limitLines(lines []string, maximum int, head bool) []string {
+	if len(lines) <= maximum {
+		return lines
+	}
+	if head {
+		return lines[:maximum]
+	}
+	return lines[len(lines)-maximum:]
+}
+
+func limitBytes(text string, maximum int, head bool) string {
+	if len(text) <= maximum {
+		return text
+	}
+	if head {
+		return prefixBytes(text, maximum)
+	}
+	return suffixBytes(text, maximum)
 }
 
 func splitLines(text string) []string {

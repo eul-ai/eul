@@ -57,14 +57,18 @@ func (w *Write) Execute(ctx context.Context, arguments json.RawMessage) (agent.T
 		return errorResult(writeToolName, err), nil
 	}
 
-	if info, statErr := os.Stat(path); statErr == nil {
-		if !info.Mode().IsRegular() {
-			return errorResult(writeToolName, fmt.Errorf("%s is not a regular file", w.workspace.display(path))), nil
-		}
-	} else if !os.IsNotExist(statErr) {
+	info, statErr := os.Stat(path)
+	if statErr == nil && !info.Mode().IsRegular() {
+		return errorResult(writeToolName, fmt.Errorf("%s is not a regular file", w.workspace.display(path))), nil
+	}
+	if statErr != nil && !os.IsNotExist(statErr) {
 		return errorResult(writeToolName, statErr), nil
-	} else if linkInfo, linkErr := os.Lstat(path); linkErr == nil && linkInfo.Mode()&os.ModeSymlink != 0 {
-		return errorResult(writeToolName, fmt.Errorf("%s is a dangling symlink", w.workspace.display(path))), nil
+	}
+	if os.IsNotExist(statErr) {
+		linkInfo, linkErr := os.Lstat(path)
+		if linkErr == nil && linkInfo.Mode()&os.ModeSymlink != 0 {
+			return errorResult(writeToolName, fmt.Errorf("%s is a dangling symlink", w.workspace.display(path))), nil
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {

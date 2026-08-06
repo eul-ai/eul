@@ -11,6 +11,8 @@
 
 ## Go
 
+- Prefer early returns and keep the happy path left-aligned.
+- Use blank lines to separate distinct logical stages within a function, especially parsing and validation from setup and execution.
 - Do not export symbols unless they are used outside their package.
 - After working on a Go file, run `gofumpt -w <path>` for each changed Go file.
 - Run focused tests for the changed packages, then `go test ./...`.

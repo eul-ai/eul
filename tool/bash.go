@@ -95,9 +95,8 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	command := exec.CommandContext(runCtx, b.shell, "-c", args.Command)
 	command.Dir = b.workspace.cwd
 	command.Stdin = nil
-	if b.env != nil {
-		command.Env = b.env
-	} else {
+	command.Env = b.env
+	if command.Env == nil {
 		command.Env = os.Environ()
 	}
 	command.WaitDelay = b.waitDelay
@@ -117,24 +116,23 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	}
 	waitErr := command.Wait()
 	output, captureTruncated := capture.String()
-	exitStatus := 0
+	exitStatus := -1
 	if command.ProcessState != nil {
 		exitStatus = command.ProcessState.ExitCode()
-	} else {
-		exitStatus = -1
 	}
 
 	parentErr := ctx.Err()
 	localTimeout := parentErr == nil && errors.Is(runCtx.Err(), context.DeadlineExceeded)
 	status := fmt.Sprintf("[exit status: %d]", exitStatus)
 	isError := waitErr != nil
-	if localTimeout {
+	switch {
+	case localTimeout:
 		status = fmt.Sprintf("[exit status: %d; timed out after %s]", exitStatus, timeout)
 		isError = true
-	} else if parentErr != nil {
+	case parentErr != nil:
 		status = fmt.Sprintf("[exit status: %d; canceled]", exitStatus)
 		isError = true
-	} else if errors.Is(waitErr, exec.ErrWaitDelay) {
+	case errors.Is(waitErr, exec.ErrWaitDelay):
 		status = fmt.Sprintf("[exit status: %d; output pipes remained open past %s]", exitStatus, b.waitDelay)
 		isError = true
 	}
