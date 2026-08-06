@@ -51,6 +51,7 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
+
 	args, err := decodeArguments[readArguments](arguments)
 	if err != nil {
 		return errorResult(readToolName, err), nil
@@ -63,6 +64,7 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	if err != nil {
 		return errorResult(readToolName, err), nil
 	}
+
 	path, err := r.workspace.resolve(args.Path)
 	if err != nil {
 		return errorResult(readToolName, err), nil
@@ -78,6 +80,7 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	if !info.Mode().IsRegular() {
 		return errorResult(readToolName, fmt.Errorf("%s is not a regular file", r.workspace.display(path))), nil
 	}
+
 	file, err := os.Open(path)
 	if err != nil {
 		return errorResult(readToolName, err), nil
@@ -104,6 +107,7 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 		if err := ctx.Err(); err != nil {
 			return agent.ToolResult{}, err
 		}
+
 		runeValue, size, readErr := reader.ReadRune()
 		if errors.Is(readErr, io.EOF) {
 			if truncatedOutput != "" {
@@ -115,6 +119,7 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 				}
 				return successResult(""), nil
 			}
+
 			lineCount := lineNumber
 			if lastWasNewline {
 				lineCount--
@@ -159,6 +164,7 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 			}
 			continue
 		}
+
 		output.WriteRune(runeValue)
 		if runeValue == '\n' {
 			selectedCompleted++
@@ -172,6 +178,7 @@ func formatReadByteTruncation(text string, lineEnds []int, offset, lineNumber in
 	if len(lineEnds) == 0 {
 		return boundHead(text, fmt.Sprintf("truncated within line %d; no lossless next offset", lineNumber))
 	}
+
 	return formatReadTruncation(text[:lineEnds[len(lineEnds)-1]], lineEnds, offset)
 }
 

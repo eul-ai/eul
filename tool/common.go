@@ -31,6 +31,7 @@ func (w workspace) resolve(name string) (string, error) {
 
 func (w workspace) display(name string) string {
 	name = filepath.Clean(name)
+
 	relative, err := filepath.Rel(w.cwd, name)
 	if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return filepath.ToSlash(relative)
@@ -104,6 +105,7 @@ func boundTail(text, notice string) string {
 		marker, _ = truncateLine(marker, defaultMaxBytes)
 		return marker
 	}
+
 	body := truncateTail(text, defaultMaxLines-1, defaultMaxBytes-len(marker)).text
 	return marker + body
 }
@@ -119,6 +121,7 @@ func splitTextLines(text string) []string {
 	if text == "" {
 		return nil
 	}
+
 	lines := strings.SplitAfter(text, "\n")
 	if lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]

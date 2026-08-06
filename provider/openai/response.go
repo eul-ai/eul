@@ -52,9 +52,11 @@ type outputContentPart struct {
 func decodeCreateResponse(body []byte) (createResponseEnvelope, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	var response createResponseEnvelope
+
 	if err := decoder.Decode(&response); err != nil {
 		return createResponseEnvelope{}, fmt.Errorf("decode response: %w", err)
 	}
+
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		if err == nil {
@@ -62,11 +64,13 @@ func decodeCreateResponse(body []byte) (createResponseEnvelope, error) {
 		}
 		return createResponseEnvelope{}, fmt.Errorf("decode response: %w", err)
 	}
+
 	for i, item := range response.Output {
 		if err := validateRawObject(item); err != nil {
 			return createResponseEnvelope{}, fmt.Errorf("response output item %d: %w", i, err)
 		}
 	}
+
 	return response, nil
 }
 
@@ -74,14 +78,17 @@ func normalizeResponse(response createResponseEnvelope) (string, []agent.ToolCal
 	if err := validateCompletedResponse(response); err != nil {
 		return "", nil, agent.Usage{}, err
 	}
+
 	text, calls, err := normalizeOutput(response.Output)
 	if err != nil {
 		return "", nil, agent.Usage{}, err
 	}
+
 	usage, err := normalizeUsage(response.Usage)
 	if err != nil {
 		return "", nil, agent.Usage{}, err
 	}
+
 	return text, calls, usage, nil
 }
 
@@ -89,6 +96,7 @@ func validateCompletedResponse(response createResponseEnvelope) error {
 	if response.Error != nil {
 		return fmt.Errorf("response failed: %s", formatResponseError(*response.Error))
 	}
+
 	if response.Status != "completed" {
 		detail := response.Status
 		if detail == "" {
@@ -99,9 +107,11 @@ func validateCompletedResponse(response createResponseEnvelope) error {
 		}
 		return fmt.Errorf("response status %s", detail)
 	}
+
 	if response.Output == nil {
 		return errors.New("response is missing output")
 	}
+
 	return nil
 }
 
@@ -114,6 +124,7 @@ func normalizeOutput(output []json.RawMessage) (string, []agent.ToolCall, error)
 		if err := json.Unmarshal(raw, &item); err != nil {
 			return "", nil, fmt.Errorf("decode response output item %d: %w", index, err)
 		}
+
 		switch item.Type {
 		case "message":
 			for _, part := range item.Content {
@@ -145,6 +156,7 @@ func normalizeToolCall(item outputItem, index int, seen map[string]struct{}) (ag
 	if _, exists := seen[item.CallID]; exists {
 		return agent.ToolCall{}, fmt.Errorf("response has duplicate function call ID %q", item.CallID)
 	}
+
 	seen[item.CallID] = struct{}{}
 	return agent.ToolCall{
 		ID:        item.CallID,
@@ -160,6 +172,7 @@ func normalizeUsage(usage *responseUsage) (agent.Usage, error) {
 	if usage.InputTokens < 0 || usage.OutputTokens < 0 || usage.TotalTokens < 0 {
 		return agent.Usage{}, errors.New("response usage contains negative token counts")
 	}
+
 	return agent.Usage{
 		InputTokens:  usage.InputTokens,
 		OutputTokens: usage.OutputTokens,
@@ -175,6 +188,7 @@ func formatResponseError(response responseError) string {
 	if response.Code != "" {
 		parts = append(parts, response.Code)
 	}
+
 	prefix := strings.Join(parts, "/")
 	if prefix == "" {
 		return response.Message

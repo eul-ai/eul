@@ -19,6 +19,7 @@ func TestBashReportsCombinedOutputStatusCWDAndEnvironment(t *testing.T) {
 	cwd := t.TempDir()
 	bashTool := NewBash(cwd, BashOptions{Env: []string{"YAAH_TEST=value"}})
 	command := `printf 'stdout:%s:%s\n' "$PWD" "$YAAH_TEST"; printf 'stderr\n' >&2`
+
 	result := executeJSON(t, bashTool, map[string]any{"command": command})
 	if result.IsError {
 		t.Fatalf("bash result = %+v", result)
@@ -34,6 +35,7 @@ func TestBashSupportsMVPDiscoveryCommands(t *testing.T) {
 	cwd := t.TempDir()
 	bashTool := NewBash(cwd, BashOptions{})
 	command := `mkdir -p nested; printf 'TODO\n' > nested/note.txt; grep -R TODO .; find . -name '*.txt'; ls nested`
+
 	result := executeJSON(t, bashTool, map[string]any{"command": command})
 	if result.IsError {
 		t.Fatalf("discovery command result = %+v", result)
@@ -113,6 +115,7 @@ func TestBashOutputKeepsBoundedTail(t *testing.T) {
 	cwd := t.TempDir()
 	bashTool := NewBash(cwd, BashOptions{})
 	command := `printf 'START-MARKER\n'; i=0; while [ "$i" -lt 7000 ]; do printf 'line-%04d-xxxxxxxx\n' "$i"; i=$((i+1)); done; printf 'END-MARKER\n'`
+
 	result := executeJSON(t, bashTool, map[string]any{"command": command})
 	if result.IsError {
 		t.Fatalf("bash result = %+v", result)
@@ -170,6 +173,7 @@ func TestBashValidationAndStartFailuresAreRecoverableAndBounded(t *testing.T) {
 
 func waitForPath(t *testing.T, path string) {
 	t.Helper()
+
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		_, err := os.Stat(path)

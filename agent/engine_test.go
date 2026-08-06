@@ -31,6 +31,7 @@ func (p *scriptedProvider) Generate(ctx context.Context, request Request, onText
 			return Response{}, err
 		}
 	}
+
 	step := p.steps[p.calls]
 	p.calls++
 	return step(ctx, request, onText)
@@ -49,6 +50,7 @@ func (t *fakeToolbox) Execute(ctx context.Context, call ToolCall) (ToolResult, e
 	if t.execute == nil {
 		return ToolResult{}, fmt.Errorf("unknown tool %q", call.Name)
 	}
+
 	return t.execute(ctx, call)
 }
 
@@ -127,6 +129,7 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
+
 	if result.Text != "done" {
 		t.Fatalf("result text = %q, want %q", result.Text, "done")
 	}
@@ -148,6 +151,7 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Run() error = %v", err)
 	}
+
 	if next.Text != "next answer" {
 		t.Fatalf("second result text = %q", next.Text)
 	}
@@ -397,6 +401,7 @@ func toolNames(definitions []ToolDefinition) []string {
 	for i, definition := range definitions {
 		names[i] = definition.Name
 	}
+
 	return names
 }
 
@@ -405,5 +410,6 @@ func eventKinds(events []Event) []EventKind {
 	for i, event := range events {
 		kinds[i] = event.Kind
 	}
+
 	return kinds
 }

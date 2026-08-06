@@ -63,6 +63,7 @@ func buildCreateRequest(request agent.Request, maxStateBytes int) (createRespons
 	if err != nil {
 		return createResponseRequest{}, nil, err
 	}
+
 	newItems := encodeInputs(request.Inputs)
 	input := make([]json.RawMessage, 0, len(history)+len(newItems))
 	input = append(input, history...)
@@ -114,6 +115,7 @@ func decodeState(encoded []byte, maxStateBytes int) ([]json.RawMessage, error) {
 	if len(encoded) > maxStateBytes {
 		return nil, fmt.Errorf("continuation state exceeds %d bytes", maxStateBytes)
 	}
+
 	var state continuationState
 	if err := json.Unmarshal(encoded, &state); err != nil {
 		return nil, fmt.Errorf("decode continuation state: %w", err)
@@ -121,6 +123,7 @@ func decodeState(encoded []byte, maxStateBytes int) ([]json.RawMessage, error) {
 	if state.Version != continuationStateVersion {
 		return nil, fmt.Errorf("unsupported continuation state version %d", state.Version)
 	}
+
 	return state.Items, nil
 }
 
@@ -129,6 +132,7 @@ func encodeState(history, newInputs, output []json.RawMessage, maxStateBytes int
 	items = append(items, history...)
 	items = append(items, newInputs...)
 	items = append(items, output...)
+
 	encoded, err := json.Marshal(continuationState{Version: continuationStateVersion, Items: items})
 	if err != nil {
 		return nil, fmt.Errorf("encode continuation state: %w", err)
@@ -136,6 +140,7 @@ func encodeState(history, newInputs, output []json.RawMessage, maxStateBytes int
 	if len(encoded) > maxStateBytes {
 		return nil, fmt.Errorf("continuation state exceeds %d bytes", maxStateBytes)
 	}
+
 	return encoded, nil
 }
 
@@ -144,5 +149,6 @@ func validateRawObject(value json.RawMessage) error {
 	if len(trimmed) == 0 || trimmed[0] != '{' || !json.Valid(trimmed) {
 		return errors.New("must be a JSON object")
 	}
+
 	return nil
 }

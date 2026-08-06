@@ -13,6 +13,7 @@ func TestBuildCreateRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	request, newItems, err := buildCreateRequest(agent.Request{
 		Model:  "model",
 		State:  state,
@@ -22,6 +23,7 @@ func TestBuildCreateRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if request.Model != "model" || len(request.Input) != 2 || len(newItems) != 1 || len(request.Tools) != 1 || request.Tools[0].Strict == nil || !*request.Tools[0].Strict {
 		t.Fatalf("request=%+v newItems=%s", request, newItems)
 	}
@@ -47,6 +49,7 @@ func TestContinuationStateVersionAndBounds(t *testing.T) {
 			}
 		})
 	}
+
 	if _, err := encodeState(nil, nil, []json.RawMessage{json.RawMessage(`{"large":"` + strings.Repeat("x", 100) + `"}`)}, 50); err == nil || !strings.Contains(err.Error(), "exceeds 50 bytes") {
 		t.Fatalf("oversized encoded state error = %v", err)
 	}

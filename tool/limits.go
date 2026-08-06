@@ -70,6 +70,7 @@ func splitLines(text string) []string {
 	if text == "" {
 		return nil
 	}
+
 	lines := strings.SplitAfter(text, "\n")
 	if lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
@@ -84,6 +85,7 @@ func prefixBytes(text string, maxBytes int) string {
 	if len(text) <= maxBytes {
 		return text
 	}
+
 	end := maxBytes
 	for end > 0 && end < len(text) && !utf8.RuneStart(text[end]) {
 		end--
@@ -98,6 +100,7 @@ func suffixBytes(text string, maxBytes int) string {
 	if len(text) <= maxBytes {
 		return text
 	}
+
 	start := len(text) - maxBytes
 	for start < len(text) && !utf8.RuneStart(text[start]) {
 		start++

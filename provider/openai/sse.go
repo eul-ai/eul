@@ -88,10 +88,12 @@ func handleSSEData(dataLines [][]byte, handle func([]byte) (createResponseEnvelo
 	if len(dataLines) == 0 {
 		return createResponseEnvelope{}, false, nil
 	}
+
 	data := bytes.Join(dataLines, []byte("\n"))
 	if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
 		return createResponseEnvelope{}, false, nil
 	}
+
 	return handle(data)
 }
 
@@ -131,11 +133,13 @@ func (decoder *responseStreamDecoder) deliverText(delta string) error {
 	if delta == "" || decoder.observer == nil {
 		return nil
 	}
+
 	if decoder.observer.onText != nil {
 		if err := decoder.observer.onText(delta); err != nil {
 			return fmt.Errorf("deliver text: %w", err)
 		}
 	}
+
 	decoder.observer.sawDelta = true
 	return nil
 }
@@ -144,11 +148,13 @@ func (decoder *responseStreamDecoder) deliverReasoning(delta string) error {
 	if delta == "" || decoder.observer == nil {
 		return nil
 	}
+
 	if decoder.observer.onReasoning != nil {
 		if err := decoder.observer.onReasoning(delta); err != nil {
 			return fmt.Errorf("deliver reasoning: %w", err)
 		}
 	}
+
 	decoder.observer.sawReasoning = true
 	return nil
 }
@@ -157,6 +163,7 @@ func (decoder *responseStreamDecoder) terminal(event responseStreamEvent) (creat
 	if len(event.Response) == 0 || bytes.Equal(bytes.TrimSpace(event.Response), []byte("null")) {
 		return createResponseEnvelope{}, errors.New("Responses terminal SSE event is missing response")
 	}
+
 	response, err := decodeCreateResponse(event.Response)
 	if err != nil {
 		return createResponseEnvelope{}, fmt.Errorf("decode Responses terminal response: %w", err)
@@ -171,6 +178,7 @@ func (decoder *responseStreamDecoder) terminal(event responseStreamEvent) (creat
 			response.Status = "failed"
 		}
 	}
+
 	if len(response.Output) == 0 && len(decoder.output) != 0 {
 		response.Output = decoder.output
 	} else if response.Output == nil {
@@ -184,11 +192,14 @@ func streamError(event responseStreamEvent) error {
 	if event.Error != nil {
 		detail = formatResponseError(*event.Error)
 	}
+
 	if detail == "" {
 		detail = formatResponseError(responseError{Code: event.Code, Message: event.Message})
 	}
+
 	if detail == "" {
 		detail = "unspecified error"
 	}
+
 	return errors.New("Responses SSE error: " + detail)
 }

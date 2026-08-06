@@ -86,6 +86,7 @@ func newClient(apiKey string, source CodexTokenSource, codex bool, options Optio
 	if err := validateReasoningEffort(options.ReasoningEffort); err != nil {
 		return nil, err
 	}
+
 	baseURL := options.BaseURL
 	if baseURL == "" {
 		baseURL = defaultBaseURL
@@ -93,6 +94,7 @@ func newClient(apiKey string, source CodexTokenSource, codex bool, options Optio
 			baseURL = defaultCodexBaseURL
 		}
 	}
+
 	responsePath := "/v1/responses"
 	if codex {
 		responsePath = "/codex/responses"
@@ -107,6 +109,7 @@ func newClient(apiKey string, source CodexTokenSource, codex bool, options Optio
 	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
+
 	return &Client{
 		httpClient:       httpClient,
 		endpoint:         strings.TrimRight(baseURL, "/") + responsePath,
@@ -127,6 +130,7 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 	if err := ctx.Err(); err != nil {
 		return agent.Response{}, err
 	}
+
 	secret, accountID, err := c.resolveAuth(ctx)
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
@@ -134,10 +138,12 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 		}
 		return agent.Response{}, c.wrapf(err, "resolve authentication: %v", err)
 	}
+
 	wireRequest, newInputs, err := buildCreateRequest(request, c.maxStateBytes)
 	if err != nil {
 		return agent.Response{}, c.errorf("build request: %v", err)
 	}
+
 	if c.reasoningEffort != "" {
 		wireRequest.Reasoning = &responseReasoning{Effort: c.reasoningEffort, Summary: "auto"}
 	}
@@ -150,6 +156,7 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 			wireRequest.Tools[index].Strict = nil
 		}
 	}
+
 	requestBody, err := json.Marshal(wireRequest)
 	if err != nil {
 		return agent.Response{}, c.errorf("encode request: %v", err)
@@ -157,6 +164,7 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 	if int64(len(requestBody)) > c.maxRequestBytes {
 		return agent.Response{}, c.errorf("request exceeds %d bytes", c.maxRequestBytes)
 	}
+
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(requestBody))
 	if err != nil {
 		return agent.Response{}, c.errorf("create request: %v", err)
@@ -184,11 +192,13 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 		}
 		return agent.Response{}, c.errorf("request failed: %v", err)
 	}
+
 	defer httpResponse.Body.Close()
 
 	if httpResponse.StatusCode < 200 || httpResponse.StatusCode >= 300 {
 		return agent.Response{}, c.decodeHTTPError(httpResponse)
 	}
+
 	observer := streamObserver{onText: onText, onReasoning: onReasoning}
 	wireResponse, err := readResponsesSSE(httpResponse.Body, c.maxResponseBytes, &observer)
 	if err != nil {
@@ -203,6 +213,7 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 		}
 		return agent.Response{}, c.wrapf(err, "%v", err)
 	}
+
 	text, calls, usage, err := normalizeResponse(wireResponse)
 	if err != nil {
 		return agent.Response{}, c.errorf("%v", err)
@@ -214,11 +225,13 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 	if err != nil {
 		return agent.Response{}, c.errorf("%v", err)
 	}
+
 	if text != "" && onText != nil && !observer.sawDelta {
 		if err := onText(text); err != nil {
 			return agent.Response{}, c.wrapf(err, "deliver text: %v", err)
 		}
 	}
+
 	return agent.Response{
 		Text:      text,
 		ToolCalls: calls,
@@ -231,6 +244,7 @@ func (c *Client) resolveAuth(ctx context.Context) (string, string, error) {
 	if !c.codex {
 		return c.apiKey, "", nil
 	}
+
 	credential, err := c.codexSource.Token(ctx)
 	return credential.AccessToken, credential.AccountID, err
 }
@@ -246,6 +260,7 @@ func (c *Client) decodeHTTPError(response *http.Response) error {
 		}
 		return c.errorf("HTTP %s; read error response: %v", response.Status, err)
 	}
+
 	detail := strings.TrimSpace(string(body))
 	if !truncated {
 		var envelope struct {
@@ -263,6 +278,7 @@ func (c *Client) decodeHTTPError(response *http.Response) error {
 	if truncated {
 		detail += " [truncated]"
 	}
+
 	return c.errorf("HTTP %s: %s", response.Status, detail)
 }
 
@@ -302,6 +318,7 @@ func readBounded(reader io.Reader, maximum int64) ([]byte, bool, error) {
 	if int64(len(data)) <= maximum {
 		return data, false, nil
 	}
+
 	return data[:maximum], true, nil
 }
 
@@ -312,6 +329,7 @@ func truncateUTF8(text string, maximum int) string {
 	if len(text) <= maximum {
 		return text
 	}
+
 	end := maximum
 	for end > 0 && end < len(text) && !utf8.RuneStart(text[end]) {
 		end--

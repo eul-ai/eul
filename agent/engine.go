@@ -106,6 +106,7 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		if toolRounds >= e.maxToolRounds {
 			return RunResult{}, errToolRoundLimit
 		}
+
 		toolRounds++
 
 		inputs = make([]Input, 0, len(response.ToolCalls))
@@ -125,6 +126,7 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			if err != nil {
 				return RunResult{}, err
 			}
+
 			if err := emit(sink, Event{Kind: EventToolEnd, Call: call, Result: toolResult}); err != nil {
 				return RunResult{}, err
 			}

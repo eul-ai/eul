@@ -51,6 +51,7 @@ func Run(ctx context.Context, engine Engine, options Options) error {
 
 	inputContext, cancelInput := context.WithCancel(ctx)
 	defer cancelInput()
+
 	inputEvents, inputRequests := readInput(inputContext, options.Input, maxInputBytes)
 	for {
 		if err := writeOutput(options.ErrorOutput, "> "); err != nil {
@@ -133,9 +134,11 @@ func Run(ctx context.Context, engine Engine, options Options) error {
 				resetIfNeeded(engine)
 				return contextErr
 			}
+
 			if errors.Is(runErr, errOutput) {
 				return runErr
 			}
+
 			if interrupted {
 				cleared := resetIfNeeded(engine)
 				message := "[interrupted]"
@@ -147,6 +150,7 @@ func Run(ctx context.Context, engine Engine, options Options) error {
 				}
 				continue
 			}
+
 			if runErr != nil {
 				if err := writeOutput(options.ErrorOutput, "error: %s\n", diagnostic(runErr.Error(), 500)); err != nil {
 					return err
@@ -168,6 +172,7 @@ func RunOneShot(ctx context.Context, engine Engine, prompt string, options Optio
 		resetIfNeeded(engine)
 		return contextErr
 	}
+
 	if interrupted {
 		resetIfNeeded(engine)
 		return ErrInterrupted
@@ -178,6 +183,7 @@ func RunOneShot(ctx context.Context, engine Engine, prompt string, options Optio
 func runTurn(parent context.Context, engine Engine, prompt string, options Options) (error, bool) {
 	turnContext, cancel := context.WithCancel(parent)
 	defer cancel()
+
 	renderer := eventRenderer{output: options.Output, errorOutput: options.ErrorOutput}
 	done := make(chan error, 1)
 	go func() {
@@ -198,6 +204,7 @@ func runTurn(parent context.Context, engine Engine, prompt string, options Optio
 		}
 		return runErr, interrupted
 	}
+
 	for {
 		select {
 		case runErr := <-done:
@@ -212,6 +219,7 @@ func runTurn(parent context.Context, engine Engine, prompt string, options Optio
 				return finish(runErr)
 			default:
 			}
+
 			if interrupted {
 				continue
 			}
@@ -229,6 +237,7 @@ func resetIfNeeded(engine Engine) bool {
 	if !engine.NeedsReset() {
 		return false
 	}
+
 	engine.Reset()
 	return true
 }
@@ -290,6 +299,7 @@ func (r *eventRenderer) finishAssistant() error {
 	if !r.assistantOpen {
 		return nil
 	}
+
 	r.assistantOpen = false
 	return writeOutput(r.output, "\n")
 }
@@ -298,6 +308,7 @@ func (r *eventRenderer) finishReasoning() error {
 	if !r.reasoningOpen {
 		return nil
 	}
+
 	r.reasoningOpen = false
 	return writeOutput(r.errorOutput, "\n")
 }
@@ -313,10 +324,12 @@ func summarizeCall(call agent.ToolCall) string {
 	if argumentName == "" {
 		return diagnostic(call.Name, 160)
 	}
+
 	var arguments map[string]json.RawMessage
 	if json.Unmarshal(call.Arguments, &arguments) != nil {
 		return diagnostic(call.Name, 160)
 	}
+
 	var value string
 	if json.Unmarshal(arguments[argumentName], &value) != nil || value == "" {
 		return diagnostic(call.Name, 160)
@@ -330,6 +343,7 @@ func summarizeResult(result agent.ToolResult) string {
 			return diagnostic("bash — "+status, 200)
 		}
 	}
+
 	if !result.IsError {
 		return diagnostic(result.Tool+" — ok", 200)
 	}
@@ -345,6 +359,7 @@ func bashStatus(output string) string {
 	if index < 0 {
 		return ""
 	}
+
 	status := output[index+1:]
 	if end := strings.IndexByte(status, ']'); end >= 0 {
 		status = status[:end]
@@ -383,6 +398,7 @@ func singleLine(value string, maximum int) string {
 		return character
 	}, value)
 	value = strings.Join(strings.Fields(value), " ")
+
 	if len(value) <= maximum {
 		return value
 	}
@@ -409,6 +425,7 @@ func readInput(ctx context.Context, input io.Reader, maximum int) (<-chan inputE
 	events := make(chan inputEvent)
 	requests := make(chan struct{}, 1)
 	reader := bufio.NewReader(input)
+
 	go func() {
 		defer close(events)
 		for {
@@ -417,12 +434,14 @@ func readInput(ctx context.Context, input io.Reader, maximum int) (<-chan inputE
 			case <-ctx.Done():
 				return
 			}
+
 			line, err := readLine(reader, maximum)
 			select {
 			case events <- inputEvent{line: line, err: err}:
 			case <-ctx.Done():
 				return
 			}
+
 			if errors.Is(err, io.EOF) || err != nil && !errors.Is(err, errInputTooLong) && !errors.Is(err, errInvalidInput) {
 				return
 			}
@@ -451,6 +470,7 @@ func readLine(reader *bufio.Reader, maximum int) (string, error) {
 		if errors.Is(err, io.EOF) && line.Len() == 0 {
 			return "", io.EOF
 		}
+
 		value := strings.TrimSuffix(line.String(), "\n")
 		value = strings.TrimSuffix(value, "\r")
 		if !utf8.ValidString(value) || strings.IndexByte(value, 0) >= 0 {
@@ -468,6 +488,7 @@ func writeLineFragment(line *strings.Builder, fragment []byte, maximum int) bool
 			contentBytes--
 		}
 	}
+
 	if line.Len()+contentBytes > maximum {
 		return false
 	}

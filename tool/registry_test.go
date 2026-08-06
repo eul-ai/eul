@@ -22,6 +22,7 @@ func (t fakeTool) Execute(ctx context.Context, arguments json.RawMessage) (agent
 	if t.execute == nil {
 		return agent.ToolResult{}, nil
 	}
+
 	return t.execute(ctx, arguments)
 }
 
@@ -30,6 +31,7 @@ func TestRegistryDefinitionsAreSorted(t *testing.T) {
 		fakeTool{definition: agent.ToolDefinition{Name: "write"}},
 		fakeTool{definition: agent.ToolDefinition{Name: "read"}},
 	)
+
 	definitions := registry.Definitions()
 	if got := []string{definitions[0].Name, definitions[1].Name}; !slices.Equal(got, []string{"read", "write"}) {
 		t.Fatalf("definition order = %v", got)
@@ -46,10 +48,12 @@ func TestRegistryDispatchesAndCorrelatesResult(t *testing.T) {
 			return agent.ToolResult{CallID: "wrong", Tool: "wrong", Output: "contents"}, nil
 		},
 	})
+
 	result, err := registry.Execute(context.Background(), agent.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"README.md"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if result.CallID != "call-1" || result.Tool != "read" || result.Output != "contents" {
 		t.Fatalf("result = %+v", result)
 	}
@@ -63,6 +67,7 @@ func TestRegistryCorrelatesErrorsAndRejectsUnknownTools(t *testing.T) {
 			return agent.ToolResult{}, toolErr
 		},
 	})
+
 	result, err := registry.Execute(context.Background(), agent.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{}`)})
 	if !errors.Is(err, toolErr) || result.CallID != "call-1" || result.Tool != "read" {
 		t.Fatalf("result=%+v error=%v", result, err)
@@ -77,6 +82,7 @@ func TestDecodeArguments(t *testing.T) {
 		Path  string `json:"path"`
 		Limit *int   `json:"limit"`
 	}
+
 	limit := 10
 	for _, test := range []struct {
 		name    string
@@ -94,6 +100,7 @@ func TestDecodeArguments(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := decodeArguments[arguments](json.RawMessage(test.input))
+
 			if test.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 					t.Fatalf("error = %v, want %q", err, test.wantErr)

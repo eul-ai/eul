@@ -49,6 +49,7 @@ func (e *Edit) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
+
 	args, err := decodeArguments[editArguments](arguments)
 	if err != nil {
 		return errorResult(editToolName, err), nil
@@ -59,6 +60,7 @@ func (e *Edit) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	if args.NewText == nil {
 		return errorResult(editToolName, fmt.Errorf("newText is required and must be a string")), nil
 	}
+
 	requestedPath, err := e.workspace.resolve(args.Path)
 	if err != nil {
 		return errorResult(editToolName, err), nil
@@ -74,6 +76,7 @@ func (e *Edit) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	if !info.Mode().IsRegular() {
 		return errorResult(editToolName, fmt.Errorf("%s is not a regular file", e.workspace.display(requestedPath))), nil
 	}
+
 	original, err := os.ReadFile(targetPath)
 	if err != nil {
 		return errorResult(editToolName, err), nil
@@ -102,6 +105,7 @@ func (e *Edit) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	if err != nil {
 		return errorResult(editToolName, err), nil
 	}
+
 	temporaryPath := temporary.Name()
 	committed := false
 	defer func() {
@@ -121,12 +125,14 @@ func (e *Edit) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	if err := temporary.Close(); err != nil {
 		return errorResult(editToolName, err), nil
 	}
+
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
 	if err := os.Rename(temporaryPath, targetPath); err != nil {
 		return errorResult(editToolName, err), nil
 	}
+
 	committed = true
 	return successResult(fmt.Sprintf("edited %s", escapeOutputName(e.workspace.display(requestedPath)))), nil
 }

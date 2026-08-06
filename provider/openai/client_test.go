@@ -209,6 +209,7 @@ func TestPlatformClientStreamsTextDeltas(t *testing.T) {
 			close(releaseTerminal)
 		}
 	}()
+
 	client := newTestClient(t, "key", server.URL, Options{})
 	var deltas []string
 	seenDelta := make(chan string, 2)
@@ -252,6 +253,7 @@ func TestPlatformClientStreamsRefusal(t *testing.T) {
 		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
 	}))
 	defer server.Close()
+
 	client := newTestClient(t, "key", server.URL, Options{})
 	var delivered string
 	response, err := client.Generate(context.Background(), baseRequest(), func(delta string) error { delivered += delta; return nil }, nil)
@@ -503,6 +505,7 @@ func newTestClient(t *testing.T, key, baseURL string, overrides Options) *Client
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return client
 }
 
@@ -512,6 +515,7 @@ func strictTestTool(name string) agent.ToolDefinition {
 	if name == "bash" {
 		property = "command"
 	}
+
 	return agent.ToolDefinition{
 		Name:        name,
 		Description: "Read a file",
@@ -547,6 +551,7 @@ func responseServer(t *testing.T, status int, body string) *httptest.Server {
 			_, _ = fmt.Fprintf(writer, "data: {\"type\":\"response.completed\",\"response\":%s}\n\n", payload)
 			return
 		}
+
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(status)
 		if _, err := io.WriteString(writer, body); err != nil {
@@ -562,6 +567,7 @@ func writeJSON(t *testing.T, writer http.ResponseWriter, value any) {
 		t.Errorf("encode response: %v", err)
 		return
 	}
+
 	writer.Header().Set("Content-Type", "text/event-stream")
 	_, _ = fmt.Fprintf(writer, "data: {\"type\":\"response.completed\",\"response\":%s}\n\n", bytes.TrimSpace(payload.Bytes()))
 }
@@ -572,11 +578,13 @@ func assertInputItem(t *testing.T, items []json.RawMessage, index int, fields ma
 		t.Errorf("input item %d missing from %d items", index, len(items))
 		return
 	}
+
 	var item map[string]any
 	if err := json.Unmarshal(items[index], &item); err != nil {
 		t.Errorf("decode input item %d: %v", index, err)
 		return
 	}
+
 	for name, want := range fields {
 		if got, _ := item[name].(string); got != want {
 			t.Errorf("input item %d field %q = %q, want %q; item=%s", index, name, got, want, items[index])

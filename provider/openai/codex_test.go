@@ -78,6 +78,7 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var delivered, reasoning string
 	response, err := client.Generate(context.Background(), agent.Request{Model: "gpt-test", Inputs: []agent.Input{{Kind: agent.InputUser, Text: "hello"}}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, func(text string) error {
 		delivered += text
@@ -104,6 +105,7 @@ func TestCodexSSEStopsAtTerminalEventWithoutWaitingForEOF(t *testing.T) {
 		<-release
 	}))
 	defer server.Close()
+
 	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
 		return CodexCredential{AccessToken: "token", AccountID: "account"}, nil
 	}), Options{BaseURL: server.URL})
@@ -160,12 +162,14 @@ func TestCodexSSEToolCallAndReasoningReplay(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+
 	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
 		return CodexCredential{AccessToken: "token", AccountID: "account"}, nil
 	}), Options{BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	first, err := client.Generate(context.Background(), agent.Request{Model: "model", Inputs: []agent.Input{{Kind: agent.InputUser, Text: "inspect"}}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -201,6 +205,7 @@ func TestCodexSourceIsResolvedPerRequest(t *testing.T) {
 		body := "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
 		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
+
 	sourceCalls := 0
 	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
 		sourceCalls++
@@ -237,6 +242,7 @@ func TestResponsesSSEValidation(t *testing.T) {
 		{name: "top-level error", body: "data: {\"type\":\"error\",\"code\":\"rate_limit\",\"message\":\"slow down\"}\n\n", want: "rate_limit: slow down"},
 		{name: "done status default", body: "data: {\"type\":\"response.done\",\"response\":{\"output\":[]}}\n\n", want: ""},
 	}
+
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			response, err := readResponsesSSE(strings.NewReader(test.body), 64*1024, nil)

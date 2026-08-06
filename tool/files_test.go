@@ -153,6 +153,7 @@ func TestReadChecksCancellationWhileScanning(t *testing.T) {
 	mustWriteFile(t, filepath.Join(cwd, "large.txt"), strings.Repeat("x", defaultMaxBytes*4), 0o644)
 	readTool := NewRead(cwd)
 	ctx := &cancelAfterChecksContext{cancelAfter: 100}
+
 	result, err := readTool.Execute(ctx, json.RawMessage(`{"path":"large.txt","offset":2}`))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("read cancellation error = %v", err)
@@ -194,6 +195,7 @@ func TestWriteCancellationAfterNonTransactionalWriteIsFatal(t *testing.T) {
 	cwd := t.TempDir()
 	writeTool := NewWrite(cwd)
 	ctx := &cancelAfterChecksContext{cancelAfter: 3}
+
 	result, err := writeTool.Execute(ctx, json.RawMessage(`{"path":"file.txt","content":"written"}`))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("write cancellation error = %v", err)
@@ -382,6 +384,7 @@ func TestCoreToolsRegisterInDeterministicOrder(t *testing.T) {
 	writeTool := NewWrite(cwd)
 	editTool := NewEdit(cwd)
 	bashTool := NewBash(cwd, BashOptions{})
+
 	registry := NewRegistry(readTool, writeTool, editTool, bashTool)
 	definitions := registry.Definitions()
 	names := make([]string, len(definitions))
@@ -399,6 +402,7 @@ func executeJSON(t *testing.T, current Tool, arguments any) agent.ToolResult {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	result, err := current.Execute(context.Background(), encoded)
 	if err != nil {
 		t.Fatalf("%s.Execute() error = %v", current.Definition().Name, err)
@@ -435,5 +439,6 @@ func mustReadFile(t *testing.T, path string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return string(content)
 }

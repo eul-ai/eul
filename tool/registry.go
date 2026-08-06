@@ -35,14 +35,17 @@ func NewRegistry(tools ...Tool) *Registry {
 		definitions: make([]agent.ToolDefinition, 0, len(tools)),
 		tools:       make(map[string]Tool, len(tools)),
 	}
+
 	for _, registered := range tools {
 		definition := registered.Definition()
 		registry.tools[definition.Name] = registered
 		registry.definitions = append(registry.definitions, definition)
 	}
+
 	slices.SortFunc(registry.definitions, func(a, b agent.ToolDefinition) int {
 		return strings.Compare(a.Name, b.Name)
 	})
+
 	return registry
 }
 
@@ -69,9 +72,11 @@ func decodeArguments[T any](arguments json.RawMessage) (T, error) {
 	var value T
 	decoder := json.NewDecoder(bytes.NewReader(arguments))
 	decoder.DisallowUnknownFields()
+
 	if err := decoder.Decode(&value); err != nil {
 		return value, fmt.Errorf("tool: decode arguments: %w", err)
 	}
+
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		if err == nil {
@@ -79,5 +84,6 @@ func decodeArguments[T any](arguments json.RawMessage) (T, error) {
 		}
 		return value, fmt.Errorf("tool: decode trailing arguments: %w", err)
 	}
+
 	return value, nil
 }

@@ -40,6 +40,7 @@ func (manager *fakeOAuthManager) Login(_ context.Context, method oauth.LoginMeth
 		manager.interactionCall = true
 		_ = interaction.AuthURL("https://example.test/authorize")
 	}
+
 	return manager.credential, manager.loginErr
 }
 
@@ -127,6 +128,7 @@ func TestRunUsesStoredOAuthAndResolvesTokenAtRequestTime(t *testing.T) {
 			return agent.Response{Text: "oauth answer"}, nil
 		}), nil
 	}
+
 	if code := run([]string{"hello"}, runtime); code != exitSuccess {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
@@ -149,6 +151,7 @@ func TestRunAPIKeyTakesPrecedenceOverStoredOAuth(t *testing.T) {
 			return agent.Response{}, nil
 		}), nil
 	}
+
 	if code := run([]string{"prompt"}, runtime); code != exitSuccess || manager.resolveCalls != 0 {
 		t.Fatalf("code=%d resolveCalls=%d stderr=%q", code, manager.resolveCalls, stderr.String())
 	}
@@ -163,6 +166,7 @@ func TestRunAPIKeyDoesNotInitializeOAuthConfiguration(t *testing.T) {
 		called = true
 		return nil, errors.New("must not initialize OAuth")
 	}
+
 	if code := run([]string{"prompt"}, runtime); code != exitSuccess || called {
 		t.Fatalf("code=%d oauthCalled=%v stderr=%q", code, called, stderr.String())
 	}
@@ -184,6 +188,7 @@ func TestRunLoginAndLogoutCommands(t *testing.T) {
 			manager := &fakeOAuthManager{credential: oauth.Credentials{AccessToken: "access-secret", RefreshToken: "refresh-secret"}}
 			runtime := testRuntime(cwd, &stdout, &stderr, nil)
 			runtime.newOAuth = fixedOAuth(manager)
+
 			if code := run(test.arguments, runtime); code != exitSuccess || manager.loginMethod != test.wantMethod || !manager.interactionCall || !strings.Contains(stderr.String(), test.wantText) || stdout.String() != "Logged in with ChatGPT.\n" {
 				t.Fatalf("code=%d method=%q stdout=%q stderr=%q", code, manager.loginMethod, stdout.String(), stderr.String())
 			}
@@ -216,12 +221,14 @@ func TestRunInteractiveUsesEnvironmentModelAndResolvedCWD(t *testing.T) {
 	if err := os.Mkdir(nested, 0o755); err != nil {
 		t.Fatal(err)
 	}
+
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{
 		"OPENAI_API_KEY": "key",
 		"OPENAI_MODEL":   "environment-model",
 	})
 	runtime.stdin = strings.NewReader("/exit\n")
+
 	code := run([]string{"--cwd", "nested"}, runtime)
 	if code != exitSuccess {
 		t.Fatalf("run() code = %d, stderr = %q", code, stderr.String())
@@ -301,6 +308,7 @@ func TestRunConfigurationAndUsageErrors(t *testing.T) {
 		{name: "empty prompt", arguments: []string{""}, environment: map[string]string{"OPENAI_API_KEY": "key", "OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "prompt must be nonempty"},
 		{name: "bad flag", arguments: []string{"--missing"}, wantCode: exitUsage, want: "flag provided but not defined"},
 	}
+
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -320,6 +328,7 @@ func TestRunRejectsInvalidWorkingDirectories(t *testing.T) {
 	if err := os.WriteFile(file, []byte("content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	for _, path := range []string{"missing", "file"} {
 		var stdout, stderr bytes.Buffer
 		runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_API_KEY": "key", "OPENAI_MODEL": "model"})
@@ -344,6 +353,7 @@ func TestRunOneShotInterruptReturns130(t *testing.T) {
 			return agent.Response{}, ctx.Err()
 		}), nil
 	}
+
 	done := make(chan int, 1)
 	go func() { done <- run([]string{"wait"}, runtime) }()
 	select {
@@ -365,6 +375,7 @@ func TestRunOneShotInterruptReturns130(t *testing.T) {
 func TestEnvironmentWithout(t *testing.T) {
 	input := []string{"OPENAI_API_KEY=one", "KEEP=value", "OPENAI_API_KEY=two", "OTHER=x"}
 	got := environmentWithout(input, "OPENAI_API_KEY")
+
 	if !slices.Equal(got, []string{"KEEP=value", "OTHER=x"}) {
 		t.Fatalf("environmentWithout() = %v", got)
 	}
@@ -380,6 +391,7 @@ func fixedOAuth(manager oauthManager) func() (oauthManager, error) {
 
 func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[string]string) appRuntime {
 	values := maps.Clone(environment)
+
 	return appRuntime{
 		stdin:  strings.NewReader("/exit\n"),
 		stdout: stdout,

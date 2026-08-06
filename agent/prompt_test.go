@@ -23,6 +23,7 @@ func TestBuildSystemPrompt(t *testing.T) {
 
 func TestBuildSystemPromptWithNoTools(t *testing.T) {
 	prompt := buildSystemPrompt(nil)
+
 	if !strings.Contains(prompt, "Available tools:\n(none)") {
 		t.Fatalf("prompt does not identify an empty toolset:\n%s", prompt)
 	}

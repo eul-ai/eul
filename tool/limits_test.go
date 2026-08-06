@@ -7,6 +7,7 @@ import (
 
 func TestTruncateHeadByLines(t *testing.T) {
 	got := truncateHead("one\ntwo\nthree\n", 2, 1_000)
+
 	if got.text != "one\ntwo\n" || !got.truncated {
 		t.Fatalf("truncateHead() = %+v", got)
 	}
@@ -14,6 +15,7 @@ func TestTruncateHeadByLines(t *testing.T) {
 
 func TestTruncateTailByLines(t *testing.T) {
 	got := truncateTail("one\ntwo\nthree\n", 2, 1_000)
+
 	if got.text != "two\nthree\n" || !got.truncated {
 		t.Fatalf("truncateTail() = %+v", got)
 	}
@@ -21,6 +23,7 @@ func TestTruncateTailByLines(t *testing.T) {
 
 func TestTruncateHeadByBytesPreservesUTF8(t *testing.T) {
 	got := truncateHead("éabc", 10, 3)
+
 	if got.text != "éa" || !got.truncated {
 		t.Fatalf("truncateHead() = %+v", got)
 	}
@@ -28,6 +31,7 @@ func TestTruncateHeadByBytesPreservesUTF8(t *testing.T) {
 
 func TestTruncateTailByBytesPreservesUTF8(t *testing.T) {
 	got := truncateTail("abcé", 10, 3)
+
 	if got.text != "cé" || !got.truncated {
 		t.Fatalf("truncateTail() = %+v", got)
 	}
@@ -35,9 +39,11 @@ func TestTruncateTailByBytesPreservesUTF8(t *testing.T) {
 
 func TestTruncateLine(t *testing.T) {
 	got, truncated := truncateLine("éabc", 4)
+
 	if got != "éab" || !truncated {
 		t.Fatalf("truncateLine() = %q, %v", got, truncated)
 	}
+
 	got, truncated = truncateLine("short", 10)
 	if got != "short" || truncated {
 		t.Fatalf("truncateLine() unbounded = %q, %v", got, truncated)
@@ -46,9 +52,11 @@ func TestTruncateLine(t *testing.T) {
 
 func TestTextLimitsAreIndependent(t *testing.T) {
 	byLines := truncateHead("a\nb\nc\n", 2, 1_000)
+
 	if byLines.text != "a\nb\n" {
 		t.Fatalf("line limit result = %q", byLines.text)
 	}
+
 	byBytes := truncateHead("a\nb\nc\n", 100, 3)
 	if byBytes.text != "a\nb" {
 		t.Fatalf("byte limit result = %q", byBytes.text)
@@ -86,6 +94,7 @@ func TestTextLimitEdgeCases(t *testing.T) {
 
 func TestZeroLimits(t *testing.T) {
 	got := truncateHead("content", 0, 100)
+
 	if got.text != "" || !got.truncated {
 		t.Fatalf("zero line limit = %+v", got)
 	}
@@ -95,9 +104,11 @@ func countLines(text string) int {
 	if text == "" {
 		return 0
 	}
+
 	lines := strings.Count(text, "\n")
 	if !strings.HasSuffix(text, "\n") {
 		lines++
 	}
+
 	return lines
 }

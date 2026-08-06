@@ -89,6 +89,7 @@ func TestBrowserLoginPKCEStorageAndRefreshRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if credential.AccessToken != accessOne || credential.RefreshToken != "refresh-one" || credential.AccountID != accountID {
 		t.Fatalf("credential = %+v", credential)
 	}
@@ -131,6 +132,7 @@ func TestBrowserCallbackRejectsWrongStateThenAcceptsValidState(t *testing.T) {
 		writeTestJSON(t, writer, map[string]any{"access_token": access, "refresh_token": "refresh", "expires_in": 3600})
 	}))
 	defer server.Close()
+
 	manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{AuthBaseURL: server.URL, CallbackAddress: "127.0.0.1:0"})
 	_, err := manager.Login(context.Background(), LoginBrowser, Interaction{AuthURL: func(raw string) error {
 		parsed, _ := url.Parse(raw)
@@ -159,6 +161,7 @@ func TestBrowserCallbackReportsMissingCode(t *testing.T) {
 	result := make(chan callbackResult, 1)
 	request := httptest.NewRequest(http.MethodGet, browserCallbackPath+"?state=expected", nil)
 	writer := httptest.NewRecorder()
+
 	callbackHandler("expected", result).ServeHTTP(writer, request)
 	if writer.Code != http.StatusBadRequest {
 		t.Fatalf("callback status = %d", writer.Code)
@@ -199,6 +202,7 @@ func TestDeviceLoginAndLogout(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+
 	path := filepath.Join(t.TempDir(), "yaah", "auth.json")
 	manager := NewManager(path, Options{AuthBaseURL: server.URL, Sleep: func(context.Context, time.Duration) error { return nil }})
 	shown := DeviceCode{}
@@ -206,12 +210,15 @@ func TestDeviceLoginAndLogout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if shown.UserCode != "ABCD-EFGH" || shown.VerificationURL != server.URL+"/codex/device" || credential.AccountID != "device-account" || polls != 2 {
 		t.Fatalf("shown=%+v credential=%+v polls=%d", shown, credential, polls)
 	}
+
 	if err := manager.Logout(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("credential still exists: %v", err)
 	}
@@ -224,6 +231,7 @@ func TestRefreshPersistsRotatedCredentials(t *testing.T) {
 		writeTestJSON(t, writer, map[string]any{"access_token": newAccess, "refresh_token": "new-refresh", "expires_in": 3600})
 	}))
 	defer server.Close()
+
 	path := filepath.Join(t.TempDir(), "auth.json")
 	manager := NewManager(path, Options{AuthBaseURL: server.URL, Now: func() time.Time { return time.Unix(2000, 0) }})
 	old := Credentials{Version: 1, Type: "oauth", AccessToken: oldAccess, RefreshToken: "old-refresh", ExpiresAt: 1, AccountID: "old-account"}
@@ -343,6 +351,7 @@ func TestPreCanceledOperationsDoNotTouchCredentials(t *testing.T) {
 	if err := writeCredentials(path, credential); err != nil {
 		t.Fatal(err)
 	}
+
 	manager := NewManager(path, Options{})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -370,6 +379,7 @@ func TestDefaultCredentialPathAndInvalidStorage(t *testing.T) {
 	if _, err := DefaultCredentialPath("relative"); err == nil {
 		t.Fatal("relative YAAH_HOME accepted")
 	}
+
 	credentialPath := filepath.Join(t.TempDir(), "auth.json")
 	if err := os.Symlink("target", credentialPath); err != nil {
 		t.Fatal(err)
@@ -405,6 +415,7 @@ func testJWT(t *testing.T, accountID, marker string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return header + "." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
 }
 

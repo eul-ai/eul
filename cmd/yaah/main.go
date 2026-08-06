@@ -164,6 +164,7 @@ func run(arguments []string, runtime appRuntime) int {
 		CWD:         cwd,
 		Interrupts:  runtime.interrupts,
 	}
+
 	if oneShot {
 		return finishRun(terminal.RunOneShot(context.Background(), engine, prompt, terminalOptions), runtime.stderr)
 	}
@@ -194,6 +195,7 @@ func resolveProviderConfig(apiKey, reasoningEffort string, runtime appRuntime) (
 
 	ctx, cancel := contextWithInterrupt(runtime.interrupts)
 	defer cancel()
+
 	if _, err := manager.Resolve(ctx); err != nil {
 		return providerConfig{}, err
 	}
@@ -229,17 +231,21 @@ func runLogin(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "usage error: yaah login accepts no arguments")
 		return exitUsage
 	}
+
 	method := oauth.LoginBrowser
 	if *device {
 		method = oauth.LoginDevice
 	}
+
 	manager, err := runtime.newOAuth()
 	if err != nil {
 		writeCLIError(runtime.stderr, "login failed: %v", err)
 		return exitFailure
 	}
+
 	ctx, cancel := contextWithInterrupt(runtime.interrupts)
 	defer cancel()
+
 	_, err = manager.Login(ctx, method, oauth.Interaction{
 		AuthURL: func(url string) error {
 			fmt.Fprintf(runtime.stderr, "Open this URL to sign in with ChatGPT:\n%s\n", url)
@@ -260,6 +266,7 @@ func runLogin(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "login failed: %v", err)
 		return exitFailure
 	}
+
 	fmt.Fprintln(runtime.stdout, "Logged in with ChatGPT.")
 	return exitSuccess
 }
@@ -278,13 +285,16 @@ func runLogout(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "usage error: yaah logout accepts no arguments")
 		return exitUsage
 	}
+
 	manager, err := runtime.newOAuth()
 	if err != nil {
 		writeCLIError(runtime.stderr, "logout failed: %v", err)
 		return exitFailure
 	}
+
 	ctx, cancel := contextWithInterrupt(runtime.interrupts)
 	defer cancel()
+
 	if err := manager.Logout(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return exitInterrupted
@@ -292,6 +302,7 @@ func runLogout(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "logout failed: %v", err)
 		return exitFailure
 	}
+
 	fmt.Fprintln(runtime.stdout, "Logged out.")
 	return exitSuccess
 }

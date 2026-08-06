@@ -28,9 +28,11 @@ func (e *fakeEngine) Run(ctx context.Context, prompt string, sink agent.EventSin
 	e.calls = append(e.calls, prompt)
 	function := e.runFunction
 	e.mu.Unlock()
+
 	if function == nil {
 		return agent.RunResult{}, nil
 	}
+
 	return function(ctx, prompt, sink)
 }
 
@@ -70,6 +72,7 @@ func TestRunCommandsFinalLineAndEOF(t *testing.T) {
 	}}
 	input := strings.NewReader("  \n/help\r\n/clear\nhello")
 	var stdout, stderr bytes.Buffer
+
 	err := Run(context.Background(), engine, Options{
 		Input:       input,
 		Output:      &stdout,
@@ -80,6 +83,7 @@ func TestRunCommandsFinalLineAndEOF(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
+
 	calls, resets := engine.snapshot()
 	if len(calls) != 1 || calls[0] != "hello" || resets != 1 {
 		t.Fatalf("calls = %v, resets = %d", calls, resets)
@@ -112,6 +116,7 @@ func TestRunExitAndEmptyEOFDoNotRunEngine(t *testing.T) {
 func TestRunRejectsUnknownCommand(t *testing.T) {
 	engine := &fakeEngine{}
 	var stdout, stderr bytes.Buffer
+
 	err := Run(context.Background(), engine, Options{Input: strings.NewReader("/unknown value\n/exit\n"), Output: &stdout, ErrorOutput: &stderr})
 	if err != nil {
 		t.Fatal(err)
@@ -159,6 +164,7 @@ func TestRenderedOutputSanitizesControlsAndTruncatesDiagnostics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	engine := &fakeEngine{runFunction: func(_ context.Context, _ string, sink agent.EventSink) (agent.RunResult, error) {
 		if err := sink(agent.Event{Kind: agent.EventAssistantText, Text: "safe\x1b[31m\rrewrite\a"}); err != nil {
 			return agent.RunResult{}, err
@@ -200,6 +206,7 @@ func TestRunDiscardsOversizedAndInvalidLinesThenContinues(t *testing.T) {
 	input := append([]byte(strings.Repeat("1", maxInputBytes+1)+"\n"), []byte{'b', 'a', 'd', 0, '\n'}...)
 	input = append(input, []byte{0xff, '\n'}...)
 	input = append(input, []byte("ok\n/exit\n")...)
+
 	engine := &fakeEngine{}
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), engine, Options{
@@ -377,6 +384,7 @@ func TestRunErrorsResetIncompleteTurnAndContinue(t *testing.T) {
 func TestReadInputStopsSendingAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	events, requests := readInput(ctx, strings.NewReader("one\ntwo\nthree\n"), 100)
+
 	requests <- struct{}{}
 	if event := <-events; event.line != "one" || event.err != nil {
 		t.Fatalf("first event = %+v", event)
