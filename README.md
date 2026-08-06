@@ -49,8 +49,8 @@ Interactive mode supports:
 - Ctrl-C to cancel the active turn or exit while idle
 
 Assistant text is streamed to stdout. Reasoning summaries, tool activity,
-compaction notices, and errors go to stderr. The terminal intentionally has no raw mode, colors,
-history, autocomplete, or ANSI rendering.
+compaction notices, and errors go to stderr. The terminal intentionally has no
+raw mode, colors, history, autocomplete, or ANSI rendering.
 
 ## Tools
 
@@ -74,6 +74,8 @@ before returning to the model.
 - `lsp_symbols(path)` returns document symbols.
 - `lsp_rename(path, line, character, oldName, newName)` resolves the named
   symbol near the approximate position and renames it across the workspace.
+- `subagent(tasks)` runs one to four explicitly requested, independent tasks
+  concurrently and returns their ordered results.
 
 LSP line numbers and UTF-16 character offsets are zero-based. Source-file
 extensions select a language server; currently `.go` files use gopls.
@@ -82,6 +84,18 @@ Unknown tools, malformed arguments, and ordinary tool failures become
 correlated tool-result errors. Cancellation stops the turn. Tools are not a
 security boundary: absolute paths, shell escape, and side effects are possible.
 
+## Subagents
+
+The main agent may use subagents only when the user explicitly requests them.
+Each call starts up to four fresh child engines concurrently and waits for every
+result before the main agent continues. Results return through the normal tool
+output path and become part of the main conversation.
+
+Subagents are read-only: they receive `read` and the five non-mutating LSP tools,
+but not Bash, file-editing tools, rename, or further subagents. They use the
+main model, reasoning effort, working directory, and project instructions. They
+are not persisted and do not run in the background.
+
 ## Architecture
 
 ```text
@@ -89,7 +103,7 @@ cmd/yaah/        CLI and dependency wiring
 agent/           provider/tool contracts, prompt, and tool-call loop
 auth/openai/     browser and device OAuth plus credential refresh
 provider/openai/ Responses API requests, SSE decoding, and continuation state
-tool/            read, write, edit, bash, LSP client, registry, and output limits
+tool/            coding tools, subagents, LSP client, registry, and output limits
 terminal/        line-oriented REPL and event rendering
 ```
 

@@ -93,6 +93,28 @@ func Use(value Thing) int {
 	}
 }
 
+type blockingShutdownServer struct {
+	protocol.UnimplementedServer
+	done chan struct{}
+}
+
+func (s blockingShutdownServer) Shutdown(ctx context.Context) error {
+	<-ctx.Done()
+	close(s.done)
+	return ctx.Err()
+}
+
+func TestLSPShutdownIsBounded(t *testing.T) {
+	server := blockingShutdownServer{done: make(chan struct{})}
+	shutdownLSPServer(server, time.Millisecond)
+
+	select {
+	case <-server.done:
+	default:
+		t.Fatal("shutdown context did not expire")
+	}
+}
+
 func TestLSPToolDescriptionsAreServerAgnostic(t *testing.T) {
 	for _, definition := range []agent.ToolDefinition{
 		lspDiagnosticsToolDefinition,

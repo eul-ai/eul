@@ -1,0 +1,180 @@
+package tool
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"yaah/agent"
+)
+
+func TestSubagentDefinitionRequiresExplicitRequest(t *testing.T) {
+	definition := NewSubagent(nil).Definition()
+	if definition.Name != "subagent" || !strings.Contains(definition.Description, "only when the user explicitly asks") {
+		t.Fatalf("definition = %+v", definition)
+	}
+	if definition.Parameters.Properties["tasks"].Items == nil || definition.Parameters.Properties["tasks"].Items.Type != "string" {
+		t.Fatalf("tasks schema = %+v", definition.Parameters.Properties["tasks"])
+	}
+}
+
+func TestSubagentRunsOneTask(t *testing.T) {
+	subagent := NewSubagent(func(_ context.Context, task string) (agent.RunResult, error) {
+		return agent.RunResult{Text: "result for " + task}, nil
+	})
+
+	result, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"]}`))
+	if err != nil || result.IsError || result.Output != "Subagent 1:\nresult for inspect" {
+		t.Fatalf("result = %+v, error = %v", result, err)
+	}
+}
+
+func TestSubagentRunsConcurrentlyAndReturnsInputOrder(t *testing.T) {
+	started := make(chan string, 2)
+	releases := map[string]chan struct{}{
+		"first":  make(chan struct{}),
+		"second": make(chan struct{}),
+	}
+	secondFinished := make(chan struct{})
+	subagent := NewSubagent(func(_ context.Context, task string) (agent.RunResult, error) {
+		started <- task
+		<-releases[task]
+		if task == "second" {
+			close(secondFinished)
+		}
+		return agent.RunResult{Text: task + " result"}, nil
+	})
+
+	done := make(chan struct {
+		result agent.ToolResult
+		err    error
+	}, 1)
+	go func() {
+		result, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["first","second"]}`))
+		done <- struct {
+			result agent.ToolResult
+			err    error
+		}{result: result, err: err}
+	}()
+
+	seen := map[string]bool{}
+	for range 2 {
+		select {
+		case task := <-started:
+			seen[task] = true
+		case <-time.After(2 * time.Second):
+			t.Fatal("tasks did not start concurrently")
+		}
+	}
+	if !seen["first"] || !seen["second"] {
+		t.Fatalf("started tasks = %v", seen)
+	}
+
+	close(releases["second"])
+	select {
+	case <-secondFinished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second task did not finish")
+	}
+	close(releases["first"])
+
+	result := <-done
+	if result.err != nil || result.result.IsError {
+		t.Fatalf("result = %+v, error = %v", result.result, result.err)
+	}
+	first := strings.Index(result.result.Output, "first result")
+	second := strings.Index(result.result.Output, "second result")
+	if first < 0 || second < 0 || first >= second {
+		t.Fatalf("output order = %q", result.result.Output)
+	}
+}
+
+func TestSubagentWaitsForMixedResults(t *testing.T) {
+	failure := errors.New("child failed")
+	subagent := NewSubagent(func(_ context.Context, task string) (agent.RunResult, error) {
+		if task == "bad" {
+			return agent.RunResult{}, failure
+		}
+		return agent.RunResult{Text: "useful finding"}, nil
+	})
+
+	result, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["good","bad"]}`))
+	if err != nil || !result.IsError || !strings.Contains(result.Output, "useful finding") || !strings.Contains(result.Output, failure.Error()) {
+		t.Fatalf("result = %+v, error = %v", result, err)
+	}
+}
+
+func TestSubagentValidatesAllTasksBeforeLaunching(t *testing.T) {
+	var calls atomic.Int64
+	subagent := NewSubagent(func(context.Context, string) (agent.RunResult, error) {
+		calls.Add(1)
+		return agent.RunResult{}, nil
+	})
+
+	for _, arguments := range []string{
+		`{"tasks":[]}`,
+		`{"tasks":["one","two","three","four","five"]}`,
+		`{"tasks":["one","  "]}`,
+	} {
+		result, err := subagent.Execute(context.Background(), json.RawMessage(arguments))
+		if err != nil || !result.IsError {
+			t.Fatalf("arguments = %s, result = %+v, error = %v", arguments, result, err)
+		}
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("callback calls = %d", calls.Load())
+	}
+}
+
+func TestSubagentPropagatesCancellationToAllTasks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{}, 2)
+	var finished sync.WaitGroup
+	finished.Add(2)
+	subagent := NewSubagent(func(ctx context.Context, _ string) (agent.RunResult, error) {
+		started <- struct{}{}
+		<-ctx.Done()
+		finished.Done()
+		return agent.RunResult{}, ctx.Err()
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := subagent.Execute(ctx, json.RawMessage(`{"tasks":["one","two"]}`))
+		done <- err
+	}()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatal("task did not start")
+		}
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Execute() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Execute() did not stop")
+	}
+	finished.Wait()
+}
+
+func TestSubagentBoundsCombinedOutput(t *testing.T) {
+	subagent := NewSubagent(func(context.Context, string) (agent.RunResult, error) {
+		return agent.RunResult{Text: strings.Repeat("x", defaultMaxBytes)}, nil
+	})
+
+	result, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["one","two"]}`))
+	if err != nil || len(result.Output) > defaultMaxBytes || !strings.Contains(result.Output, "subagent output truncated") {
+		t.Fatalf("output bytes = %d, error = %v", len(result.Output), err)
+	}
+}

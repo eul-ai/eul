@@ -60,6 +60,20 @@ func (r *Registry) Execute(ctx context.Context, call agent.ToolCall) (agent.Tool
 	return result, err
 }
 
+func (r *Registry) Close() error {
+	var closeErrors []error
+	for _, registered := range r.tools {
+		closer, ok := registered.(interface{ Close() error })
+		if !ok {
+			continue
+		}
+		if err := closer.Close(); err != nil {
+			closeErrors = append(closeErrors, err)
+		}
+	}
+	return errors.Join(closeErrors...)
+}
+
 func decodeArguments[T any](arguments json.RawMessage) (T, error) {
 	var value T
 	decoder := json.NewDecoder(bytes.NewReader(arguments))

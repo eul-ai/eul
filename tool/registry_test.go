@@ -26,6 +26,15 @@ func (t fakeTool) Execute(ctx context.Context, arguments json.RawMessage) (agent
 	return t.execute(ctx, arguments)
 }
 
+type closeTool struct {
+	fakeTool
+	close func() error
+}
+
+func (t closeTool) Close() error {
+	return t.close()
+}
+
 func TestRegistryDefinitionsAreSorted(t *testing.T) {
 	registry := NewRegistry(
 		fakeTool{definition: agent.ToolDefinition{Name: "write"}},
@@ -56,6 +65,25 @@ func TestRegistryDispatchesAndCorrelatesResult(t *testing.T) {
 
 	if result.CallID != "call-1" || result.Tool != "read" || result.Output != "contents" {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestRegistryClosesClosableTools(t *testing.T) {
+	closeErr := errors.New("close failed")
+	closed := 0
+	registry := NewRegistry(
+		closeTool{fakeTool: fakeTool{definition: agent.ToolDefinition{Name: "one"}}, close: func() error {
+			closed++
+			return nil
+		}},
+		closeTool{fakeTool: fakeTool{definition: agent.ToolDefinition{Name: "two"}}, close: func() error {
+			closed++
+			return closeErr
+		}},
+	)
+
+	if err := registry.Close(); !errors.Is(err, closeErr) || closed != 2 {
+		t.Fatalf("Close() error = %v, closed = %d", err, closed)
 	}
 }
 

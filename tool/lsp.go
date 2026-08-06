@@ -146,6 +146,11 @@ func (t *lspTool) Definition() agent.ToolDefinition {
 	return t.definition
 }
 
+func (t *lspTool) Close() error {
+	t.client.stop()
+	return nil
+}
+
 func (t *lspTool) Execute(ctx context.Context, arguments json.RawMessage) (agent.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err

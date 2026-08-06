@@ -141,13 +141,34 @@ func run(arguments []string, runtime appRuntime) int {
 		}
 	}
 
-	registry := buildTools(cwd)
 	provider, err := runtime.newProvider(tokenSource, *effort)
 	if err != nil {
 		writeCLIError(runtime.stderr, "configure provider: %v", err)
 		return exitFailure
 	}
 
+	subagent := tool.NewSubagent(func(ctx context.Context, task string) (agent.RunResult, error) {
+		childProvider, err := runtime.newProvider(tokenSource, *effort)
+		if err != nil {
+			return agent.RunResult{}, fmt.Errorf("configure subagent provider: %w", err)
+		}
+
+		childTools := buildSubagentTools(cwd)
+		child := agent.New(childProvider, childTools, agent.Options{
+			Model:               *model,
+			ProjectInstructions: projectInstructions,
+		})
+		result, runErr := child.Run(ctx, task, func(agent.Event) error { return nil })
+		closeErr := childTools.Close()
+		if runErr != nil {
+			return agent.RunResult{}, runErr
+		}
+		if closeErr != nil {
+			return agent.RunResult{}, fmt.Errorf("close subagent tools: %w", closeErr)
+		}
+		return result, nil
+	})
+	registry := buildTools(cwd, subagent)
 	engine := agent.New(provider, registry, agent.Options{
 		Model:               *model,
 		ProjectInstructions: projectInstructions,
@@ -372,7 +393,7 @@ func readProjectInstructions(cwd string) (string, error) {
 	return string(content), nil
 }
 
-func buildTools(cwd string) *tool.Registry {
+func buildTools(cwd string, additional ...tool.Tool) *tool.Registry {
 	tools := []tool.Tool{
 		tool.NewRead(cwd),
 		tool.NewWrite(cwd),
@@ -380,6 +401,18 @@ func buildTools(cwd string) *tool.Registry {
 		tool.NewBash(cwd),
 	}
 	tools = append(tools, tool.NewLSP(cwd)...)
+	tools = append(tools, additional...)
+	return tool.NewRegistry(tools...)
+}
+
+func buildSubagentTools(cwd string) *tool.Registry {
+	tools := []tool.Tool{tool.NewRead(cwd)}
+	for _, lspTool := range tool.NewLSP(cwd) {
+		if lspTool.Definition().Name == "lsp_rename" {
+			continue
+		}
+		tools = append(tools, lspTool)
+	}
 	return tool.NewRegistry(tools...)
 }
 

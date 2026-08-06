@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,11 +69,13 @@ func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	var gotRequest agent.Request
 	factoryEffort := ""
+	factoryCalls := 0
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{
 		"OPENAI_MODEL":            "environment-model",
 		"OPENAI_REASONING_EFFORT": "high",
 	})
 	runtime.newProvider = func(source openaiadapter.CodexTokenSource, reasoningEffort string) (agent.Provider, error) {
+		factoryCalls++
 		if source == nil {
 			t.Fatal("provider token source is nil")
 		}
@@ -90,8 +93,8 @@ func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 	if code != exitSuccess {
 		t.Fatalf("run() code = %d, stderr = %q", code, stderr.String())
 	}
-	if factoryEffort != "xhigh" || gotRequest.Model != "flag-model" || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].Text != "one shot prompt" {
-		t.Fatalf("factory effort=%q request=%+v", factoryEffort, gotRequest)
+	if factoryCalls != 1 || factoryEffort != "xhigh" || gotRequest.Model != "flag-model" || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].Text != "one shot prompt" {
+		t.Fatalf("factory calls=%d effort=%q request=%+v", factoryCalls, factoryEffort, gotRequest)
 	}
 	if !strings.HasSuffix(gotRequest.Instructions, projectInstructions) {
 		t.Fatalf("instructions omit AGENTS.md:\n%s", gotRequest.Instructions)
@@ -100,11 +103,115 @@ func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 	for i, definition := range gotRequest.Tools {
 		names[i] = definition.Name
 	}
-	if !slices.Equal(names, []string{"bash", "edit", "lsp_definition", "lsp_diagnostics", "lsp_hover", "lsp_references", "lsp_rename", "lsp_symbols", "read", "write"}) {
+	if !slices.Equal(names, []string{"bash", "edit", "lsp_definition", "lsp_diagnostics", "lsp_hover", "lsp_references", "lsp_rename", "lsp_symbols", "read", "subagent", "write"}) {
 		t.Fatalf("tools = %v", names)
 	}
 	if stdout.String() != "answer\n" {
 		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestRunOneShotFeedsConcurrentSubagentsBackToMain(t *testing.T) {
+	cwd := t.TempDir()
+	projectInstructions := "Follow project instructions."
+	if err := os.WriteFile(filepath.Join(cwd, "AGENTS.md"), []byte(projectInstructions), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_MODEL": "model"})
+	var mu sync.Mutex
+	factoryCalls := 0
+	var childRequests []agent.Request
+	mainCalls := 0
+	runtime.newProvider = func(openaiadapter.CodexTokenSource, string) (agent.Provider, error) {
+		mu.Lock()
+		factoryCalls++
+		call := factoryCalls
+		mu.Unlock()
+
+		if call == 1 {
+			return providerFunction(func(_ context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
+				mainCalls++
+				switch mainCalls {
+				case 1:
+					foundSubagent := false
+					for _, definition := range request.Tools {
+						if definition.Name != "subagent" {
+							continue
+						}
+						foundSubagent = true
+						if !strings.Contains(definition.Description, "explicitly asks") {
+							t.Fatalf("subagent description = %q", definition.Description)
+						}
+					}
+					if !foundSubagent || !strings.Contains(request.Instructions, "explicitly asks for subagents") {
+						t.Fatalf("main request omits explicit subagent rule: %+v", request)
+					}
+					return agent.Response{ToolCalls: []agent.ToolCall{{
+						ID:        "call-1",
+						Name:      "subagent",
+						Arguments: []byte(`{"tasks":["review alpha","review beta"]}`),
+					}}}, nil
+				case 2:
+					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "subagent" {
+						t.Fatalf("main continuation inputs = %+v", request.Inputs)
+					}
+					output := request.Inputs[0].Text
+					if !strings.Contains(output, "Subagent 1:\nfinding for review alpha") || !strings.Contains(output, "Subagent 2:\nfinding for review beta") {
+						t.Fatalf("subagent output = %q", output)
+					}
+					if err := sink("combined answer"); err != nil {
+						return agent.Response{}, err
+					}
+					return agent.Response{Text: "combined answer"}, nil
+				default:
+					t.Fatalf("unexpected main provider call %d", mainCalls)
+					return agent.Response{}, nil
+				}
+			}), nil
+		}
+
+		return providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
+			mu.Lock()
+			childRequests = append(childRequests, request)
+			mu.Unlock()
+			if len(request.Inputs) != 1 {
+				t.Fatalf("child inputs = %+v", request.Inputs)
+			}
+			return agent.Response{Text: "finding for " + request.Inputs[0].Text}, nil
+		}), nil
+	}
+
+	if code := run([]string{"use two subagents"}, runtime); code != exitSuccess {
+		t.Fatalf("run() code = %d, stderr = %q", code, stderr.String())
+	}
+	if stdout.String() != "combined answer\n" || mainCalls != 2 {
+		t.Fatalf("stdout = %q, main calls = %d", stdout.String(), mainCalls)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if factoryCalls != 3 || len(childRequests) != 2 {
+		t.Fatalf("factory calls = %d, child requests = %d", factoryCalls, len(childRequests))
+	}
+	var tasks []string
+	for _, request := range childRequests {
+		if request.Model != "model" || !strings.HasSuffix(request.Instructions, projectInstructions) {
+			t.Fatalf("child request = %+v", request)
+		}
+		names := make([]string, len(request.Tools))
+		for index, definition := range request.Tools {
+			names[index] = definition.Name
+		}
+		if !slices.Equal(names, []string{"lsp_definition", "lsp_diagnostics", "lsp_hover", "lsp_references", "lsp_symbols", "read"}) {
+			t.Fatalf("child tools = %v", names)
+		}
+		tasks = append(tasks, request.Inputs[0].Text)
+	}
+	slices.Sort(tasks)
+	if !slices.Equal(tasks, []string{"review alpha", "review beta"}) {
+		t.Fatalf("child tasks = %v", tasks)
 	}
 }
 

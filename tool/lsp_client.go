@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
@@ -24,6 +25,8 @@ type lspServerConfig struct {
 	languageID string
 	extensions []string
 }
+
+const lspShutdownTimeout = 5 * time.Second
 
 var lspServerConfigs = []lspServerConfig{
 	{
@@ -199,12 +202,18 @@ func (c *lspClient) stop() {
 }
 
 func (s *lspSession) stop() {
-	ctx := context.Background()
 	if s.connection.Err() == nil {
-		_ = s.server.Shutdown(ctx)
-		_ = s.server.Exit(ctx)
+		shutdownLSPServer(s.server, lspShutdownTimeout)
 	}
 	s.abort()
+}
+
+func shutdownLSPServer(server protocol.Server, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	_ = server.Shutdown(ctx)
+	_ = server.Exit(ctx)
 }
 
 func (s *lspSession) abort() {
