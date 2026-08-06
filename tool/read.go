@@ -26,8 +26,6 @@ var readToolDefinition = agent.ToolDefinition{
 	}, "path", "offset", "limit"),
 }
 
-// Read reads bounded UTF-8 text from regular files relative to a fixed working
-// directory. Absolute paths and paths containing .. are intentionally allowed.
 type Read struct {
 	workspace workspace
 }
@@ -38,7 +36,6 @@ type readArguments struct {
 	Limit  *int   `json:"limit"`
 }
 
-// NewRead constructs a read tool rooted at cwd.
 func NewRead(cwd string) *Read {
 	return &Read{workspace: newWorkspace(cwd)}
 }
@@ -70,9 +67,8 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 		return errorResult(readToolName, err), nil
 	}
 
-	// Stat before opening so FIFOs and devices fail instead of blocking in
-	// os.Open. The second check on the opened descriptor catches ordinary path
-	// replacement races; path handling is not a security boundary.
+	// Opening a FIFO or device can block, so reject nonregular paths before
+	// os.Open and recheck the descriptor after opening to catch path replacement.
 	info, err := os.Stat(path)
 	if err != nil {
 		return errorResult(readToolName, err), nil

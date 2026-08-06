@@ -31,8 +31,6 @@ type responseStreamDecoder struct {
 	output   []json.RawMessage
 }
 
-// readResponsesSSE consumes a bounded Responses API stream until its terminal
-// event. Completed items are retained for tool calls and continuation replay.
 func readResponsesSSE(reader io.Reader, maximum int64, observer *streamObserver) (createResponseEnvelope, error) {
 	decoder := responseStreamDecoder{observer: observer}
 	return readSSE(reader, maximum, decoder.handle)
@@ -54,7 +52,8 @@ func readSSE(reader io.Reader, maximum int64, handle func([]byte) (createRespons
 
 		line = bytes.TrimSuffix(line, []byte("\n"))
 		line = bytes.TrimSuffix(line, []byte("\r"))
-		if len(line) == 0 {
+		switch {
+		case len(line) == 0:
 			response, done, handleErr := handleSSEData(dataLines, handle)
 			dataLines = nil
 			if handleErr != nil {
@@ -63,7 +62,7 @@ func readSSE(reader io.Reader, maximum int64, handle func([]byte) (createRespons
 			if done {
 				return response, nil
 			}
-		} else if bytes.HasPrefix(line, []byte("data:")) {
+		case bytes.HasPrefix(line, []byte("data:")):
 			data := line[len("data:"):]
 			if len(data) > 0 && data[0] == ' ' {
 				data = data[1:]
@@ -179,9 +178,10 @@ func (decoder *responseStreamDecoder) terminal(event responseStreamEvent) (creat
 		}
 	}
 
-	if len(response.Output) == 0 && len(decoder.output) != 0 {
+	switch {
+	case len(response.Output) == 0 && len(decoder.output) != 0:
 		response.Output = decoder.output
-	} else if response.Output == nil {
+	case response.Output == nil:
 		response.Output = []json.RawMessage{}
 	}
 	return response, nil

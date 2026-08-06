@@ -51,7 +51,6 @@ func TestBrowserLoginPKCEStorageAndRefreshRotation(t *testing.T) {
 			if request.Form.Get("refresh_token") != "refresh-one" {
 				t.Errorf("refresh token = %q", request.Form.Get("refresh_token"))
 			}
-			// Omitted refresh_token must preserve the old rotated credential.
 			writeTestJSON(t, writer, map[string]any{"access_token": accessTwo, "expires_in": 3600})
 		default:
 			t.Errorf("grant type = %q", request.Form.Get("grant_type"))

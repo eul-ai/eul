@@ -1,6 +1,5 @@
 package agent
 
-// EventKind identifies an observable agent-engine event.
 type EventKind string
 
 const (
@@ -10,7 +9,6 @@ const (
 	EventToolEnd            EventKind = "tool_end"
 )
 
-// Event reports assistant output and tool execution lifecycle changes.
 type Event struct {
 	Kind   EventKind
 	Text   string
@@ -18,5 +16,4 @@ type Event struct {
 	Result ToolResult
 }
 
-// EventSink receives observable engine events.
 type EventSink func(Event) error

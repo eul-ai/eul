@@ -30,13 +30,10 @@ var bashToolDefinition = agent.ToolDefinition{
 	}, "command", "timeout"),
 }
 
-// BashOptions configures the subprocess environment. A nil Env inherits the
-// current process environment; a non-nil Env replaces it.
 type BashOptions struct {
 	Env []string
 }
 
-// Bash executes noninteractive shell commands in a fixed working directory.
 type Bash struct {
 	workspace      workspace
 	shell          string
@@ -51,7 +48,6 @@ type bashArguments struct {
 	Timeout *int   `json:"timeout"`
 }
 
-// NewBash constructs a Bash tool rooted at cwd.
 func NewBash(cwd string, options BashOptions) *Bash {
 	return &Bash{
 		workspace:      newWorkspace(cwd),
@@ -155,8 +151,6 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	return result, nil
 }
 
-// tailCapture bounds process output while it is produced. stdout and stderr
-// may write concurrently, so all state is protected by a mutex.
 type tailCapture struct {
 	mu        sync.Mutex
 	data      []byte

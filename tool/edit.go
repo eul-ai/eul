@@ -23,9 +23,6 @@ var editToolDefinition = agent.ToolDefinition{
 	}, "path", "oldText", "newText"),
 }
 
-// Edit performs one exact replacement and commits it with a same-directory
-// temporary file and rename. Final symlinks are resolved so the link is kept
-// and its target is replaced.
 type Edit struct {
 	workspace workspace
 }
@@ -36,7 +33,6 @@ type editArguments struct {
 	NewText *string `json:"newText"`
 }
 
-// NewEdit constructs an edit tool rooted at cwd.
 func NewEdit(cwd string) *Edit {
 	return &Edit{workspace: newWorkspace(cwd)}
 }

@@ -21,8 +21,6 @@ var writeToolDefinition = agent.ToolDefinition{
 	}, "path", "content"),
 }
 
-// Write creates or directly overwrites files. It follows filesystem symlinks
-// and is intentionally not transactional.
 type Write struct {
 	workspace workspace
 }
@@ -32,7 +30,6 @@ type writeArguments struct {
 	Content *string `json:"content"`
 }
 
-// NewWrite constructs a write tool rooted at cwd.
 func NewWrite(cwd string) *Write {
 	return &Write{workspace: newWorkspace(cwd)}
 }

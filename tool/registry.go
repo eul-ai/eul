@@ -15,21 +15,16 @@ import (
 
 var errUnknownTool = errors.New("tool: unknown tool")
 
-// Tool is the interface consumed by Registry. Concrete tool implementations
-// decode their own arguments into tool-specific Go structs.
 type Tool interface {
 	Definition() agent.ToolDefinition
 	Execute(ctx context.Context, arguments json.RawMessage) (agent.ToolResult, error)
 }
 
-// Registry is a deterministic collection of tools and implements
-// agent.Toolbox.
 type Registry struct {
 	definitions []agent.ToolDefinition
 	tools       map[string]Tool
 }
 
-// NewRegistry returns a registry sorted by tool name.
 func NewRegistry(tools ...Tool) *Registry {
 	registry := &Registry{
 		definitions: make([]agent.ToolDefinition, 0, len(tools)),
@@ -49,12 +44,10 @@ func NewRegistry(tools ...Tool) *Registry {
 	return registry
 }
 
-// Definitions returns definitions sorted by tool name.
 func (r *Registry) Definitions() []agent.ToolDefinition {
 	return r.definitions
 }
 
-// Execute dispatches a call to the registered tool with the exact name.
 func (r *Registry) Execute(ctx context.Context, call agent.ToolCall) (agent.ToolResult, error) {
 	registered, exists := r.tools[call.Name]
 	if !exists {
@@ -67,7 +60,6 @@ func (r *Registry) Execute(ctx context.Context, call agent.ToolCall) (agent.Tool
 	return result, err
 }
 
-// decodeArguments decodes one JSON object into a tool-specific Go struct.
 func decodeArguments[T any](arguments json.RawMessage) (T, error) {
 	var value T
 	decoder := json.NewDecoder(bytes.NewReader(arguments))

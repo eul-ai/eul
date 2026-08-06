@@ -13,20 +13,16 @@ var (
 	errResetRequired  = errors.New("agent: reset required after incomplete tool turn")
 )
 
-// Options configures an Engine.
 type Options struct {
 	Model         string
 	maxToolRounds int
 }
 
-// RunResult is the completed result of one user turn.
 type RunResult struct {
-	// Text is the final, tool-free assistant response.
 	Text  string
 	Usage Usage
 }
 
-// Engine owns provider conversation state and the provider/tool-call loop.
 type Engine struct {
 	provider      Provider
 	tools         Toolbox
@@ -37,7 +33,6 @@ type Engine struct {
 	resetRequired bool
 }
 
-// New constructs an Engine from its provider and tools.
 func New(provider Provider, tools Toolbox, options Options) *Engine {
 	maxToolRounds := options.maxToolRounds
 	if maxToolRounds == 0 {
@@ -53,7 +48,6 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 	}
 }
 
-// Run processes one user turn.
 func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunResult, error) {
 	if err := ctx.Err(); err != nil {
 		return RunResult{}, err
@@ -118,9 +112,9 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 				return RunResult{}, err
 			}
 
-			// Once execution starts, the external world may have changed even if
-			// the call later fails or is canceled. Require Reset until a final
-			// provider response commits a coherent continuation state.
+			// A tool may change external state before failing or being canceled.
+			// Reject another Run until a final provider response supplies coherent
+			// continuation state or the caller invokes Reset.
 			e.resetRequired = true
 			toolResult, err := e.executeTool(ctx, call)
 			if err != nil {
@@ -142,13 +136,10 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 	}
 }
 
-// NeedsReset reports whether an incomplete tool turn requires Reset before the
-// next Run. Call it after Run has returned.
 func (e *Engine) NeedsReset() bool {
 	return e.resetRequired
 }
 
-// Reset discards provider continuation state.
 func (e *Engine) Reset() {
 	e.state = nil
 	e.resetRequired = false

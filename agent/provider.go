@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 )
 
-// InputKind identifies new input supplied to a provider generation.
 type InputKind string
 
 const (
@@ -13,7 +12,6 @@ const (
 	InputToolResult InputKind = "tool_result"
 )
 
-// Input is provider-neutral input added since the previous generation.
 type Input struct {
 	Kind    InputKind
 	Text    string
@@ -22,21 +20,18 @@ type Input struct {
 	IsError bool
 }
 
-// ToolCall is a model request to execute a named tool.
 type ToolCall struct {
 	ID        string
 	Name      string
 	Arguments json.RawMessage
 }
 
-// Usage contains provider-reported token usage.
 type Usage struct {
 	InputTokens  int64
 	OutputTokens int64
 	TotalTokens  int64
 }
 
-// Request contains the provider-neutral data needed for one generation.
 type Request struct {
 	Model        string
 	Instructions string
@@ -45,7 +40,6 @@ type Request struct {
 	State        []byte
 }
 
-// Response is a completed provider generation.
 type Response struct {
 	Text      string
 	ToolCalls []ToolCall
@@ -53,10 +47,8 @@ type Response struct {
 	Usage     Usage
 }
 
-// TextSink receives ordered text or reasoning deltas as they become available.
 type TextSink func(text string) error
 
-// Provider generates assistant responses for the agent engine.
 type Provider interface {
 	Generate(ctx context.Context, request Request, onText, onReasoning TextSink) (Response, error)
 }

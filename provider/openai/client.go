@@ -25,27 +25,21 @@ const (
 	defaultMaxStateBytes    = 16 * 1024 * 1024
 )
 
-// Options configures a Client. BaseURL is an API origin or test server URL;
-// the mode-specific Responses path is appended to it. An injected client with
-// no positive timeout receives the default timeout.
 type Options struct {
 	HTTPClient      *http.Client
 	BaseURL         string
 	ReasoningEffort string
 }
 
-// CodexCredential is the request-time OAuth access token and ChatGPT account.
 type CodexCredential struct {
 	AccessToken string
 	AccountID   string
 }
 
-// CodexTokenSource refreshes OAuth credentials as needed for every request.
 type CodexTokenSource interface {
 	Token(context.Context) (CodexCredential, error)
 }
 
-// Client is an OpenAI Responses API adapter and implements agent.Provider.
 type Client struct {
 	httpClient       *http.Client
 	endpoint         string
@@ -72,12 +66,10 @@ var validReasoningEfforts = map[string]struct{}{
 	"max":     {},
 }
 
-// New constructs a Platform API-key Responses client.
 func New(apiKey string, options Options) (*Client, error) {
 	return newClient(apiKey, nil, false, options)
 }
 
-// NewCodex constructs a ChatGPT subscription Responses client.
 func NewCodex(source CodexTokenSource, options Options) (*Client, error) {
 	return newClient("", source, true, options)
 }
@@ -101,9 +93,10 @@ func newClient(apiKey string, source CodexTokenSource, codex bool, options Optio
 	}
 
 	httpClient := options.HTTPClient
-	if httpClient == nil {
+	switch {
+	case httpClient == nil:
 		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
-	} else if httpClient.Timeout <= 0 {
+	case httpClient.Timeout <= 0:
 		httpClient.Timeout = defaultHTTPTimeout
 	}
 	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error {
@@ -124,8 +117,6 @@ func newClient(apiKey string, source CodexTokenSource, codex bool, options Optio
 	}, nil
 }
 
-// Generate makes one streaming Responses API request. SSE text and refusal
-// deltas are delivered in order while completed items are retained for replay.
 func (c *Client) Generate(ctx context.Context, request agent.Request, onText, onReasoning agent.TextSink) (agent.Response, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.Response{}, err

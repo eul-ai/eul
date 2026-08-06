@@ -35,7 +35,6 @@ const (
 	deviceTimeout        = 15 * time.Minute
 )
 
-// LoginMethod selects the interactive OAuth ceremony.
 type LoginMethod string
 
 const (
@@ -43,19 +42,16 @@ const (
 	LoginDevice  LoginMethod = "device"
 )
 
-// DeviceCode is safe display data for the device authorization flow.
 type DeviceCode struct {
 	VerificationURL string
 	UserCode        string
 }
 
-// Interaction lets the CLI render OAuth steps without coupling auth to a terminal.
 type Interaction struct {
 	AuthURL    func(string) error
 	DeviceCode func(DeviceCode) error
 }
 
-// Credentials are yaah-owned ChatGPT OAuth credentials.
 type Credentials struct {
 	Version      int    `json:"version"`
 	Type         string `json:"type"`
@@ -65,7 +61,6 @@ type Credentials struct {
 	AccountID    string `json:"account_id"`
 }
 
-// Options supplies hermetic seams for OAuth tests.
 type Options struct {
 	HTTPClient      *http.Client
 	AuthBaseURL     string
@@ -74,7 +69,6 @@ type Options struct {
 	Sleep           func(context.Context, time.Duration) error
 }
 
-// Manager owns yaah's credential file and refresh lifecycle.
 type Manager struct {
 	path            string
 	httpClient      *http.Client
@@ -84,7 +78,6 @@ type Manager struct {
 	sleep           func(context.Context, time.Duration) error
 }
 
-// DefaultCredentialPath resolves a yaah-owned auth file without consulting other clients.
 func DefaultCredentialPath(yaahHome string) (string, error) {
 	if yaahHome != "" && !filepath.IsAbs(yaahHome) {
 		return "", errors.New("oauth: YAAH_HOME must be an absolute path")
@@ -100,7 +93,6 @@ func DefaultCredentialPath(yaahHome string) (string, error) {
 	return filepath.Join(config, "yaah", "auth.json"), nil
 }
 
-// NewManager constructs an OAuth credential manager.
 func NewManager(path string, options Options) *Manager {
 	base := options.AuthBaseURL
 	if base == "" {
@@ -108,9 +100,10 @@ func NewManager(path string, options Options) *Manager {
 	}
 
 	client := options.HTTPClient
-	if client == nil {
+	switch {
+	case client == nil:
 		client = &http.Client{Timeout: 30 * time.Second}
-	} else if client.Timeout <= 0 {
+	case client.Timeout <= 0:
 		client.Timeout = 30 * time.Second
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -140,7 +133,6 @@ func NewManager(path string, options Options) *Manager {
 	}
 }
 
-// Login completes the selected OAuth flow and atomically stores its credentials.
 func (m *Manager) Login(ctx context.Context, method LoginMethod, interaction Interaction) (Credentials, error) {
 	if err := ctx.Err(); err != nil {
 		return Credentials{}, err
@@ -170,7 +162,6 @@ func (m *Manager) Login(ctx context.Context, method LoginMethod, interaction Int
 	return credential, nil
 }
 
-// Resolve returns a valid credential, refreshing and persisting it when needed.
 func (m *Manager) Resolve(ctx context.Context) (Credentials, error) {
 	var result Credentials
 	err := m.withFileLock(ctx, func() error {
@@ -199,7 +190,6 @@ func (m *Manager) Resolve(ctx context.Context) (Credentials, error) {
 	return result, err
 }
 
-// Logout removes only yaah's credential file.
 func (m *Manager) Logout(ctx context.Context) error {
 	return m.withFileLock(ctx, func() error {
 		info, err := os.Lstat(m.path)

@@ -25,14 +25,12 @@ var (
 	errOutput       = errors.New("terminal: write output")
 )
 
-// Engine is the conversation runner consumed by the terminal.
 type Engine interface {
 	Run(context.Context, string, agent.EventSink) (agent.RunResult, error)
 	Reset()
 	NeedsReset() bool
 }
 
-// Options configures terminal input, output, display metadata, and interrupts.
 type Options struct {
 	Input       io.Reader
 	Output      io.Writer
@@ -42,7 +40,6 @@ type Options struct {
 	Interrupts  <-chan os.Signal
 }
 
-// Run starts the line-oriented interactive REPL.
 func Run(ctx context.Context, engine Engine, options Options) error {
 	header := singleLine(fmt.Sprintf("yaah · openai/%s · %s", options.Model, options.CWD), 500)
 	if err := writeOutput(options.ErrorOutput, "%s\n", header); err != nil {
@@ -165,7 +162,6 @@ func Run(ctx context.Context, engine Engine, options Options) error {
 	}
 }
 
-// RunOneShot runs one prompt without the interactive header or prompt marker.
 func RunOneShot(ctx context.Context, engine Engine, prompt string, options Options) error {
 	runErr, interrupted := runTurn(ctx, engine, prompt, options)
 	if contextErr := ctx.Err(); contextErr != nil {
