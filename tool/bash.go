@@ -15,20 +15,25 @@ import (
 )
 
 const (
+	bashToolName       = "bash"
 	defaultBashTimeout = 120 * time.Second
 	maximumBashTimeout = 10 * time.Minute
 	defaultWaitDelay   = time.Second
 )
 
-// BashOptions configures the local Bash process. Shell defaults to "bash".
-// A nil Env inherits the current process environment; a non-nil Env replaces
-// it. Durations primarily provide deterministic tests and deployment policy.
+var bashToolDefinition = agent.ToolDefinition{
+	Name:        bashToolName,
+	Description: "Run unsandboxed, noninteractive Bash commands with the user's permissions, a timeout, and bounded output.",
+	Parameters: strictObject(map[string]agent.JSONSchema{
+		"command": {Type: "string", Description: "Command passed exactly to bash -c."},
+		"timeout": nullable("integer", "Optional timeout in seconds; null uses the configured default."),
+	}, "command", "timeout"),
+}
+
+// BashOptions configures the subprocess environment. A nil Env inherits the
+// current process environment; a non-nil Env replaces it.
 type BashOptions struct {
-	Shell          string
-	Env            []string
-	DefaultTimeout time.Duration
-	MaxTimeout     time.Duration
-	WaitDelay      time.Duration
+	Env []string
 }
 
 // Bash executes noninteractive shell commands in a fixed working directory.
@@ -47,81 +52,40 @@ type bashArguments struct {
 }
 
 // NewBash constructs a Bash tool rooted at cwd.
-func NewBash(cwd string, options BashOptions) (*Bash, error) {
-	workspace, err := newWorkspace(cwd)
-	if err != nil {
-		return nil, err
-	}
-	shell := options.Shell
-	if shell == "" {
-		shell = "bash"
-	}
-	defaultTimeout := options.DefaultTimeout
-	if defaultTimeout == 0 {
-		defaultTimeout = defaultBashTimeout
-	}
-	maxTimeout := options.MaxTimeout
-	if maxTimeout == 0 {
-		maxTimeout = maximumBashTimeout
-	}
-	waitDelay := options.WaitDelay
-	if waitDelay == 0 {
-		waitDelay = defaultWaitDelay
-	}
-	if defaultTimeout < 0 || maxTimeout < 0 || waitDelay < 0 {
-		return nil, errors.New("tool: bash durations cannot be negative")
-	}
-	if defaultTimeout > maxTimeout {
-		return nil, errors.New("tool: bash default timeout exceeds maximum timeout")
-	}
-	var environment []string
-	if options.Env != nil {
-		environment = append(make([]string, 0, len(options.Env)), options.Env...)
-	}
+func NewBash(cwd string, options BashOptions) *Bash {
 	return &Bash{
-		workspace:      workspace,
-		shell:          shell,
-		env:            environment,
-		defaultTimeout: defaultTimeout,
-		maxTimeout:     maxTimeout,
-		waitDelay:      waitDelay,
-	}, nil
+		workspace:      newWorkspace(cwd),
+		shell:          bashToolName,
+		env:            options.Env,
+		defaultTimeout: defaultBashTimeout,
+		maxTimeout:     maximumBashTimeout,
+		waitDelay:      defaultWaitDelay,
+	}
 }
 
-func (b *Bash) Definition() agent.ToolDefinition {
-	return agent.ToolDefinition{
-		Name:          "bash",
-		Description:   "Run a noninteractive Bash command in the session working directory. Returns combined stdout/stderr, exit status, and timeout information; output keeps the bounded tail. Killing Bash is not guaranteed to kill every descendant.",
-		PromptSummary: "Run noninteractive shell commands with timeout and bounded output",
-		PromptGuidelines: []string{
-			"Bash is unsandboxed and runs with the user's permissions; avoid interactive commands.",
-		},
-		Parameters: strictObject(map[string]agent.JSONSchema{
-			"command": {Type: "string", Description: "Command passed exactly to bash -c."},
-			"timeout": nullable("integer", "Optional timeout in seconds; null uses the configured default."),
-		}, "command", "timeout"),
-	}
+func (*Bash) Definition() agent.ToolDefinition {
+	return bashToolDefinition
 }
 
 func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage) (agent.ToolResult, error) {
-	if err := validateContext(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
-	args, err := decodeArguments[bashArguments](arguments, "command", "timeout")
+	args, err := decodeArguments[bashArguments](arguments)
 	if err != nil {
-		return errorResult("bash", err), nil
+		return errorResult(bashToolName, err), nil
 	}
 	if strings.TrimSpace(args.Command) == "" {
-		return errorResult("bash", fmt.Errorf("command is required and must be nonempty")), nil
+		return errorResult(bashToolName, fmt.Errorf("command is required and must be nonempty")), nil
 	}
 
 	timeout := b.defaultTimeout
 	if args.Timeout != nil {
 		if *args.Timeout <= 0 {
-			return errorResult("bash", fmt.Errorf("timeout must be positive")), nil
+			return errorResult(bashToolName, fmt.Errorf("timeout must be positive")), nil
 		}
 		if time.Duration(*args.Timeout) > b.maxTimeout/time.Second {
-			return errorResult("bash", fmt.Errorf("timeout must not exceed %s", b.maxTimeout)), nil
+			return errorResult(bashToolName, fmt.Errorf("timeout must not exceed %s", b.maxTimeout)), nil
 		}
 		timeout = time.Duration(*args.Timeout) * time.Second
 	}
@@ -132,7 +96,7 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	command.Dir = b.workspace.cwd
 	command.Stdin = nil
 	if b.env != nil {
-		command.Env = append([]string(nil), b.env...)
+		command.Env = b.env
 	} else {
 		command.Env = os.Environ()
 	}
@@ -143,13 +107,13 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	command.Stderr = capture
 	if err := command.Start(); err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
-			result := errorResult("bash", fmt.Errorf("canceled before shell started; exit status: unavailable: %w", contextErr))
+			result := errorResult(bashToolName, fmt.Errorf("canceled before shell started; exit status: unavailable: %w", contextErr))
 			return result, contextErr
 		}
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-			return errorResult("bash", fmt.Errorf("timed out after %s before shell started; exit status: unavailable", timeout)), nil
+			return errorResult(bashToolName, fmt.Errorf("timed out after %s before shell started; exit status: unavailable", timeout)), nil
 		}
-		return errorResult("bash", fmt.Errorf("failed to start shell: %w; exit status: unavailable", err)), nil
+		return errorResult(bashToolName, fmt.Errorf("failed to start shell: %w; exit status: unavailable", err)), nil
 	}
 	waitErr := command.Wait()
 	output, captureTruncated := capture.String()

@@ -15,15 +15,21 @@ import (
 type providerStep func(context.Context, Request, TextSink) (Response, error)
 
 type scriptedProvider struct {
-	t     *testing.T
-	steps []providerStep
-	calls int
+	t         *testing.T
+	steps     []providerStep
+	calls     int
+	reasoning string
 }
 
-func (p *scriptedProvider) Generate(ctx context.Context, request Request, onText TextSink) (Response, error) {
+func (p *scriptedProvider) Generate(ctx context.Context, request Request, onText, onReasoning TextSink) (Response, error) {
 	p.t.Helper()
 	if p.calls >= len(p.steps) {
 		p.t.Fatalf("unexpected provider call %d", p.calls+1)
+	}
+	if p.calls == 0 && p.reasoning != "" {
+		if err := onReasoning(p.reasoning); err != nil {
+			return Response{}, err
+		}
 	}
 	step := p.steps[p.calls]
 	p.calls++
@@ -47,7 +53,7 @@ func (t *fakeToolbox) Execute(ctx context.Context, call ToolCall) (ToolResult, e
 }
 
 func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
-	provider := &scriptedProvider{t: t}
+	provider := &scriptedProvider{t: t, reasoning: "Assessing files"}
 	provider.steps = []providerStep{
 		func(_ context.Context, request Request, onText TextSink) (Response, error) {
 			assertUserInput(t, request, "inspect the file")
@@ -101,8 +107,8 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 
 	toolbox := &fakeToolbox{
 		definitions: []ToolDefinition{
-			{Name: "write", PromptSummary: "Create or overwrite files"},
-			{Name: "read", PromptSummary: "Read file contents"},
+			{Name: "read", Description: "Read file contents"},
+			{Name: "write", Description: "Create or overwrite files"},
 		},
 		execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
 			if call.ID != "call-1" || call.Name != "read" || string(call.Arguments) != `{"path":"README.md"}` {
@@ -130,15 +136,15 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 	if result.Usage != (Usage{InputTokens: 18, OutputTokens: 5, TotalTokens: 23}) {
 		t.Fatalf("usage = %+v", result.Usage)
 	}
-	wantKinds := []EventKind{EventAssistantText, EventToolStart, EventToolEnd, EventAssistantText}
+	wantKinds := []EventKind{EventAssistantReasoning, EventAssistantText, EventToolStart, EventToolEnd, EventAssistantText}
 	if got := eventKinds(events); !slices.Equal(got, wantKinds) {
 		t.Fatalf("event kinds = %v, want %v", got, wantKinds)
 	}
-	if events[0].Text != "Checking" || events[1].Call.ID != "call-1" || events[2].Result.CallID != "call-1" || events[3].Text != " done" {
+	if events[0].Text != "Assessing files" || events[1].Text != "Checking" || events[2].Call.ID != "call-1" || events[3].Result.CallID != "call-1" || events[4].Text != " done" {
 		t.Fatalf("unexpected event payloads: %+v", events)
 	}
 
-	next, err := engine.Run(context.Background(), "next question", nil)
+	next, err := engine.Run(context.Background(), "next question", discardEvents)
 	if err != nil {
 		t.Fatalf("second Run() error = %v", err)
 	}
@@ -176,7 +182,7 @@ func TestEngineExecutesMultipleCallsInProviderOrder(t *testing.T) {
 	}}
 
 	engine := newTestEngine(t, provider, toolbox, Options{MaxToolRounds: 1})
-	if _, err := engine.Run(context.Background(), "run both", nil); err != nil {
+	if _, err := engine.Run(context.Background(), "run both", discardEvents); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if !slices.Equal(executionOrder, []string{"second", "first"}) {
@@ -184,51 +190,32 @@ func TestEngineExecutesMultipleCallsInProviderOrder(t *testing.T) {
 	}
 }
 
-func TestEngineReturnsUnknownToolsAndMalformedArgumentsToProvider(t *testing.T) {
-	toolExecutions := 0
+func TestEngineReturnsUnknownToolsToProvider(t *testing.T) {
 	provider := &scriptedProvider{t: t, steps: []providerStep{
 		func(_ context.Context, _ Request, _ TextSink) (Response, error) {
 			return Response{
-				ToolCalls: []ToolCall{
-					{ID: "bad-json", Name: "read", Arguments: json.RawMessage(`{"path":`)},
-					{ID: "unknown", Name: "missing", Arguments: json.RawMessage(`{}`)},
-				},
-				State: []byte("calls"),
+				ToolCalls: []ToolCall{{ID: "unknown", Name: "missing", Arguments: json.RawMessage(`{}`)}},
+				State:     []byte("calls"),
 			}, nil
 		},
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if len(request.Inputs) != 2 {
-				t.Fatalf("error result count = %d, want 2", len(request.Inputs))
-			}
-			for _, input := range request.Inputs {
-				if !input.IsError {
-					t.Fatalf("input is not marked as error: %+v", input)
-				}
-			}
-			if request.Inputs[0].CallID != "bad-json" || !strings.Contains(request.Inputs[0].Text, "malformed JSON") {
-				t.Fatalf("malformed result = %+v", request.Inputs[0])
-			}
-			if request.Inputs[1].CallID != "unknown" || !strings.Contains(request.Inputs[1].Text, "unknown tool") {
-				t.Fatalf("unknown result = %+v", request.Inputs[1])
+			if len(request.Inputs) != 1 || !request.Inputs[0].IsError || request.Inputs[0].CallID != "unknown" || !strings.Contains(request.Inputs[0].Text, "unknown tool") {
+				t.Fatalf("unknown result = %+v", request.Inputs)
 			}
 			return Response{Text: "recovered", State: []byte("done")}, nil
 		},
 	}}
 	toolbox := &fakeToolbox{execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
-		toolExecutions++
 		return ToolResult{}, fmt.Errorf("unknown tool %q", call.Name)
 	}}
 
 	engine := newTestEngine(t, provider, toolbox, Options{MaxToolRounds: 1})
-	result, err := engine.Run(context.Background(), "recover", nil)
+	result, err := engine.Run(context.Background(), "recover", discardEvents)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if result.Text != "recovered" {
 		t.Fatalf("result text = %q", result.Text)
-	}
-	if toolExecutions != 1 {
-		t.Fatalf("tool executions = %d, want 1; malformed JSON should not reach toolbox", toolExecutions)
 	}
 }
 
@@ -248,14 +235,14 @@ func TestEngineStopsAtToolRoundLimit(t *testing.T) {
 	}}
 
 	engine := newTestEngine(t, provider, toolbox, Options{MaxToolRounds: 1})
-	_, err := engine.Run(context.Background(), "loop", nil)
+	_, err := engine.Run(context.Background(), "loop", discardEvents)
 	if !errors.Is(err, ErrToolRoundLimit) {
 		t.Fatalf("Run() error = %v, want ErrToolRoundLimit", err)
 	}
 	if toolExecutions != 1 {
 		t.Fatalf("tool executions = %d, want 1", toolExecutions)
 	}
-	if _, nextErr := engine.Run(context.Background(), "continue", nil); !errors.Is(nextErr, ErrResetRequired) {
+	if _, nextErr := engine.Run(context.Background(), "continue", discardEvents); !errors.Is(nextErr, ErrResetRequired) {
 		t.Fatalf("Run() after incomplete tool turn error = %v, want ErrResetRequired", nextErr)
 	}
 }
@@ -284,7 +271,7 @@ func TestEngineHonorsCancellationDuringToolExecution(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(ctx, "wait", nil)
+		_, err := engine.Run(ctx, "wait", discardEvents)
 		done <- err
 	}()
 
@@ -307,64 +294,19 @@ func TestEngineHonorsCancellationDuringToolExecution(t *testing.T) {
 	if !engine.NeedsReset() {
 		t.Fatal("canceled tool turn does not report required reset")
 	}
-	if _, err := engine.Run(context.Background(), "continue", nil); !errors.Is(err, ErrResetRequired) {
+	if _, err := engine.Run(context.Background(), "continue", discardEvents); !errors.Is(err, ErrResetRequired) {
 		t.Fatalf("Run() after canceled tool error = %v, want ErrResetRequired", err)
 	}
 	engine.Reset()
 	if engine.NeedsReset() {
 		t.Fatal("Reset() did not clear required reset state")
 	}
-	result, err := engine.Run(context.Background(), "after reset", nil)
+	result, err := engine.Run(context.Background(), "after reset", discardEvents)
 	if err != nil {
 		t.Fatalf("Run() after Reset() error = %v", err)
 	}
 	if result.Text != "recovered" {
 		t.Fatalf("Run() after Reset() text = %q", result.Text)
-	}
-}
-
-func TestEngineHonorsCancellationWhileQueued(t *testing.T) {
-	providerStarted := make(chan struct{})
-	releaseProvider := make(chan struct{})
-	provider := &scriptedProvider{t: t, steps: []providerStep{
-		func(_ context.Context, _ Request, _ TextSink) (Response, error) {
-			close(providerStarted)
-			<-releaseProvider
-			return Response{Text: "done", State: []byte("done")}, nil
-		},
-	}}
-	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
-
-	firstDone := make(chan error, 1)
-	go func() {
-		_, err := engine.Run(context.Background(), "first", nil)
-		firstDone <- err
-	}()
-	select {
-	case <-providerStarted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("first provider call did not start")
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	queuedDone := make(chan error, 1)
-	go func() {
-		_, err := engine.Run(ctx, "queued", nil)
-		queuedDone <- err
-	}()
-	select {
-	case err := <-queuedDone:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("queued Run() error = %v, want context.Canceled", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("canceled queued Run() remained blocked")
-	}
-
-	close(releaseProvider)
-	if err := <-firstDone; err != nil {
-		t.Fatalf("first Run() error = %v", err)
 	}
 }
 
@@ -385,11 +327,11 @@ func TestEngineResetDiscardsProviderState(t *testing.T) {
 	}}
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
 
-	if _, err := engine.Run(context.Background(), "first", nil); err != nil {
+	if _, err := engine.Run(context.Background(), "first", discardEvents); err != nil {
 		t.Fatalf("first Run() error = %v", err)
 	}
 	engine.Reset()
-	if _, err := engine.Run(context.Background(), "second", nil); err != nil {
+	if _, err := engine.Run(context.Background(), "second", discardEvents); err != nil {
 		t.Fatalf("second Run() error = %v", err)
 	}
 }
@@ -411,7 +353,7 @@ func TestEngineTreatsToolLocalDeadlineAsRecoverable(t *testing.T) {
 	}}
 	engine := newTestEngine(t, provider, toolbox, Options{MaxToolRounds: 1})
 
-	result, err := engine.Run(context.Background(), "run", nil)
+	result, err := engine.Run(context.Background(), "run", discardEvents)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -431,73 +373,17 @@ func TestEngineReturnsCanceledContextBeforeAcquiringAvailableGate(t *testing.T) 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := engine.Run(ctx, "canceled", nil); !errors.Is(err, context.Canceled) {
+	if _, err := engine.Run(ctx, "canceled", discardEvents); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context.Canceled", err)
-	}
-}
-
-func TestEngineDefensivelyCopiesNestedToolSchemas(t *testing.T) {
-	provider := &scriptedProvider{t: t, steps: []providerStep{
-		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			schema := &request.Tools[0].Parameters
-			schema.Required[0] = "changed"
-			schema.AnyOf[0].Type = "number"
-			property := schema.Properties["items"]
-			property.Items.Type = "number"
-			schema.Properties["items"] = property
-			return Response{Text: "first", State: []byte("first")}, nil
-		},
-		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			schema := request.Tools[0].Parameters
-			if !slices.Equal(schema.Required, []string{"items"}) {
-				t.Fatalf("required fields were mutated: %v", schema.Required)
-			}
-			if schema.AnyOf[0].Type != "object" {
-				t.Fatalf("AnyOf was mutated: %+v", schema.AnyOf)
-			}
-			if schema.Properties["items"].Items.Type != "string" {
-				t.Fatalf("Items was mutated: %+v", schema.Properties["items"])
-			}
-			return Response{Text: "second", State: []byte("second")}, nil
-		},
-	}}
-	items := JSONSchema{Type: "array", Items: &JSONSchema{Type: "string"}}
-	toolbox := &fakeToolbox{definitions: []ToolDefinition{{
-		Name: "read",
-		Parameters: JSONSchema{
-			Type:       "object",
-			Required:   []string{"items"},
-			Properties: map[string]JSONSchema{"items": items},
-			AnyOf:      []JSONSchema{{Type: "object"}},
-		},
-	}}}
-	engine := newTestEngine(t, provider, toolbox, Options{})
-
-	if _, err := engine.Run(context.Background(), "first", nil); err != nil {
-		t.Fatalf("first Run() error = %v", err)
-	}
-	if _, err := engine.Run(context.Background(), "second", nil); err != nil {
-		t.Fatalf("second Run() error = %v", err)
-	}
-}
-
-func TestNewRejectsDuplicateToolDefinitions(t *testing.T) {
-	provider := &scriptedProvider{t: t}
-	toolbox := &fakeToolbox{definitions: []ToolDefinition{{Name: "read"}, {Name: "read"}}}
-
-	if _, err := New(provider, toolbox, Options{}); err == nil || !strings.Contains(err.Error(), "duplicate tool definition") {
-		t.Fatalf("New() error = %v, want duplicate tool definition error", err)
 	}
 }
 
 func newTestEngine(t *testing.T, provider Provider, toolbox Toolbox, options Options) *Engine {
 	t.Helper()
-	engine, err := New(provider, toolbox, options)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	return engine
+	return New(provider, toolbox, options)
 }
+
+func discardEvents(Event) error { return nil }
 
 func assertUserInput(t *testing.T, request Request, text string) {
 	t.Helper()

@@ -14,6 +14,18 @@ import (
 	"yaah/agent"
 )
 
+const readToolName = "read"
+
+var readToolDefinition = agent.ToolDefinition{
+	Name:        readToolName,
+	Description: "Read a regular UTF-8 text file by path and optional line range with bounded output.",
+	Parameters: strictObject(map[string]agent.JSONSchema{
+		"path":   {Type: "string", Description: "File path, relative to the session working directory or absolute."},
+		"offset": nullable("integer", "Optional one-based starting line; null defaults to 1."),
+		"limit":  nullable("integer", "Optional maximum lines; null defaults to 2000."),
+	}, "path", "offset", "limit"),
+}
+
 // Read reads bounded UTF-8 text from regular files relative to a fixed working
 // directory. Absolute paths and paths containing .. are intentionally allowed.
 type Read struct {
@@ -27,46 +39,33 @@ type readArguments struct {
 }
 
 // NewRead constructs a read tool rooted at cwd.
-func NewRead(cwd string) (*Read, error) {
-	workspace, err := newWorkspace(cwd)
-	if err != nil {
-		return nil, err
-	}
-	return &Read{workspace: workspace}, nil
+func NewRead(cwd string) *Read {
+	return &Read{workspace: newWorkspace(cwd)}
 }
 
-func (r *Read) Definition() agent.ToolDefinition {
-	return agent.ToolDefinition{
-		Name:          "read",
-		Description:   "Read a regular UTF-8 text file with one-based line offsets and bounded output. Symlinks to regular files are followed; directories, special files, NUL bytes, and invalid UTF-8 are rejected.",
-		PromptSummary: "Read text files by path and optional line range",
-		Parameters: strictObject(map[string]agent.JSONSchema{
-			"path":   {Type: "string", Description: "File path, relative to the session working directory or absolute."},
-			"offset": nullable("integer", "Optional one-based starting line; null defaults to 1."),
-			"limit":  nullable("integer", "Optional maximum lines; null defaults to 2000."),
-		}, "path", "offset", "limit"),
-	}
+func (*Read) Definition() agent.ToolDefinition {
+	return readToolDefinition
 }
 
 func (r *Read) Execute(ctx context.Context, arguments json.RawMessage) (agent.ToolResult, error) {
-	if err := validateContext(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
-	args, err := decodeArguments[readArguments](arguments, "path", "offset", "limit")
+	args, err := decodeArguments[readArguments](arguments)
 	if err != nil {
-		return errorResult("read", err), nil
+		return errorResult(readToolName, err), nil
 	}
 	offset, err := optionalPositive(args.Offset, 1, int(^uint(0)>>1), "offset")
 	if err != nil {
-		return errorResult("read", err), nil
+		return errorResult(readToolName, err), nil
 	}
 	limit, err := optionalPositive(args.Limit, DefaultMaxLines, DefaultMaxLines, "limit")
 	if err != nil {
-		return errorResult("read", err), nil
+		return errorResult(readToolName, err), nil
 	}
 	path, err := r.workspace.resolve(args.Path)
 	if err != nil {
-		return errorResult("read", err), nil
+		return errorResult(readToolName, err), nil
 	}
 
 	// Stat before opening so FIFOs and devices fail instead of blocking in
@@ -74,22 +73,22 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	// replacement races; path handling is not a security boundary.
 	info, err := os.Stat(path)
 	if err != nil {
-		return errorResult("read", err), nil
+		return errorResult(readToolName, err), nil
 	}
 	if !info.Mode().IsRegular() {
-		return errorResult("read", fmt.Errorf("%s is not a regular file", r.workspace.display(path))), nil
+		return errorResult(readToolName, fmt.Errorf("%s is not a regular file", r.workspace.display(path))), nil
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return errorResult("read", err), nil
+		return errorResult(readToolName, err), nil
 	}
 	defer file.Close()
 	openedInfo, err := file.Stat()
 	if err != nil {
-		return errorResult("read", err), nil
+		return errorResult(readToolName, err), nil
 	}
 	if !openedInfo.Mode().IsRegular() {
-		return errorResult("read", fmt.Errorf("%s is not a regular file", r.workspace.display(path))), nil
+		return errorResult(readToolName, fmt.Errorf("%s is not a regular file", r.workspace.display(path))), nil
 	}
 
 	reader := bufio.NewReader(file)
@@ -112,7 +111,7 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 			}
 			if !sawData {
 				if offset != 1 {
-					return errorResult("read", fmt.Errorf("offset %d is beyond end of empty file", offset)), nil
+					return errorResult(readToolName, fmt.Errorf("offset %d is beyond end of empty file", offset)), nil
 				}
 				return successResult(""), nil
 			}
@@ -121,15 +120,15 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 				lineCount--
 			}
 			if offset > lineCount {
-				return errorResult("read", fmt.Errorf("offset %d is beyond end of file (%d lines)", offset, lineCount)), nil
+				return errorResult(readToolName, fmt.Errorf("offset %d is beyond end of file (%d lines)", offset, lineCount)), nil
 			}
 			return agent.ToolResult{Output: output.String()}, nil
 		}
 		if readErr != nil {
-			return errorResult("read", readErr), nil
+			return errorResult(readToolName, readErr), nil
 		}
 		if runeValue == utf8.RuneError && size == 1 || runeValue == 0 {
-			return errorResult("read", fmt.Errorf("%s: binary file is not supported", r.workspace.display(path))), nil
+			return errorResult(readToolName, fmt.Errorf("%s: binary file is not supported", r.workspace.display(path))), nil
 		}
 
 		sawData = true

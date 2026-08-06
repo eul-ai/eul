@@ -4,12 +4,13 @@ package agent
 type EventKind string
 
 const (
-	EventAssistantText EventKind = "assistant_text"
-	EventToolStart     EventKind = "tool_start"
-	EventToolEnd       EventKind = "tool_end"
+	EventAssistantText      EventKind = "assistant_text"
+	EventAssistantReasoning EventKind = "assistant_reasoning"
+	EventToolStart          EventKind = "tool_start"
+	EventToolEnd            EventKind = "tool_end"
 )
 
-// Event reports assistant text and tool execution lifecycle changes.
+// Event reports assistant output and tool execution lifecycle changes.
 type Event struct {
 	Kind   EventKind
 	Text   string

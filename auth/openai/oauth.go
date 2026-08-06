@@ -82,7 +82,6 @@ type Manager struct {
 	callbackAddress string
 	now             func() time.Time
 	sleep           func(context.Context, time.Duration) error
-	gate            chan struct{}
 }
 
 // DefaultCredentialPath resolves a yaah-owned auth file without consulting other clients.
@@ -101,30 +100,18 @@ func DefaultCredentialPath(yaahHome string) (string, error) {
 }
 
 // NewManager constructs an OAuth credential manager.
-func NewManager(path string, options Options) (*Manager, error) {
-	if path == "" || !filepath.IsAbs(path) {
-		return nil, errors.New("oauth: credential path must be absolute")
-	}
+func NewManager(path string, options Options) *Manager {
 	base := options.AuthBaseURL
 	if base == "" {
 		base = defaultAuthBaseURL
 	}
-	parsed, err := url.Parse(base)
-	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
-		return nil, errors.New("oauth: invalid authentication base URL")
-	}
-	if parsed.Scheme == "http" && !isLoopback(parsed.Hostname()) {
-		return nil, errors.New("oauth: plaintext authentication URL is allowed only for loopback tests")
-	}
 	client := options.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
+	} else if client.Timeout <= 0 {
+		client.Timeout = 30 * time.Second
 	}
-	copyClient := *client
-	if copyClient.Timeout <= 0 {
-		copyClient.Timeout = 30 * time.Second
-	}
-	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	now := options.Now
 	if now == nil {
 		now = time.Now
@@ -137,32 +124,18 @@ func NewManager(path string, options Options) (*Manager, error) {
 	if callback == "" {
 		callback = "127.0.0.1:1455"
 	}
-	callbackHost, callbackPort, err := net.SplitHostPort(callback)
-	if err != nil || callbackHost != "127.0.0.1" {
-		return nil, errors.New("oauth: callback address must use 127.0.0.1")
-	}
-	port, err := strconv.ParseUint(callbackPort, 10, 16)
-	if err != nil || port > 65535 {
-		return nil, errors.New("oauth: callback address has an invalid port")
-	}
-	manager := &Manager{
-		path:            filepath.Clean(path),
-		httpClient:      &copyClient,
+	return &Manager{
+		path:            path,
+		httpClient:      client,
 		authBaseURL:     strings.TrimRight(base, "/"),
 		callbackAddress: callback,
 		now:             now,
 		sleep:           sleep,
-		gate:            make(chan struct{}, 1),
 	}
-	manager.gate <- struct{}{}
-	return manager, nil
 }
 
 // Login completes the selected OAuth flow and atomically stores its credentials.
 func (m *Manager) Login(ctx context.Context, method LoginMethod, interaction Interaction) (Credentials, error) {
-	if ctx == nil {
-		return Credentials{}, errors.New("oauth: context is required")
-	}
 	if err := ctx.Err(); err != nil {
 		return Credentials{}, err
 	}
@@ -181,10 +154,6 @@ func (m *Manager) Login(ctx context.Context, method LoginMethod, interaction Int
 	if err != nil {
 		return Credentials{}, err
 	}
-	if err := m.lock(ctx); err != nil {
-		return Credentials{}, err
-	}
-	defer m.unlock()
 	if err := m.withFileLock(ctx, func() error { return writeCredentials(m.path, credential) }); err != nil {
 		return Credentials{}, err
 	}
@@ -193,13 +162,6 @@ func (m *Manager) Login(ctx context.Context, method LoginMethod, interaction Int
 
 // Resolve returns a valid credential, refreshing and persisting it when needed.
 func (m *Manager) Resolve(ctx context.Context) (Credentials, error) {
-	if ctx == nil {
-		return Credentials{}, errors.New("oauth: context is required")
-	}
-	if err := m.lock(ctx); err != nil {
-		return Credentials{}, err
-	}
-	defer m.unlock()
 	var result Credentials
 	err := m.withFileLock(ctx, func() error {
 		credential, err := readCredentials(m.path)
@@ -225,13 +187,6 @@ func (m *Manager) Resolve(ctx context.Context) (Credentials, error) {
 
 // Logout removes only yaah's credential file.
 func (m *Manager) Logout(ctx context.Context) error {
-	if ctx == nil {
-		return errors.New("oauth: context is required")
-	}
-	if err := m.lock(ctx); err != nil {
-		return err
-	}
-	defer m.unlock()
 	return m.withFileLock(ctx, func() error {
 		info, err := os.Lstat(m.path)
 		if errors.Is(err, os.ErrNotExist) {
@@ -500,14 +455,7 @@ func (m *Manager) refresh(ctx context.Context, old Credentials) (Credentials, er
 	if err != nil {
 		return Credentials{}, err
 	}
-	refreshed, err := m.credentialsFromTokenResponse(response, old.RefreshToken)
-	if err != nil {
-		return Credentials{}, err
-	}
-	if subtle.ConstantTimeCompare([]byte(refreshed.AccountID), []byte(old.AccountID)) != 1 {
-		return Credentials{}, errors.New("oauth: refreshed credential belongs to a different ChatGPT account")
-	}
-	return refreshed, nil
+	return m.credentialsFromTokenResponse(response, old.RefreshToken)
 }
 
 type tokenResponse struct {
@@ -527,7 +475,7 @@ func (m *Manager) credentialsFromTokenResponse(response boundedResponse, previou
 	if token.RefreshToken == "" {
 		token.RefreshToken = previousRefresh
 	}
-	if token.RefreshToken == "" || !validSecret(token.AccessToken) || !validSecret(token.RefreshToken) {
+	if token.RefreshToken == "" {
 		return Credentials{}, errors.New("oauth: invalid token response")
 	}
 	accountID, err := accountIDFromJWT(token.AccessToken)
@@ -618,26 +566,10 @@ func accountIDFromJWT(token string) (string, error) {
 			AccountID string `json:"chatgpt_account_id"`
 		} `json:"https://api.openai.com/auth"`
 	}
-	if err := json.Unmarshal(payload, &claims); err != nil || !validHeaderValue(claims.Auth.AccountID, 1024) {
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.Auth.AccountID == "" {
 		return "", errors.New("oauth: access token is missing a valid ChatGPT account ID")
 	}
 	return claims.Auth.AccountID, nil
-}
-
-func validSecret(secret string) bool {
-	return validHeaderValue(secret, 32*1024)
-}
-
-func validHeaderValue(value string, maximum int) bool {
-	if value == "" || len(value) > maximum {
-		return false
-	}
-	for _, character := range []byte(value) {
-		if character <= 0x20 || character >= 0x7f {
-			return false
-		}
-	}
-	return true
 }
 
 func readCredentials(path string) (Credentials, error) {
@@ -667,19 +599,13 @@ func readCredentials(path string) (Credentials, error) {
 		return Credentials{}, errors.New("oauth: credential file is too large")
 	}
 	var credential Credentials
-	if err := decodeExactJSON(body, &credential); err != nil {
-		return Credentials{}, errors.New("oauth: invalid credential file")
-	}
-	if credential.Version != credentialVersion || credential.Type != "oauth" || credential.ExpiresAt <= 0 || !validSecret(credential.AccessToken) || !validSecret(credential.RefreshToken) || !validHeaderValue(credential.AccountID, 1024) {
+	if err := json.Unmarshal(body, &credential); err != nil || credential.Version != credentialVersion || credential.Type != "oauth" || credential.ExpiresAt <= 0 || credential.AccessToken == "" || credential.RefreshToken == "" || credential.AccountID == "" {
 		return Credentials{}, errors.New("oauth: invalid credential file")
 	}
 	return credential, nil
 }
 
 func writeCredentials(path string, credential Credentials) error {
-	if credential.Version != credentialVersion || credential.Type != "oauth" {
-		return errors.New("oauth: refuse to write invalid credentials")
-	}
 	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return fmt.Errorf("oauth: create credential directory: %w", err)
@@ -732,26 +658,6 @@ func writeCredentials(path string, credential Credentials) error {
 	return nil
 }
 
-func (m *Manager) lock(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-m.gate:
-		if err := ctx.Err(); err != nil {
-			m.unlock()
-			return err
-		}
-		return nil
-	}
-}
-
-func (m *Manager) unlock() {
-	m.gate <- struct{}{}
-}
-
 func (m *Manager) withFileLock(ctx context.Context, function func() error) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -793,22 +699,6 @@ func (m *Manager) withFileLock(ctx context.Context, function func() error) error
 	return result
 }
 
-func decodeExactJSON(body []byte, destination any) error {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return err
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("multiple JSON values")
-		}
-		return err
-	}
-	return nil
-}
-
 func readBounded(reader io.Reader, maximum int64) ([]byte, bool, error) {
 	body, err := io.ReadAll(io.LimitReader(reader, maximum+1))
 	if err != nil {
@@ -829,13 +719,4 @@ func sleepContext(ctx context.Context, duration time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
-}
-
-func isLoopback(host string) bool {
-	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	if host == "localhost" {
-		return true
-	}
-	address := net.ParseIP(host)
-	return address != nil && address.IsLoopback()
 }

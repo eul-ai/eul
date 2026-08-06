@@ -134,7 +134,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	}, func(text string) error {
 		sinkText = append(sinkText, text)
 		return nil
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("first Generate() error = %v", err)
 	}
@@ -161,7 +161,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 			{Kind: agent.InputToolResult, CallID: "call_read", Tool: "read", Text: "file contents"},
 			{Kind: agent.InputToolResult, CallID: "call_bash", Tool: "bash", Text: "exit status 1", IsError: true},
 		},
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("second Generate() error = %v", err)
 	}
@@ -175,7 +175,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 		State:        second.State,
 		Tools:        tools,
 		Inputs:       []agent.Input{{Kind: agent.InputUser, Text: "next"}},
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("third Generate() error = %v", err)
 	}
@@ -222,7 +222,7 @@ func TestPlatformClientStreamsTextDeltas(t *testing.T) {
 			deltas = append(deltas, delta)
 			seenDelta <- delta
 			return nil
-		})
+		}, nil)
 		done <- outcome{response: response, err: err}
 	}()
 	select {
@@ -254,7 +254,7 @@ func TestPlatformClientStreamsRefusal(t *testing.T) {
 	defer server.Close()
 	client := newTestClient(t, "key", server.URL, Options{})
 	var delivered string
-	response, err := client.Generate(context.Background(), baseRequest(), func(delta string) error { delivered += delta; return nil })
+	response, err := client.Generate(context.Background(), baseRequest(), func(delta string) error { delivered += delta; return nil }, nil)
 	if err != nil || response.Text != "Cannot comply." || delivered != response.Text {
 		t.Fatalf("response=%+v delivered=%q error=%v", response, delivered, err)
 	}
@@ -270,7 +270,7 @@ func TestClientDecodesRefusalAndPreservesMalformedToolArguments(t *testing.T) {
 	}`)
 	defer server.Close()
 	client := newTestClient(t, "key", server.URL, Options{})
-	response, err := client.Generate(context.Background(), baseRequest(), nil)
+	response, err := client.Generate(context.Background(), baseRequest(), nil, nil)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -303,7 +303,7 @@ func TestClientRejectsMalformedResponses(t *testing.T) {
 			_, err := client.Generate(context.Background(), baseRequest(), func(string) error {
 				t.Fatal("text sink called for malformed response")
 				return nil
-			})
+			}, nil)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Generate() error = %v, want containing %q", err, test.want)
 			}
@@ -317,7 +317,7 @@ func TestClientBoundsHTTPErrors(t *testing.T) {
 	defer server.Close()
 	client := newTestClient(t, key, server.URL, Options{})
 	client.maxErrorBytes = 160
-	_, err := client.Generate(context.Background(), baseRequest(), nil)
+	_, err := client.Generate(context.Background(), baseRequest(), nil, nil)
 	if err == nil {
 		t.Fatal("Generate() succeeded")
 	}
@@ -330,7 +330,7 @@ func TestClientParsesStructuredHTTPError(t *testing.T) {
 	server := responseServer(t, http.StatusTooManyRequests, `{"error":{"type":"rate_limit_error","code":"rate_limit","message":"slow down"}}`)
 	defer server.Close()
 	client := newTestClient(t, "key", server.URL, Options{})
-	_, err := client.Generate(context.Background(), baseRequest(), nil)
+	_, err := client.Generate(context.Background(), baseRequest(), nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "HTTP 429") || !strings.Contains(err.Error(), "rate_limit_error/rate_limit: slow down") {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -342,7 +342,7 @@ func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
 		defer server.Close()
 		client := newTestClient(t, "key", server.URL, Options{})
 		client.maxResponseBytes = 100
-		_, err := client.Generate(context.Background(), baseRequest(), nil)
+		_, err := client.Generate(context.Background(), baseRequest(), nil, nil)
 		if err == nil || !strings.Contains(err.Error(), "response exceeds 100 bytes") {
 			t.Fatalf("Generate() error = %v", err)
 		}
@@ -355,7 +355,7 @@ func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
 		client.maxRequestBytes = 100
 		request := baseRequest()
 		request.Inputs[0].Text = strings.Repeat("x", 200)
-		_, err := client.Generate(context.Background(), request, nil)
+		_, err := client.Generate(context.Background(), request, nil, nil)
 		if err == nil || !strings.Contains(err.Error(), "request exceeds 100 bytes") || calls.Load() != 0 {
 			t.Fatalf("Generate() error = %v, HTTP calls = %d", err, calls.Load())
 		}
@@ -371,7 +371,7 @@ func TestClientRejectsOversizedReturnedStateBeforeTextSink(t *testing.T) {
 	_, err := client.Generate(context.Background(), baseRequest(), func(string) error {
 		sinkCalled = true
 		return nil
-	})
+	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "continuation state exceeds 100 bytes") || sinkCalled {
 		t.Fatalf("Generate() error = %v, sink called = %v", err, sinkCalled)
 	}
@@ -382,7 +382,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		client := newTestClient(t, "key", "http://127.0.0.1:1", Options{})
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		_, err := client.Generate(ctx, baseRequest(), nil)
+		_, err := client.Generate(ctx, baseRequest(), nil, nil)
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("Generate() error = %v", err)
 		}
@@ -393,7 +393,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 			<-release
 		}))
 		client := newTestClient(t, "key", server.URL, Options{HTTPClient: &http.Client{Timeout: 30 * time.Millisecond}})
-		_, err := client.Generate(context.Background(), baseRequest(), nil)
+		_, err := client.Generate(context.Background(), baseRequest(), nil, nil)
 		close(release)
 		server.Close()
 		if !errors.Is(err, context.DeadlineExceeded) {
@@ -408,7 +408,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = client.Generate(context.Background(), baseRequest(), nil)
+		_, err = client.Generate(context.Background(), baseRequest(), nil, nil)
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("Generate() error = %v", err)
 		}
@@ -418,7 +418,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		defer server.Close()
 		client := newTestClient(t, "key", server.URL, Options{})
 		sinkError := errors.New("sink failed")
-		_, err := client.Generate(context.Background(), baseRequest(), func(string) error { return sinkError })
+		_, err := client.Generate(context.Background(), baseRequest(), func(string) error { return sinkError }, nil)
 		if !errors.Is(err, sinkError) {
 			t.Fatalf("Generate() error = %v", err)
 		}
@@ -431,7 +431,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		defer server.Close()
 		client := newTestClient(t, "key", server.URL, Options{})
 		sinkError := errors.New("streaming sink failed")
-		_, err := client.Generate(context.Background(), baseRequest(), func(string) error { return sinkError })
+		_, err := client.Generate(context.Background(), baseRequest(), func(string) error { return sinkError }, nil)
 		if !errors.Is(err, sinkError) {
 			t.Fatalf("Generate() error = %v", err)
 		}
@@ -449,7 +449,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		seen := make(chan struct{}, 1)
 		done := make(chan error, 1)
 		go func() {
-			_, err := client.Generate(ctx, baseRequest(), func(string) error { seen <- struct{}{}; return nil })
+			_, err := client.Generate(ctx, baseRequest(), func(string) error { seen <- struct{}{}; return nil }, nil)
 			done <- err
 		}()
 		select {
@@ -472,43 +472,27 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		}))
 		defer origin.Close()
 		client := newTestClient(t, "key", origin.URL, Options{})
-		_, err := client.Generate(context.Background(), baseRequest(), nil)
+		_, err := client.Generate(context.Background(), baseRequest(), nil, nil)
 		if err == nil || !strings.Contains(err.Error(), "HTTP 307") || destinationCalls.Load() != 0 {
 			t.Fatalf("Generate() error = %v, destination calls = %d", err, destinationCalls.Load())
 		}
 	})
 }
 
-func TestNewValidatesConfiguration(t *testing.T) {
-	tests := []struct {
-		name    string
-		key     string
-		options Options
-	}{
-		{name: "missing key", key: ""},
-		{name: "invalid key", key: "bad\nkey"},
-		{name: "bad base URL", key: "key", options: Options{BaseURL: "://bad"}},
-		{name: "base credentials", key: "key", options: Options{BaseURL: "https://user@example.com"}},
-		{name: "plaintext remote base", key: "key", options: Options{BaseURL: "http://example.com"}},
-		{name: "invalid reasoning effort", key: "key", options: Options{ReasoningEffort: "extreme"}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if _, err := New(test.key, test.options); err == nil {
-				t.Fatalf("New(%q, %+v) succeeded", test.key, test.options)
-			}
-		})
+func TestNewRejectsInvalidReasoningEffort(t *testing.T) {
+	if _, err := New("key", Options{ReasoningEffort: "extreme"}); err == nil {
+		t.Fatal("invalid reasoning effort accepted")
 	}
 }
 
-func TestNewCopiesInjectedClientAndAppliesDefaultTimeout(t *testing.T) {
+func TestNewUsesInjectedClientAndAppliesDefaultTimeout(t *testing.T) {
 	injected := &http.Client{}
 	client, err := New("key", Options{BaseURL: "https://example.com", HTTPClient: injected})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.httpClient == injected || client.httpClient.Timeout != defaultHTTPTimeout || injected.Timeout != 0 {
-		t.Fatalf("injected timeout/copy = client:%p %s injected:%p %s", client.httpClient, client.httpClient.Timeout, injected, injected.Timeout)
+	if client.httpClient != injected || injected.Timeout != defaultHTTPTimeout {
+		t.Fatalf("injected client=%p timeout=%s", client.httpClient, injected.Timeout)
 	}
 }
 
@@ -529,12 +513,8 @@ func strictTestTool(name string) agent.ToolDefinition {
 		property = "command"
 	}
 	return agent.ToolDefinition{
-		Name:          name,
-		Description:   "Read a file",
-		PromptSummary: "not sent",
-		PromptGuidelines: []string{
-			"not sent",
-		},
+		Name:        name,
+		Description: "Read a file",
 		Parameters: agent.JSONSchema{
 			Type:                 "object",
 			Properties:           map[string]agent.JSONSchema{property: {Type: "string"}},

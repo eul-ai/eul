@@ -2,10 +2,8 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 )
 
 const DefaultMaxToolRounds = 20
@@ -14,10 +12,6 @@ var (
 	// ErrToolRoundLimit is returned when a model requests more tool rounds than
 	// the engine permits for one user turn.
 	ErrToolRoundLimit = errors.New("agent: maximum tool rounds exceeded")
-
-	// ErrInvalidToolCall is returned for provider responses whose tool calls
-	// cannot be correlated safely.
-	ErrInvalidToolCall = errors.New("agent: invalid tool call")
 
 	// ErrResetRequired is returned when a prior turn stopped after tool
 	// execution began. Reset must be called before the conversation can safely
@@ -40,73 +34,33 @@ type RunResult struct {
 
 // Engine owns provider conversation state and the provider/tool-call loop.
 type Engine struct {
-	runGate chan struct{}
-
 	provider      Provider
 	tools         Toolbox
 	model         string
 	maxToolRounds int
-	definitions   []ToolDefinition
 	instructions  string
 	state         []byte
 	resetRequired bool
 }
 
-// New constructs an Engine from its consumer-owned provider and tool seams.
-func New(provider Provider, tools Toolbox, options Options) (*Engine, error) {
-	if provider == nil {
-		return nil, errors.New("agent: provider is required")
-	}
-	if tools == nil {
-		return nil, errors.New("agent: toolbox is required")
-	}
-	if options.MaxToolRounds < 0 {
-		return nil, errors.New("agent: maximum tool rounds cannot be negative")
-	}
-
+// New constructs an Engine from its provider and tools.
+func New(provider Provider, tools Toolbox, options Options) *Engine {
 	maxToolRounds := options.MaxToolRounds
 	if maxToolRounds == 0 {
 		maxToolRounds = DefaultMaxToolRounds
 	}
 
-	definitions := cloneDefinitions(tools.Definitions())
-	slices.SortFunc(definitions, compareToolDefinitions)
-	for i, definition := range definitions {
-		if definition.Name == "" {
-			return nil, errors.New("agent: tool definition name is required")
-		}
-		if i > 0 && definitions[i-1].Name == definition.Name {
-			return nil, fmt.Errorf("agent: duplicate tool definition %q", definition.Name)
-		}
-	}
-
 	return &Engine{
-		runGate:       make(chan struct{}, 1),
 		provider:      provider,
 		tools:         tools,
 		model:         options.Model,
 		maxToolRounds: maxToolRounds,
-		definitions:   definitions,
-		instructions:  BuildSystemPrompt(definitions),
-	}, nil
+		instructions:  BuildSystemPrompt(tools.Definitions()),
+	}
 }
 
-// Run processes one user turn. Calls on the same Engine are serialized so its
-// provider continuation state remains ordered.
+// Run processes one user turn.
 func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunResult, error) {
-	if ctx == nil {
-		return RunResult{}, errors.New("agent: context is required")
-	}
-
-	if err := ctx.Err(); err != nil {
-		return RunResult{}, err
-	}
-	select {
-	case e.runGate <- struct{}{}:
-		defer func() { <-e.runGate }()
-	case <-ctx.Done():
-		return RunResult{}, ctx.Err()
-	}
 	if err := ctx.Err(); err != nil {
 		return RunResult{}, err
 	}
@@ -115,7 +69,7 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		return RunResult{}, ErrResetRequired
 	}
 
-	state := slices.Clone(e.state)
+	state := e.state
 	inputs := []Input{{Kind: InputUser, Text: userText}}
 	var result RunResult
 	toolRounds := 0
@@ -128,13 +82,15 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		request := Request{
 			Model:        e.model,
 			Instructions: e.instructions,
-			Inputs:       slices.Clone(inputs),
-			Tools:        cloneDefinitions(e.definitions),
-			State:        slices.Clone(state),
+			Inputs:       inputs,
+			Tools:        e.tools.Definitions(),
+			State:        state,
 		}
 
 		response, err := e.provider.Generate(ctx, request, func(text string) error {
 			return emit(sink, Event{Kind: EventAssistantText, Text: text})
+		}, func(text string) error {
+			return emit(sink, Event{Kind: EventAssistantReasoning, Text: text})
 		})
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -143,7 +99,7 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			return RunResult{}, fmt.Errorf("agent: generate response: %w", err)
 		}
 
-		state = slices.Clone(response.State)
+		state = response.State
 		addUsage(&result.Usage, response.Usage)
 
 		if len(response.ToolCalls) == 0 {
@@ -153,9 +109,6 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			return result, nil
 		}
 
-		if err := validateToolCalls(response.ToolCalls); err != nil {
-			return RunResult{}, err
-		}
 		if toolRounds >= e.maxToolRounds {
 			return RunResult{}, ErrToolRoundLimit
 		}
@@ -166,7 +119,7 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			if err := ctx.Err(); err != nil {
 				return RunResult{}, err
 			}
-			if err := emit(sink, Event{Kind: EventToolStart, Call: cloneToolCall(call)}); err != nil {
+			if err := emit(sink, Event{Kind: EventToolStart, Call: call}); err != nil {
 				return RunResult{}, err
 			}
 
@@ -178,7 +131,7 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			if err != nil {
 				return RunResult{}, err
 			}
-			if err := emit(sink, Event{Kind: EventToolEnd, Call: cloneToolCall(call), Result: toolResult}); err != nil {
+			if err := emit(sink, Event{Kind: EventToolEnd, Call: call, Result: toolResult}); err != nil {
 				return RunResult{}, err
 			}
 
@@ -196,30 +149,17 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 // NeedsReset reports whether an incomplete tool turn requires Reset before the
 // next Run. Call it after Run has returned.
 func (e *Engine) NeedsReset() bool {
-	e.runGate <- struct{}{}
-	defer func() { <-e.runGate }()
 	return e.resetRequired
 }
 
 // Reset discards provider continuation state.
 func (e *Engine) Reset() {
-	e.runGate <- struct{}{}
-	defer func() { <-e.runGate }()
 	e.state = nil
 	e.resetRequired = false
 }
 
 func (e *Engine) executeTool(ctx context.Context, call ToolCall) (ToolResult, error) {
-	if !json.Valid(call.Arguments) {
-		return ToolResult{
-			CallID:  call.ID,
-			Tool:    call.Name,
-			Output:  "invalid tool arguments: malformed JSON",
-			IsError: true,
-		}, nil
-	}
-
-	result, err := e.tools.Execute(ctx, cloneToolCall(call))
+	result, err := e.tools.Execute(ctx, call)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ToolResult{}, ctxErr
@@ -232,24 +172,7 @@ func (e *Engine) executeTool(ctx context.Context, call ToolCall) (ToolResult, er
 	return result, nil
 }
 
-func validateToolCalls(calls []ToolCall) error {
-	seen := make(map[string]struct{}, len(calls))
-	for _, call := range calls {
-		if call.ID == "" {
-			return fmt.Errorf("%w: missing call ID", ErrInvalidToolCall)
-		}
-		if _, exists := seen[call.ID]; exists {
-			return fmt.Errorf("%w: duplicate call ID %q", ErrInvalidToolCall, call.ID)
-		}
-		seen[call.ID] = struct{}{}
-	}
-	return nil
-}
-
 func emit(sink EventSink, event Event) error {
-	if sink == nil {
-		return nil
-	}
 	return sink(event)
 }
 
@@ -257,46 +180,4 @@ func addUsage(total *Usage, usage Usage) {
 	total.InputTokens += usage.InputTokens
 	total.OutputTokens += usage.OutputTokens
 	total.TotalTokens += usage.TotalTokens
-}
-
-func cloneToolCall(call ToolCall) ToolCall {
-	call.Arguments = slices.Clone(call.Arguments)
-	return call
-}
-
-func cloneDefinitions(definitions []ToolDefinition) []ToolDefinition {
-	cloned := make([]ToolDefinition, len(definitions))
-	for i, definition := range definitions {
-		definition.PromptGuidelines = slices.Clone(definition.PromptGuidelines)
-		definition.Parameters = cloneSchema(definition.Parameters)
-		cloned[i] = definition
-	}
-	return cloned
-}
-
-func cloneSchema(schema JSONSchema) JSONSchema {
-	schema.Required = slices.Clone(schema.Required)
-	if schema.AdditionalProperties != nil {
-		value := *schema.AdditionalProperties
-		schema.AdditionalProperties = &value
-	}
-	if schema.Items != nil {
-		items := cloneSchema(*schema.Items)
-		schema.Items = &items
-	}
-	if schema.AnyOf != nil {
-		anyOf := schema.AnyOf
-		schema.AnyOf = make([]JSONSchema, len(anyOf))
-		for i, item := range anyOf {
-			schema.AnyOf[i] = cloneSchema(item)
-		}
-	}
-	if schema.Properties != nil {
-		properties := schema.Properties
-		schema.Properties = make(map[string]JSONSchema, len(properties))
-		for name, property := range properties {
-			schema.Properties[name] = cloneSchema(property)
-		}
-	}
-	return schema
 }

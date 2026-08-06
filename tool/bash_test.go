@@ -17,10 +17,7 @@ import (
 
 func TestBashReportsCombinedOutputStatusCWDAndEnvironment(t *testing.T) {
 	cwd := t.TempDir()
-	bashTool, err := NewBash(cwd, BashOptions{Env: []string{"YAAH_TEST=value"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	bashTool := NewBash(cwd, BashOptions{Env: []string{"YAAH_TEST=value"}})
 	command := `printf 'stdout:%s:%s\n' "$PWD" "$YAAH_TEST"; printf 'stderr\n' >&2`
 	result := executeJSON(t, bashTool, map[string]any{"command": command})
 	if result.IsError {
@@ -35,10 +32,7 @@ func TestBashReportsCombinedOutputStatusCWDAndEnvironment(t *testing.T) {
 
 func TestBashSupportsMVPDiscoveryCommands(t *testing.T) {
 	cwd := t.TempDir()
-	bashTool, err := NewBash(cwd, BashOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	bashTool := NewBash(cwd, BashOptions{})
 	command := `mkdir -p nested; printf 'TODO\n' > nested/note.txt; grep -R TODO .; find . -name '*.txt'; ls nested`
 	result := executeJSON(t, bashTool, map[string]any{"command": command})
 	if result.IsError {
@@ -53,10 +47,7 @@ func TestBashSupportsMVPDiscoveryCommands(t *testing.T) {
 
 func TestBashReportsNonzeroExitAndNilStdin(t *testing.T) {
 	cwd := t.TempDir()
-	bashTool, err := NewBash(cwd, BashOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	bashTool := NewBash(cwd, BashOptions{})
 
 	result := executeJSON(t, bashTool, map[string]any{"command": `printf 'failure'; exit 7`})
 	if !result.IsError || !strings.Contains(result.Output, "failure") || !strings.Contains(result.Output, "[exit status: 7]") {
@@ -70,14 +61,10 @@ func TestBashReportsNonzeroExitAndNilStdin(t *testing.T) {
 
 func TestBashTimeoutIsRecoverableAndRetainsOutput(t *testing.T) {
 	cwd := t.TempDir()
-	bashTool, err := NewBash(cwd, BashOptions{
-		DefaultTimeout: 30 * time.Millisecond,
-		MaxTimeout:     time.Second,
-		WaitDelay:      20 * time.Millisecond,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	bashTool := NewBash(cwd, BashOptions{})
+	bashTool.defaultTimeout = 30 * time.Millisecond
+	bashTool.maxTimeout = time.Second
+	bashTool.waitDelay = 20 * time.Millisecond
 
 	started := time.Now()
 	result := executeJSON(t, bashTool, map[string]any{"command": `printf 'before-timeout\n'; while :; do :; done`})
@@ -93,10 +80,9 @@ func TestBashParentCancellationIsFatalAndReported(t *testing.T) {
 	cwd := t.TempDir()
 	readyPath := filepath.Join(cwd, "ready")
 	environment := append(os.Environ(), "YAAH_READY="+readyPath)
-	bashTool, err := NewBash(cwd, BashOptions{Env: environment, DefaultTimeout: 5 * time.Second, MaxTimeout: 5 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
+	bashTool := NewBash(cwd, BashOptions{Env: environment})
+	bashTool.defaultTimeout = 5 * time.Second
+	bashTool.maxTimeout = 5 * time.Second
 	ctx, cancel := context.WithCancel(context.Background())
 	type outcome struct {
 		result agent.ToolResult
@@ -125,10 +111,7 @@ func TestBashParentCancellationIsFatalAndReported(t *testing.T) {
 
 func TestBashOutputKeepsBoundedTail(t *testing.T) {
 	cwd := t.TempDir()
-	bashTool, err := NewBash(cwd, BashOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	bashTool := NewBash(cwd, BashOptions{})
 	command := `printf 'START-MARKER\n'; i=0; while [ "$i" -lt 7000 ]; do printf 'line-%04d-xxxxxxxx\n' "$i"; i=$((i+1)); done; printf 'END-MARKER\n'`
 	result := executeJSON(t, bashTool, map[string]any{"command": command})
 	if result.IsError {
@@ -147,20 +130,15 @@ func TestBashOutputKeepsBoundedTail(t *testing.T) {
 
 func TestBashValidationAndStartFailuresAreRecoverableAndBounded(t *testing.T) {
 	cwd := t.TempDir()
-	bashTool, err := NewBash(cwd, BashOptions{Shell: filepath.Join(cwd, "missing-bash")})
-	if err != nil {
-		t.Fatal(err)
-	}
+	bashTool := NewBash(cwd, BashOptions{})
+	bashTool.shell = filepath.Join(cwd, "missing-bash")
 
 	result := executeJSON(t, bashTool, map[string]any{"command": "echo no"})
 	if !result.IsError || !strings.Contains(result.Output, "failed to start shell") || !strings.Contains(result.Output, "exit status: unavailable") {
 		t.Fatalf("start failure = %+v", result)
 	}
 
-	regular, err := NewBash(cwd, BashOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	regular := NewBash(cwd, BashOptions{})
 	for _, test := range []struct {
 		name string
 		json string
@@ -168,7 +146,7 @@ func TestBashValidationAndStartFailuresAreRecoverableAndBounded(t *testing.T) {
 	}{
 		{name: "empty command", json: `{"command":""}`, want: "nonempty"},
 		{name: "zero timeout", json: `{"command":"echo no","timeout":0}`, want: "positive"},
-		{name: "unknown", json: `{"command":"echo no","extra":true}`, want: "unknown argument"},
+		{name: "unknown", json: `{"command":"echo no","extra":true}`, want: "unknown field"},
 		{name: "wrong type", json: `{"command":3}`, want: "decode arguments"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -181,26 +159,12 @@ func TestBashValidationAndStartFailuresAreRecoverableAndBounded(t *testing.T) {
 
 	largeField := strings.Repeat("x", DefaultMaxBytes*2)
 	encoded := fmt.Sprintf(`{"command":"echo no",%q:true}`, largeField)
-	result, err = regular.Execute(context.Background(), json.RawMessage(encoded))
+	result, err := regular.Execute(context.Background(), json.RawMessage(encoded))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !result.IsError || len(result.Output) > DefaultMaxBytes || countLines(result.Output) > DefaultMaxLines {
 		t.Fatalf("large validation error is not bounded: %+v", result)
-	}
-}
-
-func TestNewBashRejectsInvalidDurations(t *testing.T) {
-	cwd := t.TempDir()
-	for _, options := range []BashOptions{
-		{DefaultTimeout: -1},
-		{MaxTimeout: -1},
-		{WaitDelay: -1},
-		{DefaultTimeout: 2 * time.Second, MaxTimeout: time.Second},
-	} {
-		if _, err := NewBash(cwd, options); err == nil {
-			t.Fatalf("NewBash(%+v) succeeded", options)
-		}
 	}
 }
 

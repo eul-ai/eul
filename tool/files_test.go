@@ -18,22 +18,10 @@ import (
 
 func TestCoreToolDefinitionsUseStrictSchemas(t *testing.T) {
 	cwd := t.TempDir()
-	readTool, err := NewRead(cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeTool, err := NewWrite(cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
-	editTool, err := NewEdit(cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bashTool, err := NewBash(cwd, BashOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	readTool := NewRead(cwd)
+	writeTool := NewWrite(cwd)
+	editTool := NewEdit(cwd)
+	bashTool := NewBash(cwd, BashOptions{})
 
 	tests := []struct {
 		tool       Tool
@@ -83,10 +71,7 @@ func TestCoreToolDefinitionsUseStrictSchemas(t *testing.T) {
 func TestReadRangesTextAndReportsContinuation(t *testing.T) {
 	cwd := t.TempDir()
 	mustWriteFile(t, filepath.Join(cwd, "sample.txt"), "one\ntwo\nthree", 0o644)
-	readTool, err := NewRead(cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
+	readTool := NewRead(cwd)
 
 	result := executeJSON(t, readTool, map[string]any{"path": "sample.txt", "offset": 2, "limit": 2})
 	if result.IsError || result.Output != "two\nthree" {
@@ -111,10 +96,7 @@ func TestReadHandlesEmptyBinarySymlinkAndInvalidRanges(t *testing.T) {
 	if err := os.Symlink("target.txt", filepath.Join(cwd, "link.txt")); err != nil {
 		t.Fatal(err)
 	}
-	readTool, err := NewRead(cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
+	readTool := NewRead(cwd)
 
 	if result := executeJSON(t, readTool, map[string]any{"path": "empty.txt"}); result.IsError || result.Output != "" {
 		t.Fatalf("empty read = %+v", result)
@@ -150,10 +132,7 @@ func TestReadOutputIsBoundedAndUTF8(t *testing.T) {
 	mustWriteFile(t, filepath.Join(cwd, "lines.txt"), manyLines, 0o644)
 	longLine := strings.Repeat("é", DefaultMaxBytes)
 	mustWriteFile(t, filepath.Join(cwd, "long.txt"), longLine, 0o644)
-	readTool, err := NewRead(cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
+	readTool := NewRead(cwd)
 
 	for _, name := range []string{"lines.txt", "long.txt"} {
 		result := executeJSON(t, readTool, map[string]any{"path": name})
@@ -172,10 +151,7 @@ func TestReadOutputIsBoundedAndUTF8(t *testing.T) {
 func TestReadChecksCancellationWhileScanning(t *testing.T) {
 	cwd := t.TempDir()
 	mustWriteFile(t, filepath.Join(cwd, "large.txt"), strings.Repeat("x", DefaultMaxBytes*4), 0o644)
-	readTool, err := NewRead(cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
+	readTool := NewRead(cwd)
 	ctx := &cancelAfterChecksContext{cancelAfter: 100}
 	result, err := readTool.Execute(ctx, json.RawMessage(`{"path":"large.txt","offset":2}`))
 	if !errors.Is(err, context.Canceled) {
@@ -188,10 +164,7 @@ func TestReadChecksCancellationWhileScanning(t *testing.T) {
 
 func TestWriteCreatesParentsOverwritesAndPreservesMode(t *testing.T) {
 	cwd := t.TempDir()
-	writeTool, err := NewWrite(cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
+	writeTool := NewWrite(cwd)
 
 	result := executeJSON(t, writeTool, map[string]any{"path": "nested/file.txt", "content": "first"})
 	if result.IsError || !strings.Contains(result.Output, "wrote 5 bytes") {
@@ -219,10 +192,7 @@ func TestWriteCreatesParentsOverwritesAndPreservesMode(t *testing.T) {
 
 func TestWriteCancellationAfterNonTransactionalWriteIsFatal(t *testing.T) {
 	cwd := t.TempDir()
-	writeTool, err := NewWrite(cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
+	writeTool := NewWrite(cwd)
 	ctx := &cancelAfterChecksContext{cancelAfter: 3}
 	result, err := writeTool.Execute(ctx, json.RawMessage(`{"path":"file.txt","content":"written"}`))
 	if !errors.Is(err, context.Canceled) {
@@ -245,10 +215,7 @@ func TestWriteFollowsRegularSymlinkAndRejectsInvalidTargets(t *testing.T) {
 	if err := os.Symlink("missing.txt", filepath.Join(cwd, "dangling.txt")); err != nil {
 		t.Fatal(err)
 	}
-	writeTool, err := NewWrite(cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
+	writeTool := NewWrite(cwd)
 
 	if result := executeJSON(t, writeTool, map[string]any{"path": "link.txt", "content": "new"}); result.IsError {
 		t.Fatalf("symlink write = %+v", result)
@@ -275,10 +242,7 @@ func TestEditReplacesUniqueTextAndPreservesMode(t *testing.T) {
 	cwd := t.TempDir()
 	path := filepath.Join(cwd, "sample.txt")
 	mustWriteFile(t, path, "before old after", 0o600)
-	editTool, err := NewEdit(cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
+	editTool := NewEdit(cwd)
 
 	result := executeJSON(t, editTool, map[string]any{"path": "sample.txt", "oldText": "old", "newText": "new"})
 	if result.IsError || mustReadFile(t, path) != "before new after" {
@@ -307,10 +271,7 @@ func TestFailedEditsNeverModifyFile(t *testing.T) {
 	path := filepath.Join(cwd, "sample.txt")
 	original := "same same"
 	mustWriteFile(t, path, original, 0o640)
-	editTool, err := NewEdit(cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
+	editTool := NewEdit(cwd)
 
 	for _, test := range []struct {
 		name string
@@ -321,7 +282,7 @@ func TestFailedEditsNeverModifyFile(t *testing.T) {
 		{name: "multiple", args: map[string]any{"path": "sample.txt", "oldText": "same", "newText": "new"}, want: "2 times"},
 		{name: "empty old", args: map[string]any{"path": "sample.txt", "oldText": "", "newText": "new"}, want: "nonempty"},
 		{name: "missing new", args: map[string]any{"path": "sample.txt", "oldText": "same"}, want: "newText"},
-		{name: "unknown field", args: map[string]any{"path": "sample.txt", "oldText": "same", "newText": "new", "extra": true}, want: "unknown argument"},
+		{name: "unknown field", args: map[string]any{"path": "sample.txt", "oldText": "same", "newText": "new", "extra": true}, want: "unknown field"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			beforeInfo, statErr := os.Stat(path)
@@ -352,10 +313,7 @@ func TestEditNoOpBinaryAndSymlink(t *testing.T) {
 	if err := os.Symlink("target.txt", link); err != nil {
 		t.Fatal(err)
 	}
-	editTool, err := NewEdit(cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
+	editTool := NewEdit(cwd)
 
 	before, err := os.Lstat(link)
 	if err != nil {
@@ -393,9 +351,9 @@ func TestEditNoOpBinaryAndSymlink(t *testing.T) {
 
 func TestFilesystemToolsHonorPreCanceledContext(t *testing.T) {
 	cwd := t.TempDir()
-	readTool, _ := NewRead(cwd)
-	writeTool, _ := NewWrite(cwd)
-	editTool, _ := NewEdit(cwd)
+	readTool := NewRead(cwd)
+	writeTool := NewWrite(cwd)
+	editTool := NewEdit(cwd)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -420,14 +378,11 @@ func TestFilesystemToolsHonorPreCanceledContext(t *testing.T) {
 
 func TestCoreToolsRegisterInDeterministicOrder(t *testing.T) {
 	cwd := t.TempDir()
-	readTool, _ := NewRead(cwd)
-	writeTool, _ := NewWrite(cwd)
-	editTool, _ := NewEdit(cwd)
-	bashTool, _ := NewBash(cwd, BashOptions{})
-	registry, err := NewRegistry(readTool, writeTool, editTool, bashTool)
-	if err != nil {
-		t.Fatal(err)
-	}
+	readTool := NewRead(cwd)
+	writeTool := NewWrite(cwd)
+	editTool := NewEdit(cwd)
+	bashTool := NewBash(cwd, BashOptions{})
+	registry := NewRegistry(readTool, writeTool, editTool, bashTool)
 	definitions := registry.Definitions()
 	names := make([]string, len(definitions))
 	for i, definition := range definitions {

@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"unicode"
 
 	"yaah/agent"
@@ -43,48 +42,6 @@ type oauthManager interface {
 	Logout(context.Context) error
 }
 
-type lazyOAuthManager struct {
-	yaahHome string
-	once     sync.Once
-	manager  *oauth.Manager
-	err      error
-}
-
-func (manager *lazyOAuthManager) get() (*oauth.Manager, error) {
-	manager.once.Do(func() {
-		var path string
-		path, manager.err = oauth.DefaultCredentialPath(manager.yaahHome)
-		if manager.err == nil {
-			manager.manager, manager.err = oauth.NewManager(path, oauth.Options{})
-		}
-	})
-	return manager.manager, manager.err
-}
-
-func (manager *lazyOAuthManager) Login(ctx context.Context, method oauth.LoginMethod, interaction oauth.Interaction) (oauth.Credentials, error) {
-	resolved, err := manager.get()
-	if err != nil {
-		return oauth.Credentials{}, err
-	}
-	return resolved.Login(ctx, method, interaction)
-}
-
-func (manager *lazyOAuthManager) Resolve(ctx context.Context) (oauth.Credentials, error) {
-	resolved, err := manager.get()
-	if err != nil {
-		return oauth.Credentials{}, err
-	}
-	return resolved.Resolve(ctx)
-}
-
-func (manager *lazyOAuthManager) Logout(ctx context.Context) error {
-	resolved, err := manager.get()
-	if err != nil {
-		return err
-	}
-	return resolved.Logout(ctx)
-}
-
 type appRuntime struct {
 	stdin       io.Reader
 	stdout      io.Writer
@@ -94,7 +51,7 @@ type appRuntime struct {
 	getwd       func() (string, error)
 	interrupts  <-chan os.Signal
 	newProvider providerFactory
-	oauth       oauthManager
+	newOAuth    func() (oauthManager, error)
 	openURL     func(string) error
 }
 
@@ -109,8 +66,14 @@ func main() {
 		environ:    os.Environ,
 		getwd:      os.Getwd,
 		interrupts: interrupts,
-		oauth:      &lazyOAuthManager{yaahHome: os.Getenv("YAAH_HOME")},
-		openURL:    openBrowser,
+		newOAuth: func() (oauthManager, error) {
+			path, err := oauth.DefaultCredentialPath(os.Getenv("YAAH_HOME"))
+			if err != nil {
+				return nil, err
+			}
+			return oauth.NewManager(path, oauth.Options{}), nil
+		},
+		openURL: openBrowser,
 		newProvider: func(config providerConfig) (agent.Provider, error) {
 			options := openaiadapter.Options{ReasoningEffort: config.reasoningEffort}
 			if config.apiKey != "" {
@@ -126,10 +89,6 @@ func main() {
 }
 
 func run(arguments []string, runtime appRuntime) int {
-	if err := validateRuntime(runtime); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return exitFailure
-	}
 	if len(arguments) > 0 {
 		switch arguments[0] {
 		case "login":
@@ -162,8 +121,13 @@ func run(arguments []string, runtime appRuntime) int {
 	if strings.TrimSpace(apiKey) != "" {
 		config.apiKey = apiKey
 	} else {
+		manager, err := runtime.newOAuth()
+		if err != nil {
+			writeCLIError(runtime.stderr, "authentication required: %v", err)
+			return exitFailure
+		}
 		ctx, cancel := contextWithInterrupt(runtime.interrupts)
-		_, err := runtime.oauth.Resolve(ctx)
+		_, err = manager.Resolve(ctx)
 		cancel()
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -172,7 +136,7 @@ func run(arguments []string, runtime appRuntime) int {
 			writeCLIError(runtime.stderr, "authentication required: %v", err)
 			return exitFailure
 		}
-		config.codexToken = oauthTokenSource{manager: runtime.oauth}
+		config.codexToken = oauthTokenSource{manager: manager}
 	}
 	if err := validateModel(*model); err != nil {
 		writeCLIError(runtime.stderr, "%v", err)
@@ -194,21 +158,13 @@ func run(arguments []string, runtime appRuntime) int {
 		}
 	}
 
-	registry, err := buildTools(cwd, environmentWithout(runtime.environ(), "OPENAI_API_KEY"))
-	if err != nil {
-		writeCLIError(runtime.stderr, "configure tools: %v", err)
-		return exitFailure
-	}
+	registry := buildTools(cwd, environmentWithout(runtime.environ(), "OPENAI_API_KEY"))
 	provider, err := runtime.newProvider(config)
 	if err != nil {
 		writeCLIError(runtime.stderr, "configure provider: %v", err)
 		return exitFailure
 	}
-	engine, err := agent.New(provider, registry, agent.Options{Model: *model})
-	if err != nil {
-		writeCLIError(runtime.stderr, "configure agent: %v", err)
-		return exitFailure
-	}
+	engine := agent.New(provider, registry, agent.Options{Model: *model})
 
 	terminalOptions := terminal.Options{
 		Input:       runtime.stdin,
@@ -264,9 +220,14 @@ func runLogin(arguments []string, runtime appRuntime) int {
 	if *device {
 		method = oauth.LoginDevice
 	}
+	manager, err := runtime.newOAuth()
+	if err != nil {
+		writeCLIError(runtime.stderr, "login failed: %v", err)
+		return exitFailure
+	}
 	ctx, cancel := contextWithInterrupt(runtime.interrupts)
 	defer cancel()
-	_, err := runtime.oauth.Login(ctx, method, oauth.Interaction{
+	_, err = manager.Login(ctx, method, oauth.Interaction{
 		AuthURL: func(url string) error {
 			fmt.Fprintf(runtime.stderr, "Open this URL to sign in with ChatGPT:\n%s\n", url)
 			if err := runtime.openURL(url); err != nil {
@@ -303,9 +264,14 @@ func runLogout(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "usage error: yaah logout accepts no arguments")
 		return exitUsage
 	}
+	manager, err := runtime.newOAuth()
+	if err != nil {
+		writeCLIError(runtime.stderr, "logout failed: %v", err)
+		return exitFailure
+	}
 	ctx, cancel := contextWithInterrupt(runtime.interrupts)
 	defer cancel()
-	if err := runtime.oauth.Logout(ctx); err != nil {
+	if err := manager.Logout(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return exitInterrupted
 		}
@@ -318,9 +284,6 @@ func runLogout(arguments []string, runtime appRuntime) int {
 
 func contextWithInterrupt(interrupts <-chan os.Signal) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
-	if interrupts == nil {
-		return ctx, cancel
-	}
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -331,16 +294,6 @@ func contextWithInterrupt(interrupts <-chan os.Signal) (context.Context, context
 		}
 	}()
 	return ctx, cancel
-}
-
-func validateRuntime(runtime appRuntime) error {
-	if runtime.stdin == nil || runtime.stdout == nil || runtime.stderr == nil {
-		return errors.New("application streams are required")
-	}
-	if runtime.getenv == nil || runtime.environ == nil || runtime.getwd == nil || runtime.newProvider == nil || runtime.oauth == nil || runtime.openURL == nil {
-		return errors.New("application dependencies are required")
-	}
-	return nil
 }
 
 func validateModel(model string) error {
@@ -385,24 +338,13 @@ func resolveCWD(value string, getwd func() (string, error)) (string, error) {
 	return candidate, nil
 }
 
-func buildTools(cwd string, environment []string) (*tool.Registry, error) {
-	readTool, err := tool.NewRead(cwd)
-	if err != nil {
-		return nil, err
-	}
-	writeTool, err := tool.NewWrite(cwd)
-	if err != nil {
-		return nil, err
-	}
-	editTool, err := tool.NewEdit(cwd)
-	if err != nil {
-		return nil, err
-	}
-	bashTool, err := tool.NewBash(cwd, tool.BashOptions{Env: environment})
-	if err != nil {
-		return nil, err
-	}
-	return tool.NewRegistry(readTool, writeTool, editTool, bashTool)
+func buildTools(cwd string, environment []string) *tool.Registry {
+	return tool.NewRegistry(
+		tool.NewRead(cwd),
+		tool.NewWrite(cwd),
+		tool.NewEdit(cwd),
+		tool.NewBash(cwd, tool.BashOptions{Env: environment}),
+	)
 }
 
 func environmentWithout(environment []string, key string) []string {

@@ -15,6 +15,12 @@ import (
 	"yaah/agent"
 )
 
+type CodexTokenSourceFunc func(context.Context) (CodexCredential, error)
+
+func (function CodexTokenSourceFunc) Token(ctx context.Context) (CodexCredential, error) {
+	return function(ctx)
+}
+
 func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 	const token = "oauth-access-token"
 	const accountID = "account-123"
@@ -55,6 +61,8 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 			}
 		}
 		writer.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(writer, "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"Assessing request\"}\n\n")
+		fmt.Fprint(writer, "data: {\"type\":\"response.reasoning_summary_part.done\"}\n\n")
 		fmt.Fprint(writer, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"sequence_number\":0,\"delta\":\"subscription \"}\n\n")
 		fmt.Fprint(writer, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"sequence_number\":1,\"delta\":\"answer\"}\n\n")
 		fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"sequence_number\":2,\"output_index\":0,\"item\":{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"subscription answer\"}]}}\n\n")
@@ -70,16 +78,19 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var delivered string
+	var delivered, reasoning string
 	response, err := client.Generate(context.Background(), agent.Request{Model: "gpt-test", Inputs: []agent.Input{{Kind: agent.InputUser, Text: "hello"}}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, func(text string) error {
 		delivered += text
+		return nil
+	}, func(text string) error {
+		reasoning += text
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.Text != "subscription answer" || delivered != response.Text || response.Usage.TotalTokens != 5 || sourceCalls != 1 {
-		t.Fatalf("response=%+v delivered=%q sourceCalls=%d", response, delivered, sourceCalls)
+	if response.Text != "subscription answer" || delivered != response.Text || reasoning != "Assessing request\n\n" || response.Usage.TotalTokens != 5 || sourceCalls != 1 {
+		t.Fatalf("response=%+v delivered=%q reasoning=%q sourceCalls=%d", response, delivered, reasoning, sourceCalls)
 	}
 }
 
@@ -105,7 +116,7 @@ func TestCodexSSEStopsAtTerminalEventWithoutWaitingForEOF(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		response, err := client.Generate(context.Background(), baseRequest(), nil)
+		response, err := client.Generate(context.Background(), baseRequest(), nil, nil)
 		done <- outcome{response: response, err: err}
 	}()
 	select {
@@ -155,14 +166,14 @@ func TestCodexSSEToolCallAndReasoningReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := client.Generate(context.Background(), agent.Request{Model: "model", Inputs: []agent.Input{{Kind: agent.InputUser, Text: "inspect"}}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, nil)
+	first, err := client.Generate(context.Background(), agent.Request{Model: "model", Inputs: []agent.Input{{Kind: agent.InputUser, Text: "inspect"}}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(first.ToolCalls) != 1 || first.ToolCalls[0].ID != "call_read" || string(first.ToolCalls[0].Arguments) != `{"path":"file.go"}` {
 		t.Fatalf("first response = %+v", first)
 	}
-	second, err := client.Generate(context.Background(), agent.Request{Model: "model", State: first.State, Inputs: []agent.Input{{Kind: agent.InputToolResult, CallID: "call_read", Tool: "read", Text: "contents"}}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, nil)
+	second, err := client.Generate(context.Background(), agent.Request{Model: "model", State: first.State, Inputs: []agent.Input{{Kind: agent.InputToolResult, CallID: "call_read", Tool: "read", Text: "contents"}}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,10 +213,10 @@ func TestCodexSourceIsResolvedPerRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Generate(context.Background(), baseRequest(), nil); err != nil {
+	if _, err := client.Generate(context.Background(), baseRequest(), nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Generate(context.Background(), baseRequest(), nil)
+	_, err = client.Generate(context.Background(), baseRequest(), nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "transport failed") {
 		t.Fatalf("second Generate() error = %v", err)
 	}
@@ -245,22 +256,12 @@ func TestResponsesSSEValidation(t *testing.T) {
 	}
 }
 
-func TestCodexRejectsInvalidSourceValuesAndRedirects(t *testing.T) {
+func TestCodexDefaultEndpointAndRedirects(t *testing.T) {
 	defaultClient, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
 		return CodexCredential{AccessToken: "token", AccountID: "account"}, nil
 	}), Options{})
 	if err != nil || defaultClient.endpoint != "https://chatgpt.com/backend-api/codex/responses" {
 		t.Fatalf("default endpoint=%q error=%v", defaultClient.endpoint, err)
-	}
-
-	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
-		return CodexCredential{AccessToken: "bad\ntoken", AccountID: "account"}, nil
-	}), Options{BaseURL: "https://example.com"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.Generate(context.Background(), baseRequest(), nil); err == nil || !strings.Contains(err.Error(), "invalid characters") {
-		t.Fatalf("invalid token error = %v", err)
 	}
 
 	destinationCalls := 0
@@ -270,13 +271,13 @@ func TestCodexRejectsInvalidSourceValuesAndRedirects(t *testing.T) {
 		http.Redirect(writer, request, destination.URL, http.StatusTemporaryRedirect)
 	}))
 	defer origin.Close()
-	client, err = NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
+	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
 		return CodexCredential{AccessToken: "token", AccountID: "account"}, nil
 	}), Options{BaseURL: origin.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Generate(context.Background(), baseRequest(), nil)
+	_, err = client.Generate(context.Background(), baseRequest(), nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "HTTP 307") || destinationCalls != 0 {
 		t.Fatalf("redirect error=%v destination calls=%d", err, destinationCalls)
 	}
@@ -290,7 +291,7 @@ func TestCodexTokenSourceErrorsPropagateWithoutRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Generate(context.Background(), baseRequest(), nil)
+	_, err = client.Generate(context.Background(), baseRequest(), nil, nil)
 	if err == nil || !errors.Is(err, sourceError) || !strings.Contains(err.Error(), sourceError.Error()) {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -307,7 +308,7 @@ func TestCodexTokenSourceErrorsPropagateWithoutRequest(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, generateErr := client.Generate(ctx, baseRequest(), nil)
+		_, generateErr := client.Generate(ctx, baseRequest(), nil, nil)
 		done <- generateErr
 	}()
 	<-started

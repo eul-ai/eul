@@ -17,11 +17,9 @@ type JSONSchema struct {
 // ToolDefinition describes a tool to both the model and the system-prompt
 // builder. Parameters is serialized by a provider adapter.
 type ToolDefinition struct {
-	Name             string
-	Description      string
-	PromptSummary    string
-	PromptGuidelines []string
-	Parameters       JSONSchema
+	Name        string
+	Description string
+	Parameters  JSONSchema
 }
 
 // ToolResult is the normalized result of one tool call.

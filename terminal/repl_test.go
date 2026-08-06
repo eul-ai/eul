@@ -128,6 +128,7 @@ func TestRunRejectsUnknownCommand(t *testing.T) {
 func TestRunOneShotRendersEventsOnce(t *testing.T) {
 	engine := &fakeEngine{runFunction: func(_ context.Context, _ string, sink agent.EventSink) (agent.RunResult, error) {
 		events := []agent.Event{
+			{Kind: agent.EventAssistantReasoning, Text: "Assessing change"},
 			{Kind: agent.EventAssistantText, Text: "Checking"},
 			{Kind: agent.EventToolStart, Call: agent.ToolCall{Name: "write", Arguments: json.RawMessage(`{"path":"file.txt","content":"value"}`)}},
 			{Kind: agent.EventToolEnd, Result: agent.ToolResult{Tool: "write", IsError: true, Output: "write failed"}},
@@ -147,7 +148,7 @@ func TestRunOneShotRendersEventsOnce(t *testing.T) {
 	if stdout.String() != "Checking\nDone\n" {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "[tool] write file.txt") || strings.Contains(stderr.String(), "content") || !strings.Contains(stderr.String(), "write — error") {
+	if !strings.Contains(stderr.String(), "Assessing change\n") || !strings.Contains(stderr.String(), "[tool] write file.txt") || strings.Contains(stderr.String(), "content") || !strings.Contains(stderr.String(), "write — error") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
@@ -196,13 +197,13 @@ func TestRunOneShotSummarizesBashExit(t *testing.T) {
 }
 
 func TestRunDiscardsOversizedAndInvalidLinesThenContinues(t *testing.T) {
-	input := append([]byte("123456\n"), []byte{'b', 'a', 'd', 0, '\n'}...)
+	input := append([]byte(strings.Repeat("1", maxInputBytes+1)+"\n"), []byte{'b', 'a', 'd', 0, '\n'}...)
 	input = append(input, []byte{0xff, '\n'}...)
 	input = append(input, []byte("ok\n/exit\n")...)
 	engine := &fakeEngine{}
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), engine, Options{
-		Input: inputReader{Reader: bytes.NewReader(input)}, Output: &stdout, ErrorOutput: &stderr, MaxInputBytes: 5,
+		Input: inputReader{Reader: bytes.NewReader(input)}, Output: &stdout, ErrorOutput: &stderr,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -211,7 +212,7 @@ func TestRunDiscardsOversizedAndInvalidLinesThenContinues(t *testing.T) {
 	if len(calls) != 1 || calls[0] != "ok" {
 		t.Fatalf("calls = %v", calls)
 	}
-	if !strings.Contains(stderr.String(), "exceeds 5 bytes") || strings.Count(stderr.String(), "valid UTF-8") != 2 {
+	if !strings.Contains(stderr.String(), "exceeds 1048576 bytes") || strings.Count(stderr.String(), "valid UTF-8") != 2 {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
@@ -221,7 +222,7 @@ func TestRunAcceptsLinesAboveScannerLimit(t *testing.T) {
 	engine := &fakeEngine{}
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), engine, Options{
-		Input: strings.NewReader(prompt + "\n/exit\n"), Output: &stdout, ErrorOutput: &stderr, MaxInputBytes: 80 * 1024,
+		Input: strings.NewReader(prompt + "\n/exit\n"), Output: &stdout, ErrorOutput: &stderr,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -399,17 +400,6 @@ func TestRunPropagatesOutputErrors(t *testing.T) {
 	err := Run(context.Background(), engine, Options{Input: strings.NewReader(""), Output: io.Discard, ErrorOutput: failingWriter{}})
 	if !errors.Is(err, ErrOutput) {
 		t.Fatalf("Run() error = %v", err)
-	}
-}
-
-func TestOptionsValidation(t *testing.T) {
-	valid := Options{Input: strings.NewReader(""), Output: io.Discard, ErrorOutput: io.Discard}
-	if _, err := prepare(context.Background(), nil, valid, true); err == nil {
-		t.Fatal("nil engine accepted")
-	}
-	valid.MaxInputBytes = -1
-	if _, err := prepare(context.Background(), &fakeEngine{}, valid, true); err == nil {
-		t.Fatal("negative input limit accepted")
 	}
 }
 

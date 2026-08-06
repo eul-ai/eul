@@ -53,11 +53,10 @@ type Response struct {
 	Usage     Usage
 }
 
-// TextSink receives assistant text as it becomes available. Streaming providers
-// call it with ordered deltas.
+// TextSink receives ordered text or reasoning deltas as they become available.
 type TextSink func(text string) error
 
 // Provider generates assistant responses for the agent engine.
 type Provider interface {
-	Generate(ctx context.Context, request Request, onText TextSink) (Response, error)
+	Generate(ctx context.Context, request Request, onText, onReasoning TextSink) (Response, error)
 }

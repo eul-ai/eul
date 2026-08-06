@@ -49,9 +49,9 @@ Interactive mode supports:
 - EOF to exit
 - Ctrl-C to cancel the active turn or exit while idle
 
-Assistant text is streamed to stdout. Tool activity and errors go to stderr.
-The terminal intentionally has no raw mode, colors, history, autocomplete, or
-ANSI rendering.
+Assistant text is streamed to stdout. Reasoning summaries, tool activity, and
+errors go to stderr. The terminal intentionally has no raw mode, colors,
+history, autocomplete, or ANSI rendering.
 
 ## Tools
 
@@ -87,9 +87,9 @@ The `agent` package owns the narrow provider and toolbox interfaces. The OpenAI
 adapter owns all wire types and preserves opaque response output items for
 stateless continuation. The agent stores that state without interpreting it.
 
-Both API-key and OAuth modes use bounded SSE streams. Output-text and refusal
-deltas are delivered incrementally. Completed output items are retained for
-tool calls and continuation replay. Requests use `store: false`; API-key mode
+Both API-key and OAuth modes use bounded SSE streams. Reasoning summaries,
+output text, and refusals are delivered incrementally. Completed output items
+are retained for tool calls and continuation replay. Requests use `store: false`; API-key mode
 uses strict function schemas, while Codex mode follows its experimental wire
 contract.
 

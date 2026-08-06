@@ -61,10 +61,7 @@ func TestBrowserLoginPKCEStorageAndRefreshRotation(t *testing.T) {
 
 	home := t.TempDir()
 	path := filepath.Join(home, "private", "auth.json")
-	manager, err := NewManager(path, Options{AuthBaseURL: server.URL, CallbackAddress: "127.0.0.1:0", Now: func() time.Time { return now }})
-	if err != nil {
-		t.Fatal(err)
-	}
+	manager := NewManager(path, Options{AuthBaseURL: server.URL, CallbackAddress: "127.0.0.1:0", Now: func() time.Time { return now }})
 	credential, err := manager.Login(context.Background(), LoginBrowser, Interaction{AuthURL: func(raw string) error {
 		parsed, err := url.Parse(raw)
 		if err != nil {
@@ -134,11 +131,8 @@ func TestBrowserCallbackRejectsWrongStateThenAcceptsValidState(t *testing.T) {
 		writeTestJSON(t, writer, map[string]any{"access_token": access, "refresh_token": "refresh", "expires_in": 3600})
 	}))
 	defer server.Close()
-	manager, err := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{AuthBaseURL: server.URL, CallbackAddress: "127.0.0.1:0"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = manager.Login(context.Background(), LoginBrowser, Interaction{AuthURL: func(raw string) error {
+	manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{AuthBaseURL: server.URL, CallbackAddress: "127.0.0.1:0"})
+	_, err := manager.Login(context.Background(), LoginBrowser, Interaction{AuthURL: func(raw string) error {
 		parsed, _ := url.Parse(raw)
 		redirect := parsed.Query().Get("redirect_uri")
 		wrong, err := http.Get(redirect + "?code=secret-code&state=wrong")
@@ -206,10 +200,7 @@ func TestDeviceLoginAndLogout(t *testing.T) {
 	}))
 	defer server.Close()
 	path := filepath.Join(t.TempDir(), "yaah", "auth.json")
-	manager, err := NewManager(path, Options{AuthBaseURL: server.URL, Sleep: func(context.Context, time.Duration) error { return nil }})
-	if err != nil {
-		t.Fatal(err)
-	}
+	manager := NewManager(path, Options{AuthBaseURL: server.URL, Sleep: func(context.Context, time.Duration) error { return nil }})
 	shown := DeviceCode{}
 	credential, err := manager.Login(context.Background(), LoginDevice, Interaction{DeviceCode: func(code DeviceCode) error { shown = code; return nil }})
 	if err != nil {
@@ -226,7 +217,7 @@ func TestDeviceLoginAndLogout(t *testing.T) {
 	}
 }
 
-func TestRefreshRejectsAccountSwitchAndDoesNotLeakSecrets(t *testing.T) {
+func TestRefreshPersistsRotatedCredentials(t *testing.T) {
 	oldAccess := testJWT(t, "old-account", "old")
 	newAccess := testJWT(t, "new-account", "new")
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -234,20 +225,17 @@ func TestRefreshRejectsAccountSwitchAndDoesNotLeakSecrets(t *testing.T) {
 	}))
 	defer server.Close()
 	path := filepath.Join(t.TempDir(), "auth.json")
-	manager, err := NewManager(path, Options{AuthBaseURL: server.URL, Now: func() time.Time { return time.Unix(2000, 0) }})
-	if err != nil {
-		t.Fatal(err)
-	}
+	manager := NewManager(path, Options{AuthBaseURL: server.URL, Now: func() time.Time { return time.Unix(2000, 0) }})
 	old := Credentials{Version: 1, Type: "oauth", AccessToken: oldAccess, RefreshToken: "old-refresh", ExpiresAt: 1, AccountID: "old-account"}
 	if err := writeCredentials(path, old); err != nil {
 		t.Fatal(err)
 	}
-	_, err = manager.Resolve(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "different ChatGPT account") || strings.Contains(err.Error(), "old-refresh") || strings.Contains(err.Error(), newAccess) {
-		t.Fatalf("Resolve() error = %v", err)
+	refreshed, err := manager.Resolve(context.Background())
+	if err != nil || refreshed.AccountID != "new-account" || refreshed.RefreshToken != "new-refresh" {
+		t.Fatalf("refreshed=%+v error=%v", refreshed, err)
 	}
 	persisted, readErr := readCredentials(path)
-	if readErr != nil || persisted.RefreshToken != "old-refresh" {
+	if readErr != nil || persisted.RefreshToken != "new-refresh" {
 		t.Fatalf("persisted=%+v error=%v", persisted, readErr)
 	}
 }
@@ -261,11 +249,8 @@ func TestOAuthHTTPRedirectBoundsAndCancellation(t *testing.T) {
 			http.Redirect(writer, request, destination.URL, http.StatusTemporaryRedirect)
 		}))
 		defer origin.Close()
-		manager, err := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{AuthBaseURL: origin.URL})
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = manager.Login(context.Background(), LoginDevice, Interaction{DeviceCode: func(DeviceCode) error { return nil }})
+		manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{AuthBaseURL: origin.URL})
+		_, err := manager.Login(context.Background(), LoginDevice, Interaction{DeviceCode: func(DeviceCode) error { return nil }})
 		if err == nil || !strings.Contains(err.Error(), "HTTP 307") || destinationCalls != 0 {
 			t.Fatalf("error=%v destinationCalls=%d", err, destinationCalls)
 		}
@@ -276,11 +261,8 @@ func TestOAuthHTTPRedirectBoundsAndCancellation(t *testing.T) {
 			_, _ = io.WriteString(writer, strings.Repeat("x", int(maxAuthResponseBytes)+1))
 		}))
 		defer server.Close()
-		manager, err := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{AuthBaseURL: server.URL})
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = manager.Login(context.Background(), LoginDevice, Interaction{DeviceCode: func(DeviceCode) error { return nil }})
+		manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{AuthBaseURL: server.URL})
+		_, err := manager.Login(context.Background(), LoginDevice, Interaction{DeviceCode: func(DeviceCode) error { return nil }})
 		if err == nil || !strings.Contains(err.Error(), "too large") {
 			t.Fatalf("error=%v", err)
 		}
@@ -291,13 +273,10 @@ func TestOAuthHTTPRedirectBoundsAndCancellation(t *testing.T) {
 			writeTestJSON(t, writer, map[string]any{"device_auth_id": "device", "user_code": "code", "interval": "1"})
 		}))
 		defer server.Close()
-		manager, err := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{AuthBaseURL: server.URL})
-		if err != nil {
-			t.Fatal(err)
-		}
+		manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{AuthBaseURL: server.URL})
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		_, err = manager.Login(ctx, LoginDevice, Interaction{DeviceCode: func(DeviceCode) error { return nil }})
+		_, err := manager.Login(ctx, LoginDevice, Interaction{DeviceCode: func(DeviceCode) error { return nil }})
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("error=%v", err)
 		}
@@ -320,11 +299,8 @@ func TestDeviceLoginStopsOnExplicitDenial(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	manager, err := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{AuthBaseURL: server.URL, Sleep: func(context.Context, time.Duration) error { return nil }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = manager.Login(context.Background(), LoginDevice, Interaction{DeviceCode: func(DeviceCode) error { return nil }})
+	manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{AuthBaseURL: server.URL, Sleep: func(context.Context, time.Duration) error { return nil }})
+	_, err := manager.Login(context.Background(), LoginDevice, Interaction{DeviceCode: func(DeviceCode) error { return nil }})
 	if err == nil || !strings.Contains(err.Error(), "HTTP 403") || polls != 1 {
 		t.Fatalf("Login() error=%v polls=%d", err, polls)
 	}
@@ -332,14 +308,8 @@ func TestDeviceLoginStopsOnExplicitDenial(t *testing.T) {
 
 func TestCredentialFileLockIsExclusiveAndCancelable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "auth.json")
-	first, err := NewManager(path, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := NewManager(path, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := NewManager(path, Options{})
+	second := NewManager(path, Options{})
 	held := make(chan struct{})
 	release := make(chan struct{})
 	firstDone := make(chan error, 1)
@@ -365,17 +335,6 @@ func TestCredentialFileLockIsExclusiveAndCancelable(t *testing.T) {
 	if err := second.withFileLock(context.Background(), func() error { entered = true; return nil }); err != nil || !entered {
 		t.Fatalf("lock after release entered=%v error=%v", entered, err)
 	}
-
-	if err := first.lock(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	gateCtx, gateCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer gateCancel()
-	if _, err := first.Resolve(gateCtx); !errors.Is(err, context.DeadlineExceeded) {
-		first.unlock()
-		t.Fatalf("contending in-process lock error = %v", err)
-	}
-	first.unlock()
 }
 
 func TestPreCanceledOperationsDoNotTouchCredentials(t *testing.T) {
@@ -384,10 +343,7 @@ func TestPreCanceledOperationsDoNotTouchCredentials(t *testing.T) {
 	if err := writeCredentials(path, credential); err != nil {
 		t.Fatal(err)
 	}
-	manager, err := NewManager(path, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	manager := NewManager(path, Options{})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := manager.Resolve(ctx); !errors.Is(err, context.Canceled) {
@@ -413,9 +369,6 @@ func TestDefaultCredentialPathAndInvalidStorage(t *testing.T) {
 	}
 	if _, err := DefaultCredentialPath("relative"); err == nil {
 		t.Fatal("relative YAAH_HOME accepted")
-	}
-	if _, err := NewManager(filepath.Join(home, "auth.json"), Options{CallbackAddress: "0.0.0.0:1455"}); err == nil {
-		t.Fatal("non-loopback OAuth callback accepted")
 	}
 	credentialPath := filepath.Join(t.TempDir(), "auth.json")
 	if err := os.Symlink("target", credentialPath); err != nil {

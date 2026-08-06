@@ -16,7 +16,7 @@ import (
 	"yaah/agent"
 )
 
-const DefaultMaxInputBytes = 1024 * 1024
+const maxInputBytes = 1024 * 1024
 
 var (
 	ErrInterrupted  = errors.New("terminal: interrupted")
@@ -34,21 +34,16 @@ type Engine interface {
 
 // Options configures terminal input, output, display metadata, and interrupts.
 type Options struct {
-	Input         io.Reader
-	Output        io.Writer
-	ErrorOutput   io.Writer
-	Model         string
-	CWD           string
-	Interrupts    <-chan os.Signal
-	MaxInputBytes int
+	Input       io.Reader
+	Output      io.Writer
+	ErrorOutput io.Writer
+	Model       string
+	CWD         string
+	Interrupts  <-chan os.Signal
 }
 
 // Run starts the line-oriented interactive REPL.
 func Run(ctx context.Context, engine Engine, options Options) error {
-	options, err := prepare(ctx, engine, options, true)
-	if err != nil {
-		return err
-	}
 	header := singleLine(fmt.Sprintf("yaah · openai/%s · %s", options.Model, options.CWD), 500)
 	if err := writeOutput(options.ErrorOutput, "%s\n", header); err != nil {
 		return err
@@ -56,7 +51,7 @@ func Run(ctx context.Context, engine Engine, options Options) error {
 
 	inputContext, cancelInput := context.WithCancel(ctx)
 	defer cancelInput()
-	inputEvents, inputRequests := readInput(inputContext, options.Input, options.MaxInputBytes)
+	inputEvents, inputRequests := readInput(inputContext, options.Input, maxInputBytes)
 	for {
 		if err := writeOutput(options.ErrorOutput, "> "); err != nil {
 			return err
@@ -92,7 +87,7 @@ func Run(ctx context.Context, engine Engine, options Options) error {
 				return nil
 			}
 			if errors.Is(event.err, ErrInputTooLong) {
-				if err := writeOutput(options.ErrorOutput, "error: input line exceeds %d bytes\n", options.MaxInputBytes); err != nil {
+				if err := writeOutput(options.ErrorOutput, "error: input line exceeds %d bytes\n", maxInputBytes); err != nil {
 					return err
 				}
 				continue
@@ -133,7 +128,7 @@ func Run(ctx context.Context, engine Engine, options Options) error {
 				continue
 			}
 
-			_, runErr, interrupted := runTurn(ctx, engine, event.line, options)
+			runErr, interrupted := runTurn(ctx, engine, event.line, options)
 			if contextErr := ctx.Err(); contextErr != nil {
 				resetIfNeeded(engine)
 				return contextErr
@@ -168,11 +163,7 @@ func Run(ctx context.Context, engine Engine, options Options) error {
 
 // RunOneShot runs one prompt without the interactive header or prompt marker.
 func RunOneShot(ctx context.Context, engine Engine, prompt string, options Options) error {
-	options, err := prepare(ctx, engine, options, false)
-	if err != nil {
-		return err
-	}
-	_, runErr, interrupted := runTurn(ctx, engine, prompt, options)
+	runErr, interrupted := runTurn(ctx, engine, prompt, options)
 	if contextErr := ctx.Err(); contextErr != nil {
 		resetIfNeeded(engine)
 		return contextErr
@@ -184,68 +175,41 @@ func RunOneShot(ctx context.Context, engine Engine, prompt string, options Optio
 	return runErr
 }
 
-func prepare(ctx context.Context, engine Engine, options Options, requireInput bool) (Options, error) {
-	if ctx == nil {
-		return Options{}, errors.New("terminal: context is required")
-	}
-	if engine == nil {
-		return Options{}, errors.New("terminal: engine is required")
-	}
-	if requireInput && options.Input == nil {
-		return Options{}, errors.New("terminal: input is required")
-	}
-	if options.Output == nil || options.ErrorOutput == nil {
-		return Options{}, errors.New("terminal: output writers are required")
-	}
-	if options.MaxInputBytes < 0 {
-		return Options{}, errors.New("terminal: maximum input bytes cannot be negative")
-	}
-	if options.MaxInputBytes == 0 {
-		options.MaxInputBytes = DefaultMaxInputBytes
-	}
-	return options, nil
-}
-
-type turnOutcome struct {
-	result agent.RunResult
-	err    error
-}
-
-func runTurn(parent context.Context, engine Engine, prompt string, options Options) (agent.RunResult, error, bool) {
+func runTurn(parent context.Context, engine Engine, prompt string, options Options) (error, bool) {
 	turnContext, cancel := context.WithCancel(parent)
 	defer cancel()
 	renderer := eventRenderer{output: options.Output, errorOutput: options.ErrorOutput}
-	done := make(chan turnOutcome, 1)
+	done := make(chan error, 1)
 	go func() {
-		result, err := engine.Run(turnContext, prompt, renderer.render)
-		done <- turnOutcome{result: result, err: err}
+		_, err := engine.Run(turnContext, prompt, renderer.render)
+		done <- err
 	}()
 
 	interrupted := false
 	parentCanceled := false
 	interrupts := options.Interrupts
 	parentDone := parent.Done()
-	finish := func(outcome turnOutcome) (agent.RunResult, error, bool) {
+	finish := func(runErr error) (error, bool) {
 		if err := renderer.finish(); err != nil {
-			return agent.RunResult{}, err, interrupted
+			return err, interrupted
 		}
 		if parentCanceled {
-			return agent.RunResult{}, parent.Err(), false
+			return parent.Err(), false
 		}
-		return outcome.result, outcome.err, interrupted
+		return runErr, interrupted
 	}
 	for {
 		select {
-		case outcome := <-done:
-			return finish(outcome)
+		case runErr := <-done:
+			return finish(runErr)
 		case _, ok := <-interrupts:
 			if !ok {
 				interrupts = nil
 				continue
 			}
 			select {
-			case outcome := <-done:
-				return finish(outcome)
+			case runErr := <-done:
+				return finish(runErr)
 			default:
 			}
 			if !interrupted {
@@ -274,11 +238,15 @@ type eventRenderer struct {
 	output        io.Writer
 	errorOutput   io.Writer
 	assistantOpen bool
+	reasoningOpen bool
 }
 
 func (r *eventRenderer) render(event agent.Event) error {
 	switch event.Kind {
 	case agent.EventAssistantText:
+		if err := r.finishReasoning(); err != nil {
+			return err
+		}
 		text := sanitizeAssistantText(event.Text)
 		if err := writeOutput(r.output, "%s", text); err != nil {
 			return err
@@ -286,8 +254,19 @@ func (r *eventRenderer) render(event agent.Event) error {
 		if text != "" {
 			r.assistantOpen = !strings.HasSuffix(text, "\n")
 		}
-	case agent.EventToolStart:
+	case agent.EventAssistantReasoning:
 		if err := r.finishAssistant(); err != nil {
+			return err
+		}
+		text := sanitizeAssistantText(event.Text)
+		if err := writeOutput(r.errorOutput, "%s", text); err != nil {
+			return err
+		}
+		if text != "" {
+			r.reasoningOpen = !strings.HasSuffix(text, "\n")
+		}
+	case agent.EventToolStart:
+		if err := r.finish(); err != nil {
 			return err
 		}
 		if err := writeOutput(r.errorOutput, "[tool] %s\n", summarizeCall(event.Call)); err != nil {
@@ -302,7 +281,10 @@ func (r *eventRenderer) render(event agent.Event) error {
 }
 
 func (r *eventRenderer) finish() error {
-	return r.finishAssistant()
+	if err := r.finishAssistant(); err != nil {
+		return err
+	}
+	return r.finishReasoning()
 }
 
 func (r *eventRenderer) finishAssistant() error {
@@ -311,6 +293,14 @@ func (r *eventRenderer) finishAssistant() error {
 	}
 	r.assistantOpen = false
 	return writeOutput(r.output, "\n")
+}
+
+func (r *eventRenderer) finishReasoning() error {
+	if !r.reasoningOpen {
+		return nil
+	}
+	r.reasoningOpen = false
+	return writeOutput(r.errorOutput, "\n")
 }
 
 func summarizeCall(call agent.ToolCall) string {

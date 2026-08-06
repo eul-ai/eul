@@ -7,9 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -47,13 +45,6 @@ type CodexTokenSource interface {
 	Token(context.Context) (CodexCredential, error)
 }
 
-// CodexTokenSourceFunc adapts a function to CodexTokenSource.
-type CodexTokenSourceFunc func(context.Context) (CodexCredential, error)
-
-func (function CodexTokenSourceFunc) Token(ctx context.Context) (CodexCredential, error) {
-	return function(ctx)
-}
-
 // Client is an OpenAI Responses API adapter and implements agent.Provider.
 type Client struct {
 	httpClient       *http.Client
@@ -83,17 +74,11 @@ var validReasoningEfforts = map[string]struct{}{
 
 // New constructs a Platform API-key Responses client.
 func New(apiKey string, options Options) (*Client, error) {
-	if err := validateCredentialValue(apiKey, "API key"); err != nil {
-		return nil, err
-	}
 	return newClient(apiKey, nil, false, options)
 }
 
 // NewCodex constructs a ChatGPT subscription Responses client.
 func NewCodex(source CodexTokenSource, options Options) (*Client, error) {
-	if source == nil {
-		return nil, errors.New("openai: OAuth token source is required")
-	}
 	return newClient("", source, true, options)
 }
 
@@ -108,37 +93,23 @@ func newClient(apiKey string, source CodexTokenSource, codex bool, options Optio
 			baseURL = defaultCodexBaseURL
 		}
 	}
-	parsed, err := url.Parse(baseURL)
-	if err != nil {
-		return nil, errors.New("openai: invalid base URL")
-	}
-	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return nil, errors.New("openai: base URL must be an HTTP(S) origin without credentials, query, or fragment")
-	}
-	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
-		return nil, errors.New("openai: plaintext HTTP base URLs are allowed only for loopback test servers")
-	}
 	responsePath := "/v1/responses"
 	if codex {
 		responsePath = "/codex/responses"
 	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + responsePath
-	parsed.RawPath = ""
 
 	httpClient := options.HTTPClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
+	} else if httpClient.Timeout <= 0 {
+		httpClient.Timeout = defaultHTTPTimeout
 	}
-	httpClientCopy := *httpClient
-	if httpClientCopy.Timeout <= 0 {
-		httpClientCopy.Timeout = defaultHTTPTimeout
-	}
-	httpClientCopy.CheckRedirect = func(*http.Request, []*http.Request) error {
+	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
 	return &Client{
-		httpClient:       &httpClientCopy,
-		endpoint:         parsed.String(),
+		httpClient:       httpClient,
+		endpoint:         strings.TrimRight(baseURL, "/") + responsePath,
 		apiKey:           apiKey,
 		codexSource:      source,
 		codex:            codex,
@@ -150,24 +121,9 @@ func newClient(apiKey string, source CodexTokenSource, codex bool, options Optio
 	}, nil
 }
 
-func isLoopbackHost(host string) bool {
-	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	if host == "localhost" {
-		return true
-	}
-	address := net.ParseIP(host)
-	return address != nil && address.IsLoopback()
-}
-
 // Generate makes one streaming Responses API request. SSE text and refusal
 // deltas are delivered in order while completed items are retained for replay.
-func (c *Client) Generate(ctx context.Context, request agent.Request, onText agent.TextSink) (agent.Response, error) {
-	if c == nil {
-		return agent.Response{}, errors.New("openai: client is nil")
-	}
-	if ctx == nil {
-		return agent.Response{}, errors.New("openai: context is required")
-	}
+func (c *Client) Generate(ctx context.Context, request agent.Request, onText, onReasoning agent.TextSink) (agent.Response, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.Response{}, err
 	}
@@ -233,7 +189,7 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText age
 	if httpResponse.StatusCode < 200 || httpResponse.StatusCode >= 300 {
 		return agent.Response{}, c.decodeHTTPError(httpResponse)
 	}
-	observer := streamObserver{onText: onText}
+	observer := streamObserver{onText: onText, onReasoning: onReasoning}
 	wireResponse, err := readResponsesSSE(httpResponse.Body, c.maxResponseBytes, &observer)
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
@@ -276,16 +232,7 @@ func (c *Client) resolveAuth(ctx context.Context) (string, string, error) {
 		return c.apiKey, "", nil
 	}
 	credential, err := c.codexSource.Token(ctx)
-	if err != nil {
-		return "", "", err
-	}
-	if err := validateCredentialValue(credential.AccessToken, "OAuth access token"); err != nil {
-		return "", "", err
-	}
-	if err := validateHeaderValue(credential.AccountID, "ChatGPT account ID", 1024); err != nil {
-		return "", "", err
-	}
-	return credential.AccessToken, credential.AccountID, nil
+	return credential.AccessToken, credential.AccountID, err
 }
 
 func (c *Client) decodeHTTPError(response *http.Response) error {
@@ -335,31 +282,6 @@ func (c *Client) errorMessage(format string, arguments ...any) string {
 func validateReasoningEffort(effort string) error {
 	if _, ok := validReasoningEfforts[effort]; !ok {
 		return errors.New("openai: reasoning effort must be one of none, minimal, low, medium, high, xhigh, or max")
-	}
-	return nil
-}
-
-func validateCredentialValue(value, name string) error {
-	if strings.TrimSpace(value) == "" {
-		return fmt.Errorf("openai: %s is required", name)
-	}
-	if len(value) > 8*1024 {
-		return fmt.Errorf("openai: %s is too long", name)
-	}
-	return validateHeaderValue(value, name, 8*1024)
-}
-
-func validateHeaderValue(value, name string, maximum int) error {
-	if value == "" {
-		return fmt.Errorf("openai: %s is required", name)
-	}
-	if len(value) > maximum {
-		return fmt.Errorf("openai: %s is too long", name)
-	}
-	for _, character := range []byte(value) {
-		if character <= 0x20 || character >= 0x7f {
-			return fmt.Errorf("openai: %s contains invalid characters", name)
-		}
 	}
 	return nil
 }

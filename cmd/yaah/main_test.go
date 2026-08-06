@@ -53,7 +53,7 @@ func (manager *fakeOAuthManager) Logout(context.Context) error {
 	return manager.logoutErr
 }
 
-func (function providerFunction) Generate(ctx context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
+func (function providerFunction) Generate(ctx context.Context, request agent.Request, sink, _ agent.TextSink) (agent.Response, error) {
 	return function(ctx, request, sink)
 }
 
@@ -108,7 +108,7 @@ func TestRunUsesStoredOAuthAndResolvesTokenAtRequestTime(t *testing.T) {
 	}}
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_MODEL": "subscription-model"})
-	runtime.oauth = manager
+	runtime.newOAuth = fixedOAuth(manager)
 	runtime.newProvider = func(config providerConfig) (agent.Provider, error) {
 		if config.apiKey != "" || config.codexToken == nil {
 			t.Fatalf("provider config = %+v", config)
@@ -140,7 +140,7 @@ func TestRunAPIKeyTakesPrecedenceOverStoredOAuth(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_API_KEY": "explicit-key", "OPENAI_MODEL": "model"})
 	manager := &fakeOAuthManager{resolveErr: errors.New("must not resolve")}
-	runtime.oauth = manager
+	runtime.newOAuth = fixedOAuth(manager)
 	runtime.newProvider = func(config providerConfig) (agent.Provider, error) {
 		if config.apiKey != "explicit-key" || config.codexToken != nil {
 			t.Fatalf("provider config = %+v", config)
@@ -158,9 +158,13 @@ func TestRunAPIKeyDoesNotInitializeOAuthConfiguration(t *testing.T) {
 	cwd := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_API_KEY": "explicit-key", "OPENAI_MODEL": "model"})
-	runtime.oauth = &lazyOAuthManager{yaahHome: "relative-path-that-oauth-would-reject"}
-	if code := run([]string{"prompt"}, runtime); code != exitSuccess {
-		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	called := false
+	runtime.newOAuth = func() (oauthManager, error) {
+		called = true
+		return nil, errors.New("must not initialize OAuth")
+	}
+	if code := run([]string{"prompt"}, runtime); code != exitSuccess || called {
+		t.Fatalf("code=%d oauthCalled=%v stderr=%q", code, called, stderr.String())
 	}
 }
 
@@ -179,7 +183,7 @@ func TestRunLoginAndLogoutCommands(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			manager := &fakeOAuthManager{credential: oauth.Credentials{AccessToken: "access-secret", RefreshToken: "refresh-secret"}}
 			runtime := testRuntime(cwd, &stdout, &stderr, nil)
-			runtime.oauth = manager
+			runtime.newOAuth = fixedOAuth(manager)
 			if code := run(test.arguments, runtime); code != exitSuccess || manager.loginMethod != test.wantMethod || !manager.interactionCall || !strings.Contains(stderr.String(), test.wantText) || stdout.String() != "Logged in with ChatGPT.\n" {
 				t.Fatalf("code=%d method=%q stdout=%q stderr=%q", code, manager.loginMethod, stdout.String(), stderr.String())
 			}
@@ -192,7 +196,7 @@ func TestRunLoginAndLogoutCommands(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	manager := &fakeOAuthManager{}
 	runtime := testRuntime(cwd, &stdout, &stderr, nil)
-	runtime.oauth = manager
+	runtime.newOAuth = fixedOAuth(manager)
 	if code := run([]string{"logout"}, runtime); code != exitSuccess || manager.logoutCalls != 1 || stdout.String() != "Logged out.\n" {
 		t.Fatalf("code=%d calls=%d stdout=%q stderr=%q", code, manager.logoutCalls, stdout.String(), stderr.String())
 	}
@@ -370,6 +374,10 @@ func TestEnvironmentWithout(t *testing.T) {
 	}
 }
 
+func fixedOAuth(manager oauthManager) func() (oauthManager, error) {
+	return func() (oauthManager, error) { return manager, nil }
+}
+
 func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[string]string) appRuntime {
 	values := maps.Clone(environment)
 	return appRuntime{
@@ -390,7 +398,7 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[strin
 				return agent.Response{}, nil
 			}), nil
 		},
-		oauth:   &fakeOAuthManager{resolveErr: errors.New("oauth: not logged in; run 'yaah login'")},
-		openURL: func(string) error { return nil },
+		newOAuth: fixedOAuth(&fakeOAuthManager{resolveErr: errors.New("oauth: not logged in; run 'yaah login'")}),
+		openURL:  func(string) error { return nil },
 	}
 }

@@ -2,10 +2,8 @@ package tool
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
@@ -17,22 +15,8 @@ type workspace struct {
 	cwd string
 }
 
-func newWorkspace(cwd string) (workspace, error) {
-	if strings.TrimSpace(cwd) == "" {
-		return workspace{}, errors.New("tool: working directory is required")
-	}
-	absolute, err := filepath.Abs(cwd)
-	if err != nil {
-		return workspace{}, fmt.Errorf("tool: resolve working directory: %w", err)
-	}
-	info, err := os.Stat(absolute)
-	if err != nil {
-		return workspace{}, fmt.Errorf("tool: inspect working directory: %w", err)
-	}
-	if !info.IsDir() {
-		return workspace{}, fmt.Errorf("tool: working directory %q is not a directory", absolute)
-	}
-	return workspace{cwd: filepath.Clean(absolute)}, nil
+func newWorkspace(cwd string) workspace {
+	return workspace{cwd: cwd}
 }
 
 func (w workspace) resolve(name string) (string, error) {
@@ -72,13 +56,6 @@ func nullable(schemaType string, description string) agent.JSONSchema {
 			{Type: "null"},
 		},
 	}
-}
-
-func validateContext(ctx context.Context) error {
-	if ctx == nil {
-		return errors.New("tool: context is required")
-	}
-	return ctx.Err()
 }
 
 func errorResult(toolName string, err error) agent.ToolResult {

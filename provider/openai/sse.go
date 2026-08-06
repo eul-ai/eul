@@ -10,8 +10,10 @@ import (
 )
 
 type streamObserver struct {
-	onText   func(string) error
-	sawDelta bool
+	onText       func(string) error
+	onReasoning  func(string) error
+	sawDelta     bool
+	sawReasoning bool
 }
 
 type responseStreamEvent struct {
@@ -66,7 +68,7 @@ func readSSE(reader io.Reader, maximum int64, handle func([]byte) (createRespons
 			if len(data) > 0 && data[0] == ' ' {
 				data = data[1:]
 			}
-			dataLines = append(dataLines, append([]byte(nil), data...))
+			dataLines = append(dataLines, data)
 		}
 
 		if errors.Is(err, io.EOF) {
@@ -103,12 +105,19 @@ func (decoder *responseStreamDecoder) handle(data []byte) (createResponseEnvelop
 	case "error":
 		return createResponseEnvelope{}, false, streamError(event)
 	case "response.output_text.delta", "response.refusal.delta":
-		return createResponseEnvelope{}, false, decoder.deliver(event.Delta)
+		return createResponseEnvelope{}, false, decoder.deliverText(event.Delta)
+	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
+		return createResponseEnvelope{}, false, decoder.deliverReasoning(event.Delta)
+	case "response.reasoning_summary_part.done":
+		if decoder.observer == nil || !decoder.observer.sawReasoning {
+			return createResponseEnvelope{}, false, nil
+		}
+		return createResponseEnvelope{}, false, decoder.deliverReasoning("\n\n")
 	case "response.output_item.done":
 		if err := validateRawObject(event.Item); err != nil {
 			return createResponseEnvelope{}, false, fmt.Errorf("Responses completed output item: %w", err)
 		}
-		decoder.output = append(decoder.output, append(json.RawMessage(nil), event.Item...))
+		decoder.output = append(decoder.output, event.Item)
 		return createResponseEnvelope{}, false, nil
 	case "response.completed", "response.done", "response.incomplete", "response.failed":
 		response, err := decoder.terminal(event)
@@ -118,7 +127,7 @@ func (decoder *responseStreamDecoder) handle(data []byte) (createResponseEnvelop
 	}
 }
 
-func (decoder *responseStreamDecoder) deliver(delta string) error {
+func (decoder *responseStreamDecoder) deliverText(delta string) error {
 	if delta == "" || decoder.observer == nil {
 		return nil
 	}
@@ -128,6 +137,19 @@ func (decoder *responseStreamDecoder) deliver(delta string) error {
 		}
 	}
 	decoder.observer.sawDelta = true
+	return nil
+}
+
+func (decoder *responseStreamDecoder) deliverReasoning(delta string) error {
+	if delta == "" || decoder.observer == nil {
+		return nil
+	}
+	if decoder.observer.onReasoning != nil {
+		if err := decoder.observer.onReasoning(delta); err != nil {
+			return fmt.Errorf("deliver reasoning: %w", err)
+		}
+	}
+	decoder.observer.sawReasoning = true
 	return nil
 }
 
@@ -150,7 +172,7 @@ func (decoder *responseStreamDecoder) terminal(event responseStreamEvent) (creat
 		}
 	}
 	if len(response.Output) == 0 && len(decoder.output) != 0 {
-		response.Output = append([]json.RawMessage(nil), decoder.output...)
+		response.Output = decoder.output
 	} else if response.Output == nil {
 		response.Output = []json.RawMessage{}
 	}

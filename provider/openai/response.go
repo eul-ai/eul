@@ -149,7 +149,7 @@ func normalizeToolCall(item outputItem, index int, seen map[string]struct{}) (ag
 	return agent.ToolCall{
 		ID:        item.CallID,
 		Name:      item.Name,
-		Arguments: append(json.RawMessage(nil), item.Arguments...),
+		Arguments: json.RawMessage(item.Arguments),
 	}, nil
 }
 
