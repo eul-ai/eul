@@ -100,7 +100,7 @@ func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 	for i, definition := range gotRequest.Tools {
 		names[i] = definition.Name
 	}
-	if !slices.Equal(names, []string{"bash", "edit", "read", "write"}) {
+	if !slices.Equal(names, []string{"bash", "edit", "lsp_definition", "lsp_diagnostics", "lsp_hover", "lsp_references", "lsp_rename", "lsp_symbols", "read", "write"}) {
 		t.Fatalf("tools = %v", names)
 	}
 	if stdout.String() != "answer\n" {

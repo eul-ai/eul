@@ -373,12 +373,14 @@ func readProjectInstructions(cwd string) (string, error) {
 }
 
 func buildTools(cwd string) *tool.Registry {
-	return tool.NewRegistry(
+	tools := []tool.Tool{
 		tool.NewRead(cwd),
 		tool.NewWrite(cwd),
 		tool.NewEdit(cwd),
 		tool.NewBash(cwd),
-	)
+	}
+	tools = append(tools, tool.NewLSP(cwd)...)
+	return tool.NewRegistry(tools...)
 }
 
 func writeCLIError(output io.Writer, format string, arguments ...any) {
