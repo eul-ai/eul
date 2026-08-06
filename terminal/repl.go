@@ -20,9 +20,9 @@ const maxInputBytes = 1024 * 1024
 
 var (
 	ErrInterrupted  = errors.New("terminal: interrupted")
-	ErrInputTooLong = errors.New("terminal: input line is too long")
-	ErrInvalidInput = errors.New("terminal: input must be valid UTF-8 text without NUL")
-	ErrOutput       = errors.New("terminal: write output")
+	errInputTooLong = errors.New("terminal: input line is too long")
+	errInvalidInput = errors.New("terminal: input must be valid UTF-8 text without NUL")
+	errOutput       = errors.New("terminal: write output")
 )
 
 // Engine is the conversation runner consumed by the terminal.
@@ -86,13 +86,13 @@ func Run(ctx context.Context, engine Engine, options Options) error {
 				}
 				return nil
 			}
-			if errors.Is(event.err, ErrInputTooLong) {
+			if errors.Is(event.err, errInputTooLong) {
 				if err := writeOutput(options.ErrorOutput, "error: input line exceeds %d bytes\n", maxInputBytes); err != nil {
 					return err
 				}
 				continue
 			}
-			if errors.Is(event.err, ErrInvalidInput) {
+			if errors.Is(event.err, errInvalidInput) {
 				if err := writeOutput(options.ErrorOutput, "error: input must be valid UTF-8 text without NUL\n"); err != nil {
 					return err
 				}
@@ -133,7 +133,7 @@ func Run(ctx context.Context, engine Engine, options Options) error {
 				resetIfNeeded(engine)
 				return contextErr
 			}
-			if errors.Is(runErr, ErrOutput) {
+			if errors.Is(runErr, errOutput) {
 				return runErr
 			}
 			if interrupted {
@@ -396,7 +396,7 @@ func singleLine(value string, maximum int) string {
 
 func writeOutput(writer io.Writer, format string, arguments ...any) error {
 	if _, err := fmt.Fprintf(writer, format, arguments...); err != nil {
-		return fmt.Errorf("%w: %v", ErrOutput, err)
+		return fmt.Errorf("%w: %v", errOutput, err)
 	}
 	return nil
 }
@@ -424,7 +424,7 @@ func readInput(ctx context.Context, input io.Reader, maximum int) (<-chan inputE
 			case <-ctx.Done():
 				return
 			}
-			if errors.Is(err, io.EOF) || err != nil && !errors.Is(err, ErrInputTooLong) && !errors.Is(err, ErrInvalidInput) {
+			if errors.Is(err, io.EOF) || err != nil && !errors.Is(err, errInputTooLong) && !errors.Is(err, errInvalidInput) {
 				return
 			}
 		}
@@ -458,7 +458,7 @@ func readLine(reader *bufio.Reader, maximum int) (string, error) {
 			return "", err
 		}
 		if tooLong {
-			return "", ErrInputTooLong
+			return "", errInputTooLong
 		}
 		if errors.Is(err, io.EOF) && line.Len() == 0 {
 			return "", io.EOF
@@ -466,7 +466,7 @@ func readLine(reader *bufio.Reader, maximum int) (string, error) {
 		value := strings.TrimSuffix(line.String(), "\n")
 		value = strings.TrimSuffix(value, "\r")
 		if !utf8.ValidString(value) || strings.IndexByte(value, 0) >= 0 {
-			return "", ErrInvalidInput
+			return "", errInvalidInput
 		}
 		return value, nil
 	}

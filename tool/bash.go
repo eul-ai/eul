@@ -102,7 +102,7 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	}
 	command.WaitDelay = b.waitDelay
 
-	capture := newTailCapture(DefaultMaxBytes)
+	capture := newTailCapture(defaultMaxBytes)
 	command.Stdout = capture
 	command.Stderr = capture
 	if err := command.Start(); err != nil {

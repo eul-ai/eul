@@ -70,20 +70,20 @@ func successResult(output string) agent.ToolResult {
 }
 
 func boundHead(text, notice string) string {
-	bounded := TruncateHead(text, DefaultMaxLines, DefaultMaxBytes)
-	if notice == "" && !bounded.Truncated {
+	bounded := truncateHead(text, defaultMaxLines, defaultMaxBytes)
+	if notice == "" && !bounded.truncated {
 		return text
 	}
 	if notice == "" {
 		notice = "output truncated"
 	}
 	marker := "[" + notice + "]\n"
-	if len(marker) >= DefaultMaxBytes {
-		marker, _ = TruncateLine(marker, DefaultMaxBytes)
+	if len(marker) >= defaultMaxBytes {
+		marker, _ = truncateLine(marker, defaultMaxBytes)
 		return marker
 	}
 
-	body := TruncateHead(text, DefaultMaxLines-1, DefaultMaxBytes-len(marker)-1).Text
+	body := truncateHead(text, defaultMaxLines-1, defaultMaxBytes-len(marker)-1).text
 	separator := ""
 	if body != "" && !strings.HasSuffix(body, "\n") {
 		separator = "\n"
@@ -92,19 +92,19 @@ func boundHead(text, notice string) string {
 }
 
 func boundTail(text, notice string) string {
-	bounded := TruncateTail(text, DefaultMaxLines, DefaultMaxBytes)
-	if notice == "" && !bounded.Truncated {
+	bounded := truncateTail(text, defaultMaxLines, defaultMaxBytes)
+	if notice == "" && !bounded.truncated {
 		return text
 	}
 	if notice == "" {
 		notice = "earlier output truncated"
 	}
 	marker := "[" + notice + "]\n"
-	if len(marker) >= DefaultMaxBytes {
-		marker, _ = TruncateLine(marker, DefaultMaxBytes)
+	if len(marker) >= defaultMaxBytes {
+		marker, _ = truncateLine(marker, defaultMaxBytes)
 		return marker
 	}
-	body := TruncateTail(text, DefaultMaxLines-1, DefaultMaxBytes-len(marker)).Text
+	body := truncateTail(text, defaultMaxLines-1, defaultMaxBytes-len(marker)).text
 	return marker + body
 }
 

@@ -6,29 +6,24 @@ import (
 )
 
 const (
-	DefaultMaxLines = 2_000
-	DefaultMaxBytes = 50 * 1024
+	defaultMaxLines = 2_000
+	defaultMaxBytes = 50 * 1024
 )
 
-// Truncation describes bounded text output.
-type Truncation struct {
-	Text      string
-	Truncated bool
+type truncation struct {
+	text      string
+	truncated bool
 }
 
-// TruncateHead keeps the beginning of text within both limits.
-func TruncateHead(text string, maxLines, maxBytes int) Truncation {
+func truncateHead(text string, maxLines, maxBytes int) truncation {
 	return truncateText(text, maxLines, maxBytes, true)
 }
 
-// TruncateTail keeps the end of text within both limits.
-func TruncateTail(text string, maxLines, maxBytes int) Truncation {
+func truncateTail(text string, maxLines, maxBytes int) truncation {
 	return truncateText(text, maxLines, maxBytes, false)
 }
 
-// TruncateLine keeps the beginning of one line within maxBytes without
-// splitting a UTF-8 code point.
-func TruncateLine(line string, maxBytes int) (string, bool) {
+func truncateLine(line string, maxBytes int) (string, bool) {
 	if maxBytes < 0 {
 		maxBytes = 0
 	}
@@ -38,7 +33,7 @@ func TruncateLine(line string, maxBytes int) (string, bool) {
 	return prefixBytes(line, maxBytes), true
 }
 
-func truncateText(text string, maxLines, maxBytes int, head bool) Truncation {
+func truncateText(text string, maxLines, maxBytes int, head bool) truncation {
 	if maxLines < 0 {
 		maxLines = 0
 	}
@@ -65,7 +60,7 @@ func truncateText(text string, maxLines, maxBytes int, head bool) Truncation {
 		}
 	}
 
-	return Truncation{Text: output, Truncated: len(output) != len(text)}
+	return truncation{text: output, truncated: len(output) != len(text)}
 }
 
 func splitLines(text string) []string {

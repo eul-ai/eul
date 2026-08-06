@@ -117,7 +117,7 @@ func TestBashOutputKeepsBoundedTail(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("bash result = %+v", result)
 	}
-	if len(result.Output) > DefaultMaxBytes || countLines(result.Output) > DefaultMaxLines {
+	if len(result.Output) > defaultMaxBytes || countLines(result.Output) > defaultMaxLines {
 		t.Fatalf("bash output is not bounded: %d bytes, %d lines", len(result.Output), countLines(result.Output))
 	}
 	if !utf8.ValidString(result.Output) || !strings.Contains(result.Output, "earlier command output truncated") || !strings.Contains(result.Output, "END-MARKER") || !strings.Contains(result.Output, "[exit status: 0]") {
@@ -157,13 +157,13 @@ func TestBashValidationAndStartFailuresAreRecoverableAndBounded(t *testing.T) {
 		})
 	}
 
-	largeField := strings.Repeat("x", DefaultMaxBytes*2)
+	largeField := strings.Repeat("x", defaultMaxBytes*2)
 	encoded := fmt.Sprintf(`{"command":"echo no",%q:true}`, largeField)
 	result, err := regular.Execute(context.Background(), json.RawMessage(encoded))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.IsError || len(result.Output) > DefaultMaxBytes || countLines(result.Output) > DefaultMaxLines {
+	if !result.IsError || len(result.Output) > defaultMaxBytes || countLines(result.Output) > defaultMaxLines {
 		t.Fatalf("large validation error is not bounded: %+v", result)
 	}
 }

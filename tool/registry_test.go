@@ -67,7 +67,7 @@ func TestRegistryCorrelatesErrorsAndRejectsUnknownTools(t *testing.T) {
 	if !errors.Is(err, toolErr) || result.CallID != "call-1" || result.Tool != "read" {
 		t.Fatalf("result=%+v error=%v", result, err)
 	}
-	if _, err := registry.Execute(context.Background(), agent.ToolCall{Name: "missing"}); !errors.Is(err, ErrUnknownTool) {
+	if _, err := registry.Execute(context.Background(), agent.ToolCall{Name: "missing"}); !errors.Is(err, errUnknownTool) {
 		t.Fatalf("unknown tool error = %v", err)
 	}
 }

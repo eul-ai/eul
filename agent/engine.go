@@ -6,23 +6,17 @@ import (
 	"fmt"
 )
 
-const DefaultMaxToolRounds = 20
+const defaultMaxToolRounds = 20
 
 var (
-	// ErrToolRoundLimit is returned when a model requests more tool rounds than
-	// the engine permits for one user turn.
-	ErrToolRoundLimit = errors.New("agent: maximum tool rounds exceeded")
-
-	// ErrResetRequired is returned when a prior turn stopped after tool
-	// execution began. Reset must be called before the conversation can safely
-	// continue.
-	ErrResetRequired = errors.New("agent: reset required after incomplete tool turn")
+	errToolRoundLimit = errors.New("agent: maximum tool rounds exceeded")
+	errResetRequired  = errors.New("agent: reset required after incomplete tool turn")
 )
 
 // Options configures an Engine.
 type Options struct {
 	Model         string
-	MaxToolRounds int
+	maxToolRounds int
 }
 
 // RunResult is the completed result of one user turn.
@@ -45,9 +39,9 @@ type Engine struct {
 
 // New constructs an Engine from its provider and tools.
 func New(provider Provider, tools Toolbox, options Options) *Engine {
-	maxToolRounds := options.MaxToolRounds
+	maxToolRounds := options.maxToolRounds
 	if maxToolRounds == 0 {
-		maxToolRounds = DefaultMaxToolRounds
+		maxToolRounds = defaultMaxToolRounds
 	}
 
 	return &Engine{
@@ -55,7 +49,7 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 		tools:         tools,
 		model:         options.Model,
 		maxToolRounds: maxToolRounds,
-		instructions:  BuildSystemPrompt(tools.Definitions()),
+		instructions:  buildSystemPrompt(tools.Definitions()),
 	}
 }
 
@@ -66,7 +60,7 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 	}
 
 	if e.resetRequired {
-		return RunResult{}, ErrResetRequired
+		return RunResult{}, errResetRequired
 	}
 
 	state := e.state
@@ -110,7 +104,7 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		}
 
 		if toolRounds >= e.maxToolRounds {
-			return RunResult{}, ErrToolRoundLimit
+			return RunResult{}, errToolRoundLimit
 		}
 		toolRounds++
 

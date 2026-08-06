@@ -13,7 +13,7 @@ import (
 	"yaah/agent"
 )
 
-var ErrUnknownTool = errors.New("tool: unknown tool")
+var errUnknownTool = errors.New("tool: unknown tool")
 
 // Tool is the interface consumed by Registry. Concrete tool implementations
 // decode their own arguments into tool-specific Go structs.
@@ -55,7 +55,7 @@ func (r *Registry) Definitions() []agent.ToolDefinition {
 func (r *Registry) Execute(ctx context.Context, call agent.ToolCall) (agent.ToolResult, error) {
 	registered, exists := r.tools[call.Name]
 	if !exists {
-		return agent.ToolResult{}, fmt.Errorf("%w %q", ErrUnknownTool, call.Name)
+		return agent.ToolResult{}, fmt.Errorf("%w %q", errUnknownTool, call.Name)
 	}
 
 	result, err := registered.Execute(ctx, call.Arguments)

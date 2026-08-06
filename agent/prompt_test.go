@@ -6,7 +6,7 @@ import (
 )
 
 func TestBuildSystemPrompt(t *testing.T) {
-	prompt := BuildSystemPrompt([]ToolDefinition{
+	prompt := buildSystemPrompt([]ToolDefinition{
 		{Name: "read", Description: "Read file contents"},
 		{Name: "write", Description: "Create or overwrite files"},
 	})
@@ -22,7 +22,7 @@ func TestBuildSystemPrompt(t *testing.T) {
 }
 
 func TestBuildSystemPromptWithNoTools(t *testing.T) {
-	prompt := BuildSystemPrompt(nil)
+	prompt := buildSystemPrompt(nil)
 	if !strings.Contains(prompt, "Available tools:\n(none)") {
 		t.Fatalf("prompt does not identify an empty toolset:\n%s", prompt)
 	}

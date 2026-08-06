@@ -11,5 +11,6 @@
 
 ## Go
 
+- Do not export symbols unless they are used outside their package.
 - After working on a Go file, run `gofumpt -w <path>` for each changed Go file.
 - Run focused tests for the changed packages, then `go test ./...`.

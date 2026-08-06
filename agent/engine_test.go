@@ -118,7 +118,7 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 		},
 	}
 
-	engine := newTestEngine(t, provider, toolbox, Options{Model: "test-model", MaxToolRounds: 2})
+	engine := newTestEngine(t, provider, toolbox, Options{Model: "test-model", maxToolRounds: 2})
 	var events []Event
 	result, err := engine.Run(context.Background(), "inspect the file", func(event Event) error {
 		events = append(events, event)
@@ -181,7 +181,7 @@ func TestEngineExecutesMultipleCallsInProviderOrder(t *testing.T) {
 		return ToolResult{Output: call.Name + " result"}, nil
 	}}
 
-	engine := newTestEngine(t, provider, toolbox, Options{MaxToolRounds: 1})
+	engine := newTestEngine(t, provider, toolbox, Options{maxToolRounds: 1})
 	if _, err := engine.Run(context.Background(), "run both", discardEvents); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -209,7 +209,7 @@ func TestEngineReturnsUnknownToolsToProvider(t *testing.T) {
 		return ToolResult{}, fmt.Errorf("unknown tool %q", call.Name)
 	}}
 
-	engine := newTestEngine(t, provider, toolbox, Options{MaxToolRounds: 1})
+	engine := newTestEngine(t, provider, toolbox, Options{maxToolRounds: 1})
 	result, err := engine.Run(context.Background(), "recover", discardEvents)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -234,16 +234,16 @@ func TestEngineStopsAtToolRoundLimit(t *testing.T) {
 		return ToolResult{Output: "ok"}, nil
 	}}
 
-	engine := newTestEngine(t, provider, toolbox, Options{MaxToolRounds: 1})
+	engine := newTestEngine(t, provider, toolbox, Options{maxToolRounds: 1})
 	_, err := engine.Run(context.Background(), "loop", discardEvents)
-	if !errors.Is(err, ErrToolRoundLimit) {
-		t.Fatalf("Run() error = %v, want ErrToolRoundLimit", err)
+	if !errors.Is(err, errToolRoundLimit) {
+		t.Fatalf("Run() error = %v, want tool round limit", err)
 	}
 	if toolExecutions != 1 {
 		t.Fatalf("tool executions = %d, want 1", toolExecutions)
 	}
-	if _, nextErr := engine.Run(context.Background(), "continue", discardEvents); !errors.Is(nextErr, ErrResetRequired) {
-		t.Fatalf("Run() after incomplete tool turn error = %v, want ErrResetRequired", nextErr)
+	if _, nextErr := engine.Run(context.Background(), "continue", discardEvents); !errors.Is(nextErr, errResetRequired) {
+		t.Fatalf("Run() after incomplete tool turn error = %v, want reset required", nextErr)
 	}
 }
 
@@ -266,7 +266,7 @@ func TestEngineHonorsCancellationDuringToolExecution(t *testing.T) {
 		<-ctx.Done()
 		return ToolResult{}, ctx.Err()
 	}}
-	engine := newTestEngine(t, provider, toolbox, Options{MaxToolRounds: 1})
+	engine := newTestEngine(t, provider, toolbox, Options{maxToolRounds: 1})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -294,8 +294,8 @@ func TestEngineHonorsCancellationDuringToolExecution(t *testing.T) {
 	if !engine.NeedsReset() {
 		t.Fatal("canceled tool turn does not report required reset")
 	}
-	if _, err := engine.Run(context.Background(), "continue", discardEvents); !errors.Is(err, ErrResetRequired) {
-		t.Fatalf("Run() after canceled tool error = %v, want ErrResetRequired", err)
+	if _, err := engine.Run(context.Background(), "continue", discardEvents); !errors.Is(err, errResetRequired) {
+		t.Fatalf("Run() after canceled tool error = %v, want reset required", err)
 	}
 	engine.Reset()
 	if engine.NeedsReset() {
@@ -351,7 +351,7 @@ func TestEngineTreatsToolLocalDeadlineAsRecoverable(t *testing.T) {
 	toolbox := &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
 		return ToolResult{}, context.DeadlineExceeded
 	}}
-	engine := newTestEngine(t, provider, toolbox, Options{MaxToolRounds: 1})
+	engine := newTestEngine(t, provider, toolbox, Options{maxToolRounds: 1})
 
 	result, err := engine.Run(context.Background(), "run", discardEvents)
 	if err != nil {

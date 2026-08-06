@@ -6,52 +6,52 @@ import (
 )
 
 func TestTruncateHeadByLines(t *testing.T) {
-	got := TruncateHead("one\ntwo\nthree\n", 2, 1_000)
-	if got.Text != "one\ntwo\n" || !got.Truncated {
-		t.Fatalf("TruncateHead() = %+v", got)
+	got := truncateHead("one\ntwo\nthree\n", 2, 1_000)
+	if got.text != "one\ntwo\n" || !got.truncated {
+		t.Fatalf("truncateHead() = %+v", got)
 	}
 }
 
 func TestTruncateTailByLines(t *testing.T) {
-	got := TruncateTail("one\ntwo\nthree\n", 2, 1_000)
-	if got.Text != "two\nthree\n" || !got.Truncated {
-		t.Fatalf("TruncateTail() = %+v", got)
+	got := truncateTail("one\ntwo\nthree\n", 2, 1_000)
+	if got.text != "two\nthree\n" || !got.truncated {
+		t.Fatalf("truncateTail() = %+v", got)
 	}
 }
 
 func TestTruncateHeadByBytesPreservesUTF8(t *testing.T) {
-	got := TruncateHead("éabc", 10, 3)
-	if got.Text != "éa" || !got.Truncated {
-		t.Fatalf("TruncateHead() = %+v", got)
+	got := truncateHead("éabc", 10, 3)
+	if got.text != "éa" || !got.truncated {
+		t.Fatalf("truncateHead() = %+v", got)
 	}
 }
 
 func TestTruncateTailByBytesPreservesUTF8(t *testing.T) {
-	got := TruncateTail("abcé", 10, 3)
-	if got.Text != "cé" || !got.Truncated {
-		t.Fatalf("TruncateTail() = %+v", got)
+	got := truncateTail("abcé", 10, 3)
+	if got.text != "cé" || !got.truncated {
+		t.Fatalf("truncateTail() = %+v", got)
 	}
 }
 
 func TestTruncateLine(t *testing.T) {
-	got, truncated := TruncateLine("éabc", 4)
+	got, truncated := truncateLine("éabc", 4)
 	if got != "éab" || !truncated {
-		t.Fatalf("TruncateLine() = %q, %v", got, truncated)
+		t.Fatalf("truncateLine() = %q, %v", got, truncated)
 	}
-	got, truncated = TruncateLine("short", 10)
+	got, truncated = truncateLine("short", 10)
 	if got != "short" || truncated {
-		t.Fatalf("TruncateLine() unbounded = %q, %v", got, truncated)
+		t.Fatalf("truncateLine() unbounded = %q, %v", got, truncated)
 	}
 }
 
 func TestTextLimitsAreIndependent(t *testing.T) {
-	byLines := TruncateHead("a\nb\nc\n", 2, 1_000)
-	if byLines.Text != "a\nb\n" {
-		t.Fatalf("line limit result = %q", byLines.Text)
+	byLines := truncateHead("a\nb\nc\n", 2, 1_000)
+	if byLines.text != "a\nb\n" {
+		t.Fatalf("line limit result = %q", byLines.text)
 	}
-	byBytes := TruncateHead("a\nb\nc\n", 100, 3)
-	if byBytes.Text != "a\nb" {
-		t.Fatalf("byte limit result = %q", byBytes.Text)
+	byBytes := truncateHead("a\nb\nc\n", 100, 3)
+	if byBytes.text != "a\nb" {
+		t.Fatalf("byte limit result = %q", byBytes.text)
 	}
 }
 
@@ -74,19 +74,19 @@ func TestTextLimitEdgeCases(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := TruncateHead(test.text, test.lines, test.bytes).Text; got != test.wantHead {
-				t.Fatalf("TruncateHead() = %q, want %q", got, test.wantHead)
+			if got := truncateHead(test.text, test.lines, test.bytes).text; got != test.wantHead {
+				t.Fatalf("truncateHead() = %q, want %q", got, test.wantHead)
 			}
-			if got := TruncateTail(test.text, test.lines, test.bytes).Text; got != test.wantTail {
-				t.Fatalf("TruncateTail() = %q, want %q", got, test.wantTail)
+			if got := truncateTail(test.text, test.lines, test.bytes).text; got != test.wantTail {
+				t.Fatalf("truncateTail() = %q, want %q", got, test.wantTail)
 			}
 		})
 	}
 }
 
 func TestZeroLimits(t *testing.T) {
-	got := TruncateHead("content", 0, 100)
-	if got.Text != "" || !got.Truncated {
+	got := truncateHead("content", 0, 100)
+	if got.text != "" || !got.truncated {
 		t.Fatalf("zero line limit = %+v", got)
 	}
 }

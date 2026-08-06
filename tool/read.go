@@ -59,7 +59,7 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	if err != nil {
 		return errorResult(readToolName, err), nil
 	}
-	limit, err := optionalPositive(args.Limit, DefaultMaxLines, DefaultMaxLines, "limit")
+	limit, err := optionalPositive(args.Limit, defaultMaxLines, defaultMaxLines, "limit")
 	if err != nil {
 		return errorResult(readToolName, err), nil
 	}
@@ -95,7 +95,7 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	var output strings.Builder
 	lineNumber := 1
 	selectedCompleted := 0
-	lineEnds := make([]int, 0, min(limit, DefaultMaxLines))
+	lineEnds := make([]int, 0, min(limit, defaultMaxLines))
 	sawData := false
 	lastWasNewline := false
 	truncatedOutput := ""
@@ -152,7 +152,7 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 			}
 			continue
 		}
-		if output.Len()+size > DefaultMaxBytes {
+		if output.Len()+size > defaultMaxBytes {
 			if len(lineEnds) == 0 {
 				truncatedOutput = boundHead(output.String(), fmt.Sprintf("truncated within line %d; no lossless next offset", lineNumber))
 			} else {
@@ -183,7 +183,7 @@ func formatReadTruncation(text string, lineEnds []int, offset int) string {
 		if keptLines > 0 {
 			end = lineEnds[keptLines-1]
 		}
-		if keptLines <= DefaultMaxLines-1 && end <= DefaultMaxBytes-markerBytes-1 {
+		if keptLines <= defaultMaxLines-1 && end <= defaultMaxBytes-markerBytes-1 {
 			return boundHead(text[:end], notice)
 		}
 		keptLines--

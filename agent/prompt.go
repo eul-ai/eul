@@ -4,8 +4,7 @@ import "strings"
 
 const baseSystemPrompt = `You are a coding agent. Use the available tools to inspect and modify code. Be concise and report results clearly.`
 
-// BuildSystemPrompt constructs the system prompt from the active tools.
-func BuildSystemPrompt(definitions []ToolDefinition) string {
+func buildSystemPrompt(definitions []ToolDefinition) string {
 	var prompt strings.Builder
 	prompt.WriteString(baseSystemPrompt)
 	prompt.WriteString("\n\nAvailable tools:\n")

@@ -88,7 +88,7 @@ func TestReadHandlesEmptyBinarySymlinkAndInvalidRanges(t *testing.T) {
 	cwd := t.TempDir()
 	mustWriteFile(t, filepath.Join(cwd, "empty.txt"), "", 0o644)
 	mustWriteFile(t, filepath.Join(cwd, "binary.dat"), "text\x00data", 0o644)
-	mustWriteFile(t, filepath.Join(cwd, "late-binary.dat"), strings.Repeat("text\n", DefaultMaxLines+1)+"\x00", 0o644)
+	mustWriteFile(t, filepath.Join(cwd, "late-binary.dat"), strings.Repeat("text\n", defaultMaxLines+1)+"\x00", 0o644)
 	mustWriteFile(t, filepath.Join(cwd, "target.txt"), "target", 0o644)
 	if err := syscall.Mkfifo(filepath.Join(cwd, "pipe"), 0o600); err != nil {
 		t.Fatal(err)
@@ -113,7 +113,7 @@ func TestReadHandlesEmptyBinarySymlinkAndInvalidRanges(t *testing.T) {
 		{name: "binary after result limit", args: map[string]any{"path": "late-binary.dat"}, want: "binary file"},
 		{name: "empty offset", args: map[string]any{"path": "empty.txt", "offset": 2}, want: "beyond end"},
 		{name: "zero offset", args: map[string]any{"path": "target.txt", "offset": 0}, want: "must be positive"},
-		{name: "large limit", args: map[string]any{"path": "target.txt", "limit": DefaultMaxLines + 1}, want: "must not exceed"},
+		{name: "large limit", args: map[string]any{"path": "target.txt", "limit": defaultMaxLines + 1}, want: "must not exceed"},
 		{name: "directory", args: map[string]any{"path": "."}, want: "not a regular file"},
 		{name: "fifo", args: map[string]any{"path": "pipe"}, want: "not a regular file"},
 	} {
@@ -128,9 +128,9 @@ func TestReadHandlesEmptyBinarySymlinkAndInvalidRanges(t *testing.T) {
 
 func TestReadOutputIsBoundedAndUTF8(t *testing.T) {
 	cwd := t.TempDir()
-	manyLines := strings.Repeat("line\n", DefaultMaxLines+10)
+	manyLines := strings.Repeat("line\n", defaultMaxLines+10)
 	mustWriteFile(t, filepath.Join(cwd, "lines.txt"), manyLines, 0o644)
-	longLine := strings.Repeat("é", DefaultMaxBytes)
+	longLine := strings.Repeat("é", defaultMaxBytes)
 	mustWriteFile(t, filepath.Join(cwd, "long.txt"), longLine, 0o644)
 	readTool := NewRead(cwd)
 
@@ -139,7 +139,7 @@ func TestReadOutputIsBoundedAndUTF8(t *testing.T) {
 		if result.IsError {
 			t.Fatalf("read %s = %+v", name, result)
 		}
-		if len(result.Output) > DefaultMaxBytes || countLines(result.Output) > DefaultMaxLines {
+		if len(result.Output) > defaultMaxBytes || countLines(result.Output) > defaultMaxLines {
 			t.Fatalf("read %s is not bounded: %d bytes, %d lines", name, len(result.Output), countLines(result.Output))
 		}
 		if !utf8.ValidString(result.Output) || !strings.Contains(result.Output, "truncated") {
@@ -150,7 +150,7 @@ func TestReadOutputIsBoundedAndUTF8(t *testing.T) {
 
 func TestReadChecksCancellationWhileScanning(t *testing.T) {
 	cwd := t.TempDir()
-	mustWriteFile(t, filepath.Join(cwd, "large.txt"), strings.Repeat("x", DefaultMaxBytes*4), 0o644)
+	mustWriteFile(t, filepath.Join(cwd, "large.txt"), strings.Repeat("x", defaultMaxBytes*4), 0o644)
 	readTool := NewRead(cwd)
 	ctx := &cancelAfterChecksContext{cancelAfter: 100}
 	result, err := readTool.Execute(ctx, json.RawMessage(`{"path":"large.txt","offset":2}`))

@@ -398,7 +398,7 @@ func TestReadInputStopsSendingAfterCancellation(t *testing.T) {
 func TestRunPropagatesOutputErrors(t *testing.T) {
 	engine := &fakeEngine{}
 	err := Run(context.Background(), engine, Options{Input: strings.NewReader(""), Output: io.Discard, ErrorOutput: failingWriter{}})
-	if !errors.Is(err, ErrOutput) {
+	if !errors.Is(err, errOutput) {
 		t.Fatalf("Run() error = %v", err)
 	}
 }
