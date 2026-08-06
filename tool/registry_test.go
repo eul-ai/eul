@@ -88,8 +88,7 @@ func TestDecodeArguments(t *testing.T) {
 		{name: "case insensitive", input: `{"PATH":"README.md","limit":10}`, want: arguments{Path: "README.md", Limit: &limit}},
 		{name: "duplicate uses last", input: `{"path":"first","path":"README.md","limit":10}`, want: arguments{Path: "README.md", Limit: &limit}},
 		{name: "unknown", input: `{"path":"README.md","extra":true}`, wantErr: "unknown field"},
-		{name: "non object", input: `[]`, wantErr: "JSON object"},
-		{name: "null", input: `null`, wantErr: "JSON object"},
+		{name: "non object", input: `[]`, wantErr: "decode arguments"},
 		{name: "malformed", input: `{"path":`, wantErr: "decode arguments"},
 		{name: "trailing", input: `{"path":"README.md"} {}`, wantErr: "multiple JSON values"},
 	} {

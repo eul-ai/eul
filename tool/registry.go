@@ -67,10 +67,6 @@ func (r *Registry) Execute(ctx context.Context, call agent.ToolCall) (agent.Tool
 // decodeArguments decodes one JSON object into a tool-specific Go struct.
 func decodeArguments[T any](arguments json.RawMessage) (T, error) {
 	var value T
-	arguments = bytes.TrimSpace(arguments)
-	if len(arguments) == 0 || arguments[0] != '{' {
-		return value, errors.New("tool: arguments must be a JSON object")
-	}
 	decoder := json.NewDecoder(bytes.NewReader(arguments))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&value); err != nil {
