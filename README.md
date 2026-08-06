@@ -29,9 +29,8 @@ yaah logout
 reasoning efforts are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and
 `max`.
 
-A nonblank `OPENAI_API_KEY` selects the OpenAI Platform API. Otherwise yaah uses
-its own ChatGPT OAuth credential from `YAAH_HOME/auth.json` or the operating
-system's user configuration directory. Yaah does not read Pi or Codex
+Yaah uses its own ChatGPT OAuth credential from `YAAH_HOME/auth.json` or the
+operating system's user configuration directory. It does not read Pi or Codex
 credential stores.
 
 ChatGPT OAuth uses the subscription-backed Codex endpoint. OpenAI documents
@@ -87,11 +86,10 @@ The `agent` package owns the narrow provider and toolbox interfaces. The OpenAI
 adapter owns all wire types and preserves opaque response output items for
 stateless continuation. The agent stores that state without interpreting it.
 
-Both API-key and OAuth modes use bounded SSE streams. Reasoning summaries,
-output text, and refusals are delivered incrementally. Completed output items
-are retained for tool calls and continuation replay. Requests use `store: false`; API-key mode
-uses strict function schemas, while Codex mode follows its experimental wire
-contract.
+The OpenAI adapter uses bounded SSE streams. Reasoning summaries, output text,
+and refusals are delivered incrementally. Completed output items are retained
+for tool calls and continuation replay. Requests use `store: false` and follow
+the experimental Codex wire contract.
 
 The engine permits at most 20 tool rounds per user turn. Once tool execution
 has begun, cancellation or an incomplete continuation requires `/clear` before
@@ -104,8 +102,7 @@ Device authorization is available for headless environments. Credentials are
 stored privately and atomically, refreshed before expiry, and updated when the
 server rotates refresh tokens. Logout removes only yaah's credential file.
 
-Credentials are sent only in HTTP headers. `OPENAI_API_KEY` is removed from the
-`bash` subprocess environment.
+Credentials are sent only in HTTP headers.
 
 ## Verification
 

@@ -28,13 +28,7 @@ const (
 	exitInterrupted = 130
 )
 
-type providerConfig struct {
-	apiKey          string
-	codexToken      openaiadapter.CodexTokenSource
-	reasoningEffort string
-}
-
-type providerFactory func(providerConfig) (agent.Provider, error)
+type providerFactory func(openaiadapter.CodexTokenSource, string) (agent.Provider, error)
 
 type oauthManager interface {
 	Login(context.Context, oauth.LoginMethod, oauth.Interaction) (oauth.Credentials, error)
@@ -47,7 +41,6 @@ type appRuntime struct {
 	stdout      io.Writer
 	stderr      io.Writer
 	getenv      func(string) string
-	environ     func() []string
 	getwd       func() (string, error)
 	interrupts  <-chan os.Signal
 	newProvider providerFactory
@@ -64,7 +57,6 @@ func main() {
 		stdout:     os.Stdout,
 		stderr:     os.Stderr,
 		getenv:     os.Getenv,
-		environ:    os.Environ,
 		getwd:      os.Getwd,
 		interrupts: interrupts,
 		newOAuth: func() (oauthManager, error) {
@@ -75,12 +67,8 @@ func main() {
 			return oauth.NewManager(path, oauth.Options{}), nil
 		},
 		openURL: openBrowser,
-		newProvider: func(config providerConfig) (agent.Provider, error) {
-			options := openaiadapter.Options{ReasoningEffort: config.reasoningEffort}
-			if config.apiKey != "" {
-				return openaiadapter.New(config.apiKey, options)
-			}
-			return openaiadapter.NewCodex(config.codexToken, options)
+		newProvider: func(source openaiadapter.CodexTokenSource, reasoningEffort string) (agent.Provider, error) {
+			return openaiadapter.NewCodex(source, openaiadapter.Options{ReasoningEffort: reasoningEffort})
 		},
 	})
 
@@ -119,7 +107,7 @@ func run(arguments []string, runtime appRuntime) int {
 		return exitUsage
 	}
 
-	config, err := resolveProviderConfig(runtime.getenv("OPENAI_API_KEY"), *effort, runtime)
+	tokenSource, err := resolveTokenSource(runtime)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return exitInterrupted
@@ -153,8 +141,8 @@ func run(arguments []string, runtime appRuntime) int {
 		}
 	}
 
-	registry := buildTools(cwd, environmentWithout(runtime.environ(), "OPENAI_API_KEY"))
-	provider, err := runtime.newProvider(config)
+	registry := buildTools(cwd)
+	provider, err := runtime.newProvider(tokenSource, *effort)
 	if err != nil {
 		writeCLIError(runtime.stderr, "configure provider: %v", err)
 		return exitFailure
@@ -192,24 +180,20 @@ func finishRun(runErr error, errorOutput io.Writer) int {
 	return exitFailure
 }
 
-func resolveProviderConfig(apiKey, reasoningEffort string, runtime appRuntime) (providerConfig, error) {
-	if strings.TrimSpace(apiKey) != "" {
-		return providerConfig{apiKey: apiKey, reasoningEffort: reasoningEffort}, nil
-	}
-
+func resolveTokenSource(runtime appRuntime) (openaiadapter.CodexTokenSource, error) {
 	manager, err := runtime.newOAuth()
 	if err != nil {
-		return providerConfig{}, err
+		return nil, err
 	}
 
 	ctx, cancel := contextWithInterrupt(runtime.interrupts)
 	defer cancel()
 
 	if _, err := manager.Resolve(ctx); err != nil {
-		return providerConfig{}, err
+		return nil, err
 	}
 
-	return providerConfig{codexToken: oauthTokenSource{manager: manager}, reasoningEffort: reasoningEffort}, nil
+	return oauthTokenSource{manager: manager}, nil
 }
 
 type oauthTokenSource struct {
@@ -388,25 +372,13 @@ func readProjectInstructions(cwd string) (string, error) {
 	return string(content), nil
 }
 
-func buildTools(cwd string, environment []string) *tool.Registry {
+func buildTools(cwd string) *tool.Registry {
 	return tool.NewRegistry(
 		tool.NewRead(cwd),
 		tool.NewWrite(cwd),
 		tool.NewEdit(cwd),
-		tool.NewBash(cwd, tool.BashOptions{Env: environment}),
+		tool.NewBash(cwd),
 	)
-}
-
-func environmentWithout(environment []string, key string) []string {
-	prefix := key + "="
-	filtered := make([]string, 0, len(environment))
-	for _, entry := range environment {
-		if strings.HasPrefix(entry, prefix) {
-			continue
-		}
-		filtered = append(filtered, entry)
-	}
-	return filtered
 }
 
 func writeCLIError(output io.Writer, format string, arguments ...any) {

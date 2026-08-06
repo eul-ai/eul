@@ -21,7 +21,7 @@ func TestCoreToolDefinitionsUseStrictSchemas(t *testing.T) {
 	readTool := NewRead(cwd)
 	writeTool := NewWrite(cwd)
 	editTool := NewEdit(cwd)
-	bashTool := NewBash(cwd, BashOptions{})
+	bashTool := NewBash(cwd)
 
 	tests := []struct {
 		tool       Tool
@@ -383,7 +383,7 @@ func TestCoreToolsRegisterInDeterministicOrder(t *testing.T) {
 	readTool := NewRead(cwd)
 	writeTool := NewWrite(cwd)
 	editTool := NewEdit(cwd)
-	bashTool := NewBash(cwd, BashOptions{})
+	bashTool := NewBash(cwd)
 
 	registry := NewRegistry(readTool, writeTool, editTool, bashTool)
 	definitions := registry.Definitions()

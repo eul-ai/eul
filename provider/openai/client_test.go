@@ -19,14 +19,14 @@ import (
 )
 
 func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
-	const apiKey = "secret-test-key"
+	const token = "secret-test-token"
 	var requestNumber atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		call := int(requestNumber.Add(1))
-		if request.Method != http.MethodPost || request.URL.Path != "/v1/responses" {
+		if request.Method != http.MethodPost || request.URL.Path != "/codex/responses" {
 			t.Errorf("request %d = %s %s", call, request.Method, request.URL.Path)
 		}
-		if request.Header.Get("Authorization") != "Bearer "+apiKey || request.Header.Get("Content-Type") != "application/json" || request.Header.Get("Accept") != "text/event-stream" {
+		if request.Header.Get("Authorization") != "Bearer "+token || request.Header.Get("Content-Type") != "application/json" || request.Header.Get("Accept") != "text/event-stream" {
 			t.Errorf("request %d headers = %v", call, request.Header)
 		}
 		body, err := io.ReadAll(request.Body)
@@ -35,8 +35,8 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 			writer.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		if strings.Contains(string(body), apiKey) {
-			t.Errorf("request %d body contains API key", call)
+		if strings.Contains(string(body), token) {
+			t.Errorf("request %d body contains OAuth token", call)
 		}
 		if strings.Contains(string(body), "not sent") {
 			t.Errorf("request %d leaked prompt-only tool metadata: %s", call, body)
@@ -65,7 +65,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 		if wire.Model != "test-model" || wire.Instructions != "system instructions" || wire.Store || !wire.Stream || !slices.Equal(wire.Include, []string{"reasoning.encrypted_content"}) || wire.Reasoning == nil || wire.Reasoning.Effort != "high" || wire.Reasoning.Summary != "auto" {
 			t.Errorf("request %d shape = %+v", call, wire)
 		}
-		if len(wire.Tools) != 2 || wire.Tools[0].Type != "function" || wire.Tools[0].Name != "read" || wire.Tools[1].Name != "bash" || wire.Tools[0].Strict == nil || !*wire.Tools[0].Strict || wire.Tools[1].Strict == nil || !*wire.Tools[1].Strict || wire.Tools[0].Parameters.Type != "object" || wire.Tools[0].Parameters.AdditionalProperties == nil || *wire.Tools[0].Parameters.AdditionalProperties || !slices.Equal(wire.Tools[0].Parameters.Required, []string{"path"}) {
+		if len(wire.Tools) != 2 || wire.Tools[0].Type != "function" || wire.Tools[0].Name != "read" || wire.Tools[1].Name != "bash" || wire.Tools[0].Strict != nil || wire.Tools[1].Strict != nil || wire.Tools[0].Parameters.Type != "object" || wire.Tools[0].Parameters.AdditionalProperties == nil || *wire.Tools[0].Parameters.AdditionalProperties || !slices.Equal(wire.Tools[0].Parameters.Required, []string{"path"}) {
 			t.Errorf("request %d tools = %+v", call, wire.Tools)
 		}
 
@@ -123,7 +123,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestClient(t, apiKey, server.URL, Options{ReasoningEffort: "high"})
+	client := newTestClient(t, token, server.URL, Options{ReasoningEffort: "high"})
 	tools := []agent.ToolDefinition{strictTestTool("read"), strictTestTool("bash")}
 	var sinkText []string
 	first, err := client.Generate(context.Background(), agent.Request{
@@ -184,7 +184,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	}
 }
 
-func TestPlatformClientStreamsTextDeltas(t *testing.T) {
+func TestClientStreamsTextDeltas(t *testing.T) {
 	releaseTerminal := make(chan struct{})
 	released := false
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -245,7 +245,7 @@ func TestPlatformClientStreamsTextDeltas(t *testing.T) {
 	}
 }
 
-func TestPlatformClientStreamsRefusal(t *testing.T) {
+func TestClientStreamsRefusal(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(writer, "data: {\"type\":\"response.refusal.delta\",\"delta\":\"Cannot comply.\"}\n\n")
@@ -406,7 +406,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		transport := roundTripperFunc(func(*http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: errorReadCloser{err: context.DeadlineExceeded}}, nil
 		})
-		client, err := New("key", Options{BaseURL: "https://example.com", HTTPClient: &http.Client{Transport: transport}})
+		client, err := NewCodex(testTokenSource("token"), Options{BaseURL: "https://example.com", HTTPClient: &http.Client{Transport: transport}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -482,14 +482,14 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 }
 
 func TestNewRejectsInvalidReasoningEffort(t *testing.T) {
-	if _, err := New("key", Options{ReasoningEffort: "extreme"}); err == nil {
+	if _, err := NewCodex(testTokenSource("token"), Options{ReasoningEffort: "extreme"}); err == nil {
 		t.Fatal("invalid reasoning effort accepted")
 	}
 }
 
 func TestNewUsesInjectedClientAndAppliesDefaultTimeout(t *testing.T) {
 	injected := &http.Client{}
-	client, err := New("key", Options{BaseURL: "https://example.com", HTTPClient: injected})
+	client, err := NewCodex(testTokenSource("token"), Options{BaseURL: "https://example.com", HTTPClient: injected})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,15 +498,21 @@ func TestNewUsesInjectedClientAndAppliesDefaultTimeout(t *testing.T) {
 	}
 }
 
-func newTestClient(t *testing.T, key, baseURL string, overrides Options) *Client {
+func newTestClient(t *testing.T, token, baseURL string, overrides Options) *Client {
 	t.Helper()
 	overrides.BaseURL = baseURL
-	client, err := New(key, overrides)
+	client, err := NewCodex(testTokenSource(token), overrides)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	return client
+}
+
+func testTokenSource(token string) CodexTokenSource {
+	return CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
+		return CodexCredential{AccessToken: token, AccountID: "account"}, nil
+	})
 }
 
 func strictTestTool(name string) agent.ToolDefinition {

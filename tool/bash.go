@@ -30,14 +30,9 @@ var bashToolDefinition = agent.ToolDefinition{
 	}, "command", "timeout"),
 }
 
-type BashOptions struct {
-	Env []string
-}
-
 type Bash struct {
 	workspace      workspace
 	shell          string
-	env            []string
 	defaultTimeout time.Duration
 	maxTimeout     time.Duration
 	waitDelay      time.Duration
@@ -48,11 +43,10 @@ type bashArguments struct {
 	Timeout *int   `json:"timeout"`
 }
 
-func NewBash(cwd string, options BashOptions) *Bash {
+func NewBash(cwd string) *Bash {
 	return &Bash{
 		workspace:      newWorkspace(cwd),
 		shell:          bashToolName,
-		env:            options.Env,
 		defaultTimeout: defaultBashTimeout,
 		maxTimeout:     maximumBashTimeout,
 		waitDelay:      defaultWaitDelay,
@@ -93,10 +87,7 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 	command := exec.CommandContext(runCtx, b.shell, "-c", args.Command)
 	command.Dir = b.workspace.cwd
 	command.Stdin = nil
-	command.Env = b.env
-	if command.Env == nil {
-		command.Env = os.Environ()
-	}
+	command.Env = os.Environ()
 	command.WaitDelay = b.waitDelay
 
 	capture := newTailCapture(defaultMaxBytes)

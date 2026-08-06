@@ -71,13 +71,11 @@ func buildCreateRequest(request agent.Request, maxStateBytes int) (createRespons
 
 	tools := make([]functionTool, len(request.Tools))
 	for i, definition := range request.Tools {
-		strict := true
 		tools[i] = functionTool{
 			Type:        "function",
 			Name:        definition.Name,
 			Description: definition.Description,
 			Parameters:  definition.Parameters,
-			Strict:      &strict,
 		}
 	}
 

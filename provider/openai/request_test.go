@@ -24,7 +24,7 @@ func TestBuildCreateRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if request.Model != "model" || len(request.Input) != 2 || len(newItems) != 1 || len(request.Tools) != 1 || request.Tools[0].Strict == nil || !*request.Tools[0].Strict {
+	if request.Model != "model" || len(request.Input) != 2 || len(newItems) != 1 || len(request.Tools) != 1 || request.Tools[0].Strict != nil {
 		t.Fatalf("request=%+v newItems=%s", request, newItems)
 	}
 	if !strings.Contains(string(newItems[0]), `[tool error]\nfailed`) {

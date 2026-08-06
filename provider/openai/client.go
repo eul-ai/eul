@@ -16,8 +16,7 @@ import (
 )
 
 const (
-	defaultBaseURL          = "https://api.openai.com"
-	defaultCodexBaseURL     = "https://chatgpt.com/backend-api"
+	defaultBaseURL          = "https://chatgpt.com/backend-api"
 	defaultHTTPTimeout      = 10 * time.Minute
 	defaultMaxRequestBytes  = int64(32 * 1024 * 1024)
 	defaultMaxResponseBytes = int64(16 * 1024 * 1024)
@@ -43,9 +42,7 @@ type CodexTokenSource interface {
 type Client struct {
 	httpClient       *http.Client
 	endpoint         string
-	apiKey           string
-	codexSource      CodexTokenSource
-	codex            bool
+	tokenSource      CodexTokenSource
 	maxRequestBytes  int64
 	maxResponseBytes int64
 	maxErrorBytes    int64
@@ -66,15 +63,7 @@ var validReasoningEfforts = map[string]struct{}{
 	"max":     {},
 }
 
-func New(apiKey string, options Options) (*Client, error) {
-	return newClient(apiKey, nil, false, options)
-}
-
 func NewCodex(source CodexTokenSource, options Options) (*Client, error) {
-	return newClient("", source, true, options)
-}
-
-func newClient(apiKey string, source CodexTokenSource, codex bool, options Options) (*Client, error) {
 	if err := validateReasoningEffort(options.ReasoningEffort); err != nil {
 		return nil, err
 	}
@@ -82,14 +71,6 @@ func newClient(apiKey string, source CodexTokenSource, codex bool, options Optio
 	baseURL := options.BaseURL
 	if baseURL == "" {
 		baseURL = defaultBaseURL
-		if codex {
-			baseURL = defaultCodexBaseURL
-		}
-	}
-
-	responsePath := "/v1/responses"
-	if codex {
-		responsePath = "/codex/responses"
 	}
 
 	httpClient := options.HTTPClient
@@ -105,10 +86,8 @@ func newClient(apiKey string, source CodexTokenSource, codex bool, options Optio
 
 	return &Client{
 		httpClient:       httpClient,
-		endpoint:         strings.TrimRight(baseURL, "/") + responsePath,
-		apiKey:           apiKey,
-		codexSource:      source,
-		codex:            codex,
+		endpoint:         strings.TrimRight(baseURL, "/") + "/codex/responses",
+		tokenSource:      source,
 		maxRequestBytes:  defaultMaxRequestBytes,
 		maxResponseBytes: defaultMaxResponseBytes,
 		maxErrorBytes:    defaultMaxErrorBytes,
@@ -122,7 +101,7 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 		return agent.Response{}, err
 	}
 
-	secret, accountID, err := c.resolveAuth(ctx)
+	credential, err := c.tokenSource.Token(ctx)
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return agent.Response{}, contextErr
@@ -139,14 +118,9 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 		wireRequest.Reasoning = &responseReasoning{Effort: c.reasoningEffort, Summary: "auto"}
 	}
 	wireRequest.Stream = true
-	if c.codex {
-		wireRequest.Text = &responseText{Verbosity: "low"}
-		wireRequest.ToolChoice = "auto"
-		wireRequest.ParallelToolCalls = true
-		for index := range wireRequest.Tools {
-			wireRequest.Tools[index].Strict = nil
-		}
-	}
+	wireRequest.Text = &responseText{Verbosity: "low"}
+	wireRequest.ToolChoice = "auto"
+	wireRequest.ParallelToolCalls = true
 
 	requestBody, err := json.Marshal(wireRequest)
 	if err != nil {
@@ -160,15 +134,13 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 	if err != nil {
 		return agent.Response{}, c.errorf("create request: %v", err)
 	}
-	httpRequest.Header.Set("Authorization", "Bearer "+secret)
+	httpRequest.Header.Set("Authorization", "Bearer "+credential.AccessToken)
 	httpRequest.Header.Set("Content-Type", "application/json")
 	httpRequest.Header.Set("Accept", "text/event-stream")
-	if c.codex {
-		httpRequest.Header.Set("chatgpt-account-id", accountID)
-		httpRequest.Header.Set("originator", "yaah")
-		httpRequest.Header.Set("User-Agent", "yaah")
-		httpRequest.Header.Set("OpenAI-Beta", "responses=experimental")
-	}
+	httpRequest.Header.Set("chatgpt-account-id", credential.AccountID)
+	httpRequest.Header.Set("originator", "yaah")
+	httpRequest.Header.Set("User-Agent", "yaah")
+	httpRequest.Header.Set("OpenAI-Beta", "responses=experimental")
 
 	httpResponse, err := c.httpClient.Do(httpRequest)
 	if err != nil {
@@ -229,15 +201,6 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 		State:     state,
 		Usage:     usage,
 	}, nil
-}
-
-func (c *Client) resolveAuth(ctx context.Context) (string, string, error) {
-	if !c.codex {
-		return c.apiKey, "", nil
-	}
-
-	credential, err := c.codexSource.Token(ctx)
-	return credential.AccessToken, credential.AccountID, err
 }
 
 func (c *Client) decodeHTTPError(response *http.Response) error {
