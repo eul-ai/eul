@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,7 +26,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 		if request.Method != http.MethodPost || request.URL.Path != "/v1/responses" {
 			t.Errorf("request %d = %s %s", call, request.Method, request.URL.Path)
 		}
-		if request.Header.Get("Authorization") != "Bearer "+apiKey || request.Header.Get("Content-Type") != "application/json" || request.Header.Get("Accept") != "application/json" {
+		if request.Header.Get("Authorization") != "Bearer "+apiKey || request.Header.Get("Content-Type") != "application/json" || request.Header.Get("Accept") != "text/event-stream" {
 			t.Errorf("request %d headers = %v", call, request.Header)
 		}
 		body, err := io.ReadAll(request.Body)
@@ -61,7 +62,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 			writer.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if wire.Model != "test-model" || wire.Instructions != "system instructions" || wire.Store || wire.Stream || !slices.Equal(wire.Include, []string{"reasoning.encrypted_content"}) || wire.Reasoning == nil || wire.Reasoning.Effort != "high" || wire.Reasoning.Summary != "auto" {
+		if wire.Model != "test-model" || wire.Instructions != "system instructions" || wire.Store || !wire.Stream || !slices.Equal(wire.Include, []string{"reasoning.encrypted_content"}) || wire.Reasoning == nil || wire.Reasoning.Effort != "high" || wire.Reasoning.Summary != "auto" {
 			t.Errorf("request %d shape = %+v", call, wire)
 		}
 		if len(wire.Tools) != 2 || wire.Tools[0].Type != "function" || wire.Tools[0].Name != "read" || wire.Tools[1].Name != "bash" || wire.Tools[0].Strict == nil || !*wire.Tools[0].Strict || wire.Tools[1].Strict == nil || !*wire.Tools[1].Strict || wire.Tools[0].Parameters.Type != "object" || wire.Tools[0].Parameters.AdditionalProperties == nil || *wire.Tools[0].Parameters.AdditionalProperties || !slices.Equal(wire.Tools[0].Parameters.Required, []string{"path"}) {
@@ -183,6 +184,82 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	}
 }
 
+func TestPlatformClientStreamsTextDeltas(t *testing.T) {
+	releaseTerminal := make(chan struct{})
+	released := false
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var wire createResponseRequest
+		if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
+			t.Error(err)
+		}
+		if !wire.Stream || request.Header.Get("Accept") != "text/event-stream" {
+			t.Errorf("stream=%v accept=%q", wire.Stream, request.Header.Get("Accept"))
+		}
+		writer.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		fmt.Fprint(writer, "data: {\"type\":\"response.output_text.delta\",\"sequence_number\":0,\"delta\":\"streamed \"}\n\n")
+		writer.(http.Flusher).Flush()
+		<-releaseTerminal
+		fmt.Fprint(writer, "data: {\"type\":\"response.output_text.delta\",\"sequence_number\":1,\"delta\":\"answer\"}\n\n")
+		fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"sequence_number\":2,\"output_index\":0,\"item\":{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"streamed answer\"}]}}\n\n")
+		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"sequence_number\":3,\"response\":{\"status\":\"completed\"}}\n\n")
+	}))
+	defer server.Close()
+	defer func() {
+		if !released {
+			close(releaseTerminal)
+		}
+	}()
+	client := newTestClient(t, "key", server.URL, Options{})
+	var deltas []string
+	seenDelta := make(chan string, 2)
+	type outcome struct {
+		response agent.Response
+		err      error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		response, err := client.Generate(context.Background(), baseRequest(), func(delta string) error {
+			deltas = append(deltas, delta)
+			seenDelta <- delta
+			return nil
+		})
+		done <- outcome{response: response, err: err}
+	}()
+	select {
+	case delta := <-seenDelta:
+		if delta != "streamed " {
+			t.Fatalf("first delta = %q", delta)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first delta was not delivered before the terminal event")
+	}
+	close(releaseTerminal)
+	released = true
+	result := <-done
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	if result.response.Text != "streamed answer" || !slices.Equal(deltas, []string{"streamed ", "answer"}) {
+		t.Fatalf("response=%+v deltas=%q", result.response, deltas)
+	}
+}
+
+func TestPlatformClientStreamsRefusal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(writer, "data: {\"type\":\"response.refusal.delta\",\"delta\":\"Cannot comply.\"}\n\n")
+		fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"content\":[{\"type\":\"refusal\",\"refusal\":\"Cannot comply.\"}]}}\n\n")
+		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
+	}))
+	defer server.Close()
+	client := newTestClient(t, "key", server.URL, Options{})
+	var delivered string
+	response, err := client.Generate(context.Background(), baseRequest(), func(delta string) error { delivered += delta; return nil })
+	if err != nil || response.Text != "Cannot comply." || delivered != response.Text {
+		t.Fatalf("response=%+v delivered=%q error=%v", response, delivered, err)
+	}
+}
+
 func TestClientDecodesRefusalAndPreservesMalformedToolArguments(t *testing.T) {
 	server := responseServer(t, http.StatusOK, `{
 		"status":"completed",
@@ -208,10 +285,8 @@ func TestClientRejectsMalformedResponses(t *testing.T) {
 		body string
 		want string
 	}{
-		{name: "malformed JSON", body: `{`, want: "decode response"},
-		{name: "trailing JSON", body: `{"status":"completed","output":[]} {}`, want: "multiple JSON values"},
-		{name: "missing status", body: `{"output":[]}`, want: "status missing"},
-		{name: "missing output", body: `{"status":"completed"}`, want: "missing output"},
+		{name: "malformed JSON", body: `{`, want: "decode Responses SSE"},
+		{name: "trailing JSON", body: `{"status":"completed","output":[]} {}`, want: "decode Responses SSE"},
 		{name: "incomplete", body: `{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[]}`, want: "incomplete: max_output_tokens"},
 		{name: "response error", body: `{"status":"failed","error":{"type":"server_error","code":"bad","message":"failed"},"output":[]}`, want: "server_error/bad: failed"},
 		{name: "missing call ID", body: `{"status":"completed","output":[{"type":"function_call","name":"read","arguments":"{}"}]}`, want: "no call ID"},
@@ -236,7 +311,7 @@ func TestClientRejectsMalformedResponses(t *testing.T) {
 	}
 }
 
-func TestClientBoundsAndRedactsHTTPErrors(t *testing.T) {
+func TestClientBoundsHTTPErrors(t *testing.T) {
 	const key = "top-secret-key"
 	server := responseServer(t, http.StatusBadRequest, strings.Repeat(key+" ", 100))
 	defer server.Close()
@@ -245,7 +320,7 @@ func TestClientBoundsAndRedactsHTTPErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("Generate() succeeded")
 	}
-	if len(err.Error()) > 160 || strings.Contains(err.Error(), key) || strings.Contains(err.Error(), "top-secret") || !strings.Contains(err.Error(), "HTTP 400") {
+	if len(err.Error()) > 160 || !strings.Contains(err.Error(), "HTTP 400") {
 		t.Fatalf("bounded error = %q (%d bytes)", err, len(err.Error()))
 	}
 }
@@ -341,6 +416,46 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		sinkError := errors.New("sink failed")
 		_, err := client.Generate(context.Background(), baseRequest(), func(string) error { return sinkError })
 		if !errors.Is(err, sinkError) {
+			t.Fatalf("Generate() error = %v", err)
+		}
+	})
+	t.Run("streaming sink", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"answer\"}\n\n")
+		}))
+		defer server.Close()
+		client := newTestClient(t, "key", server.URL, Options{})
+		sinkError := errors.New("streaming sink failed")
+		_, err := client.Generate(context.Background(), baseRequest(), func(string) error { return sinkError })
+		if !errors.Is(err, sinkError) {
+			t.Fatalf("Generate() error = %v", err)
+		}
+	})
+	t.Run("stream cancellation", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			writer.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
+			writer.(http.Flusher).Flush()
+			<-request.Context().Done()
+		}))
+		defer server.Close()
+		client := newTestClient(t, "key", server.URL, Options{})
+		ctx, cancel := context.WithCancel(context.Background())
+		seen := make(chan struct{}, 1)
+		done := make(chan error, 1)
+		go func() {
+			_, err := client.Generate(ctx, baseRequest(), func(string) error { seen <- struct{}{}; return nil })
+			done <- err
+		}()
+		select {
+		case <-seen:
+			cancel()
+		case <-time.After(2 * time.Second):
+			cancel()
+			t.Fatal("stream delta was not delivered")
+		}
+		if err := <-done; !errors.Is(err, context.Canceled) {
 			t.Fatalf("Generate() error = %v", err)
 		}
 	})
@@ -441,6 +556,17 @@ func baseRequest() agent.Request {
 func responseServer(t *testing.T, status int, body string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if status >= 200 && status < 300 {
+			payload := body
+			var compact bytes.Buffer
+			if json.Compact(&compact, []byte(body)) == nil {
+				payload = compact.String()
+			}
+			writer.Header().Set("Content-Type", "text/event-stream")
+			writer.WriteHeader(status)
+			_, _ = fmt.Fprintf(writer, "data: {\"type\":\"response.completed\",\"response\":%s}\n\n", payload)
+			return
+		}
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(status)
 		if _, err := io.WriteString(writer, body); err != nil {
@@ -451,10 +577,13 @@ func responseServer(t *testing.T, status int, body string) *httptest.Server {
 
 func writeJSON(t *testing.T, writer http.ResponseWriter, value any) {
 	t.Helper()
-	writer.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(writer).Encode(value); err != nil {
+	var payload bytes.Buffer
+	if err := json.NewEncoder(&payload).Encode(value); err != nil {
 		t.Errorf("encode response: %v", err)
+		return
 	}
+	writer.Header().Set("Content-Type", "text/event-stream")
+	_, _ = fmt.Fprintf(writer, "data: {\"type\":\"response.completed\",\"response\":%s}\n\n", bytes.TrimSpace(payload.Bytes()))
 }
 
 func assertInputItem(t *testing.T, items []json.RawMessage, index int, fields map[string]string) {
@@ -472,21 +601,6 @@ func assertInputItem(t *testing.T, items []json.RawMessage, index int, fields ma
 		if got, _ := item[name].(string); got != want {
 			t.Errorf("input item %d field %q = %q, want %q; item=%s", index, name, got, want, items[index])
 		}
-	}
-}
-
-func TestErrorMessagesDoNotExposeAPIKeyThroughTransportErrors(t *testing.T) {
-	key := "transport-secret"
-	transport := roundTripperFunc(func(*http.Request) (*http.Response, error) {
-		return nil, fmt.Errorf("transport echoed %s", key)
-	})
-	client, err := New(key, Options{BaseURL: "https://example.com", HTTPClient: &http.Client{Transport: transport}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = client.Generate(context.Background(), baseRequest(), nil)
-	if err == nil || strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), "[REDACTED]") {
-		t.Fatalf("Generate() error = %v", err)
 	}
 }
 

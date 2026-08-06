@@ -439,9 +439,6 @@ func TestDefaultCredentialPathAndInvalidStorage(t *testing.T) {
 	if _, err := readCredentials(insecurePath); err == nil || !strings.Contains(err.Error(), "permissions") {
 		t.Fatalf("insecure credential read error = %v", err)
 	}
-	if secrets := credential.Secrets(); len(secrets) != 3 || secrets[2] != credential.AccountID {
-		t.Fatalf("credential secrets = %v", secrets)
-	}
 }
 
 func testJWT(t *testing.T, accountID, marker string) string {

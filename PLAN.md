@@ -60,7 +60,7 @@ Assistant text goes to stdout. Tool status and errors go to stderr. Do not requi
 
 ### Streaming
 
-For the strictest MVP, begin with non-streaming OpenAI responses. Design the provider interface so streaming can be added without changing the agent loop. Streaming should be the first follow-up feature if Pi-like responsiveness is important.
+Use bounded Responses API SSE streams in both Platform API-key and ChatGPT OAuth modes. Deliver output-text and refusal deltas incrementally to the terminal while collecting completed output items for validation, tool calls, usage, and stateless continuation replay.
 
 ## 2. Pi-style toolset
 
@@ -161,7 +161,7 @@ provider/openai/
     client.go               HTTP adapter
     request.go              Responses API mapping
     response.go             Response decoding
-    sse.go                  Added when streaming is introduced
+    sse.go                  Bounded SSE parsing and delta delivery
 
 tool/
     registry.go
@@ -224,7 +224,7 @@ type Response struct {
 }
 ```
 
-The event callback may receive one complete text event initially and true deltas after streaming is added.
+The event callback receives assistant text deltas as they arrive. If a valid stream contains completed text but no deltas, the provider delivers that text once at completion.
 
 The opaque state is important for OpenAI reasoning models: the Responses API requires carrying forward all returned output items, including reasoning items, rather than only function calls. The core stores this state but never interprets OpenAI wire types.
 
@@ -287,7 +287,7 @@ Important rules:
 
 Use the **Responses API**, with:
 
-- API-key mode: `POST https://api.openai.com/v1/responses` with a non-streaming JSON response.
+- API-key mode: bounded SSE from `POST https://api.openai.com/v1/responses`.
 - OAuth mode: bounded SSE from `POST https://chatgpt.com/backend-api/codex/responses`, with request-time token refresh and ChatGPT account routing headers.
 - `store: false`
 - Explicit `model`
@@ -303,15 +303,14 @@ The adapter owns all OpenAI DTOs and HTTP details. Inject `http.Client` and base
 Handle:
 
 - Browser PKCE and device-code login, private atomic credential storage, refresh-token rotation, and logout
-- Bounded Codex SSE completion responses while retaining the terminal's completed-text behavior
+- Bounded Platform and Codex SSE responses with incremental output-text and refusal delivery
 - Bounded non-2xx response bodies
 - Malformed JSON
 - Missing call IDs
 - Multiple function calls
 - Context cancellation and HTTP timeouts
-- Secret redaction
 
-When streaming is added, parse SSE correctly rather than assuming one JSON object per network read.
+Parse SSE by event boundaries rather than assuming one JSON object per network read; stop at terminal response events without waiting for connection EOF.
 
 ## 6. Milestones
 
@@ -363,7 +362,7 @@ Exit criteria:
 
 ### Milestone 4 — OpenAI adapter
 
-Use non-streaming Responses first.
+Use streaming Responses with bounded SSE parsing.
 
 Exit criteria:
 
@@ -385,7 +384,7 @@ Exit criteria:
 
 ### Milestone 6 — Hardening
 
-- Add incremental terminal streaming; OAuth currently collects and bounds Codex SSE before delivering completed text.
+- Verify incremental terminal streaming across Platform and OAuth modes, including cancellation and malformed event sequences.
 - Review resource cleanup and process cancellation.
 - Add an optional credential-gated live smoke test.
 
@@ -440,7 +439,7 @@ go list -m all   # only the main module
 | Zero dependency | No third-party Go modules; Bash runtime allowed |
 | Platform | macOS/Linux first |
 | OpenAI endpoint | Platform Responses API for API keys; experimental ChatGPT Codex Responses endpoint for OAuth |
-| Streaming | Follow-up milestone; interface ready from day one |
+| Streaming | Bounded SSE with incremental text/refusal delivery in Platform and OAuth modes |
 | Model | Require `--model` or `OPENAI_MODEL`; accept optional `--effort` or `OPENAI_REASONING_EFFORT` |
 | Safety | Trusted and unsandboxed |
 | Provider plugins | Compile-time adapters only |

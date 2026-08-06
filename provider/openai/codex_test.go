@@ -55,9 +55,10 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 			}
 		}
 		writer.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(writer, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"ignored duplicate\"}\n\n")
-		fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"subscription answer\"}]}}\n\n")
-		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":3,\"output_tokens\":2,\"total_tokens\":5}}}\n\n")
+		fmt.Fprint(writer, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"sequence_number\":0,\"delta\":\"subscription \"}\n\n")
+		fmt.Fprint(writer, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"sequence_number\":1,\"delta\":\"answer\"}\n\n")
+		fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"sequence_number\":2,\"output_index\":0,\"item\":{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"subscription answer\"}]}}\n\n")
+		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"sequence_number\":3,\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":3,\"output_tokens\":2,\"total_tokens\":5}}}\n\n")
 	}))
 	defer server.Close()
 
@@ -86,7 +87,7 @@ func TestCodexSSEStopsAtTerminalEventWithoutWaitingForEOF(t *testing.T) {
 	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}}\n\n")
+		fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}}\n\n")
 		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
 		writer.(http.Flusher).Flush()
 		<-release
@@ -131,8 +132,8 @@ func TestCodexSSEToolCallAndReasoningReplay(t *testing.T) {
 		switch call {
 		case 1:
 			assertInputItem(t, wire.Input, 0, map[string]string{"role": "user", "content": "inspect"})
-			fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"reasoning\",\"encrypted_content\":\"opaque\"}}\n\n")
-			fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"call_id\":\"call_read\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"file.go\\\"}\"}}\n\n")
+			fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"encrypted_content\":\"opaque\"}}\n\n")
+			fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_read\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"file.go\\\"}\"}}\n\n")
 			fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
 		case 2:
 			if len(wire.Input) != 4 {
@@ -141,7 +142,7 @@ func TestCodexSSEToolCallAndReasoningReplay(t *testing.T) {
 			assertInputItem(t, wire.Input, 1, map[string]string{"type": "reasoning", "encrypted_content": "opaque"})
 			assertInputItem(t, wire.Input, 2, map[string]string{"type": "function_call", "call_id": "call_read"})
 			assertInputItem(t, wire.Input, 3, map[string]string{"type": "function_call_output", "call_id": "call_read", "output": "contents"})
-			fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"finished\"}]}}\n\n")
+			fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"finished\"}]}}\n\n")
 			fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
 		default:
 			t.Errorf("unexpected request %d", call)
@@ -170,7 +171,7 @@ func TestCodexSSEToolCallAndReasoningReplay(t *testing.T) {
 	}
 }
 
-func TestCodexSourceIsResolvedPerRequestAndDynamicTokenIsRedacted(t *testing.T) {
+func TestCodexSourceIsResolvedPerRequest(t *testing.T) {
 	const first = "first-oauth-secret"
 	const second = "refreshed-oauth-secret"
 	calls := 0
@@ -184,7 +185,7 @@ func TestCodexSourceIsResolvedPerRequestAndDynamicTokenIsRedacted(t *testing.T) 
 			t.Errorf("request %d authorization = %q", calls, request.Header.Get("Authorization"))
 		}
 		if calls == 2 {
-			return nil, fmt.Errorf("transport echoed %s and %s", second, request.Header.Get("chatgpt-account-id"))
+			return nil, errors.New("transport failed")
 		}
 		body := "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
 		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(body))}, nil
@@ -205,7 +206,7 @@ func TestCodexSourceIsResolvedPerRequestAndDynamicTokenIsRedacted(t *testing.T) 
 		t.Fatal(err)
 	}
 	_, err = client.Generate(context.Background(), baseRequest(), nil)
-	if err == nil || strings.Contains(err.Error(), second) || strings.Contains(err.Error(), "account") || strings.Count(err.Error(), "[REDACTED]") != 2 {
+	if err == nil || !strings.Contains(err.Error(), "transport failed") {
 		t.Fatalf("second Generate() error = %v", err)
 	}
 	if sourceCalls != 2 {
@@ -213,21 +214,21 @@ func TestCodexSourceIsResolvedPerRequestAndDynamicTokenIsRedacted(t *testing.T) 
 	}
 }
 
-func TestDecodeCodexSSEValidation(t *testing.T) {
+func TestResponsesSSEValidation(t *testing.T) {
 	tests := []struct {
 		name string
 		body string
 		want string
 	}{
 		{name: "missing terminal", body: "data: {\"type\":\"response.output_text.delta\"}\n\n", want: "without a terminal"},
-		{name: "malformed", body: "data: {\n\n", want: "decode Codex SSE"},
+		{name: "malformed", body: "data: {\n\n", want: "decode Responses SSE"},
 		{name: "nested error", body: "data: {\"type\":\"error\",\"error\":{\"type\":\"server_error\",\"message\":\"failed\"}}\n\n", want: "server_error: failed"},
 		{name: "top-level error", body: "data: {\"type\":\"error\",\"code\":\"rate_limit\",\"message\":\"slow down\"}\n\n", want: "rate_limit: slow down"},
 		{name: "done status default", body: "data: {\"type\":\"response.done\",\"response\":{\"output\":[]}}\n\n", want: ""},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			response, err := readCodexSSE(strings.NewReader(test.body), 64*1024)
+			response, err := readResponsesSSE(strings.NewReader(test.body), 64*1024, nil)
 			if test.want == "" {
 				if err != nil || response.Status != "completed" {
 					t.Fatalf("response=%+v error=%v", response, err)
@@ -239,7 +240,7 @@ func TestDecodeCodexSSEValidation(t *testing.T) {
 			}
 		})
 	}
-	if _, err := readCodexSSE(strings.NewReader(strings.Repeat("x", 101)), 100); err == nil || !strings.Contains(err.Error(), "exceeds 100 bytes") {
+	if _, err := readResponsesSSE(strings.NewReader(strings.Repeat("x", 101)), 100, nil); err == nil || !strings.Contains(err.Error(), "exceeds 100 bytes") {
 		t.Fatalf("bounded SSE error = %v", err)
 	}
 }

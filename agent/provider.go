@@ -53,8 +53,8 @@ type Response struct {
 	Usage     Usage
 }
 
-// TextSink receives assistant text as it becomes available. A non-streaming
-// provider calls it once with the complete response text.
+// TextSink receives assistant text as it becomes available. Streaming providers
+// call it with ordered deltas.
 type TextSink func(text string) error
 
 // Provider generates assistant responses for the agent engine.

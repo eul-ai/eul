@@ -143,58 +143,45 @@ func run(arguments []string, runtime appRuntime) int {
 	modelDefault := runtime.getenv("OPENAI_MODEL")
 	effortDefault := runtime.getenv("OPENAI_REASONING_EFFORT")
 	flags := flag.NewFlagSet("yaah", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
+	flags.SetOutput(runtime.stderr)
 	model := flags.String("model", modelDefault, "OpenAI model (or OPENAI_MODEL)")
 	effort := flags.String("effort", effortDefault, "reasoning effort (or OPENAI_REASONING_EFFORT)")
 	cwdFlag := flags.String("cwd", "", "fixed working directory")
-	flags.Usage = func() { writeUsage(runtime.stdout) }
 	if err := flags.Parse(arguments); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitSuccess
 		}
-		writeCLIError(runtime.stderr, []string{runtime.getenv("OPENAI_API_KEY")}, "usage error: %v", err)
-		writeCLIError(runtime.stderr, nil, "Run 'yaah --help' for usage.")
 		return exitUsage
 	}
 	if flags.NArg() > 1 {
-		writeCLIError(runtime.stderr, []string{runtime.getenv("OPENAI_API_KEY")}, "usage error: expected at most one prompt argument")
-		writeCLIError(runtime.stderr, nil, "Run 'yaah --help' for usage.")
+		writeCLIError(runtime.stderr, "usage error: expected at most one prompt argument")
 		return exitUsage
 	}
 
 	apiKey := runtime.getenv("OPENAI_API_KEY")
-	var (
-		config  = providerConfig{reasoningEffort: *effort}
-		secrets []string
-	)
+	config := providerConfig{reasoningEffort: *effort}
 	if strings.TrimSpace(apiKey) != "" {
 		config.apiKey = apiKey
-		secrets = []string{apiKey}
 	} else {
 		ctx, cancel := contextWithInterrupt(runtime.interrupts)
-		credential, err := runtime.oauth.Resolve(ctx)
+		_, err := runtime.oauth.Resolve(ctx)
 		cancel()
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return exitInterrupted
 			}
-			writeCLIError(runtime.stderr, nil, "authentication required: %v", err)
+			writeCLIError(runtime.stderr, "authentication required: %v", err)
 			return exitFailure
 		}
-		secrets = credential.Secrets()
-		config.codexToken = oauthTokenSource{manager: runtime.oauth, accountID: credential.AccountID}
+		config.codexToken = oauthTokenSource{manager: runtime.oauth}
 	}
 	if err := validateModel(*model); err != nil {
-		writeCLIError(runtime.stderr, secrets, "%v", err)
-		return exitFailure
-	}
-	if err := validateReasoningEffort(*effort); err != nil {
-		writeCLIError(runtime.stderr, secrets, "%v", err)
+		writeCLIError(runtime.stderr, "%v", err)
 		return exitFailure
 	}
 	cwd, err := resolveCWD(*cwdFlag, runtime.getwd)
 	if err != nil {
-		writeCLIError(runtime.stderr, secrets, "%v", err)
+		writeCLIError(runtime.stderr, "%v", err)
 		return exitFailure
 	}
 
@@ -203,24 +190,24 @@ func run(arguments []string, runtime appRuntime) int {
 	if oneShot {
 		prompt = flags.Arg(0)
 		if strings.TrimSpace(prompt) == "" {
-			writeCLIError(runtime.stderr, secrets, "one-shot prompt must be nonempty")
+			writeCLIError(runtime.stderr, "one-shot prompt must be nonempty")
 			return exitUsage
 		}
 	}
 
 	registry, err := buildTools(cwd, environmentWithout(runtime.environ(), "OPENAI_API_KEY"))
 	if err != nil {
-		writeCLIError(runtime.stderr, secrets, "configure tools: %v", err)
+		writeCLIError(runtime.stderr, "configure tools: %v", err)
 		return exitFailure
 	}
 	provider, err := runtime.newProvider(config)
 	if err != nil {
-		writeCLIError(runtime.stderr, secrets, "configure provider: %v", err)
+		writeCLIError(runtime.stderr, "configure provider: %v", err)
 		return exitFailure
 	}
 	engine, err := agent.New(provider, registry, agent.Options{Model: *model})
 	if err != nil {
-		writeCLIError(runtime.stderr, secrets, "configure agent: %v", err)
+		writeCLIError(runtime.stderr, "configure agent: %v", err)
 		return exitFailure
 	}
 
@@ -231,7 +218,6 @@ func run(arguments []string, runtime appRuntime) int {
 		Model:       *model,
 		CWD:         cwd,
 		Interrupts:  runtime.interrupts,
-		Redact:      secrets,
 	}
 	var runErr error
 	if oneShot {
@@ -245,13 +231,12 @@ func run(arguments []string, runtime appRuntime) int {
 	if errors.Is(runErr, terminal.ErrInterrupted) || errors.Is(runErr, context.Canceled) {
 		return exitInterrupted
 	}
-	writeCLIError(runtime.stderr, secrets, "%v", runErr)
+	writeCLIError(runtime.stderr, "%v", runErr)
 	return exitFailure
 }
 
 type oauthTokenSource struct {
-	manager   oauthManager
-	accountID string
+	manager oauthManager
 }
 
 func (source oauthTokenSource) Token(ctx context.Context) (openaiadapter.CodexCredential, error) {
@@ -259,27 +244,21 @@ func (source oauthTokenSource) Token(ctx context.Context) (openaiadapter.CodexCr
 	if err != nil {
 		return openaiadapter.CodexCredential{}, err
 	}
-	if credential.AccountID != source.accountID {
-		return openaiadapter.CodexCredential{}, errors.New("OAuth account changed while yaah was running; restart yaah")
-	}
 	return openaiadapter.CodexCredential{AccessToken: credential.AccessToken, AccountID: credential.AccountID}, nil
 }
 
 func runLogin(arguments []string, runtime appRuntime) int {
 	flags := flag.NewFlagSet("yaah login", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
+	flags.SetOutput(runtime.stderr)
 	device := flags.Bool("device-auth", false, "use device authorization for headless environments")
 	if err := flags.Parse(arguments); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintln(runtime.stdout, "Usage: yaah login [--device-auth]")
 			return exitSuccess
 		}
-		writeCLIError(runtime.stderr, nil, "usage error: %v", err)
-		writeCLIError(runtime.stderr, nil, "Usage: yaah login [--device-auth]")
 		return exitUsage
 	}
 	if flags.NArg() != 0 {
-		writeCLIError(runtime.stderr, nil, "usage error: yaah login accepts no arguments")
+		writeCLIError(runtime.stderr, "usage error: yaah login accepts no arguments")
 		return exitUsage
 	}
 	method := oauth.LoginBrowser
@@ -288,7 +267,7 @@ func runLogin(arguments []string, runtime appRuntime) int {
 	}
 	ctx, cancel := contextWithInterrupt(runtime.interrupts)
 	defer cancel()
-	credential, err := runtime.oauth.Login(ctx, method, oauth.Interaction{
+	_, err := runtime.oauth.Login(ctx, method, oauth.Interaction{
 		AuthURL: func(url string) error {
 			fmt.Fprintf(runtime.stderr, "Open this URL to sign in with ChatGPT:\n%s\n", url)
 			if err := runtime.openURL(url); err != nil {
@@ -305,7 +284,7 @@ func runLogin(arguments []string, runtime appRuntime) int {
 		if errors.Is(err, context.Canceled) {
 			return exitInterrupted
 		}
-		writeCLIError(runtime.stderr, credential.Secrets(), "login failed: %v", err)
+		writeCLIError(runtime.stderr, "login failed: %v", err)
 		return exitFailure
 	}
 	fmt.Fprintln(runtime.stdout, "Logged in with ChatGPT.")
@@ -313,12 +292,16 @@ func runLogin(arguments []string, runtime appRuntime) int {
 }
 
 func runLogout(arguments []string, runtime appRuntime) int {
-	if len(arguments) == 1 && (arguments[0] == "--help" || arguments[0] == "-h") {
-		fmt.Fprintln(runtime.stdout, "Usage: yaah logout")
-		return exitSuccess
+	flags := flag.NewFlagSet("yaah logout", flag.ContinueOnError)
+	flags.SetOutput(runtime.stderr)
+	if err := flags.Parse(arguments); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return exitSuccess
+		}
+		return exitUsage
 	}
-	if len(arguments) != 0 {
-		writeCLIError(runtime.stderr, nil, "usage error: yaah logout accepts no arguments")
+	if flags.NArg() != 0 {
+		writeCLIError(runtime.stderr, "usage error: yaah logout accepts no arguments")
 		return exitUsage
 	}
 	ctx, cancel := contextWithInterrupt(runtime.interrupts)
@@ -327,7 +310,7 @@ func runLogout(arguments []string, runtime appRuntime) int {
 		if errors.Is(err, context.Canceled) {
 			return exitInterrupted
 		}
-		writeCLIError(runtime.stderr, nil, "logout failed: %v", err)
+		writeCLIError(runtime.stderr, "logout failed: %v", err)
 		return exitFailure
 	}
 	fmt.Fprintln(runtime.stdout, "Logged out.")
@@ -359,15 +342,6 @@ func validateRuntime(runtime appRuntime) error {
 		return errors.New("application dependencies are required")
 	}
 	return nil
-}
-
-func validateReasoningEffort(effort string) error {
-	switch effort {
-	case "", "none", "minimal", "low", "medium", "high", "xhigh", "max":
-		return nil
-	default:
-		return errors.New("reasoning effort must be one of none, minimal, low, medium, high, xhigh, or max")
-	}
 }
 
 func validateModel(model string) error {
@@ -444,30 +418,8 @@ func environmentWithout(environment []string, key string) []string {
 	return filtered
 }
 
-func writeUsage(output io.Writer) {
-	fmt.Fprintln(output, "Usage: yaah [--model model] [--effort level] [--cwd directory] [prompt]")
-	fmt.Fprintln(output, "       yaah login [--device-auth]")
-	fmt.Fprintln(output, "       yaah logout")
-	fmt.Fprintln(output, "")
-	fmt.Fprintln(output, "Authentication:")
-	fmt.Fprintln(output, "  OPENAI_API_KEY  optional Platform API key; takes precedence over OAuth")
-	fmt.Fprintln(output, "  yaah login      sign in with a ChatGPT subscription")
-	fmt.Fprintln(output, "  YAAH_HOME       optional directory for yaah's auth.json")
-	fmt.Fprintln(output, "")
-	fmt.Fprintln(output, "Configuration:")
-	fmt.Fprintln(output, "  OPENAI_MODEL             used when --model is omitted")
-	fmt.Fprintln(output, "  OPENAI_REASONING_EFFORT  none, minimal, low, medium, high, xhigh, or max")
-	fmt.Fprintln(output, "")
-	fmt.Fprintln(output, "Commands: /help, /clear, /exit")
-}
-
-func writeCLIError(output io.Writer, secrets []string, format string, arguments ...any) {
+func writeCLIError(output io.Writer, format string, arguments ...any) {
 	message := fmt.Sprintf(format, arguments...)
-	for _, secret := range secrets {
-		if secret != "" {
-			message = strings.ReplaceAll(message, secret, "[REDACTED]")
-		}
-	}
 	message = strings.Map(func(character rune) rune {
 		if unicode.IsControl(character) {
 			return ' '

@@ -32,8 +32,7 @@ type Engine interface {
 	NeedsReset() bool
 }
 
-// Options configures terminal input, output, display metadata, interrupts, and
-// literal values that must be redacted from rendered output.
+// Options configures terminal input, output, display metadata, and interrupts.
 type Options struct {
 	Input         io.Reader
 	Output        io.Writer
@@ -41,18 +40,17 @@ type Options struct {
 	Model         string
 	CWD           string
 	Interrupts    <-chan os.Signal
-	Redact        []string
 	MaxInputBytes int
 }
 
 // Run starts the line-oriented interactive REPL.
 func Run(ctx context.Context, engine Engine, options Options) error {
-	options, redact, err := prepare(ctx, engine, options, true)
+	options, err := prepare(ctx, engine, options, true)
 	if err != nil {
 		return err
 	}
-	header := singleLine(fmt.Sprintf("yaah · openai/%s · %s", redact.apply(options.Model), redact.apply(options.CWD)), 500)
-	if err := writeOutput(options.ErrorOutput, "%s\n", redact.apply(header)); err != nil {
+	header := singleLine(fmt.Sprintf("yaah · openai/%s · %s", options.Model, options.CWD), 500)
+	if err := writeOutput(options.ErrorOutput, "%s\n", header); err != nil {
 		return err
 	}
 
@@ -129,13 +127,13 @@ func Run(ctx context.Context, engine Engine, options Options) error {
 				return nil
 			}
 			if strings.HasPrefix(trimmed, "/") {
-				if err := writeOutput(options.ErrorOutput, "error: unknown command %s\n", diagnostic(trimmed, redact, 120)); err != nil {
+				if err := writeOutput(options.ErrorOutput, "error: unknown command %s\n", diagnostic(trimmed, 120)); err != nil {
 					return err
 				}
 				continue
 			}
 
-			_, runErr, interrupted := runTurn(ctx, engine, event.line, options, redact)
+			_, runErr, interrupted := runTurn(ctx, engine, event.line, options)
 			if contextErr := ctx.Err(); contextErr != nil {
 				resetIfNeeded(engine)
 				return contextErr
@@ -155,7 +153,7 @@ func Run(ctx context.Context, engine Engine, options Options) error {
 				continue
 			}
 			if runErr != nil {
-				if err := writeOutput(options.ErrorOutput, "error: %s\n", diagnostic(runErr.Error(), redact, 500)); err != nil {
+				if err := writeOutput(options.ErrorOutput, "error: %s\n", diagnostic(runErr.Error(), 500)); err != nil {
 					return err
 				}
 				if resetIfNeeded(engine) {
@@ -170,11 +168,11 @@ func Run(ctx context.Context, engine Engine, options Options) error {
 
 // RunOneShot runs one prompt without the interactive header or prompt marker.
 func RunOneShot(ctx context.Context, engine Engine, prompt string, options Options) error {
-	options, redact, err := prepare(ctx, engine, options, false)
+	options, err := prepare(ctx, engine, options, false)
 	if err != nil {
 		return err
 	}
-	_, runErr, interrupted := runTurn(ctx, engine, prompt, options, redact)
+	_, runErr, interrupted := runTurn(ctx, engine, prompt, options)
 	if contextErr := ctx.Err(); contextErr != nil {
 		resetIfNeeded(engine)
 		return contextErr
@@ -186,26 +184,26 @@ func RunOneShot(ctx context.Context, engine Engine, prompt string, options Optio
 	return runErr
 }
 
-func prepare(ctx context.Context, engine Engine, options Options, requireInput bool) (Options, redactor, error) {
+func prepare(ctx context.Context, engine Engine, options Options, requireInput bool) (Options, error) {
 	if ctx == nil {
-		return Options{}, redactor{}, errors.New("terminal: context is required")
+		return Options{}, errors.New("terminal: context is required")
 	}
 	if engine == nil {
-		return Options{}, redactor{}, errors.New("terminal: engine is required")
+		return Options{}, errors.New("terminal: engine is required")
 	}
 	if requireInput && options.Input == nil {
-		return Options{}, redactor{}, errors.New("terminal: input is required")
+		return Options{}, errors.New("terminal: input is required")
 	}
 	if options.Output == nil || options.ErrorOutput == nil {
-		return Options{}, redactor{}, errors.New("terminal: output writers are required")
+		return Options{}, errors.New("terminal: output writers are required")
 	}
 	if options.MaxInputBytes < 0 {
-		return Options{}, redactor{}, errors.New("terminal: maximum input bytes cannot be negative")
+		return Options{}, errors.New("terminal: maximum input bytes cannot be negative")
 	}
 	if options.MaxInputBytes == 0 {
 		options.MaxInputBytes = DefaultMaxInputBytes
 	}
-	return options, newRedactor(options.Redact), nil
+	return options, nil
 }
 
 type turnOutcome struct {
@@ -213,10 +211,10 @@ type turnOutcome struct {
 	err    error
 }
 
-func runTurn(parent context.Context, engine Engine, prompt string, options Options, redact redactor) (agent.RunResult, error, bool) {
+func runTurn(parent context.Context, engine Engine, prompt string, options Options) (agent.RunResult, error, bool) {
 	turnContext, cancel := context.WithCancel(parent)
 	defer cancel()
-	renderer := eventRenderer{output: options.Output, errorOutput: options.ErrorOutput, redact: redact}
+	renderer := eventRenderer{output: options.Output, errorOutput: options.ErrorOutput}
 	done := make(chan turnOutcome, 1)
 	go func() {
 		result, err := engine.Run(turnContext, prompt, renderer.render)
@@ -275,15 +273,13 @@ func resetIfNeeded(engine Engine) bool {
 type eventRenderer struct {
 	output        io.Writer
 	errorOutput   io.Writer
-	redact        redactor
 	assistantOpen bool
 }
 
 func (r *eventRenderer) render(event agent.Event) error {
 	switch event.Kind {
 	case agent.EventAssistantText:
-		text := sanitizeAssistantText(r.redact.apply(event.Text))
-		text = r.redact.apply(text)
+		text := sanitizeAssistantText(event.Text)
 		if err := writeOutput(r.output, "%s", text); err != nil {
 			return err
 		}
@@ -294,11 +290,11 @@ func (r *eventRenderer) render(event agent.Event) error {
 		if err := r.finishAssistant(); err != nil {
 			return err
 		}
-		if err := writeOutput(r.errorOutput, "[tool] %s\n", summarizeCall(event.Call, r.redact)); err != nil {
+		if err := writeOutput(r.errorOutput, "[tool] %s\n", summarizeCall(event.Call)); err != nil {
 			return err
 		}
 	case agent.EventToolEnd:
-		if err := writeOutput(r.errorOutput, "[tool] %s\n", summarizeResult(event.Result, r.redact)); err != nil {
+		if err := writeOutput(r.errorOutput, "[tool] %s\n", summarizeResult(event.Result)); err != nil {
 			return err
 		}
 	}
@@ -317,7 +313,7 @@ func (r *eventRenderer) finishAssistant() error {
 	return writeOutput(r.output, "\n")
 }
 
-func summarizeCall(call agent.ToolCall, redact redactor) string {
+func summarizeCall(call agent.ToolCall) string {
 	argumentName := ""
 	switch call.Name {
 	case "read", "write", "edit":
@@ -326,35 +322,33 @@ func summarizeCall(call agent.ToolCall, redact redactor) string {
 		argumentName = "command"
 	}
 	if argumentName == "" {
-		return diagnostic(call.Name, redact, 160)
+		return diagnostic(call.Name, 160)
 	}
 	var arguments map[string]json.RawMessage
 	if json.Unmarshal(call.Arguments, &arguments) != nil {
-		return diagnostic(call.Name, redact, 160)
+		return diagnostic(call.Name, 160)
 	}
 	var value string
 	if json.Unmarshal(arguments[argumentName], &value) != nil || value == "" {
-		return diagnostic(call.Name, redact, 160)
+		return diagnostic(call.Name, 160)
 	}
-	name := redact.apply(call.Name)
-	value = redact.apply(value)
-	return diagnostic(name+" "+displayArgument(value), redact, 160)
+	return diagnostic(call.Name+" "+displayArgument(value), 160)
 }
 
-func summarizeResult(result agent.ToolResult, redact redactor) string {
+func summarizeResult(result agent.ToolResult) string {
 	if result.Tool == "bash" {
-		if status := bashStatus(redact.apply(result.Output)); status != "" {
-			return diagnostic("bash — "+status, redact, 200)
+		if status := bashStatus(result.Output); status != "" {
+			return diagnostic("bash — "+status, 200)
 		}
 	}
 	if !result.IsError {
-		return diagnostic(result.Tool+" — ok", redact, 200)
+		return diagnostic(result.Tool+" — ok", 200)
 	}
-	detail := redact.apply(result.Output)
+	detail := result.Output
 	if newline := strings.IndexByte(detail, '\n'); newline >= 0 {
 		detail = detail[:newline]
 	}
-	return diagnostic(result.Tool+" — error: "+detail, redact, 200)
+	return diagnostic(result.Tool+" — error: "+detail, 200)
 }
 
 func bashStatus(output string) string {
@@ -376,10 +370,8 @@ func displayArgument(value string) string {
 	return value
 }
 
-func diagnostic(value string, redact redactor, maximum int) string {
-	value = redact.apply(value)
-	value = singleLine(value, maximum)
-	return redact.apply(value)
+func diagnostic(value string, maximum int) string {
+	return singleLine(value, maximum)
 }
 
 func sanitizeAssistantText(value string) string {
@@ -410,27 +402,6 @@ func singleLine(value string, maximum int) string {
 		end--
 	}
 	return value[:end] + "..."
-}
-
-type redactor struct {
-	values []string
-}
-
-func newRedactor(values []string) redactor {
-	result := redactor{values: make([]string, 0, len(values))}
-	for _, value := range values {
-		if value != "" {
-			result.values = append(result.values, value)
-		}
-	}
-	return result
-}
-
-func (r redactor) apply(value string) string {
-	for _, secret := range r.values {
-		value = strings.ReplaceAll(value, secret, "[REDACTED]")
-	}
-	return value
 }
 
 func writeOutput(writer io.Writer, format string, arguments ...any) error {

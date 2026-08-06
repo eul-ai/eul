@@ -71,8 +71,23 @@ func decodeCreateResponse(body []byte) (createResponseEnvelope, error) {
 }
 
 func normalizeResponse(response createResponseEnvelope) (string, []agent.ToolCall, agent.Usage, error) {
+	if err := validateCompletedResponse(response); err != nil {
+		return "", nil, agent.Usage{}, err
+	}
+	text, calls, err := normalizeOutput(response.Output)
+	if err != nil {
+		return "", nil, agent.Usage{}, err
+	}
+	usage, err := normalizeUsage(response.Usage)
+	if err != nil {
+		return "", nil, agent.Usage{}, err
+	}
+	return text, calls, usage, nil
+}
+
+func validateCompletedResponse(response createResponseEnvelope) error {
 	if response.Error != nil {
-		return "", nil, agent.Usage{}, fmt.Errorf("response failed: %s", formatResponseError(*response.Error))
+		return fmt.Errorf("response failed: %s", formatResponseError(*response.Error))
 	}
 	if response.Status != "completed" {
 		detail := response.Status
@@ -82,19 +97,22 @@ func normalizeResponse(response createResponseEnvelope) (string, []agent.ToolCal
 		if response.IncompleteDetails != nil && response.IncompleteDetails.Reason != "" {
 			detail += ": " + response.IncompleteDetails.Reason
 		}
-		return "", nil, agent.Usage{}, fmt.Errorf("response status %s", detail)
+		return fmt.Errorf("response status %s", detail)
 	}
 	if response.Output == nil {
-		return "", nil, agent.Usage{}, errors.New("response is missing output")
+		return errors.New("response is missing output")
 	}
+	return nil
+}
 
+func normalizeOutput(output []json.RawMessage) (string, []agent.ToolCall, error) {
 	var text strings.Builder
 	var calls []agent.ToolCall
 	seenCallIDs := make(map[string]struct{})
-	for i, raw := range response.Output {
+	for index, raw := range output {
 		var item outputItem
 		if err := json.Unmarshal(raw, &item); err != nil {
-			return "", nil, agent.Usage{}, fmt.Errorf("decode response output item %d: %w", i, err)
+			return "", nil, fmt.Errorf("decode response output item %d: %w", index, err)
 		}
 		switch item.Type {
 		case "message":
@@ -107,36 +125,46 @@ func normalizeResponse(response createResponseEnvelope) (string, []agent.ToolCal
 				}
 			}
 		case "function_call":
-			if item.CallID == "" {
-				return "", nil, agent.Usage{}, fmt.Errorf("response function call %d has no call ID", i)
+			call, err := normalizeToolCall(item, index, seenCallIDs)
+			if err != nil {
+				return "", nil, err
 			}
-			if item.Name == "" {
-				return "", nil, agent.Usage{}, fmt.Errorf("response function call %d has no name", i)
-			}
-			if _, exists := seenCallIDs[item.CallID]; exists {
-				return "", nil, agent.Usage{}, fmt.Errorf("response has duplicate function call ID %q", item.CallID)
-			}
-			seenCallIDs[item.CallID] = struct{}{}
-			calls = append(calls, agent.ToolCall{
-				ID:        item.CallID,
-				Name:      item.Name,
-				Arguments: append(json.RawMessage(nil), item.Arguments...),
-			})
+			calls = append(calls, call)
 		}
 	}
+	return text.String(), calls, nil
+}
 
-	usage := agent.Usage{}
-	if response.Usage != nil {
-		if response.Usage.InputTokens < 0 || response.Usage.OutputTokens < 0 || response.Usage.TotalTokens < 0 {
-			return "", nil, agent.Usage{}, errors.New("response usage contains negative token counts")
-		}
-		usage = agent.Usage{
-			InputTokens:  response.Usage.InputTokens,
-			OutputTokens: response.Usage.OutputTokens,
-			TotalTokens:  response.Usage.TotalTokens,
-		}
+func normalizeToolCall(item outputItem, index int, seen map[string]struct{}) (agent.ToolCall, error) {
+	if item.CallID == "" {
+		return agent.ToolCall{}, fmt.Errorf("response function call %d has no call ID", index)
 	}
-	return text.String(), calls, usage, nil
+	if item.Name == "" {
+		return agent.ToolCall{}, fmt.Errorf("response function call %d has no name", index)
+	}
+	if _, exists := seen[item.CallID]; exists {
+		return agent.ToolCall{}, fmt.Errorf("response has duplicate function call ID %q", item.CallID)
+	}
+	seen[item.CallID] = struct{}{}
+	return agent.ToolCall{
+		ID:        item.CallID,
+		Name:      item.Name,
+		Arguments: append(json.RawMessage(nil), item.Arguments...),
+	}, nil
+}
+
+func normalizeUsage(usage *responseUsage) (agent.Usage, error) {
+	if usage == nil {
+		return agent.Usage{}, nil
+	}
+	if usage.InputTokens < 0 || usage.OutputTokens < 0 || usage.TotalTokens < 0 {
+		return agent.Usage{}, errors.New("response usage contains negative token counts")
+	}
+	return agent.Usage{
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+		TotalTokens:  usage.TotalTokens,
+	}, nil
 }
 
 func formatResponseError(response responseError) string {

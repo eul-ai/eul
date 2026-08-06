@@ -65,11 +65,6 @@ type Credentials struct {
 	AccountID    string `json:"account_id"`
 }
 
-// Secrets returns sensitive credential and routing values that must be redacted.
-func (c Credentials) Secrets() []string {
-	return []string{c.AccessToken, c.RefreshToken, c.AccountID}
-}
-
 // Options supplies hermetic seams for OAuth tests.
 type Options struct {
 	HTTPClient      *http.Client

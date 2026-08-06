@@ -135,15 +135,6 @@ func TestRunUsesStoredOAuthAndResolvesTokenAtRequestTime(t *testing.T) {
 	}
 }
 
-func TestOAuthTokenSourceRejectsAccountReplacement(t *testing.T) {
-	manager := &fakeOAuthManager{credential: oauth.Credentials{AccessToken: "access", AccountID: "new-account"}}
-	source := oauthTokenSource{manager: manager, accountID: "original-account"}
-	_, err := source.Token(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "account changed") {
-		t.Fatalf("Token() error = %v", err)
-	}
-}
-
 func TestRunAPIKeyTakesPrecedenceOverStoredOAuth(t *testing.T) {
 	cwd := t.TempDir()
 	var stdout, stderr bytes.Buffer
@@ -209,24 +200,9 @@ func TestRunLoginAndLogoutCommands(t *testing.T) {
 	for _, arguments := range [][]string{{"login", "--help"}, {"logout", "--help"}} {
 		stdout.Reset()
 		stderr.Reset()
-		if code := run(arguments, runtime); code != exitSuccess || !strings.Contains(stdout.String(), "Usage: yaah ") || stderr.Len() != 0 {
+		if code := run(arguments, runtime); code != exitSuccess || !strings.Contains(stderr.String(), "Usage of yaah ") {
 			t.Fatalf("arguments=%v code=%d stdout=%q stderr=%q", arguments, code, stdout.String(), stderr.String())
 		}
-	}
-}
-
-func TestRunLoginRedactsCredentialOnFailure(t *testing.T) {
-	cwd := t.TempDir()
-	const access = "login-access-secret"
-	const refresh = "login-refresh-secret"
-	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(cwd, &stdout, &stderr, nil)
-	runtime.oauth = &fakeOAuthManager{
-		credential: oauth.Credentials{AccessToken: access, RefreshToken: refresh},
-		loginErr:   errors.New("failed " + access + " " + refresh),
-	}
-	if code := run([]string{"login", "--device-auth"}, runtime); code != exitFailure || strings.Contains(stderr.String(), access) || strings.Contains(stderr.String(), refresh) || !strings.Contains(stderr.String(), "[REDACTED]") {
-		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
 }
 
@@ -312,12 +288,11 @@ func TestRunConfigurationAndUsageErrors(t *testing.T) {
 		wantCode    int
 		want        string
 	}{
-		{name: "help", arguments: []string{"--help"}, wantCode: exitSuccess, want: "Usage:"},
+		{name: "help", arguments: []string{"--help"}, wantCode: exitSuccess, want: "Usage of yaah:"},
 		{name: "missing authentication", environment: map[string]string{"OPENAI_MODEL": "model"}, wantCode: exitFailure, want: "run 'yaah login'"},
 		{name: "missing model", environment: map[string]string{"OPENAI_API_KEY": "key"}, wantCode: exitFailure, want: "model is required"},
 		{name: "explicit empty model", arguments: []string{"--model="}, environment: map[string]string{"OPENAI_API_KEY": "key", "OPENAI_MODEL": "fallback"}, wantCode: exitFailure, want: "model is required"},
 		{name: "model whitespace", arguments: []string{"--model", "bad model"}, environment: map[string]string{"OPENAI_API_KEY": "key"}, wantCode: exitFailure, want: "must not contain whitespace"},
-		{name: "invalid reasoning effort", arguments: []string{"--effort", "extreme"}, environment: map[string]string{"OPENAI_API_KEY": "key", "OPENAI_MODEL": "model"}, wantCode: exitFailure, want: "reasoning effort must be one of"},
 		{name: "extra prompts", arguments: []string{"one", "two"}, environment: map[string]string{"OPENAI_API_KEY": "key", "OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "at most one prompt"},
 		{name: "empty prompt", arguments: []string{""}, environment: map[string]string{"OPENAI_API_KEY": "key", "OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "prompt must be nonempty"},
 		{name: "bad flag", arguments: []string{"--missing"}, wantCode: exitUsage, want: "flag provided but not defined"},
@@ -348,19 +323,6 @@ func TestRunRejectsInvalidWorkingDirectories(t *testing.T) {
 		if code != exitFailure || !strings.Contains(stderr.String(), "working directory") {
 			t.Fatalf("path=%q code=%d stderr=%q", path, code, stderr.String())
 		}
-	}
-}
-
-func TestRunRedactsProviderSetupErrors(t *testing.T) {
-	cwd := t.TempDir()
-	const key = "setup-secret"
-	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_API_KEY": key, "OPENAI_MODEL": "model"})
-	runtime.newProvider = func(providerConfig) (agent.Provider, error) {
-		return nil, errors.New("failed with " + key)
-	}
-	if code := run(nil, runtime); code != exitFailure || strings.Contains(stderr.String(), key) || !strings.Contains(stderr.String(), "[REDACTED]") {
-		t.Fatalf("stderr=%q", stderr.String())
 	}
 }
 

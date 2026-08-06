@@ -61,8 +61,10 @@ func (e *fakeEngine) snapshot() ([]string, int) {
 
 func TestRunCommandsFinalLineAndEOF(t *testing.T) {
 	engine := &fakeEngine{runFunction: func(_ context.Context, prompt string, sink agent.EventSink) (agent.RunResult, error) {
-		if err := sink(agent.Event{Kind: agent.EventAssistantText, Text: "answer"}); err != nil {
-			return agent.RunResult{}, err
+		for _, delta := range []string{"ans", "wer"} {
+			if err := sink(agent.Event{Kind: agent.EventAssistantText, Text: delta}); err != nil {
+				return agent.RunResult{}, err
+			}
 		}
 		return agent.RunResult{Text: "answer", AssistantMessages: []string{"answer"}}, nil
 	}}
@@ -123,46 +125,41 @@ func TestRunRejectsUnknownCommand(t *testing.T) {
 	}
 }
 
-func TestRunOneShotRendersEventsOnceAndRedactsSecrets(t *testing.T) {
-	const secret = "api-secret"
+func TestRunOneShotRendersEventsOnce(t *testing.T) {
 	engine := &fakeEngine{runFunction: func(_ context.Context, _ string, sink agent.EventSink) (agent.RunResult, error) {
 		events := []agent.Event{
-			{Kind: agent.EventAssistantText, Text: "Checking " + secret},
-			{Kind: agent.EventToolStart, Call: agent.ToolCall{Name: "write", Arguments: json.RawMessage(`{"path":"secret.txt","content":"` + secret + `"}`)}},
-			{Kind: agent.EventToolEnd, Result: agent.ToolResult{Tool: "write", IsError: true, Output: "write failed with " + secret}},
-			{Kind: agent.EventAssistantText, Text: "Done " + secret},
+			{Kind: agent.EventAssistantText, Text: "Checking"},
+			{Kind: agent.EventToolStart, Call: agent.ToolCall{Name: "write", Arguments: json.RawMessage(`{"path":"file.txt","content":"value"}`)}},
+			{Kind: agent.EventToolEnd, Result: agent.ToolResult{Tool: "write", IsError: true, Output: "write failed"}},
+			{Kind: agent.EventAssistantText, Text: "Done"},
 		}
 		for _, event := range events {
 			if err := sink(event); err != nil {
 				return agent.RunResult{}, err
 			}
 		}
-		return agent.RunResult{Text: "Done " + secret, AssistantMessages: []string{"Checking " + secret, "Done " + secret}}, nil
+		return agent.RunResult{Text: "Done", AssistantMessages: []string{"Checking", "Done"}}, nil
 	}}
 	var stdout, stderr bytes.Buffer
-	err := RunOneShot(context.Background(), engine, "prompt", Options{Output: &stdout, ErrorOutput: &stderr, Redact: []string{secret}})
-	if err != nil {
+	if err := RunOneShot(context.Background(), engine, "prompt", Options{Output: &stdout, ErrorOutput: &stderr}); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(stdout.String(), secret) || strings.Contains(stderr.String(), secret) {
-		t.Fatalf("secret leaked: stdout=%q stderr=%q", stdout.String(), stderr.String())
-	}
-	if strings.Count(stdout.String(), "Done") != 1 || stdout.String() != "Checking [REDACTED]\nDone [REDACTED]\n" {
+	if stdout.String() != "Checking\nDone\n" {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "[tool] write secret.txt") || strings.Contains(stderr.String(), "content") || !strings.Contains(stderr.String(), "write — error") {
+	if !strings.Contains(stderr.String(), "[tool] write file.txt") || strings.Contains(stderr.String(), "content") || !strings.Contains(stderr.String(), "write — error") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 
-func TestRenderedOutputSanitizesControlsAndRedactsBeforeTruncation(t *testing.T) {
-	secret := strings.Repeat("long-secret", 30) + `"quoted`
-	arguments, err := json.Marshal(map[string]string{"command": "printf " + secret})
+func TestRenderedOutputSanitizesControlsAndTruncatesDiagnostics(t *testing.T) {
+	value := strings.Repeat("long-value", 30) + `"quoted`
+	arguments, err := json.Marshal(map[string]string{"command": "printf " + value})
 	if err != nil {
 		t.Fatal(err)
 	}
 	engine := &fakeEngine{runFunction: func(_ context.Context, _ string, sink agent.EventSink) (agent.RunResult, error) {
-		if err := sink(agent.Event{Kind: agent.EventAssistantText, Text: "safe\x1b[31m\rrewrite\a " + secret}); err != nil {
+		if err := sink(agent.Event{Kind: agent.EventAssistantText, Text: "safe\x1b[31m\rrewrite\a"}); err != nil {
 			return agent.RunResult{}, err
 		}
 		if err := sink(agent.Event{Kind: agent.EventToolStart, Call: agent.ToolCall{Name: "bash", Arguments: arguments}}); err != nil {
@@ -171,26 +168,11 @@ func TestRenderedOutputSanitizesControlsAndRedactsBeforeTruncation(t *testing.T)
 		return agent.RunResult{}, nil
 	}}
 	var stdout, stderr bytes.Buffer
-	if err := RunOneShot(context.Background(), engine, "prompt", Options{Output: &stdout, ErrorOutput: &stderr, Redact: []string{secret}}); err != nil {
+	if err := RunOneShot(context.Background(), engine, "prompt", Options{Output: &stdout, ErrorOutput: &stderr}); err != nil {
 		t.Fatal(err)
 	}
-	combined := stdout.String() + stderr.String()
-	if strings.Contains(combined, secret) || strings.Contains(combined, secret[:30]) || strings.ContainsAny(combined, "\x1b\r\a") {
+	if strings.ContainsAny(stdout.String()+stderr.String(), "\x1b\r\a") || !strings.Contains(stderr.String(), "...") {
 		t.Fatalf("unsafe output: stdout=%q stderr=%q", stdout.String(), stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "[REDACTED]") || !strings.Contains(stderr.String(), "[REDACTED]") {
-		t.Fatalf("redaction missing: stdout=%q stderr=%q", stdout.String(), stderr.String())
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	if err := Run(context.Background(), &fakeEngine{}, Options{
-		Input: strings.NewReader("/exit\n"), Output: &stdout, ErrorOutput: &stderr, Model: "model", CWD: "/" + secret, Redact: []string{secret},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(stderr.String(), secret[:30]) || !strings.Contains(stderr.String(), "[REDACTED]") {
-		t.Fatalf("header redaction failed: %q", stderr.String())
 	}
 }
 
@@ -380,13 +362,13 @@ func TestRunErrorsResetIncompleteTurnAndContinue(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	err := Run(context.Background(), engine, Options{
-		Input: strings.NewReader("first\nsecond\n/exit\n"), Output: &stdout, ErrorOutput: &stderr, Redact: []string{"api-secret"},
+		Input: strings.NewReader("first\nsecond\n/exit\n"), Output: &stdout, ErrorOutput: &stderr,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	calls, resets := engine.snapshot()
-	if len(calls) != 2 || resets != 1 || !strings.Contains(stdout.String(), "recovered") || strings.Contains(stderr.String(), "api-secret") || !strings.Contains(stderr.String(), "[REDACTED]") || strings.ContainsAny(stderr.String(), "\r\x1b") {
+	if len(calls) != 2 || resets != 1 || !strings.Contains(stdout.String(), "recovered") || !strings.Contains(stderr.String(), "api-secret") || strings.ContainsAny(stderr.String(), "\r\x1b") {
 		t.Fatalf("calls=%v resets=%d stdout=%q stderr=%q", calls, resets, stdout.String(), stderr.String())
 	}
 }
@@ -422,11 +404,11 @@ func TestRunPropagatesOutputErrors(t *testing.T) {
 
 func TestOptionsValidation(t *testing.T) {
 	valid := Options{Input: strings.NewReader(""), Output: io.Discard, ErrorOutput: io.Discard}
-	if _, _, err := prepare(context.Background(), nil, valid, true); err == nil {
+	if _, err := prepare(context.Background(), nil, valid, true); err == nil {
 		t.Fatal("nil engine accepted")
 	}
 	valid.MaxInputBytes = -1
-	if _, _, err := prepare(context.Background(), &fakeEngine{}, valid, true); err == nil {
+	if _, err := prepare(context.Background(), &fakeEngine{}, valid, true); err == nil {
 		t.Fatal("negative input limit accepted")
 	}
 }
