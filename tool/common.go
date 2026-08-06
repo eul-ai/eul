@@ -117,18 +117,6 @@ func validateText(data []byte) error {
 	return nil
 }
 
-func splitTextLines(text string) []string {
-	if text == "" {
-		return nil
-	}
-
-	lines := strings.SplitAfter(text, "\n")
-	if lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
-	return lines
-}
-
 func escapeOutputName(name string) string {
 	replacer := strings.NewReplacer("\\", "\\\\", "\n", "\\n", "\r", "\\r", "\t", "\\t")
 	return replacer.Replace(name)

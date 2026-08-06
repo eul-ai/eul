@@ -47,7 +47,7 @@ func readSSE(reader io.Reader, maximum int64, handle func([]byte) (createRespons
 			return createResponseEnvelope{}, fmt.Errorf("read Responses SSE: %w", err)
 		}
 		if limited.N == 0 {
-			return createResponseEnvelope{}, fmt.Errorf("Responses SSE response exceeds %d bytes", maximum)
+			return createResponseEnvelope{}, fmt.Errorf("responses SSE response exceeds %d bytes", maximum)
 		}
 
 		line = bytes.TrimSuffix(line, []byte("\n"))
@@ -78,7 +78,7 @@ func readSSE(reader io.Reader, maximum int64, handle func([]byte) (createRespons
 			if done {
 				return response, nil
 			}
-			return createResponseEnvelope{}, errors.New("Responses SSE stream ended without a terminal response")
+			return createResponseEnvelope{}, errors.New("responses SSE stream ended without a terminal response")
 		}
 	}
 }
@@ -116,7 +116,7 @@ func (decoder *responseStreamDecoder) handle(data []byte) (createResponseEnvelop
 		return createResponseEnvelope{}, false, decoder.deliverReasoning("\n\n")
 	case "response.output_item.done":
 		if err := validateRawObject(event.Item); err != nil {
-			return createResponseEnvelope{}, false, fmt.Errorf("Responses completed output item: %w", err)
+			return createResponseEnvelope{}, false, fmt.Errorf("responses completed output item: %w", err)
 		}
 		decoder.output = append(decoder.output, event.Item)
 		return createResponseEnvelope{}, false, nil
@@ -160,7 +160,7 @@ func (decoder *responseStreamDecoder) deliverReasoning(delta string) error {
 
 func (decoder *responseStreamDecoder) terminal(event responseStreamEvent) (createResponseEnvelope, error) {
 	if len(event.Response) == 0 || bytes.Equal(bytes.TrimSpace(event.Response), []byte("null")) {
-		return createResponseEnvelope{}, errors.New("Responses terminal SSE event is missing response")
+		return createResponseEnvelope{}, errors.New("responses terminal SSE event is missing response")
 	}
 
 	response, err := decodeCreateResponse(event.Response)
@@ -201,5 +201,5 @@ func streamError(event responseStreamEvent) error {
 		detail = "unspecified error"
 	}
 
-	return errors.New("Responses SSE error: " + detail)
+	return errors.New("responses SSE error: " + detail)
 }
