@@ -6,6 +6,7 @@ import (
 	"errors"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -103,8 +104,12 @@ func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 	for i, definition := range gotRequest.Tools {
 		names[i] = definition.Name
 	}
-	if !slices.Equal(names, []string{"bash", "edit", "lsp_definition", "lsp_diagnostics", "lsp_hover", "lsp_references", "lsp_rename", "lsp_symbols", "read", "subagent", "write"}) {
-		t.Fatalf("tools = %v", names)
+	wantNames := []string{"bash", "edit", "read", "subagent", "write"}
+	if _, err := exec.LookPath("gopls"); err == nil {
+		wantNames = []string{"bash", "edit", "lsp_definition", "lsp_diagnostics", "lsp_hover", "lsp_references", "lsp_rename", "lsp_symbols", "read", "subagent", "write"}
+	}
+	if !slices.Equal(names, wantNames) {
+		t.Fatalf("tools = %v, want %v", names, wantNames)
 	}
 	if stdout.String() != "answer\n" {
 		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
@@ -204,8 +209,12 @@ func TestRunOneShotFeedsConcurrentSubagentsBackToMain(t *testing.T) {
 		for index, definition := range request.Tools {
 			names[index] = definition.Name
 		}
-		if !slices.Equal(names, []string{"lsp_definition", "lsp_diagnostics", "lsp_hover", "lsp_references", "lsp_symbols", "read"}) {
-			t.Fatalf("child tools = %v", names)
+		wantNames := []string{"read"}
+		if _, err := exec.LookPath("gopls"); err == nil {
+			wantNames = []string{"lsp_definition", "lsp_diagnostics", "lsp_hover", "lsp_references", "lsp_symbols", "read"}
+		}
+		if !slices.Equal(names, wantNames) {
+			t.Fatalf("child tools = %v, want %v", names, wantNames)
 		}
 		tasks = append(tasks, request.Inputs[0].Text)
 	}

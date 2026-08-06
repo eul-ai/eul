@@ -15,6 +15,26 @@ import (
 	"yaah/agent"
 )
 
+func TestNewLSPOmitsToolsWhenServerIsUnavailable(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	if tools := NewLSP(t.TempDir()); len(tools) != 0 {
+		t.Fatalf("NewLSP() returned %d tools", len(tools))
+	}
+}
+
+func TestNewLSPRegistersToolsWhenServerIsAvailable(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "gopls"), []byte(""), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory)
+
+	if tools := NewLSP(t.TempDir()); len(tools) != 6 {
+		t.Fatalf("NewLSP() returned %d tools", len(tools))
+	}
+}
+
 func TestLSPToolsWithGopls(t *testing.T) {
 	if _, err := exec.LookPath(lspServerConfigs[0].command); err != nil {
 		t.Skip("gopls is not installed")
@@ -40,6 +60,9 @@ func Use(value Thing) int {
 	}
 
 	tools := NewLSP(cwd)
+	if len(tools) != 6 {
+		t.Fatalf("NewLSP() returned %d tools", len(tools))
+	}
 	defer tools[0].(*lspTool).client.stop()
 	registry := NewRegistry(tools...)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

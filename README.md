@@ -1,20 +1,20 @@
 # Yaah
 
 Yaah is a small, trusted-local coding agent written in Go. It provides one
-line-oriented executable, an in-memory conversation, four coding tools, and an
+line-oriented executable, an in-memory conversation, coding tools, and an
 OpenAI Responses API adapter.
 
 ## Scope
 
-- Go implementation; Bash and gopls are currently required at runtime.
+- Go implementation; Bash is required at runtime.
 - macOS and Linux are the initial targets.
 - Tools run unsandboxed with the user's permissions.
 - Provider adapters are selected at compile time.
 - Sessions live only in memory and `/clear` discards them.
 
 Yaah deliberately excludes a full-screen TUI, Markdown rendering, dynamic
-plugins, provider negotiation, model catalogs, telemetry, MCP, subagents,
-project indexing, multimodal input, and session persistence.
+plugins, provider negotiation, model catalogs, telemetry, MCP, project indexing,
+multimodal input, and session persistence.
 
 ## Usage
 
@@ -77,8 +77,9 @@ before returning to the model.
 - `subagent(tasks)` runs one to four explicitly requested, independent tasks
   concurrently and returns their ordered results.
 
-LSP line numbers and UTF-16 character offsets are zero-based. Source-file
-extensions select a language server; currently `.go` files use gopls.
+LSP line numbers and UTF-16 character offsets are zero-based. LSP tools are
+registered only when a configured language server is installed; currently `.go`
+files use gopls when available.
 
 Unknown tools, malformed arguments, and ordinary tool failures become
 correlated tool-result errors. Cancellation stops the turn. Tools are not a
@@ -91,10 +92,10 @@ Each call starts up to four fresh child engines concurrently and waits for every
 result before the main agent continues. Results return through the normal tool
 output path and become part of the main conversation.
 
-Subagents are read-only: they receive `read` and the five non-mutating LSP tools,
-but not Bash, file-editing tools, rename, or further subagents. They use the
-main model, reasoning effort, working directory, and project instructions. They
-are not persisted and do not run in the background.
+Subagents are read-only: they receive `read` and, when available, the five
+non-mutating LSP tools, but not Bash, file-editing tools, rename, or further
+subagents. They use the main model, reasoning effort, working directory, and
+project instructions, and are not persisted or run in the background.
 
 ## Architecture
 

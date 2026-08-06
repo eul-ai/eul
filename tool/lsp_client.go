@@ -37,6 +37,15 @@ var lspServerConfigs = []lspServerConfig{
 	},
 }
 
+func hasAvailableLSPServer() bool {
+	for _, config := range lspServerConfigs {
+		if _, err := exec.LookPath(config.command); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 type lspClient struct {
 	workspace workspace
 	sessions  map[string]*lspSession

@@ -131,6 +131,10 @@ type lspFileChange struct {
 }
 
 func NewLSP(cwd string) []Tool {
+	if !hasAvailableLSPServer() {
+		return nil
+	}
+
 	client := newLSPClient(cwd)
 	return []Tool{
 		&lspTool{client: client, definition: lspDiagnosticsToolDefinition, operation: lspDiagnostics},
