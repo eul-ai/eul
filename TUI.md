@@ -82,7 +82,7 @@ The input bar sits between horizontal rules in the style of Claude Code and Pi. 
 3. its horizontal rules; and
 4. the conversation.
 
-The base canvas preserves the terminal's background instead of painting the theme background across the alternate screen. Conversation block backgrounds span the full width while their text has a two-cell horizontal inset. User and assistant text use the base background, reasoning summaries use muted italic text with balanced space above and below, and compact tool blocks use horizontal and vertical padding with pending, success, or error backgrounds. Role labels are omitted. Input rules use the theme color for the selected reasoning effort.
+The base canvas preserves the terminal's background instead of painting the theme background across the alternate screen. The conversation viewport has one blank row at the top and bottom. Block backgrounds span the full width while their text has a two-cell horizontal inset. User and assistant text use the base background, reasoning summaries use muted italic text with balanced space above and below, and compact tool blocks use horizontal and vertical padding with pending, success, or error backgrounds. Role labels are omitted. Input rules use the theme color for the selected reasoning effort.
 
 On narrow terminals, the status bar will preserve the activity label and compact context percentage before truncating the model and effort.
 

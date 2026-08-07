@@ -47,7 +47,8 @@ status shows current activity on the left and model, reasoning effort, and conte
 usage on the right. Reasoning summaries, tool activity, compaction notices, and
 errors remain visible in the conversation. The TUI preserves the terminal's base
 background and uses effort-colored input rules. Conversation text has a two-cell
-horizontal inset while block backgrounds retain the full width. Reasoning
+horizontal inset while block backgrounds retain the full width, with one blank
+row above and below the viewport content. Reasoning
 summaries use muted italic text, while compact tool blocks use padded pending,
 success, and error backgrounds. The current palette is based on the
 [Ayu Mirage theme](https://github.com/iodic/pi-ayu-themes/blob/main/themes/ayu-mirage.json).

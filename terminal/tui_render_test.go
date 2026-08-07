@@ -93,6 +93,16 @@ func TestToolBlockHasHorizontalAndVerticalPadding(t *testing.T) {
 	}
 }
 
+func TestConversationWindowHasVerticalPadding(t *testing.T) {
+	model := newTUIModel(40, 8, Options{})
+	model.appendBlock(blockUser, "message")
+	lines := modelConversationLines(model, 40)
+
+	if len(lines) != 3 || lines[0].text != "" || lines[1].text != "message" || lines[2].text != "" {
+		t.Fatalf("lines = %+v", lines)
+	}
+}
+
 func TestPaddedBlockBackgroundFillsWidth(t *testing.T) {
 	style := blockPresentation(blockTool)
 	var frame strings.Builder

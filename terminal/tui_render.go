@@ -8,11 +8,12 @@ import (
 )
 
 const (
-	ansiHideCursor      = "\x1b[?25l"
-	ansiShowCursor      = "\x1b[?25h"
-	ansiReset           = "\x1b[0m"
-	ansiItalic          = "\x1b[3m"
-	conversationPadding = 2
+	ansiHideCursor              = "\x1b[?25l"
+	ansiShowCursor              = "\x1b[?25h"
+	ansiReset                   = "\x1b[0m"
+	ansiItalic                  = "\x1b[3m"
+	conversationPadding         = 2
+	conversationVerticalPadding = 1
 )
 
 type lineStyle struct {
@@ -190,7 +191,11 @@ func conversationViewport(model *tuiModel, width, height int) []styledLine {
 
 func modelConversationLines(model *tuiModel, width int) []styledLine {
 	if model.conversationDirty || model.wrappedWidth != width {
-		model.conversationLines = conversationLines(model.blocks, width)
+		lines := conversationLines(model.blocks, width)
+		model.conversationLines = make([]styledLine, 0, len(lines)+conversationVerticalPadding*2)
+		model.conversationLines = append(model.conversationLines, make([]styledLine, conversationVerticalPadding)...)
+		model.conversationLines = append(model.conversationLines, lines...)
+		model.conversationLines = append(model.conversationLines, make([]styledLine, conversationVerticalPadding)...)
 		model.wrappedWidth = width
 		model.conversationDirty = false
 	}
