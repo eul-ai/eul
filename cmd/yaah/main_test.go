@@ -60,6 +60,25 @@ func (function providerFunction) Generate(ctx context.Context, request agent.Req
 	return function(ctx, request, sink)
 }
 
+func TestBuildSubagentToolsUsesReadOnlyLSP(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "gopls"), nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory)
+
+	registry := buildSubagentTools(t.TempDir())
+	defer registry.Close()
+	names := make([]string, len(registry.Definitions()))
+	for index, definition := range registry.Definitions() {
+		names[index] = definition.Name
+	}
+	want := []string{"lsp_definition", "lsp_diagnostics", "lsp_hover", "lsp_references", "lsp_symbols", "read"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("tools = %v, want %v", names, want)
+	}
+}
+
 func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 	cwd := t.TempDir()
 	projectInstructions := "Run focused tests before finishing."

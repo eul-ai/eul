@@ -26,7 +26,11 @@ type lspServerConfig struct {
 	extensions []string
 }
 
-const lspShutdownTimeout = 5 * time.Second
+const (
+	lspDocumentVersion      = int32(1)
+	lspDocumentCloseTimeout = time.Second
+	lspShutdownTimeout      = 5 * time.Second
+)
 
 var lspServerConfigs = []lspServerConfig{
 	{
@@ -58,6 +62,7 @@ type lspSession struct {
 	command         *exec.Cmd
 	done            <-chan error
 	pullDiagnostics bool
+	stopSession     func()
 }
 
 type lspTransport struct {
@@ -94,21 +99,40 @@ func (c *lspClient) documentRequest(ctx context.Context, path string, request ls
 		return nil, err
 	}
 
+	return c.withOpenDocument(ctx, config, session, path, content, request)
+}
+
+func (c *lspClient) withOpenDocument(ctx context.Context, config lspServerConfig, session *lspSession, path string, content []byte, request lspDocumentRequest) (any, error) {
 	document := protocol.TextDocumentIdentifier{URI: uri.File(path)}
 	session.client.clearDiagnostics(document.URI)
 	if err := session.server.DidOpen(ctx, &protocol.DidOpenTextDocumentParams{
 		TextDocument: protocol.TextDocumentItem{
 			URI:        document.URI,
 			LanguageID: protocol.LanguageKind(config.languageID),
-			Version:    1,
+			Version:    lspDocumentVersion,
 			Text:       string(content),
 		},
 	}); err != nil {
+		c.invalidateSession(config, session)
 		return nil, err
 	}
-	defer session.server.DidClose(ctx, &protocol.DidCloseTextDocumentParams{TextDocument: document})
 
-	return request(ctx, session, document)
+	response, requestErr := request(ctx, session, document)
+	closeCtx, cancel := context.WithTimeout(context.Background(), lspDocumentCloseTimeout)
+	defer cancel()
+	closeErr := session.server.DidClose(closeCtx, &protocol.DidCloseTextDocumentParams{TextDocument: document})
+	if closeErr != nil {
+		c.invalidateSession(config, session)
+	}
+	return response, errors.Join(requestErr, closeErr)
+}
+
+func (c *lspClient) invalidateSession(config lspServerConfig, session *lspSession) {
+	if c.sessions[config.name] != session {
+		return
+	}
+	delete(c.sessions, config.name)
+	session.stop()
 }
 
 func (c *lspClient) session(ctx context.Context, config lspServerConfig) (*lspSession, error) {
@@ -211,6 +235,10 @@ func (c *lspClient) stop() {
 }
 
 func (s *lspSession) stop() {
+	if s.stopSession != nil {
+		s.stopSession()
+		return
+	}
 	if s.connection.Err() == nil {
 		shutdownLSPServer(s.server, lspShutdownTimeout)
 	}

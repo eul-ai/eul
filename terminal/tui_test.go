@@ -267,6 +267,16 @@ func TestHandleKeyCommands(t *testing.T) {
 		t.Fatalf("blocks = %+v", model.blocks)
 	}
 
+	if err := model.insertInput("/clear"); err != nil {
+		t.Fatal(err)
+	}
+	if exit, err := handleKey(context.Background(), model, engine, keyEvent{code: keyEnter}, messages, stopped, &cancel); err != nil || exit {
+		t.Fatalf("clear command exit=%v err=%v", exit, err)
+	}
+	if _, resets := engine.snapshot(); resets != 1 || len(model.blocks) != 0 || model.activity.kind != activityReady {
+		t.Fatalf("resets=%d blocks=%+v activity=%+v", resets, model.blocks, model.activity)
+	}
+
 	if err := model.insertInput("/exit"); err != nil {
 		t.Fatal(err)
 	}

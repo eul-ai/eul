@@ -13,7 +13,6 @@ type terminalColor struct {
 }
 
 type theme struct {
-	background            terminalColor
 	foreground            terminalColor
 	accent                terminalColor
 	orange                terminalColor
@@ -30,7 +29,6 @@ type theme struct {
 
 // Source: https://github.com/iodic/pi-ayu-themes/blob/main/themes/ayu-mirage.json
 var ayuMirageTheme = theme{
-	background:            terminalColor{red: 0x17, green: 0x1b, blue: 0x24},
 	foreground:            terminalColor{red: 0xcc, green: 0xca, blue: 0xc2},
 	accent:                terminalColor{red: 0xff, green: 0xcc, blue: 0x66},
 	orange:                terminalColor{red: 0xff, green: 0xa7, blue: 0x59},

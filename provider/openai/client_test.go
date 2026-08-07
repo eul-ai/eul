@@ -709,14 +709,27 @@ func TestClientRejectsUnsupportedThinkingLevelBeforeAuthentication(t *testing.T)
 	}
 }
 
-func TestNewUsesInjectedClientAndAppliesDefaultTimeout(t *testing.T) {
-	injected := &http.Client{}
+func TestNewCopiesInjectedClientBeforeApplyingPolicy(t *testing.T) {
+	redirect := func(*http.Request, []*http.Request) error { return nil }
+	transport := http.DefaultTransport
+	injected := &http.Client{Transport: transport, CheckRedirect: redirect}
+
 	client, err := NewCodex(testTokenSource("token"), Options{BaseURL: "https://example.com", HTTPClient: injected})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.httpClient != injected || injected.Timeout != defaultHTTPTimeout {
-		t.Fatalf("injected client=%p timeout=%s", client.httpClient, injected.Timeout)
+	if client.httpClient == injected || client.httpClient.Transport != transport || client.httpClient.Timeout != defaultHTTPTimeout {
+		t.Fatalf("owned client=%p injected=%p transport=%T timeout=%s", client.httpClient, injected, client.httpClient.Transport, client.httpClient.Timeout)
+	}
+	if injected.Timeout != 0 || injected.CheckRedirect == nil {
+		t.Fatalf("injected client was mutated: timeout=%s redirect missing=%t", injected.Timeout, injected.CheckRedirect == nil)
+	}
+	request, _ := http.NewRequest(http.MethodGet, "https://example.com", nil)
+	if err := client.httpClient.CheckRedirect(request, nil); !errors.Is(err, http.ErrUseLastResponse) {
+		t.Fatalf("owned redirect policy error = %v", err)
+	}
+	if err := injected.CheckRedirect(request, nil); err != nil {
+		t.Fatalf("injected redirect policy changed: %v", err)
 	}
 }
 

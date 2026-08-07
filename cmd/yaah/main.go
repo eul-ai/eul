@@ -9,25 +9,19 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"runtime"
-	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"yaah/agent"
 	oauth "yaah/auth/openai"
 	openaiadapter "yaah/provider/openai"
 	"yaah/terminal"
-	"yaah/tool"
 )
 
 const (
-	exitSuccess         = 0
-	exitFailure         = 1
-	exitUsage           = 2
-	exitInterrupted     = 130
-	maxPipedPromptBytes = 1024 * 1024
+	exitSuccess     = 0
+	exitFailure     = 1
+	exitUsage       = 2
+	exitInterrupted = 130
 )
 
 type providerFactory func(openaiadapter.CodexTokenSource) (agent.Provider, error)
@@ -90,50 +84,16 @@ func run(arguments []string, runtime appRuntime) int {
 		}
 	}
 
-	modelDefault := runtime.getenv("OPENAI_MODEL")
-	thinkingDefault := runtime.getenv("YAAH_THINKING_LEVEL")
-	if thinkingDefault == "" {
-		thinkingDefault = string(agent.DefaultThinkingLevel)
-	}
-
-	flags := flag.NewFlagSet("yaah", flag.ContinueOnError)
-	flags.SetOutput(runtime.stderr)
-	model := flags.String("model", modelDefault, "OpenAI model (or OPENAI_MODEL)")
-	thinking := flags.String("thinking", thinkingDefault, "thinking level (or YAAH_THINKING_LEVEL)")
-	cwdFlag := flags.String("cwd", "", "fixed working directory")
-
-	if err := flags.Parse(arguments); err != nil {
+	parsed, err := parseAgentArguments(arguments, runtime)
+	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitSuccess
 		}
-		return exitUsage
-	}
-	if flags.NArg() > 1 {
-		writeCLIError(runtime.stderr, "usage error: expected at most one prompt argument")
-		return exitUsage
-	}
-	thinkingLevel, err := agent.ParseThinkingLevel(*thinking)
-	if err != nil {
-		writeCLIError(runtime.stderr, "%v", err)
-		return exitUsage
-	}
-
-	prompt := ""
-	oneShot := flags.NArg() == 1
-	if oneShot {
-		prompt = flags.Arg(0)
-		if strings.TrimSpace(prompt) == "" {
-			writeCLIError(runtime.stderr, "one-shot prompt must be nonempty")
-			return exitUsage
-		}
-	} else if !terminal.IsTerminal(runtime.stdin) {
-		pipedPrompt, err := readPipedPrompt(runtime.stdin)
-		if err != nil {
+		var reported reportedFlagError
+		if !errors.As(err, &reported) {
 			writeCLIError(runtime.stderr, "%v", err)
-			return exitUsage
 		}
-		prompt = pipedPrompt
-		oneShot = true
+		return exitUsage
 	}
 
 	tokenSource, err := resolveTokenSource(runtime)
@@ -144,122 +104,49 @@ func run(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "authentication required: %v", err)
 		return exitFailure
 	}
-	if err := validateModel(*model); err != nil {
-		writeCLIError(runtime.stderr, "%v", err)
-		return exitFailure
-	}
-	cwd, err := resolveCWD(*cwdFlag, runtime.getwd)
+
+	config, err := resolveAgentConfig(parsed, runtime)
 	if err != nil {
 		writeCLIError(runtime.stderr, "%v", err)
 		return exitFailure
 	}
-
-	projectInstructions, err := readProjectInstructions(cwd)
+	session, err := newAgentSession(config, runtime, tokenSource)
 	if err != nil {
 		writeCLIError(runtime.stderr, "%v", err)
 		return exitFailure
 	}
 
-	currentThinkingLevel := openaiadapter.ClampThinkingLevel(*model, thinkingLevel)
-	provider, err := runtime.newProvider(tokenSource)
-	if err != nil {
-		writeCLIError(runtime.stderr, "configure provider: %v", err)
-		return exitFailure
-	}
-
-	subagent := tool.NewSubagent(func(ctx context.Context, task string, usage func(agent.Usage)) (agent.RunResult, error) {
-		childProvider, err := runtime.newProvider(tokenSource)
-		if err != nil {
-			return agent.RunResult{}, fmt.Errorf("configure subagent provider: %w", err)
-		}
-
-		childTools := buildSubagentTools(cwd)
-		child := agent.New(childProvider, childTools, agent.Options{
-			Model:               *model,
-			ThinkingLevel:       currentThinkingLevel,
-			ProjectInstructions: projectInstructions,
-		})
-		var liveUsage agent.Usage
-		result, runErr := child.Run(ctx, task, func(event agent.Event) error {
-			switch event.Kind {
-			case agent.EventCompactionEnd, agent.EventContextUsage:
-				liveUsage.InputTokens += event.Usage.InputTokens
-				liveUsage.OutputTokens += event.Usage.OutputTokens
-				liveUsage.TotalTokens += event.Usage.TotalTokens
-				usage(liveUsage)
-			}
-			return nil
-		})
-		closeErr := childTools.Close()
-		if runErr != nil {
-			return agent.RunResult{}, runErr
-		}
-		if closeErr != nil {
-			return agent.RunResult{}, fmt.Errorf("close subagent tools: %w", closeErr)
-		}
-		return result, nil
-	})
-	registry := buildTools(cwd, subagent)
-	engine := agent.New(provider, registry, agent.Options{
-		Model:               *model,
-		ThinkingLevel:       currentThinkingLevel,
-		ProjectInstructions: projectInstructions,
-	})
-	setThinkingLevel := func(level agent.ThinkingLevel) error {
-		if err := engine.SetThinkingLevel(level); err != nil {
-			return err
-		}
-		currentThinkingLevel = level
-		return nil
-	}
-
-	terminalOptions := terminal.Options{
-		Input:            runtime.stdin,
-		Output:           runtime.stdout,
-		ErrorOutput:      runtime.stderr,
-		Model:            *model,
-		ThinkingLevel:    currentThinkingLevel,
-		ThinkingLevels:   openaiadapter.SupportedThinkingLevels(*model),
-		ContextWindow:    openaiadapter.ContextWindow(*model),
-		Interrupts:       runtime.interrupts,
-		SetThinkingLevel: setThinkingLevel,
-	}
-
-	if oneShot {
-		return finishRun(terminal.RunOneShot(context.Background(), engine, prompt, terminalOptions), runtime.stderr)
-	}
-	return finishRun(terminal.Run(context.Background(), engine, terminalOptions), runtime.stderr)
-}
-
-func readPipedPrompt(reader io.Reader) (string, error) {
-	content, err := io.ReadAll(io.LimitReader(reader, maxPipedPromptBytes+1))
-	if err != nil {
-		return "", fmt.Errorf("read piped prompt: %w", err)
-	}
-	if len(content) > maxPipedPromptBytes {
-		return "", fmt.Errorf("piped prompt exceeds %d bytes", maxPipedPromptBytes)
-	}
-	if !utf8.Valid(content) || strings.IndexByte(string(content), 0) >= 0 {
-		return "", errors.New("piped prompt must be valid UTF-8 text without NUL")
-	}
-
-	prompt := string(content)
-	if strings.TrimSpace(prompt) == "" {
-		return "", errors.New("piped prompt must be nonempty")
-	}
-	return prompt, nil
+	return finishRun(session.run(context.Background()), runtime.stderr)
 }
 
 func finishRun(runErr error, errorOutput io.Writer) int {
 	if runErr == nil {
 		return exitSuccess
 	}
-	if errors.Is(runErr, terminal.ErrInterrupted) || errors.Is(runErr, context.Canceled) {
+	if isOnlyInterruption(runErr) {
 		return exitInterrupted
 	}
 
 	writeCLIError(errorOutput, "%v", runErr)
 	return exitFailure
+}
+
+func isOnlyInterruption(err error) bool {
+	joined, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		return errors.Is(err, terminal.ErrInterrupted) || errors.Is(err, context.Canceled)
+	}
+
+	causes := joined.Unwrap()
+	if len(causes) == 0 {
+		return false
+	}
+	for _, cause := range causes {
+		if !isOnlyInterruption(cause) {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveTokenSource(runtime appRuntime) (openaiadapter.CodexTokenSource, error) {
@@ -397,84 +284,6 @@ func contextWithInterrupt(interrupts <-chan os.Signal) (context.Context, context
 	}()
 
 	return ctx, cancel
-}
-
-func validateModel(model string) error {
-	if strings.TrimSpace(model) == "" {
-		return errors.New("model is required; use --model or OPENAI_MODEL")
-	}
-
-	if model != strings.TrimSpace(model) || strings.IndexFunc(model, func(character rune) bool {
-		return unicode.IsControl(character) || unicode.IsSpace(character)
-	}) >= 0 {
-		return errors.New("model must not contain whitespace or control characters")
-	}
-
-	return nil
-}
-
-func resolveCWD(value string, getwd func() (string, error)) (string, error) {
-	candidate := value
-	if candidate == "" || !filepath.IsAbs(candidate) {
-		base, err := getwd()
-		if err != nil {
-			return "", fmt.Errorf("get working directory: %w", err)
-		}
-		if !filepath.IsAbs(base) {
-			base, err = filepath.Abs(base)
-			if err != nil {
-				return "", fmt.Errorf("resolve working directory: %w", err)
-			}
-		}
-		candidate = filepath.Join(base, candidate)
-	}
-
-	candidate = filepath.Clean(candidate)
-	info, err := os.Stat(candidate)
-	if err != nil {
-		return "", fmt.Errorf("inspect working directory: %w", err)
-	}
-
-	if !info.IsDir() {
-		return "", fmt.Errorf("working directory %q is not a directory", candidate)
-	}
-
-	return candidate, nil
-}
-
-func readProjectInstructions(cwd string) (string, error) {
-	content, err := os.ReadFile(filepath.Join(cwd, "AGENTS.md"))
-	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("read AGENTS.md: %w", err)
-	}
-
-	return string(content), nil
-}
-
-func buildTools(cwd string, additional ...tool.Tool) *tool.Registry {
-	tools := []tool.Tool{
-		tool.NewRead(cwd),
-		tool.NewWrite(cwd),
-		tool.NewEdit(cwd),
-		tool.NewBash(cwd),
-	}
-	tools = append(tools, tool.NewLSP(cwd)...)
-	tools = append(tools, additional...)
-	return tool.NewRegistry(tools...)
-}
-
-func buildSubagentTools(cwd string) *tool.Registry {
-	tools := []tool.Tool{tool.NewRead(cwd)}
-	for _, lspTool := range tool.NewLSP(cwd) {
-		if lspTool.Definition().Name == "lsp_rename" {
-			continue
-		}
-		tools = append(tools, lspTool)
-	}
-	return tool.NewRegistry(tools...)
 }
 
 func writeCLIError(output io.Writer, format string, arguments ...any) {

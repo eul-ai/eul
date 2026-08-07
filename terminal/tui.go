@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"golang.org/x/term"
@@ -42,15 +41,7 @@ func Run(ctx context.Context, engine Engine, options Options) (runErr error) {
 	defer func() {
 		leaveErr := writeOutput(options.Output, "%s", leaveScreen)
 		restoreErr := term.Restore(inputFD, state)
-		cleanupErr := errors.Join(leaveErr, wrapRestoreError(restoreErr))
-		if cleanupErr == nil {
-			return
-		}
-		if runErr != nil {
-			runErr = fmt.Errorf("%v; cleanup: %w", runErr, cleanupErr)
-			return
-		}
-		runErr = cleanupErr
+		runErr = errors.Join(runErr, leaveErr, wrapRestoreError(restoreErr))
 	}()
 
 	if err := writeOutput(options.Output, "%s", enterScreen); err != nil {
@@ -216,16 +207,13 @@ func renderIfDirty(renderer *tuiRenderer, model *tuiModel, output io.Writer, dir
 }
 
 func interruptTUI(model *tuiModel, cancel context.CancelFunc) error {
-	if !model.running {
-		return ErrInterrupted
+	action, err := reduceInterrupt(model)
+	if err != nil {
+		return err
 	}
-	if model.interrupted {
-		return nil
+	if action.kind == tuiActionCancel {
+		cancel()
 	}
-
-	model.interrupted = true
-	model.activity = activity{kind: activityCanceling}
-	cancel()
 	return nil
 }
 
@@ -238,103 +226,31 @@ func handleKey(
 	stopped <-chan struct{},
 	turnCancel *context.CancelFunc,
 ) (bool, error) {
-	switch key.code {
-	case keyFailure:
-		if key.fatal {
-			return false, fmt.Errorf("terminal: read input: %w", key.err)
-		}
-		if model.running {
-			return false, nil
-		}
-		detail := diagnostic(key.err.Error(), 200)
-		model.activity = activity{kind: activityError, detail: detail}
+	action, err := reduceKey(model, key)
+	if err != nil {
+		return false, err
+	}
+
+	switch action.kind {
+	case tuiActionNone:
 		return false, nil
-	case keyEOF:
+	case tuiActionCancel:
+		(*turnCancel)()
+	case tuiActionReset:
+		engine.Reset()
+		model.clearConversation()
+	case tuiActionExit:
 		return true, nil
-	case keyCtrlC:
-		if model.running {
-			return false, interruptTUI(model, *turnCancel)
-		}
-		if len(model.input) > 0 {
-			model.clearInput()
+	case tuiActionSubmit:
+		turnContext, cancel := context.WithCancel(ctx)
+		*turnCancel = cancel
+		go runEngineTurn(turnContext, engine, action.prompt, messages, stopped)
+	case tuiActionSetThinking:
+		if err := model.setThinkingLevel(action.thinkingLevel); err != nil {
+			setInputError(model, err)
 			return false, nil
 		}
-		return false, ErrInterrupted
-	case keyCtrlL:
-		model.forceRedraw = true
-		return false, nil
-	case keyPageUp:
-		scrollConversation(model, -1)
-		return false, nil
-	case keyPageDown:
-		scrollConversation(model, 1)
-		return false, nil
-	}
-
-	if model.running {
-		return false, nil
-	}
-
-	switch key.code {
-	case keyText:
-		if err := model.insertInput(key.text); err != nil {
-			detail := diagnostic(err.Error(), 200)
-			model.activity = activity{kind: activityError, detail: detail}
-		}
-	case keyNewline:
-		if err := model.insertNewline(); err != nil {
-			detail := diagnostic(err.Error(), 200)
-			model.activity = activity{kind: activityError, detail: detail}
-		}
-	case keyShiftTab:
-		if err := model.cycleThinkingLevel(); err != nil {
-			detail := diagnostic(err.Error(), 200)
-			model.activity = activity{kind: activityError, detail: detail}
-		}
-	case keyLeft:
-		model.moveLeft()
-	case keyRight:
-		model.moveRight()
-	case keyHome:
-		model.cursor = 0
-	case keyEnd:
-		model.cursor = len(model.input)
-	case keyBackspace:
-		model.backspace()
-	case keyDelete:
-		model.delete()
-	case keyUp:
-		model.historyUp()
-	case keyDown:
-		model.historyDown()
-	case keyCtrlD:
-		return len(model.input) == 0, nil
-	case keyEnter:
-		prompt, ok := model.takePrompt()
-		if !ok {
-			return false, nil
-		}
-		trimmed := strings.TrimSpace(prompt)
-		switch trimmed {
-		case "/help":
-			model.appendBlock(blockInfo, "Commands:\n  /help   show this help\n  /clear  discard conversation state\n  /exit   exit yaah")
-		case "/clear":
-			engine.Reset()
-			model.clearConversation()
-		case "/exit":
-			return true, nil
-		default:
-			if strings.HasPrefix(trimmed, "/") {
-				model.appendBlock(blockError, "Unknown command "+diagnostic(trimmed, 120))
-				model.activity = activity{kind: activityError, detail: "unknown command"}
-				return false, nil
-			}
-
-			model.beginTurn(prompt)
-			turnContext, cancel := context.WithCancel(ctx)
-			*turnCancel = cancel
-			go runEngineTurn(turnContext, engine, prompt, messages, stopped)
-		}
+		model.thinkingLevel = action.thinkingLevel
 	}
 	return false, nil
 }

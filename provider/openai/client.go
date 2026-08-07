@@ -60,11 +60,11 @@ func NewCodex(source CodexTokenSource, options Options) (*Client, error) {
 		baseURL = defaultBaseURL
 	}
 
-	httpClient := options.HTTPClient
-	switch {
-	case httpClient == nil:
-		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
-	case httpClient.Timeout <= 0:
+	httpClient := &http.Client{}
+	if options.HTTPClient != nil {
+		*httpClient = *options.HTTPClient
+	}
+	if httpClient.Timeout <= 0 {
 		httpClient.Timeout = defaultHTTPTimeout
 	}
 	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error {
@@ -110,50 +110,25 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 	wireRequest.ToolChoice = "auto"
 	wireRequest.ParallelToolCalls = true
 
-	requestBody, err := json.Marshal(wireRequest)
+	requestBody, oversized, err := marshalBoundedJSON(wireRequest, c.maxRequestBytes)
 	if err != nil {
 		return agent.Response{}, c.errorf("encode request: %v", err)
 	}
-	if int64(len(requestBody)) > c.maxRequestBytes {
+	if oversized {
 		return agent.Response{}, c.errorf("request exceeds %d bytes", c.maxRequestBytes)
 	}
 
-	httpRequest, err := c.newRequest(ctx, c.endpoint, "text/event-stream", requestBody, credential)
+	httpResponse, err := c.post(ctx, c.endpoint, "text/event-stream", requestBody, credential, "request")
 	if err != nil {
-		return agent.Response{}, c.errorf("create request: %v", err)
+		return agent.Response{}, err
 	}
-
-	httpResponse, err := c.httpClient.Do(httpRequest)
-	if err != nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return agent.Response{}, contextErr
-		}
-		if errors.Is(err, context.DeadlineExceeded) {
-			return agent.Response{}, c.wrapf(context.DeadlineExceeded, "request failed: %v", err)
-		}
-		if errors.Is(err, context.Canceled) {
-			return agent.Response{}, c.wrapf(context.Canceled, "request failed: %v", err)
-		}
-		return agent.Response{}, c.errorf("request failed: %v", err)
-	}
-
 	defer httpResponse.Body.Close()
-
-	if httpResponse.StatusCode < 200 || httpResponse.StatusCode >= 300 {
-		return agent.Response{}, c.decodeHTTPError(httpResponse)
-	}
 
 	observer := streamObserver{onText: onText, onReasoning: onReasoning, onToolCall: onToolCall}
 	wireResponse, err := readResponsesSSE(httpResponse.Body, c.maxResponseBytes, &observer)
 	if err != nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return agent.Response{}, contextErr
-		}
-		if errors.Is(err, context.DeadlineExceeded) {
-			return agent.Response{}, c.wrapf(context.DeadlineExceeded, "read response: %v", err)
-		}
-		if errors.Is(err, context.Canceled) {
-			return agent.Response{}, c.wrapf(context.Canceled, "read response: %v", err)
+		if classified := c.contextError(ctx, err, "read response"); classified != nil {
+			return agent.Response{}, classified
 		}
 		return agent.Response{}, c.wrapf(err, "%v", err)
 	}
@@ -207,47 +182,24 @@ func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.Comp
 	wireRequest.Text = &responseText{Verbosity: "low"}
 	wireRequest.ParallelToolCalls = true
 
-	requestBody, err := json.Marshal(wireRequest)
+	requestBody, oversized, err := marshalBoundedJSON(wireRequest, c.maxRequestBytes)
 	if err != nil {
 		return agent.CompactResponse{}, c.errorf("encode compact request: %v", err)
 	}
-	if int64(len(requestBody)) > c.maxRequestBytes {
+	if oversized {
 		return agent.CompactResponse{}, c.errorf("compact request exceeds %d bytes", c.maxRequestBytes)
 	}
 
-	httpRequest, err := c.newRequest(ctx, c.compactEndpoint, "application/json", requestBody, credential)
+	httpResponse, err := c.post(ctx, c.compactEndpoint, "application/json", requestBody, credential, "compact request")
 	if err != nil {
-		return agent.CompactResponse{}, c.errorf("create compact request: %v", err)
-	}
-	httpResponse, err := c.httpClient.Do(httpRequest)
-	if err != nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return agent.CompactResponse{}, contextErr
-		}
-		if errors.Is(err, context.DeadlineExceeded) {
-			return agent.CompactResponse{}, c.wrapf(context.DeadlineExceeded, "compact request failed: %v", err)
-		}
-		if errors.Is(err, context.Canceled) {
-			return agent.CompactResponse{}, c.wrapf(context.Canceled, "compact request failed: %v", err)
-		}
-		return agent.CompactResponse{}, c.errorf("compact request failed: %v", err)
+		return agent.CompactResponse{}, err
 	}
 	defer httpResponse.Body.Close()
 
-	if httpResponse.StatusCode < 200 || httpResponse.StatusCode >= 300 {
-		return agent.CompactResponse{}, c.decodeHTTPError(httpResponse)
-	}
-
 	responseBody, truncated, err := readBounded(httpResponse.Body, c.maxResponseBytes)
 	if err != nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return agent.CompactResponse{}, contextErr
-		}
-		if errors.Is(err, context.DeadlineExceeded) {
-			return agent.CompactResponse{}, c.wrapf(context.DeadlineExceeded, "read compact response: %v", err)
-		}
-		if errors.Is(err, context.Canceled) {
-			return agent.CompactResponse{}, c.wrapf(context.Canceled, "read compact response: %v", err)
+		if classified := c.contextError(ctx, err, "read compact response"); classified != nil {
+			return agent.CompactResponse{}, classified
 		}
 		return agent.CompactResponse{}, c.errorf("read compact response: %v", err)
 	}
@@ -269,6 +221,47 @@ func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.Comp
 	}
 
 	return agent.CompactResponse{State: state, Usage: usage}, nil
+}
+
+func marshalBoundedJSON(value any, maximum int64) ([]byte, bool, error) {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return nil, false, err
+	}
+	return body, int64(len(body)) > maximum, nil
+}
+
+func (c *Client) post(ctx context.Context, endpoint, accept string, body []byte, credential CodexCredential, operation string) (*http.Response, error) {
+	request, err := c.newRequest(ctx, endpoint, accept, body, credential)
+	if err != nil {
+		return nil, c.errorf("create %s: %v", operation, err)
+	}
+
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		if classified := c.contextError(ctx, err, operation+" failed"); classified != nil {
+			return nil, classified
+		}
+		return nil, c.errorf("%s failed: %v", operation, err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		defer response.Body.Close()
+		return nil, c.decodeHTTPError(response)
+	}
+	return response, nil
+}
+
+func (c *Client) contextError(ctx context.Context, err error, operation string) error {
+	if contextErr := ctx.Err(); contextErr != nil {
+		return contextErr
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return c.wrapf(context.DeadlineExceeded, "%s: %v", operation, err)
+	}
+	if errors.Is(err, context.Canceled) {
+		return c.wrapf(context.Canceled, "%s: %v", operation, err)
+	}
+	return nil
 }
 
 func (c *Client) resolveCredential(ctx context.Context) (CodexCredential, error) {

@@ -9,6 +9,11 @@ import (
 	"yaah/agent"
 )
 
+func renderFrame(model *tuiModel) string {
+	var renderer tuiRenderer
+	return renderer.render(model)
+}
+
 func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 	model := newTUIModel(72, 12, Options{
 		Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, ContextWindow: 272_000,

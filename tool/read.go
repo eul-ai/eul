@@ -98,7 +98,37 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage, _ agent.T
 		return errorResult(readToolName, fmt.Errorf("%s is not a regular file", r.workspace.display(path))), nil
 	}
 
-	reader := bufio.NewReader(file)
+	output, err := scanReadRange(ctx, file, offset, limit)
+	if err != nil {
+		var contextErr *readContextError
+		switch {
+		case errors.As(err, &contextErr):
+			return agent.ToolResult{}, contextErr.cause
+		case errors.Is(err, errReadBinary):
+			return errorResult(readToolName, fmt.Errorf("%s: binary file is not supported", r.workspace.display(path))), nil
+		default:
+			return errorResult(readToolName, err), nil
+		}
+	}
+	return successResult(output), nil
+}
+
+var errReadBinary = errors.New("binary file is not supported")
+
+type readContextError struct {
+	cause error
+}
+
+func (err *readContextError) Error() string {
+	return err.cause.Error()
+}
+
+func (err *readContextError) Unwrap() error {
+	return err.cause
+}
+
+func scanReadRange(ctx context.Context, source io.Reader, offset, limit int) (string, error) {
+	reader := bufio.NewReader(source)
 	var output strings.Builder
 	lineNumber := 1
 	selectedCompleted := 0
@@ -109,19 +139,19 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage, _ agent.T
 
 	for {
 		if err := ctx.Err(); err != nil {
-			return agent.ToolResult{}, err
+			return "", &readContextError{cause: err}
 		}
 
 		runeValue, size, readErr := reader.ReadRune()
 		if errors.Is(readErr, io.EOF) {
 			if truncatedOutput != "" {
-				return agent.ToolResult{Output: truncatedOutput}, nil
+				return truncatedOutput, nil
 			}
 			if !sawData {
 				if offset != 1 {
-					return errorResult(readToolName, fmt.Errorf("offset %d is beyond end of empty file", offset)), nil
+					return "", fmt.Errorf("offset %d is beyond end of empty file", offset)
 				}
-				return successResult(""), nil
+				return "", nil
 			}
 
 			lineCount := lineNumber
@@ -129,15 +159,15 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage, _ agent.T
 				lineCount--
 			}
 			if offset > lineCount {
-				return errorResult(readToolName, fmt.Errorf("offset %d is beyond end of file (%d lines)", offset, lineCount)), nil
+				return "", fmt.Errorf("offset %d is beyond end of file (%d lines)", offset, lineCount)
 			}
-			return agent.ToolResult{Output: output.String()}, nil
+			return output.String(), nil
 		}
 		if readErr != nil {
-			return errorResult(readToolName, readErr), nil
+			return "", readErr
 		}
 		if runeValue == utf8.RuneError && size == 1 || runeValue == 0 {
-			return errorResult(readToolName, fmt.Errorf("%s: binary file is not supported", r.workspace.display(path))), nil
+			return "", errReadBinary
 		}
 
 		sawData = true

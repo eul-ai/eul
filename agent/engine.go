@@ -2,10 +2,8 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 )
 
 const defaultMaxToolRounds = 20
@@ -61,97 +59,40 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		return RunResult{}, err
 	}
 
-	state := e.state
-	contextUsage := e.contextUsage
-	inputs := append([]Input(nil), e.pendingInputs...)
-	inputs = append(inputs, Input{Kind: InputUser, Text: userText})
+	current := continuation{
+		state:  e.state,
+		usage:  e.contextUsage,
+		inputs: append([]Input(nil), e.pendingInputs...),
+	}
+	current.inputs = append(current.inputs, Input{Kind: InputUser, Text: userText})
 	var result RunResult
 	toolRounds := 0
 
 	for {
 		if err := ctx.Err(); err != nil {
+			current.checkpoint(e)
 			return RunResult{}, err
 		}
 
-		request := Request{
-			Model:         e.model,
-			ThinkingLevel: e.thinkingLevel,
-			Instructions:  e.instructions,
-			Inputs:        inputs,
-			Tools:         e.tools.Definitions(),
-			State:         state,
-		}
-		if compactor, canCompact := e.provider.(Compactor); canCompact && compactor.ShouldCompact(request, contextUsage) {
-			if err := emit(sink, Event{Kind: EventCompactionStart}); err != nil {
-				return RunResult{}, err
-			}
-
-			compacted, err := compactor.Compact(ctx, request)
-			if err != nil {
-				e.preserveContinuation(request.State, contextUsage, request.Inputs)
-				if ctxErr := ctx.Err(); ctxErr != nil {
-					return RunResult{}, ctxErr
-				}
-				return RunResult{}, fmt.Errorf("agent: compact context: %w", err)
-			}
-			if len(compacted.State) == 0 {
-				e.preserveContinuation(request.State, contextUsage, request.Inputs)
-				return RunResult{}, errors.New("agent: compact context: provider returned empty state")
-			}
-
-			state = compacted.State
-			inputs = nil
-			addUsage(&result.Usage, compacted.Usage)
-			request.State = state
-			request.Inputs = nil
-
-			if err := emit(sink, Event{Kind: EventCompactionEnd}); err != nil {
-				return RunResult{}, err
-			}
-		}
-
-		streamedTools := make(map[string]streamedTool)
-		streamedOrder := make([]string, 0)
-		var providerEventMu sync.Mutex
-		emitProviderEvent := func(event Event) error {
-			providerEventMu.Lock()
-			defer providerEventMu.Unlock()
-			return emit(sink, event)
-		}
-		response, err := e.provider.Generate(ctx, request, func(text string) error {
-			return emitProviderEvent(Event{Kind: EventAssistantText, Text: text})
-		}, func(text string) error {
-			return emitProviderEvent(Event{Kind: EventAssistantReasoning, Text: text})
-		}, func(snapshot ToolCallSnapshot) error {
-			providerEventMu.Lock()
-			defer providerEventMu.Unlock()
-
-			if snapshot.ID == "" || snapshot.Name == "" {
-				return nil
-			}
-			presentation := clonePresentation(e.tools.Presentation(snapshot))
-			call := ToolCall{ID: snapshot.ID, Name: snapshot.Name, Arguments: []byte(snapshot.RawArguments)}
-			current, exists := streamedTools[snapshot.ID]
-			if exists && presentationsEqual(current.presentation, presentation) {
-				current.call = call
-				streamedTools[snapshot.ID] = current
-				return nil
-			}
-
-			kind := EventToolUpdate
-			if !exists {
-				kind = EventToolStart
-				streamedOrder = append(streamedOrder, snapshot.ID)
-			}
-			if err := emit(sink, Event{Kind: kind, Call: call, Presentation: presentation}); err != nil {
-				return err
-			}
-			streamedTools[snapshot.ID] = streamedTool{call: call, presentation: presentation}
-			return nil
-		})
+		request := e.request(current)
+		var compactedUsage Usage
+		var err error
+		request, current, compactedUsage, err = e.compact(ctx, sink, request, current)
+		addUsage(&result.Usage, compactedUsage)
 		if err != nil {
-			e.preserveContinuation(request.State, contextUsage, request.Inputs)
-			closeErr := closeStreamedTools(sink, streamedTools, streamedOrder, err)
+			current.checkpoint(e)
+			return RunResult{}, err
+		}
+
+		toolEvents := newToolEventTracker(e.tools, sink)
+		response, err := e.provider.Generate(ctx, request, func(text string) error {
+			return toolEvents.emitProvider(Event{Kind: EventAssistantText, Text: text})
+		}, func(text string) error {
+			return toolEvents.emitProvider(Event{Kind: EventAssistantReasoning, Text: text})
+		}, toolEvents.observeSnapshot)
+		if err != nil {
+			current.checkpoint(e)
+			closeErr := toolEvents.closeRemaining(err)
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return RunResult{}, ctxErr
 			}
@@ -161,144 +102,148 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			return RunResult{}, fmt.Errorf("agent: generate response: %w", err)
 		}
 
-		state = response.State
-		contextUsage = response.Usage
+		responseContinuation := continuation{state: response.State, usage: response.Usage}
 		addUsage(&result.Usage, response.Usage)
 		if err := emit(sink, Event{Kind: EventContextUsage, Usage: response.Usage}); err != nil {
+			responseContinuation.inputs = unexecutedToolInputs(response.ToolCalls, err)
+			responseContinuation.checkpoint(e)
+			return RunResult{}, err
+		}
+		if err := toolEvents.reconcileFinal(response.ToolCalls); err != nil {
+			responseContinuation.inputs = unexecutedToolInputs(response.ToolCalls, err)
+			responseContinuation.checkpoint(e)
 			return RunResult{}, err
 		}
 
-		finalCalls := make(map[string]struct{}, len(response.ToolCalls))
-		for _, call := range response.ToolCalls {
-			finalCalls[call.ID] = struct{}{}
-		}
-		for _, callID := range streamedOrder {
-			streamed, exists := streamedTools[callID]
-			if !exists {
-				continue
-			}
-			if _, exists := finalCalls[callID]; exists {
-				continue
-			}
-			result := ToolResult{CallID: callID, Tool: streamed.call.Name, Output: "tool call did not complete", IsError: true}
-			if err := emit(sink, Event{Kind: EventToolEnd, Call: streamed.call, Presentation: streamed.presentation, Result: result}); err != nil {
-				return RunResult{}, err
-			}
-			delete(streamedTools, callID)
-		}
-
 		if len(response.ToolCalls) == 0 {
-			e.state = state
-			e.contextUsage = contextUsage
-			e.pendingInputs = nil
+			responseContinuation.checkpoint(e)
 			result.Text = response.Text
 			return result, nil
 		}
 
 		if toolRounds >= e.maxToolRounds {
-			e.preserveContinuation(state, contextUsage, unexecutedToolInputs(response.ToolCalls, errToolRoundLimit))
-			if err := closeStreamedTools(sink, streamedTools, streamedOrder, errToolRoundLimit); err != nil {
+			responseContinuation.inputs = unexecutedToolInputs(response.ToolCalls, errToolRoundLimit)
+			responseContinuation.checkpoint(e)
+			if err := toolEvents.closeRemaining(errToolRoundLimit); err != nil {
 				return RunResult{}, err
 			}
 			return RunResult{}, errToolRoundLimit
 		}
 		toolRounds++
 
-		inputs = make([]Input, 0, len(response.ToolCalls))
-		for callIndex, call := range response.ToolCalls {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				inputs = append(inputs, unexecutedToolInputs(response.ToolCalls[callIndex:], ctxErr)...)
-				e.preserveContinuation(state, contextUsage, inputs)
-				_ = closeStreamedTools(sink, streamedTools, streamedOrder, ctxErr)
-				return RunResult{}, ctxErr
-			}
-
-			snapshot := completeToolCallSnapshot(call)
-			presentation := clonePresentation(e.tools.Presentation(snapshot))
-			streamed, exists := streamedTools[call.ID]
-			if !exists {
-				if err := emit(sink, Event{Kind: EventToolStart, Call: call, Presentation: presentation}); err != nil {
-					return RunResult{}, err
-				}
-				streamed = streamedTool{call: call, presentation: presentation}
-				streamedOrder = append(streamedOrder, call.ID)
-			} else if !presentationsEqual(streamed.presentation, presentation) {
-				if err := emit(sink, Event{Kind: EventToolUpdate, Call: call, Presentation: presentation}); err != nil {
-					return RunResult{}, err
-				}
-				streamed.presentation = presentation
-			}
-			streamed.call = call
-			streamedTools[call.ID] = streamed
-			if err := emit(sink, Event{Kind: EventToolExecute, Call: call, Presentation: streamed.presentation}); err != nil {
-				return RunResult{}, err
-			}
-
-			var toolUpdateMu sync.Mutex
-			var updateErr error
-			toolResult, err := e.executeTool(ctx, call, func(next ToolPresentation) error {
-				toolUpdateMu.Lock()
-				defer toolUpdateMu.Unlock()
-				if updateErr != nil {
-					return updateErr
-				}
-				next = clonePresentation(next)
-				if presentationsEqual(streamed.presentation, next) {
-					return nil
-				}
-				if eventErr := emit(sink, Event{Kind: EventToolUpdate, Call: call, Presentation: next}); eventErr != nil {
-					updateErr = eventErr
-					return eventErr
-				}
-				streamed.presentation = next
-				streamedTools[call.ID] = streamed
-				return nil
-			})
-			toolUpdateMu.Lock()
-			currentUpdateErr := updateErr
-			streamed = streamedTools[call.ID]
-			toolUpdateMu.Unlock()
-			if currentUpdateErr != nil {
-				toolResult = failedToolResult(call, toolResult, currentUpdateErr)
-				inputs = append(inputs, toolResultInput(toolResult))
-				inputs = append(inputs, unexecutedToolInputs(response.ToolCalls[callIndex+1:], currentUpdateErr)...)
-				e.preserveContinuation(state, contextUsage, inputs)
-				return RunResult{}, currentUpdateErr
-			}
-			if err != nil {
-				if toolResult.Output == "" {
-					toolResult.Output = err.Error()
-				}
-				toolResult.IsError = true
-				endErr := emit(sink, Event{Kind: EventToolEnd, Call: call, Presentation: streamed.presentation, Result: toolResult})
-				delete(streamedTools, call.ID)
-				closeErr := closeStreamedTools(sink, streamedTools, streamedOrder, err)
-				inputs = append(inputs, toolResultInput(toolResult))
-				inputs = append(inputs, unexecutedToolInputs(response.ToolCalls[callIndex+1:], err)...)
-				e.preserveContinuation(state, contextUsage, inputs)
-				if ctxErr := ctx.Err(); ctxErr != nil {
-					return RunResult{}, ctxErr
-				}
-				if endErr != nil {
-					return RunResult{}, endErr
-				}
-				if closeErr != nil {
-					return RunResult{}, closeErr
-				}
-				return RunResult{}, err
-			}
-
-			if err := emit(sink, Event{Kind: EventToolEnd, Call: call, Presentation: streamed.presentation, Result: toolResult}); err != nil {
-				inputs = append(inputs, toolResultInput(toolResult))
-				inputs = append(inputs, unexecutedToolInputs(response.ToolCalls[callIndex+1:], err)...)
-				e.preserveContinuation(state, contextUsage, inputs)
-				return RunResult{}, err
-			}
-			delete(streamedTools, call.ID)
-
-			inputs = append(inputs, toolResultInput(toolResult))
+		inputs, err := e.executeToolRound(ctx, response.ToolCalls, toolEvents)
+		responseContinuation.inputs = inputs
+		current = responseContinuation
+		if err != nil {
+			current.checkpoint(e)
+			return RunResult{}, err
 		}
 	}
+}
+
+func (e *Engine) request(current continuation) Request {
+	return Request{
+		Model:         e.model,
+		ThinkingLevel: e.thinkingLevel,
+		Instructions:  e.instructions,
+		Inputs:        current.inputs,
+		Tools:         e.tools.Definitions(),
+		State:         current.state,
+	}
+}
+
+func (e *Engine) compact(ctx context.Context, sink EventSink, request Request, current continuation) (Request, continuation, Usage, error) {
+	compactor, canCompact := e.provider.(Compactor)
+	if !canCompact || !compactor.ShouldCompact(request, current.usage) {
+		return request, current, Usage{}, nil
+	}
+
+	if err := emit(sink, Event{Kind: EventCompactionStart}); err != nil {
+		return request, current, Usage{}, err
+	}
+
+	compacted, err := compactor.Compact(ctx, request)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return request, current, Usage{}, ctxErr
+		}
+		return request, current, Usage{}, fmt.Errorf("agent: compact context: %w", err)
+	}
+	if len(compacted.State) == 0 {
+		return request, current, Usage{}, errors.New("agent: compact context: provider returned empty state")
+	}
+
+	current = continuation{state: compacted.State}
+	request.State = current.state
+	request.Inputs = nil
+	if err := emit(sink, Event{Kind: EventCompactionEnd, Usage: compacted.Usage}); err != nil {
+		return request, current, compacted.Usage, err
+	}
+	return request, current, compacted.Usage, nil
+}
+
+func (e *Engine) executeToolRound(ctx context.Context, calls []ToolCall, toolEvents *toolEventTracker) ([]Input, error) {
+	inputs := make([]Input, 0, len(calls))
+	for callIndex, call := range calls {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			inputs = append(inputs, unexecutedToolInputs(calls[callIndex:], ctxErr)...)
+			_ = toolEvents.closeRemaining(ctxErr)
+			return inputs, ctxErr
+		}
+
+		if err := toolEvents.beginExecution(call); err != nil {
+			inputs = append(inputs, unexecutedToolInputs(calls[callIndex:], err)...)
+			return inputs, err
+		}
+
+		toolResult, err := e.executeTool(ctx, call, toolEvents.update(call))
+		if updateErr := toolEvents.updateError(); updateErr != nil {
+			toolResult = failedToolResult(call, toolResult, updateErr)
+			inputs = append(inputs, toolResultInput(toolResult))
+			inputs = append(inputs, unexecutedToolInputs(calls[callIndex+1:], updateErr)...)
+			return inputs, updateErr
+		}
+		if err != nil {
+			if toolResult.Output == "" {
+				toolResult.Output = err.Error()
+			}
+			toolResult.IsError = true
+			endErr := toolEvents.end(call, toolResult)
+			closeErr := toolEvents.closeRemaining(err)
+			inputs = append(inputs, toolResultInput(toolResult))
+			inputs = append(inputs, unexecutedToolInputs(calls[callIndex+1:], err)...)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return inputs, ctxErr
+			}
+			if endErr != nil {
+				return inputs, endErr
+			}
+			if closeErr != nil {
+				return inputs, closeErr
+			}
+			return inputs, err
+		}
+
+		if err := toolEvents.end(call, toolResult); err != nil {
+			inputs = append(inputs, toolResultInput(toolResult))
+			inputs = append(inputs, unexecutedToolInputs(calls[callIndex+1:], err)...)
+			return inputs, err
+		}
+		inputs = append(inputs, toolResultInput(toolResult))
+	}
+	return inputs, nil
+}
+
+type continuation struct {
+	state  []byte
+	usage  Usage
+	inputs []Input
+}
+
+func (current continuation) checkpoint(engine *Engine) {
+	engine.state = append([]byte(nil), current.state...)
+	engine.contextUsage = current.usage
+	engine.pendingInputs = append([]Input(nil), current.inputs...)
 }
 
 func (e *Engine) SetThinkingLevel(level ThinkingLevel) error {
@@ -313,12 +258,6 @@ func (e *Engine) Reset() {
 	e.state = nil
 	e.contextUsage = Usage{}
 	e.pendingInputs = nil
-}
-
-func (e *Engine) preserveContinuation(state []byte, usage Usage, inputs []Input) {
-	e.state = append([]byte(nil), state...)
-	e.contextUsage = usage
-	e.pendingInputs = append([]Input(nil), inputs...)
 }
 
 func toolResultInput(result ToolResult) Input {
@@ -369,62 +308,6 @@ func (e *Engine) executeTool(ctx context.Context, call ToolCall, updates ToolUpd
 		result = ToolResult{CallID: call.ID, Tool: call.Name, Output: err.Error(), IsError: true}
 	}
 	return result, nil
-}
-
-type streamedTool struct {
-	call         ToolCall
-	presentation ToolPresentation
-}
-
-func completeToolCallSnapshot(call ToolCall) ToolCallSnapshot {
-	arguments := make(map[string]any)
-	if err := json.Unmarshal(call.Arguments, &arguments); err != nil || arguments == nil {
-		arguments = make(map[string]any)
-	}
-	return ToolCallSnapshot{
-		ID:           call.ID,
-		Name:         call.Name,
-		RawArguments: string(call.Arguments),
-		Arguments:    arguments,
-		Complete:     true,
-	}
-}
-
-func closeStreamedTools(sink EventSink, tools map[string]streamedTool, order []string, cause error) error {
-	for _, callID := range order {
-		streamed, exists := tools[callID]
-		if !exists {
-			continue
-		}
-		result := ToolResult{
-			CallID:  streamed.call.ID,
-			Tool:    streamed.call.Name,
-			Output:  cause.Error(),
-			IsError: true,
-		}
-		if err := emit(sink, Event{Kind: EventToolEnd, Call: streamed.call, Presentation: streamed.presentation, Result: result}); err != nil {
-			return err
-		}
-		delete(tools, callID)
-	}
-	return nil
-}
-
-func clonePresentation(presentation ToolPresentation) ToolPresentation {
-	presentation.Lines = append([]string(nil), presentation.Lines...)
-	return presentation
-}
-
-func presentationsEqual(left, right ToolPresentation) bool {
-	if left.Title != right.Title || left.Arguments != right.Arguments || left.Markdown != right.Markdown || left.Outcome != right.Outcome || len(left.Lines) != len(right.Lines) {
-		return false
-	}
-	for index := range left.Lines {
-		if left.Lines[index] != right.Lines[index] {
-			return false
-		}
-	}
-	return true
 }
 
 func emit(sink EventSink, event Event) error {

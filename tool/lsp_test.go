@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"go.lsp.dev/protocol"
+	"go.lsp.dev/uri"
 
 	"yaah/agent"
 )
@@ -23,15 +25,58 @@ func TestNewLSPOmitsToolsWhenServerIsUnavailable(t *testing.T) {
 	}
 }
 
-func TestNewLSPRegistersToolsWhenServerIsAvailable(t *testing.T) {
+func TestNewLSPRegistersFullAndReadOnlyToolSets(t *testing.T) {
 	directory := t.TempDir()
 	if err := os.WriteFile(filepath.Join(directory, "gopls"), []byte(""), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", directory)
 
-	if tools := NewLSP(t.TempDir()); len(tools) != 6 {
-		t.Fatalf("NewLSP() returned %d tools", len(tools))
+	for _, test := range []struct {
+		name      string
+		tools     []Tool
+		wantNames []string
+	}{
+		{
+			name:      "full",
+			tools:     NewLSP(t.TempDir()),
+			wantNames: []string{lspDiagnosticsToolName, lspHoverToolName, lspDefinitionToolName, lspReferencesToolName, lspSymbolsToolName, lspRenameToolName},
+		},
+		{
+			name:      "read-only",
+			tools:     NewReadOnlyLSP(t.TempDir()),
+			wantNames: []string{lspDiagnosticsToolName, lspHoverToolName, lspDefinitionToolName, lspReferencesToolName, lspSymbolsToolName},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if len(test.tools) != len(test.wantNames) {
+				t.Fatalf("tool count = %d, want %d", len(test.tools), len(test.wantNames))
+			}
+			closers := 0
+			for index, current := range test.tools {
+				if current.Definition().Name != test.wantNames[index] {
+					t.Fatalf("tool %d = %q, want %q", index, current.Definition().Name, test.wantNames[index])
+				}
+				if _, ok := current.(interface{ Close() error }); ok {
+					closers++
+				}
+			}
+			if closers != 1 {
+				t.Fatalf("closers = %d, want 1", closers)
+			}
+			owner, ok := test.tools[0].(*lspToolOwner)
+			if !ok {
+				t.Fatalf("owner type = %T", test.tools[0])
+			}
+			stops := 0
+			owner.client.sessions["test"] = &lspSession{stopSession: func() { stops++ }}
+			if err := NewRegistry(test.tools...).Close(); err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+			if stops != 1 {
+				t.Fatalf("session stops = %d, want 1", stops)
+			}
+		})
 	}
 }
 
@@ -63,8 +108,8 @@ func Use(value Thing) int {
 	if len(tools) != 6 {
 		t.Fatalf("NewLSP() returned %d tools", len(tools))
 	}
-	defer tools[0].(*lspTool).client.stop()
 	registry := NewRegistry(tools...)
+	defer registry.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -113,6 +158,127 @@ func Use(value Thing) int {
 	}
 	if strings.Count(string(updated), "Number") != 2 || strings.Contains(string(updated), "Value") {
 		t.Fatalf("renamed source:\n%s", updated)
+	}
+}
+
+type documentLifecycleServer struct {
+	protocol.UnimplementedServer
+	openErr         error
+	closeErr        error
+	closeContextErr error
+	opened          int
+	closed          int
+}
+
+func (s *documentLifecycleServer) DidOpen(ctx context.Context, _ *protocol.DidOpenTextDocumentParams) error {
+	s.opened++
+	if s.openErr != nil {
+		return s.openErr
+	}
+	return ctx.Err()
+}
+
+func (s *documentLifecycleServer) DidClose(ctx context.Context, _ *protocol.DidCloseTextDocumentParams) error {
+	s.closed++
+	s.closeContextErr = ctx.Err()
+	return s.closeErr
+}
+
+func TestLSPDocumentOpenFailureInvalidatesSession(t *testing.T) {
+	openErr := errors.New("open failed")
+	for _, test := range []struct {
+		name    string
+		openErr error
+		cancel  bool
+	}{
+		{name: "server failure", openErr: openErr},
+		{name: "canceled context", cancel: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := &documentLifecycleServer{openErr: test.openErr}
+			stopped := 0
+			session := &lspSession{
+				server:      server,
+				client:      &lspProtocolClient{diagnostics: make(map[uri.URI][]protocol.Diagnostic), waiters: make(map[uri.URI][]chan []protocol.Diagnostic)},
+				stopSession: func() { stopped++ },
+			}
+			config := lspServerConfig{name: "test", languageID: "go"}
+			client := newLSPClient(t.TempDir())
+			client.sessions[config.name] = session
+			ctx, cancel := context.WithCancel(context.Background())
+			if test.cancel {
+				cancel()
+			} else {
+				defer cancel()
+			}
+
+			requestCalled := false
+			_, err := client.withOpenDocument(ctx, config, session, filepath.Join(t.TempDir(), "sample.go"), []byte("package sample"), func(context.Context, *lspSession, protocol.TextDocumentIdentifier) (any, error) {
+				requestCalled = true
+				return nil, nil
+			})
+			wantErr := test.openErr
+			if test.cancel {
+				wantErr = context.Canceled
+			}
+			if !errors.Is(err, wantErr) || requestCalled || server.opened != 1 || server.closed != 0 || stopped != 1 {
+				t.Fatalf("error=%v requestCalled=%v opened=%d closed=%d stopped=%d", err, requestCalled, server.opened, server.closed, stopped)
+			}
+			if _, cached := client.sessions[config.name]; cached {
+				t.Fatal("failed session remained cached")
+			}
+		})
+	}
+}
+
+func TestLSPDocumentCleanupUsesLiveContextAndInvalidatesFailedSession(t *testing.T) {
+	requestErr := errors.New("request failed")
+	closeErr := errors.New("close failed")
+	for _, test := range []struct {
+		name        string
+		requestErr  error
+		closeErr    error
+		wantStopped int
+		wantCached  bool
+	}{
+		{name: "close succeeds", requestErr: requestErr, wantCached: true},
+		{name: "request and close fail", requestErr: requestErr, closeErr: closeErr, wantStopped: 1},
+		{name: "only close fails", closeErr: closeErr, wantStopped: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := &documentLifecycleServer{closeErr: test.closeErr}
+			stopped := 0
+			session := &lspSession{
+				server:      server,
+				client:      &lspProtocolClient{diagnostics: make(map[uri.URI][]protocol.Diagnostic), waiters: make(map[uri.URI][]chan []protocol.Diagnostic)},
+				stopSession: func() { stopped++ },
+			}
+			config := lspServerConfig{name: "test", languageID: "go"}
+			client := newLSPClient(t.TempDir())
+			client.sessions[config.name] = session
+			ctx, cancel := context.WithCancel(context.Background())
+
+			response, err := client.withOpenDocument(ctx, config, session, filepath.Join(t.TempDir(), "sample.go"), []byte("package sample"), func(context.Context, *lspSession, protocol.TextDocumentIdentifier) (any, error) {
+				cancel()
+				return "response", test.requestErr
+			})
+			if response != "response" || test.requestErr != nil && !errors.Is(err, test.requestErr) {
+				t.Fatalf("response=%v error=%v", response, err)
+			}
+			if test.closeErr != nil && !errors.Is(err, test.closeErr) {
+				t.Fatalf("error = %v, want close failure", err)
+			}
+			if server.opened != 1 || server.closed != 1 || server.closeContextErr != nil {
+				t.Fatalf("opened=%d closed=%d close context error=%v", server.opened, server.closed, server.closeContextErr)
+			}
+			if stopped != test.wantStopped {
+				t.Fatalf("stopped=%d, want %d", stopped, test.wantStopped)
+			}
+			_, cached := client.sessions[config.name]
+			if cached != test.wantCached {
+				t.Fatalf("cached=%v, want %v", cached, test.wantCached)
+			}
+		})
 	}
 }
 

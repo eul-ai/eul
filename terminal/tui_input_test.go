@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"strings"
@@ -169,8 +170,9 @@ func TestTUIModelCyclesSupportedThinkingLevels(t *testing.T) {
 		},
 	})
 	for _, want := range []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh} {
-		if err := model.cycleThinkingLevel(); err != nil {
-			t.Fatal(err)
+		exit, err := handleModelKey(model, keyEvent{code: keyShiftTab})
+		if err != nil || exit {
+			t.Fatalf("handleKey() exit=%v error=%v", exit, err)
 		}
 		if model.thinkingLevel != want {
 			t.Fatalf("thinking level = %q, want %q", model.thinkingLevel, want)
@@ -189,12 +191,24 @@ func TestTUIModelKeepsThinkingLevelWhenUpdateFails(t *testing.T) {
 			return errors.New("update failed")
 		},
 	})
-	if err := model.cycleThinkingLevel(); err == nil {
-		t.Fatal("cycleThinkingLevel() succeeded")
+	exit, err := handleModelKey(model, keyEvent{code: keyShiftTab})
+	if err != nil || exit {
+		t.Fatalf("handleKey() exit=%v error=%v", exit, err)
 	}
 	if model.thinkingLevel != agent.ThinkingMedium {
 		t.Fatalf("thinking level = %q", model.thinkingLevel)
 	}
+	if model.activity.kind != activityError || model.activity.detail != "update failed" {
+		t.Fatalf("activity = %+v", model.activity)
+	}
+}
+
+func handleModelKey(model *tuiModel, key keyEvent) (bool, error) {
+	messages := make(chan engineMessage, 1)
+	stopped := make(chan struct{})
+	defer close(stopped)
+	var cancel context.CancelFunc
+	return handleKey(context.Background(), model, &fakeEngine{}, key, messages, stopped, &cancel)
 }
 
 func TestTUIModelPreservesPastedNewlinesAndRejectsNUL(t *testing.T) {

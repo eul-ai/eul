@@ -88,34 +88,49 @@ func (s *Subagent) Execute(ctx context.Context, arguments json.RawMessage, updat
 	if err != nil {
 		return errorResult(subagentToolName, err), nil
 	}
-	if len(args.Tasks) == 0 {
-		return errorResult(subagentToolName, fmt.Errorf("at least one task is required")), nil
-	}
-	if len(args.Tasks) > maxSubagents {
-		return errorResult(subagentToolName, fmt.Errorf("tasks must not exceed %d", maxSubagents)), nil
-	}
-	for _, task := range args.Tasks {
-		if strings.TrimSpace(task) == "" {
-			return errorResult(subagentToolName, fmt.Errorf("tasks must be nonempty")), nil
-		}
+	if err := validateSubagentTasks(args.Tasks); err != nil {
+		return errorResult(subagentToolName, err), nil
 	}
 
+	results, err := s.collectResults(ctx, args.Tasks, updates)
+	if err != nil {
+		return agent.ToolResult{}, err
+	}
+	return formatSubagentResults(results), nil
+}
+
+func validateSubagentTasks(tasks []string) error {
+	if len(tasks) == 0 {
+		return fmt.Errorf("at least one task is required")
+	}
+	if len(tasks) > maxSubagents {
+		return fmt.Errorf("tasks must not exceed %d", maxSubagents)
+	}
+	for _, task := range tasks {
+		if strings.TrimSpace(task) == "" {
+			return fmt.Errorf("tasks must be nonempty")
+		}
+	}
+	return nil
+}
+
+func (s *Subagent) collectResults(ctx context.Context, tasks []string, updates agent.ToolUpdateSink) ([]subagentResult, error) {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	started := time.Now()
-	statuses := make([]subagentStatus, len(args.Tasks))
+	statuses := make([]subagentStatus, len(tasks))
 	for index := range statuses {
 		statuses[index] = subagentStatus{state: "running", started: started}
 	}
-	if err := publishSubagentUpdate(updates, args.Tasks, statuses, started); err != nil {
-		return agent.ToolResult{}, err
+	if err := publishSubagentUpdate(updates, tasks, statuses, started); err != nil {
+		return nil, err
 	}
 
-	completions := make(chan subagentCompletion, len(args.Tasks))
-	progress := make(chan subagentProgress, len(args.Tasks))
-	for index, task := range args.Tasks {
-		go func() {
+	completions := make(chan subagentCompletion, len(tasks))
+	progress := make(chan subagentProgress, len(tasks))
+	for index, task := range tasks {
+		go func(index int, task string) {
 			result, runErr := s.run(runCtx, task, func(usage agent.Usage) {
 				select {
 				case progress <- subagentProgress{index: index, usage: usage}:
@@ -127,14 +142,14 @@ func (s *Subagent) Execute(ctx context.Context, arguments json.RawMessage, updat
 				elapsed: time.Since(started),
 				result:  subagentResult{text: result.Text, usage: result.Usage, err: runErr},
 			}
-		}()
+		}(index, task)
 	}
 
 	ticker := time.NewTicker(subagentUpdateInterval)
 	defer ticker.Stop()
 
-	results := make([]subagentResult, len(args.Tasks))
-	remaining := len(args.Tasks)
+	results := make([]subagentResult, len(tasks))
+	remaining := len(tasks)
 	var updateErr error
 	for remaining > 0 {
 		select {
@@ -152,7 +167,7 @@ func (s *Subagent) Execute(ctx context.Context, arguments json.RawMessage, updat
 				status.state = "complete"
 			}
 			if updateErr == nil {
-				updateErr = publishSubagentUpdate(updates, args.Tasks, statuses, time.Now())
+				updateErr = publishSubagentUpdate(updates, tasks, statuses, time.Now())
 				if updateErr != nil {
 					cancel()
 				}
@@ -163,14 +178,14 @@ func (s *Subagent) Execute(ctx context.Context, arguments json.RawMessage, updat
 			}
 			statuses[childProgress.index].tokens = childProgress.usage.TotalTokens
 			if updateErr == nil {
-				updateErr = publishSubagentUpdate(updates, args.Tasks, statuses, time.Now())
+				updateErr = publishSubagentUpdate(updates, tasks, statuses, time.Now())
 				if updateErr != nil {
 					cancel()
 				}
 			}
 		case now := <-ticker.C:
 			if updateErr == nil {
-				updateErr = publishSubagentUpdate(updates, args.Tasks, statuses, now)
+				updateErr = publishSubagentUpdate(updates, tasks, statuses, now)
 				if updateErr != nil {
 					cancel()
 				}
@@ -179,12 +194,15 @@ func (s *Subagent) Execute(ctx context.Context, arguments json.RawMessage, updat
 	}
 
 	if updateErr != nil {
-		return agent.ToolResult{}, updateErr
+		return nil, updateErr
 	}
 	if err := ctx.Err(); err != nil {
-		return agent.ToolResult{}, err
+		return nil, err
 	}
+	return results, nil
+}
 
+func formatSubagentResults(results []subagentResult) agent.ToolResult {
 	var output strings.Builder
 	failed := false
 	for index, result := range results {
@@ -204,7 +222,7 @@ func (s *Subagent) Execute(ctx context.Context, arguments json.RawMessage, updat
 	if truncateHead(formatted, defaultMaxLines, defaultMaxBytes).truncated {
 		formatted = boundHead(formatted, "subagent output truncated")
 	}
-	return agent.ToolResult{Output: formatted, IsError: failed}, nil
+	return agent.ToolResult{Output: formatted, IsError: failed}
 }
 
 func publishSubagentUpdate(updates agent.ToolUpdateSink, tasks []string, statuses []subagentStatus, now time.Time) error {

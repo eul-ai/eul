@@ -377,6 +377,261 @@ func TestEngineGenerationFailurePreservesPriorContextAndUserInput(t *testing.T) 
 	}
 }
 
+func TestEngineCompactionSinkFailuresPreservePhaseContinuation(t *testing.T) {
+	failure := errors.New("sink failed")
+	for _, test := range []struct {
+		name       string
+		failKind   EventKind
+		wantState  string
+		wantUsage  Usage
+		wantInputs []Input
+	}{
+		{
+			name:      "start",
+			failKind:  EventCompactionStart,
+			wantState: "stable",
+			wantUsage: Usage{TotalTokens: 100},
+			wantInputs: []Input{
+				{Kind: InputUser, Text: "first"},
+				{Kind: InputUser, Text: "continue"},
+			},
+		},
+		{
+			name:      "end",
+			failKind:  EventCompactionEnd,
+			wantState: "compact",
+			wantInputs: []Input{
+				{Kind: InputUser, Text: "continue"},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			generateCalls := 0
+			provider := streamingProviderFunc(func(_ context.Context, request Request, _ TextSink, _ TextSink, _ ToolCallSink) (Response, error) {
+				generateCalls++
+				if string(request.State) != test.wantState || !slices.Equal(request.Inputs, test.wantInputs) {
+					t.Fatalf("continued request = %+v", request)
+				}
+				return Response{Text: "recovered", State: []byte("recovered")}, nil
+			})
+			compactChecks := 0
+			compacting := &compactingProvider{
+				Provider: provider,
+				shouldCompact: func(request Request, usage Usage) bool {
+					compactChecks++
+					if compactChecks > 1 && usage != test.wantUsage {
+						t.Fatalf("continued usage = %+v, want %+v", usage, test.wantUsage)
+					}
+					return compactChecks == 1
+				},
+				compact: func(context.Context, Request) (CompactResponse, error) {
+					return CompactResponse{State: []byte("compact"), Usage: Usage{TotalTokens: 42}}, nil
+				},
+			}
+			engine := newTestEngine(t, compacting, &fakeToolbox{}, Options{})
+			engine.state = []byte("stable")
+			engine.contextUsage = Usage{TotalTokens: 100}
+
+			failed := false
+			_, err := engine.Run(context.Background(), "first", func(event Event) error {
+				if event.Kind == test.failKind && !failed {
+					failed = true
+					return failure
+				}
+				return nil
+			})
+			if !errors.Is(err, failure) {
+				t.Fatalf("Run() error = %v, want sink failure", err)
+			}
+			result, err := engine.Run(context.Background(), "continue", discardEvents)
+			if err != nil || result.Text != "recovered" || generateCalls != 1 {
+				t.Fatalf("continued result = %+v, error = %v, generate calls = %d", result, err, generateCalls)
+			}
+		})
+	}
+}
+
+func TestEngineEventSinkFailuresPreserveResponseContinuation(t *testing.T) {
+	failure := errors.New("sink failed")
+	synthetic := func(id, tool string) Input {
+		return Input{Kind: InputToolResult, CallID: id, Tool: tool, Text: "tool was not executed: " + failure.Error(), IsError: true}
+	}
+
+	for _, test := range []struct {
+		name         string
+		failKind     EventKind
+		response     Response
+		stream       func(ToolCallSink) error
+		toolbox      *fakeToolbox
+		wantPending  []Input
+		wantExecuted int
+	}{
+		{
+			name:     "context usage",
+			failKind: EventContextUsage,
+			response: Response{State: []byte("calls"), ToolCalls: []ToolCall{
+				{ID: "one", Name: "write", Arguments: json.RawMessage(`{}`)},
+				{ID: "two", Name: "read", Arguments: json.RawMessage(`{}`)},
+			}},
+			toolbox:     &fakeToolbox{},
+			wantPending: []Input{synthetic("one", "write"), synthetic("two", "read")},
+		},
+		{
+			name:     "tool start",
+			failKind: EventToolStart,
+			response: Response{State: []byte("calls"), ToolCalls: []ToolCall{
+				{ID: "one", Name: "write", Arguments: json.RawMessage(`{}`)},
+				{ID: "two", Name: "read", Arguments: json.RawMessage(`{}`)},
+			}},
+			toolbox:     &fakeToolbox{},
+			wantPending: []Input{synthetic("one", "write"), synthetic("two", "read")},
+		},
+		{
+			name:     "final tool update",
+			failKind: EventToolUpdate,
+			response: Response{State: []byte("calls"), ToolCalls: []ToolCall{
+				{ID: "one", Name: "write", Arguments: json.RawMessage(`{"content":"complete"}`)},
+			}},
+			stream: func(sink ToolCallSink) error {
+				return sink(ToolCallSnapshot{ID: "one", Name: "write", RawArguments: `{"content":"partial"}`, Arguments: map[string]any{"content": "partial"}})
+			},
+			toolbox: &fakeToolbox{presentation: func(snapshot ToolCallSnapshot) ToolPresentation {
+				content, _ := snapshot.Arguments["content"].(string)
+				return ToolPresentation{Title: "write", Lines: []string{content}}
+			}},
+			wantPending: []Input{synthetic("one", "write")},
+		},
+		{
+			name:        "tool execute",
+			failKind:    EventToolExecute,
+			response:    Response{State: []byte("calls"), ToolCalls: []ToolCall{{ID: "one", Name: "write", Arguments: json.RawMessage(`{}`)}}},
+			toolbox:     &fakeToolbox{},
+			wantPending: []Input{synthetic("one", "write")},
+		},
+		{
+			name:     "tool progress update",
+			failKind: EventToolUpdate,
+			response: Response{State: []byte("calls"), ToolCalls: []ToolCall{{ID: "one", Name: "write", Arguments: json.RawMessage(`{}`)}}},
+			toolbox: &fakeToolbox{executeWithUpdates: func(_ context.Context, _ ToolCall, updates ToolUpdateSink) (ToolResult, error) {
+				_ = updates(ToolPresentation{Title: "write", Lines: []string{"changed"}})
+				return ToolResult{Output: "changed"}, nil
+			}},
+			wantPending:  []Input{{Kind: InputToolResult, CallID: "one", Tool: "write", Text: "changed", IsError: true}},
+			wantExecuted: 1,
+		},
+		{
+			name:     "tool end",
+			failKind: EventToolEnd,
+			response: Response{State: []byte("calls"), ToolCalls: []ToolCall{{ID: "one", Name: "write", Arguments: json.RawMessage(`{}`)}}},
+			toolbox: &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
+				return ToolResult{Output: "changed"}, nil
+			}},
+			wantPending:  []Input{{Kind: InputToolResult, CallID: "one", Tool: "write", Text: "changed"}},
+			wantExecuted: 1,
+		},
+		{
+			name:     "incomplete streamed tool end",
+			failKind: EventToolEnd,
+			response: Response{State: []byte("complete")},
+			stream: func(sink ToolCallSink) error {
+				return sink(ToolCallSnapshot{ID: "ghost", Name: "write", RawArguments: `{}`, Arguments: map[string]any{}})
+			},
+			toolbox: &fakeToolbox{},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			providerCalls := 0
+			executed := 0
+			if test.toolbox.execute != nil {
+				execute := test.toolbox.execute
+				test.toolbox.execute = func(ctx context.Context, call ToolCall) (ToolResult, error) {
+					executed++
+					return execute(ctx, call)
+				}
+			}
+			if test.toolbox.executeWithUpdates != nil {
+				execute := test.toolbox.executeWithUpdates
+				test.toolbox.executeWithUpdates = func(ctx context.Context, call ToolCall, updates ToolUpdateSink) (ToolResult, error) {
+					executed++
+					return execute(ctx, call, updates)
+				}
+			}
+			provider := streamingProviderFunc(func(_ context.Context, request Request, _ TextSink, _ TextSink, onToolCall ToolCallSink) (Response, error) {
+				providerCalls++
+				if providerCalls == 1 {
+					if test.stream != nil {
+						if err := test.stream(onToolCall); err != nil {
+							return Response{}, err
+						}
+					}
+					return test.response, nil
+				}
+
+				wantInputs := append([]Input(nil), test.wantPending...)
+				wantInputs = append(wantInputs, Input{Kind: InputUser, Text: "continue"})
+				if string(request.State) != string(test.response.State) || !slices.Equal(request.Inputs, wantInputs) {
+					t.Fatalf("continued request = %+v, want state %q and inputs %+v", request, test.response.State, wantInputs)
+				}
+				return Response{Text: "recovered", State: []byte("recovered")}, nil
+			})
+			engine := newTestEngine(t, provider, test.toolbox, Options{})
+			failed := false
+			_, err := engine.Run(context.Background(), "first", func(event Event) error {
+				if event.Kind == test.failKind && !failed {
+					failed = true
+					return failure
+				}
+				return nil
+			})
+			if !errors.Is(err, failure) {
+				t.Fatalf("Run() error = %v, want sink failure", err)
+			}
+			result, err := engine.Run(context.Background(), "continue", discardEvents)
+			if err != nil || result.Text != "recovered" || executed != test.wantExecuted {
+				t.Fatalf("continued result = %+v, error = %v, executions = %d", result, err, executed)
+			}
+		})
+	}
+}
+
+func TestEngineCancellationAfterCompletedToolRoundPreservesResult(t *testing.T) {
+	providerCalls := 0
+	provider := streamingProviderFunc(func(_ context.Context, request Request, _ TextSink, _ TextSink, _ ToolCallSink) (Response, error) {
+		providerCalls++
+		if providerCalls == 1 {
+			return Response{State: []byte("calls"), ToolCalls: []ToolCall{{ID: "one", Name: "write", Arguments: json.RawMessage(`{}`)}}}, nil
+		}
+		wantInputs := []Input{
+			{Kind: InputToolResult, CallID: "one", Tool: "write", Text: "changed"},
+			{Kind: InputUser, Text: "continue"},
+		}
+		if string(request.State) != "calls" || !slices.Equal(request.Inputs, wantInputs) {
+			t.Fatalf("continued request = %+v", request)
+		}
+		return Response{Text: "recovered", State: []byte("recovered")}, nil
+	})
+	toolExecutions := 0
+	toolbox := &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
+		toolExecutions++
+		return ToolResult{Output: "changed"}, nil
+	}}
+	engine := newTestEngine(t, provider, toolbox, Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err := engine.Run(ctx, "first", func(event Event) error {
+		if event.Kind == EventToolEnd {
+			cancel()
+		}
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context.Canceled", err)
+	}
+	result, err := engine.Run(context.Background(), "continue", discardEvents)
+	if err != nil || result.Text != "recovered" || toolExecutions != 1 {
+		t.Fatalf("continued result = %+v, error = %v, executions = %d", result, err, toolExecutions)
+	}
+}
+
 func TestEngineCompactsBeforeNextUserGeneration(t *testing.T) {
 	scripted := &scriptedProvider{t: t, steps: []providerStep{
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
@@ -423,6 +678,9 @@ func TestEngineCompactsBeforeNextUserGeneration(t *testing.T) {
 	}
 	if got := eventKinds(events); !slices.Equal(got, []EventKind{EventCompactionStart, EventCompactionEnd, EventContextUsage}) {
 		t.Fatalf("event kinds = %v", got)
+	}
+	if events[1].Usage.TotalTokens != 105 {
+		t.Fatalf("compaction usage event = %+v", events[1])
 	}
 	if events[2].Usage.TotalTokens != 23 {
 		t.Fatalf("context usage event = %+v", events[2])
@@ -799,7 +1057,7 @@ func TestEngineSendsCurrentThinkingLevel(t *testing.T) {
 	}
 }
 
-func TestEngineReturnsCanceledContextBeforeAcquiringAvailableGate(t *testing.T) {
+func TestEngineRejectsPreCanceledContext(t *testing.T) {
 	provider := &scriptedProvider{t: t, steps: []providerStep{
 		func(context.Context, Request, TextSink) (Response, error) {
 			t.Fatal("provider called for an already canceled run")

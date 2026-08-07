@@ -282,9 +282,9 @@ func (m *tuiModel) clearInput() {
 	m.historyDraft = ""
 }
 
-func (m *tuiModel) cycleThinkingLevel() error {
+func (m *tuiModel) nextThinkingLevel() (agent.ThinkingLevel, error) {
 	if m.setThinkingLevel == nil || len(m.thinkingLevels) == 0 {
-		return errors.New("thinking level selection is unavailable")
+		return "", errors.New("thinking level selection is unavailable")
 	}
 
 	next := m.thinkingLevels[0]
@@ -294,11 +294,7 @@ func (m *tuiModel) cycleThinkingLevel() error {
 			break
 		}
 	}
-	if err := m.setThinkingLevel(next); err != nil {
-		return err
-	}
-	m.thinkingLevel = next
-	return nil
+	return next, nil
 }
 
 func (m *tuiModel) backspace() {

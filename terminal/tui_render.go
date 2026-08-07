@@ -113,11 +113,6 @@ func maximumInputHeight(height int) int {
 	}
 }
 
-func renderFrame(model *tuiModel) string {
-	var renderer tuiRenderer
-	return renderer.render(model)
-}
-
 func (r *tuiRenderer) render(model *tuiModel) string {
 	next := buildTerminalFrame(model)
 	if next.width < 1 || next.height < 1 {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -161,6 +162,38 @@ func TestReadChecksCancellationWhileScanning(t *testing.T) {
 	if result != (agent.ToolResult{}) {
 		t.Fatalf("read cancellation result = %+v", result)
 	}
+}
+
+func TestScanReadRangeValidatesTheFullStream(t *testing.T) {
+	lateBinary := strings.NewReader("selected\nignored\x00")
+	if _, err := scanReadRange(context.Background(), lateBinary, 1, 1); !errors.Is(err, errReadBinary) {
+		t.Fatalf("late binary error = %v", err)
+	}
+
+	readErr := errors.New("read failed")
+	source := io.MultiReader(strings.NewReader("text"), failingReader{err: readErr})
+	if _, err := scanReadRange(context.Background(), source, 1, 1); !errors.Is(err, readErr) {
+		t.Fatalf("reader error = %v", err)
+	}
+
+	output, err := scanReadRange(context.Background(), strings.NewReader(strings.Repeat("é", defaultMaxBytes)), 1, 1)
+	if err != nil || len(output) > defaultMaxBytes || !utf8.ValidString(output) || !strings.Contains(output, "truncated") {
+		t.Fatalf("long-line output bytes=%d valid=%t error=%v", len(output), utf8.ValidString(output), err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := scanReadRange(ctx, strings.NewReader("text"), 1, 1); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation error = %v", err)
+	}
+}
+
+type failingReader struct {
+	err error
+}
+
+func (r failingReader) Read([]byte) (int, error) {
+	return 0, r.err
 }
 
 func TestWriteCreatesParentsOverwritesAndPreservesMode(t *testing.T) {

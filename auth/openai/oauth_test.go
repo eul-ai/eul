@@ -247,6 +247,81 @@ func TestRefreshPersistsRotatedCredentials(t *testing.T) {
 	}
 }
 
+func TestNewManagerCopiesInjectedHTTPClientBeforeApplyingPolicy(t *testing.T) {
+	redirect := func(*http.Request, []*http.Request) error { return nil }
+	transport := http.DefaultTransport
+	injected := &http.Client{Transport: transport, CheckRedirect: redirect}
+
+	manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{HTTPClient: injected})
+	if manager.httpClient == injected || manager.httpClient.Transport != transport || manager.httpClient.Timeout != defaultHTTPTimeout {
+		t.Fatalf("owned client=%p injected=%p transport=%T timeout=%s", manager.httpClient, injected, manager.httpClient.Transport, manager.httpClient.Timeout)
+	}
+	if injected.Timeout != 0 || injected.CheckRedirect == nil {
+		t.Fatalf("injected client was mutated: timeout=%s redirect missing=%t", injected.Timeout, injected.CheckRedirect == nil)
+	}
+	request := httptest.NewRequest(http.MethodGet, "https://example.com", nil)
+	if err := manager.httpClient.CheckRedirect(request, nil); !errors.Is(err, http.ErrUseLastResponse) {
+		t.Fatalf("owned redirect policy error = %v", err)
+	}
+	if err := injected.CheckRedirect(request, nil); err != nil {
+		t.Fatalf("injected redirect policy changed: %v", err)
+	}
+}
+
+func TestDeviceExchangeUsesPollingDeadline(t *testing.T) {
+	access := testJWT(t, "device-account", "deadline")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/accounts/deviceauth/usercode":
+			writeTestJSON(t, writer, map[string]any{"device_auth_id": "device-id", "user_code": "code", "interval": 0})
+		case "/api/accounts/deviceauth/token":
+			writeTestJSON(t, writer, map[string]any{"authorization_code": "authorization", "code_verifier": "verifier"})
+		case "/oauth/token":
+			writeTestJSON(t, writer, map[string]any{"access_token": access, "refresh_token": "refresh", "expires_in": 3600})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	sawDeadline := false
+	transport := oauthRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path == "/oauth/token" {
+			deadline, ok := request.Context().Deadline()
+			remaining := time.Until(deadline)
+			if !ok || remaining <= 0 || remaining > deviceTimeout {
+				t.Errorf("token exchange deadline ok=%t remaining=%s", ok, remaining)
+			}
+			sawDeadline = ok
+		}
+		return http.DefaultTransport.RoundTrip(request)
+	})
+	manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{
+		AuthBaseURL: server.URL,
+		HTTPClient:  &http.Client{Transport: transport},
+		Sleep:       func(context.Context, time.Duration) error { return nil },
+	})
+	if _, err := manager.Login(context.Background(), LoginDevice, Interaction{DeviceCode: func(DeviceCode) error { return nil }}); err != nil {
+		t.Fatal(err)
+	}
+	if !sawDeadline {
+		t.Fatal("token exchange did not use polling context")
+	}
+}
+
+func TestParseIntervalRejectsNonFiniteValues(t *testing.T) {
+	for _, raw := range []string{`"NaN"`, `"Inf"`, `"-Inf"`} {
+		if _, err := parseInterval(json.RawMessage(raw)); err == nil {
+			t.Fatalf("parseInterval(%s) succeeded", raw)
+		}
+	}
+	for _, raw := range []string{`1.5`, `"1.5"`} {
+		if interval, err := parseInterval(json.RawMessage(raw)); err != nil || interval != 1500*time.Millisecond {
+			t.Fatalf("parseInterval(%s) = %s, %v", raw, interval, err)
+		}
+	}
+}
+
 func TestOAuthHTTPRedirectBoundsAndCancellation(t *testing.T) {
 	t.Run("redirect", func(t *testing.T) {
 		destinationCalls := 0
@@ -421,6 +496,12 @@ func testJWT(t *testing.T, accountID, marker string) string {
 func sha256Base64(value string) string {
 	hash := sha256.Sum256([]byte(value))
 	return base64.RawURLEncoding.EncodeToString(hash[:])
+}
+
+type oauthRoundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (function oauthRoundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
 }
 
 func writeTestJSON(t *testing.T, writer http.ResponseWriter, value any) {
