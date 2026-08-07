@@ -25,8 +25,9 @@ const (
 )
 
 type Options struct {
-	HTTPClient *http.Client
-	BaseURL    string
+	HTTPClient       *http.Client
+	BaseURL          string
+	ReasoningSummary ReasoningSummary
 }
 
 type CodexCredential struct {
@@ -48,15 +49,22 @@ type Client struct {
 	maxResponseBytes int64
 	maxErrorBytes    int64
 	maxStateBytes    int
+	reasoningSummary ReasoningSummary
 }
 
 var (
-	_ agent.Provider      = (*Client)(nil)
-	_ agent.Compactor     = (*Client)(nil)
-	_ agent.UsageProvider = (*Client)(nil)
+	_ agent.Provider              = (*Client)(nil)
+	_ agent.Compactor             = (*Client)(nil)
+	_ agent.UsageProvider         = (*Client)(nil)
+	_ agent.ModelMetadataProvider = (*Client)(nil)
 )
 
 func NewCodex(source CodexTokenSource, options Options) (*Client, error) {
+	reasoningSummary, err := ParseReasoningSummary(string(options.ReasoningSummary))
+	if err != nil {
+		return nil, err
+	}
+
 	baseURL := options.BaseURL
 	if baseURL == "" {
 		baseURL = defaultBaseURL
@@ -90,7 +98,15 @@ func NewCodex(source CodexTokenSource, options Options) (*Client, error) {
 		maxResponseBytes: defaultMaxResponseBytes,
 		maxErrorBytes:    defaultMaxErrorBytes,
 		maxStateBytes:    defaultMaxStateBytes,
+		reasoningSummary: reasoningSummary,
 	}, nil
+}
+
+func (*Client) ModelMetadata(model string) agent.ModelMetadata {
+	return agent.ModelMetadata{
+		ContextWindow:  contextWindow(model),
+		ThinkingLevels: supportedThinkingLevels(model),
+	}
 }
 
 func (c *Client) Generate(ctx context.Context, request agent.Request, onText, onReasoning agent.TextSink, onToolCall agent.ToolCallSink) (agent.Response, error) {
@@ -98,7 +114,7 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 		return agent.Response{}, err
 	}
 
-	reasoning, err := responseReasoningFor(request.Model, request.ThinkingLevel)
+	reasoning, err := responseReasoningFor(request.Model, request.ThinkingLevel, c.reasoningSummary)
 	if err != nil {
 		return agent.Response{}, c.errorf("%v", err)
 	}
@@ -173,7 +189,7 @@ func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.Comp
 		return agent.CompactResponse{}, err
 	}
 
-	reasoning, err := responseReasoningFor(request.Model, request.ThinkingLevel)
+	reasoning, err := responseReasoningFor(request.Model, request.ThinkingLevel, c.reasoningSummary)
 	if err != nil {
 		return agent.CompactResponse{}, c.errorf("%v", err)
 	}

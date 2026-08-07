@@ -6,9 +6,11 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"yaah/agent"
+	openaiadapter "yaah/provider/openai"
 )
 
 func TestParseAgentArgumentsSelectsPromptSource(t *testing.T) {
@@ -44,6 +46,28 @@ func TestParseAgentArgumentsSelectsPromptSource(t *testing.T) {
 				t.Fatalf("arguments = %+v, want %+v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestOpenAIOptionsFromEnvironment(t *testing.T) {
+	values := map[string]string{}
+	options, err := openAIOptionsFromEnvironment(func(key string) string { return values[key] })
+	if err != nil || options.ReasoningSummary != openaiadapter.ReasoningSummaryAuto {
+		t.Fatalf("default options = %+v, err = %v", options, err)
+	}
+
+	values["OPENAI_REASONING_SUMMARY"] = "detailed"
+	options, err = openAIOptionsFromEnvironment(func(key string) string { return values[key] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.ReasoningSummary != openaiadapter.ReasoningSummaryDetailed {
+		t.Fatalf("reasoning summary = %q", options.ReasoningSummary)
+	}
+
+	values["OPENAI_REASONING_SUMMARY"] = "verbose"
+	if _, err := openAIOptionsFromEnvironment(func(key string) string { return values[key] }); err == nil || !strings.Contains(err.Error(), "OPENAI_REASONING_SUMMARY") {
+		t.Fatalf("invalid summary error = %v", err)
 	}
 }
 

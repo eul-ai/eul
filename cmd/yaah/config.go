@@ -101,7 +101,7 @@ func resolveAgentConfig(arguments agentArguments, runtime appRuntime) (agentConf
 
 	return agentConfig{
 		model:               arguments.model,
-		thinkingLevel:       openaiadapter.ClampThinkingLevel(arguments.model, arguments.thinkingLevel),
+		thinkingLevel:       arguments.thinkingLevel,
 		cwd:                 cwd,
 		projectInstructions: projectInstructions,
 		prompt:              arguments.prompt,
@@ -126,6 +126,14 @@ func readPipedPrompt(reader io.Reader) (string, error) {
 		return "", errors.New("piped prompt must be nonempty")
 	}
 	return prompt, nil
+}
+
+func openAIOptionsFromEnvironment(getenv func(string) string) (openaiadapter.Options, error) {
+	summary, err := openaiadapter.ParseReasoningSummary(getenv("OPENAI_REASONING_SUMMARY"))
+	if err != nil {
+		return openaiadapter.Options{}, fmt.Errorf("OPENAI_REASONING_SUMMARY: %w", err)
+	}
+	return openaiadapter.Options{ReasoningSummary: summary}, nil
 }
 
 func validateModel(model string) error {

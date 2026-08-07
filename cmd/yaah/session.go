@@ -19,8 +19,13 @@ type agentSession struct {
 	oneShot         bool
 }
 
-func newAgentSession(config agentConfig, runtime appRuntime, tokenSource openaiadapter.CodexTokenSource) (*agentSession, error) {
-	provider, err := runtime.newProvider(tokenSource)
+func newAgentSession(
+	config agentConfig,
+	runtime appRuntime,
+	tokenSource openaiadapter.CodexTokenSource,
+	providerOptions openaiadapter.Options,
+) (*agentSession, error) {
+	provider, err := runtime.newProvider(tokenSource, providerOptions)
 	if err != nil {
 		return nil, fmt.Errorf("configure provider: %w", err)
 	}
@@ -29,9 +34,13 @@ func newAgentSession(config agentConfig, runtime appRuntime, tokenSource openaia
 		loadUsage = usageProvider.Usage
 	}
 
-	currentThinkingLevel := config.thinkingLevel
+	metadata := agent.ModelMetadata{ThinkingLevels: agent.ThinkingLevels()}
+	if metadataProvider, ok := provider.(agent.ModelMetadataProvider); ok {
+		metadata = metadataProvider.ModelMetadata(config.model)
+	}
+	currentThinkingLevel := metadata.ClampThinkingLevel(config.thinkingLevel)
 	subagent := tool.NewSubagent(func(ctx context.Context, task string, usage func(agent.Usage)) (agent.RunResult, error) {
-		return runChildAgent(ctx, runtime.newProvider, tokenSource, config, currentThinkingLevel, task, usage)
+		return runChildAgent(ctx, runtime.newProvider, tokenSource, providerOptions, config, currentThinkingLevel, task, usage)
 	})
 	registry := buildTools(config.cwd, subagent)
 	engine := agent.New(provider, registry, agent.Options{
@@ -59,8 +68,8 @@ func newAgentSession(config agentConfig, runtime appRuntime, tokenSource openaia
 			Model:            config.model,
 			WorkingDirectory: config.cwd,
 			ThinkingLevel:    currentThinkingLevel,
-			ThinkingLevels:   openaiadapter.SupportedThinkingLevels(config.model),
-			ContextWindow:    openaiadapter.ContextWindow(config.model),
+			ThinkingLevels:   metadata.ThinkingLevels,
+			ContextWindow:    metadata.ContextWindow,
 			Interrupts:       runtime.interrupts,
 			SetThinkingLevel: setThinkingLevel,
 			LoadUsage:        loadUsage,
@@ -87,12 +96,13 @@ func runChildAgent(
 	ctx context.Context,
 	newProvider providerFactory,
 	tokenSource openaiadapter.CodexTokenSource,
+	providerOptions openaiadapter.Options,
 	config agentConfig,
 	thinkingLevel agent.ThinkingLevel,
 	task string,
 	usage func(agent.Usage),
 ) (agent.RunResult, error) {
-	provider, err := newProvider(tokenSource)
+	provider, err := newProvider(tokenSource, providerOptions)
 	if err != nil {
 		return agent.RunResult{}, fmt.Errorf("configure subagent provider: %w", err)
 	}

@@ -26,6 +26,13 @@ func (usageCapableProvider) Usage(context.Context) (agent.ProviderUsage, error) 
 	return agent.ProviderUsage{}, nil
 }
 
+func (usageCapableProvider) ModelMetadata(string) agent.ModelMetadata {
+	return agent.ModelMetadata{
+		ContextWindow:  123_000,
+		ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh},
+	}
+}
+
 func (*closeRecordingTool) Definition() agent.ToolDefinition {
 	return agent.ToolDefinition{Name: "close-recording"}
 }
@@ -43,11 +50,11 @@ func TestNewAgentSessionWiresOptionalProviderUsage(t *testing.T) {
 	provider := usageCapableProvider{providerFunction: func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
 		return agent.Response{}, nil
 	}}
-	runtime := appRuntime{newProvider: func(openaiadapter.CodexTokenSource) (agent.Provider, error) {
+	runtime := appRuntime{newProvider: func(openaiadapter.CodexTokenSource, openaiadapter.Options) (agent.Provider, error) {
 		return provider, nil
 	}}
 	cwd := t.TempDir()
-	session, err := newAgentSession(agentConfig{model: "model", thinkingLevel: agent.ThinkingMedium, cwd: cwd}, runtime, nil)
+	session, err := newAgentSession(agentConfig{model: "model", thinkingLevel: agent.ThinkingMedium, cwd: cwd}, runtime, nil, openaiadapter.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,6 +64,9 @@ func TestNewAgentSessionWiresOptionalProviderUsage(t *testing.T) {
 	}
 	if session.terminalOptions.WorkingDirectory != cwd {
 		t.Fatalf("terminal working directory = %q, want %q", session.terminalOptions.WorkingDirectory, cwd)
+	}
+	if session.terminalOptions.ContextWindow != 123_000 || session.terminalOptions.ThinkingLevel != agent.ThinkingHigh {
+		t.Fatalf("terminal metadata = %+v", session.terminalOptions)
 	}
 }
 

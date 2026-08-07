@@ -58,11 +58,14 @@ func (levels ThinkingLevelMap) SupportedLevels() []ThinkingLevel {
 }
 
 func (levels ThinkingLevelMap) Clamp(level ThinkingLevel) ThinkingLevel {
-	if _, ok := levels[level]; ok {
+	return ClampThinkingLevel(level, levels.SupportedLevels())
+}
+
+func ClampThinkingLevel(level ThinkingLevel, supported []ThinkingLevel) ThinkingLevel {
+	if slices.Contains(supported, level) {
 		return level
 	}
 
-	supported := levels.SupportedLevels()
 	requested := slices.Index(thinkingLevels, level)
 	if requested < 0 {
 		if len(supported) > 0 {
@@ -71,12 +74,12 @@ func (levels ThinkingLevelMap) Clamp(level ThinkingLevel) ThinkingLevel {
 		return ThinkingOff
 	}
 	for index := requested + 1; index < len(thinkingLevels); index++ {
-		if _, ok := levels[thinkingLevels[index]]; ok {
+		if slices.Contains(supported, thinkingLevels[index]) {
 			return thinkingLevels[index]
 		}
 	}
 	for index := requested - 1; index >= 0; index-- {
-		if _, ok := levels[thinkingLevels[index]]; ok {
+		if slices.Contains(supported, thinkingLevels[index]) {
 			return thinkingLevels[index]
 		}
 	}

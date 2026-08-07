@@ -35,16 +35,12 @@ var models = map[string]modelMetadata{
 	"gpt-5.6-sol":   {contextWindow: 272_000, thinkingLevels: extendedThinkingLevelMap},
 }
 
-func ContextWindow(model string) int64 {
+func contextWindow(model string) int64 {
 	return models[model].contextWindow
 }
 
-func SupportedThinkingLevels(model string) []agent.ThinkingLevel {
+func supportedThinkingLevels(model string) []agent.ThinkingLevel {
 	return thinkingLevelMap(model).SupportedLevels()
-}
-
-func ClampThinkingLevel(model string, level agent.ThinkingLevel) agent.ThinkingLevel {
-	return thinkingLevelMap(model).Clamp(level)
 }
 
 func thinkingLevelMap(model string) agent.ThinkingLevelMap {
@@ -54,7 +50,32 @@ func thinkingLevelMap(model string) agent.ThinkingLevelMap {
 	return standardThinkingLevelMap
 }
 
-func responseReasoningFor(model string, level agent.ThinkingLevel) (*responseReasoning, error) {
+type ReasoningSummary string
+
+const (
+	ReasoningSummaryAuto     ReasoningSummary = "auto"
+	ReasoningSummaryConcise  ReasoningSummary = "concise"
+	ReasoningSummaryDetailed ReasoningSummary = "detailed"
+	ReasoningSummaryNone     ReasoningSummary = "none"
+)
+
+func ParseReasoningSummary(value string) (ReasoningSummary, error) {
+	if value == "" {
+		return ReasoningSummaryAuto, nil
+	}
+	summary := ReasoningSummary(value)
+	switch summary {
+	case ReasoningSummaryAuto, ReasoningSummaryConcise, ReasoningSummaryDetailed, ReasoningSummaryNone:
+		return summary, nil
+	default:
+		return "", fmt.Errorf("reasoning summary must be one of auto, concise, detailed, or none")
+	}
+}
+
+func responseReasoningFor(model string, level agent.ThinkingLevel, summary ReasoningSummary) (*responseReasoning, error) {
+	if summary == "" {
+		summary = ReasoningSummaryAuto
+	}
 	if level == "" {
 		level = agent.DefaultThinkingLevel
 	}
@@ -64,8 +85,8 @@ func responseReasoningFor(model string, level agent.ThinkingLevel) (*responseRea
 	}
 
 	reasoning := &responseReasoning{Effort: effort}
-	if level != agent.ThinkingOff {
-		reasoning.Summary = "auto"
+	if level != agent.ThinkingOff && summary != ReasoningSummaryNone {
+		reasoning.Summary = string(summary)
 	}
 	return reasoning, nil
 }

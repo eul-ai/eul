@@ -8,19 +8,41 @@ import (
 	"yaah/agent"
 )
 
-func TestContextWindow(t *testing.T) {
-	if got := ContextWindow("gpt-5.6-sol"); got != 272_000 {
-		t.Fatalf("ContextWindow() = %d", got)
+func TestClientReasoningSummaryAndModelMetadata(t *testing.T) {
+	client, err := NewCodex(nil, Options{ReasoningSummary: ReasoningSummaryDetailed})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := ContextWindow("unknown"); got != 0 {
-		t.Fatalf("ContextWindow(unknown) = %d", got)
+	if client.reasoningSummary != ReasoningSummaryDetailed {
+		t.Fatalf("reasoning summary = %q", client.reasoningSummary)
+	}
+	defaultClient, err := NewCodex(nil, Options{})
+	if err != nil || defaultClient.reasoningSummary != ReasoningSummaryAuto {
+		t.Fatalf("default reasoning summary = %q, err = %v", defaultClient.reasoningSummary, err)
+	}
+	metadata := client.ModelMetadata("unknown")
+	if metadata.ContextWindow != 0 || metadata.ClampThinkingLevel(agent.ThinkingXHigh) != agent.ThinkingHigh {
+		t.Fatalf("metadata = %+v", metadata)
+	}
+
+	if _, err := NewCodex(nil, Options{ReasoningSummary: ReasoningSummary("verbose")}); err == nil {
+		t.Fatal("invalid reasoning summary option was accepted")
+	}
+}
+
+func TestContextWindow(t *testing.T) {
+	if got := contextWindow("gpt-5.6-sol"); got != 272_000 {
+		t.Fatalf("contextWindow() = %d", got)
+	}
+	if got := contextWindow("unknown"); got != 0 {
+		t.Fatalf("contextWindow(unknown) = %d", got)
 	}
 }
 
 func TestThinkingLevelMappings(t *testing.T) {
 	allLevels := agent.ThinkingLevels()
 	for _, model := range []string{"gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"} {
-		if got := SupportedThinkingLevels(model); !slices.Equal(got, allLevels) {
+		if got := supportedThinkingLevels(model); !slices.Equal(got, allLevels) {
 			t.Fatalf("%s levels = %v, want %v", model, got, allLevels)
 		}
 	}
@@ -31,11 +53,8 @@ func TestThinkingLevelMappings(t *testing.T) {
 		agent.ThinkingMedium,
 		agent.ThinkingHigh,
 	}
-	if got := SupportedThinkingLevels("unknown"); !slices.Equal(got, standardLevels) {
+	if got := supportedThinkingLevels("unknown"); !slices.Equal(got, standardLevels) {
 		t.Fatalf("unknown model levels = %v, want %v", got, standardLevels)
-	}
-	if got := ClampThinkingLevel("unknown", agent.ThinkingXHigh); got != agent.ThinkingHigh {
-		t.Fatalf("ClampThinkingLevel() = %q, want high", got)
 	}
 
 	for _, test := range []struct {
@@ -51,7 +70,7 @@ func TestThinkingLevelMappings(t *testing.T) {
 		{level: agent.ThinkingXHigh, wantEffort: "xhigh", wantSummary: "auto"},
 		{level: agent.ThinkingMax, wantEffort: "max", wantSummary: "auto"},
 	} {
-		reasoning, err := responseReasoningFor("gpt-5.6-sol", test.level)
+		reasoning, err := responseReasoningFor("gpt-5.6-sol", test.level, ReasoningSummaryAuto)
 		if err != nil {
 			t.Fatalf("responseReasoningFor(%q) error = %v", test.level, err)
 		}
@@ -60,18 +79,47 @@ func TestThinkingLevelMappings(t *testing.T) {
 		}
 	}
 
-	unknown, err := responseReasoningFor("unknown", agent.ThinkingHigh)
+	unknown, err := responseReasoningFor("unknown", agent.ThinkingHigh, ReasoningSummaryAuto)
 	if err != nil || unknown.Effort != "high" {
 		t.Fatalf("unknown model high reasoning = %+v, %v", unknown, err)
 	}
 
-	off, err := responseReasoningFor("gpt-5.6-sol", agent.ThinkingOff)
+	off, err := responseReasoningFor("gpt-5.6-sol", agent.ThinkingOff, ReasoningSummaryDetailed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	encoded, err := json.Marshal(off)
 	if err != nil || string(encoded) != `{"effort":"none"}` {
 		t.Fatalf("off reasoning = %s, %v", encoded, err)
+	}
+
+	for _, test := range []struct {
+		value ReasoningSummary
+		want  string
+	}{
+		{value: ReasoningSummaryAuto, want: "auto"},
+		{value: ReasoningSummaryConcise, want: "concise"},
+		{value: ReasoningSummaryDetailed, want: "detailed"},
+		{value: ReasoningSummaryNone},
+	} {
+		reasoning, err := responseReasoningFor("gpt-5.6-sol", agent.ThinkingHigh, test.value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reasoning.Summary != test.want {
+			t.Fatalf("summary %q = %q, want %q", test.value, reasoning.Summary, test.want)
+		}
+	}
+}
+
+func TestParseReasoningSummary(t *testing.T) {
+	for _, value := range []string{"", "auto", "concise", "detailed", "none"} {
+		if _, err := ParseReasoningSummary(value); err != nil {
+			t.Fatalf("ParseReasoningSummary(%q): %v", value, err)
+		}
+	}
+	if _, err := ParseReasoningSummary("verbose"); err == nil {
+		t.Fatal("invalid reasoning summary was accepted")
 	}
 }
 

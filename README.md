@@ -33,6 +33,11 @@ are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`; the default i
 Unavailable levels are clamped to the nearest level supported by the selected
 model; `xhigh` and `max` require explicit model support.
 
+`OPENAI_REASONING_SUMMARY` controls OpenAI reasoning summaries and defaults to
+`auto`. Accepted values are `auto`, `concise`, `detailed`, and `none`. It changes
+summary verbosity independently of reasoning effort; thinking level `off` still
+disables summaries.
+
 Yaah uses its own ChatGPT OAuth credential from `YAAH_HOME/auth.json` or the
 operating system's user configuration directory. It does not read Pi or Codex
 credential stores.

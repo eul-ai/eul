@@ -24,7 +24,7 @@ const (
 	exitInterrupted = 130
 )
 
-type providerFactory func(openaiadapter.CodexTokenSource) (agent.Provider, error)
+type providerFactory func(openaiadapter.CodexTokenSource, openaiadapter.Options) (agent.Provider, error)
 
 type oauthManager interface {
 	Login(context.Context, oauth.LoginMethod, oauth.Interaction) (oauth.Credentials, error)
@@ -63,8 +63,8 @@ func main() {
 			return oauth.NewManager(path, oauth.Options{}), nil
 		},
 		openURL: openBrowser,
-		newProvider: func(source openaiadapter.CodexTokenSource) (agent.Provider, error) {
-			return openaiadapter.NewCodex(source, openaiadapter.Options{})
+		newProvider: func(source openaiadapter.CodexTokenSource, options openaiadapter.Options) (agent.Provider, error) {
+			return openaiadapter.NewCodex(source, options)
 		},
 	})
 
@@ -96,6 +96,12 @@ func run(arguments []string, runtime appRuntime) int {
 		return exitUsage
 	}
 
+	providerOptions, err := openAIOptionsFromEnvironment(runtime.getenv)
+	if err != nil {
+		writeCLIError(runtime.stderr, "%v", err)
+		return exitUsage
+	}
+
 	tokenSource, err := resolveTokenSource(runtime)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -110,7 +116,7 @@ func run(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "%v", err)
 		return exitFailure
 	}
-	session, err := newAgentSession(config, runtime, tokenSource)
+	session, err := newAgentSession(config, runtime, tokenSource, providerOptions)
 	if err != nil {
 		writeCLIError(runtime.stderr, "%v", err)
 		return exitFailure

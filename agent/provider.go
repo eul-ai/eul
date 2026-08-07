@@ -85,6 +85,19 @@ type UsageProvider interface {
 	Usage(context.Context) (ProviderUsage, error)
 }
 
+type ModelMetadata struct {
+	ContextWindow  int64
+	ThinkingLevels []ThinkingLevel
+}
+
+func (metadata ModelMetadata) ClampThinkingLevel(level ThinkingLevel) ThinkingLevel {
+	return ClampThinkingLevel(level, metadata.ThinkingLevels)
+}
+
+type ModelMetadataProvider interface {
+	ModelMetadata(model string) ModelMetadata
+}
+
 type Compactor interface {
 	ShouldCompact(Request, Usage) bool
 	Compact(context.Context, Request) (CompactResponse, error)

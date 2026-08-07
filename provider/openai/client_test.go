@@ -62,7 +62,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 			writer.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if wire.Model != "test-model" || wire.Instructions != "system instructions" || wire.Store || !wire.Stream || !slices.Equal(wire.Include, []string{"reasoning.encrypted_content"}) || wire.Reasoning == nil || wire.Reasoning.Effort != "high" || wire.Reasoning.Summary != "auto" {
+		if wire.Model != "test-model" || wire.Instructions != "system instructions" || wire.Store || !wire.Stream || !slices.Equal(wire.Include, []string{"reasoning.encrypted_content"}) || wire.Reasoning == nil || wire.Reasoning.Effort != "high" || wire.Reasoning.Summary != "detailed" {
 			t.Errorf("request %d shape = %+v", call, wire)
 		}
 		if len(wire.Tools) != 2 || wire.Tools[0].Type != "function" || wire.Tools[0].Name != "read" || wire.Tools[1].Name != "bash" || wire.Tools[0].Strict != nil || wire.Tools[1].Strict != nil || wire.Tools[0].Parameters.Type != "object" || wire.Tools[0].Parameters.AdditionalProperties == nil || *wire.Tools[0].Parameters.AdditionalProperties || !slices.Equal(wire.Tools[0].Parameters.Required, []string{"path"}) {
@@ -123,7 +123,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestClient(t, token, server.URL, Options{})
+	client := newTestClient(t, token, server.URL, Options{ReasoningSummary: ReasoningSummaryDetailed})
 	tools := []agent.ToolDefinition{strictTestTool("read"), strictTestTool("bash")}
 	var sinkText []string
 	first, err := client.Generate(context.Background(), agent.Request{
