@@ -415,23 +415,60 @@ func toolConversationLines(block conversationBlock, width int, style lineStyle, 
 		appendInlineSpan(&heading, " — "+outcome, inlineStyle{foreground: titleForeground})
 	}
 
-	lines := make([]styledLine, 0, len(block.tool.Lines)+2)
+	lines := make([]styledLine, 0, len(block.tool.Lines)+len(block.tool.Diff)+2)
 	for _, line := range wrapInlineSpans(heading, width) {
 		lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding})
 	}
-	if len(block.tool.Lines) == 0 {
+	if len(block.tool.Lines) == 0 && len(block.tool.Diff) == 0 {
 		return lines
 	}
 	lines = append(lines, styledLine{style: style, padding: padding})
-	body := strings.Join(block.tool.Lines, "\n")
-	if block.tool.Markdown {
-		for _, line := range wrapInlineMarkdown(body, width) {
-			lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding})
+	if len(block.tool.Lines) > 0 {
+		body := strings.Join(block.tool.Lines, "\n")
+		if block.tool.Markdown {
+			for _, line := range wrapInlineMarkdown(body, width) {
+				lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding})
+			}
+		} else {
+			for _, line := range wrapText(body, width) {
+				lines = append(lines, styledLine{text: line, style: style, padding: padding})
+			}
 		}
-		return lines
 	}
-	for _, line := range wrapText(body, width) {
-		lines = append(lines, styledLine{text: line, style: style, padding: padding})
+	lines = append(lines, toolDiffConversationLines(block.tool.Diff, width, style, padding)...)
+	return lines
+}
+
+func toolDiffConversationLines(diff []agent.ToolDiffLine, width int, style lineStyle, padding int) []styledLine {
+	lineNumberWidth := 1
+	for _, line := range diff {
+		lineNumberWidth = max(lineNumberWidth, len(strconv.Itoa(max(line.OldLine, line.NewLine))))
+	}
+
+	lines := make([]styledLine, 0, len(diff))
+	for _, line := range diff {
+		prefix := " "
+		lineNumber := line.OldLine
+		lineStyle := style
+		lineStyle.foreground = currentTheme.diffContext
+		switch line.Kind {
+		case agent.ToolDiffLineAdded:
+			prefix = "+"
+			lineNumber = line.NewLine
+			lineStyle.foreground = currentTheme.diffAdded
+		case agent.ToolDiffLineRemoved:
+			prefix = "-"
+			lineStyle.foreground = currentTheme.diffRemoved
+		}
+
+		lineNumberText := strings.Repeat(" ", lineNumberWidth)
+		if lineNumber > 0 {
+			lineNumberText = fmt.Sprintf("%*d", lineNumberWidth, lineNumber)
+		}
+		text := prefix + lineNumberText + " " + line.Text
+		for _, wrapped := range wrapText(text, width) {
+			lines = append(lines, styledLine{text: wrapped, style: lineStyle, padding: padding})
+		}
 	}
 	return lines
 }

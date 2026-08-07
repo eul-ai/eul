@@ -67,6 +67,7 @@ func (r *Registry) Presentation(snapshot agent.ToolCallSnapshot) agent.ToolPrese
 		presentation.Title = snapshot.Name
 	}
 	presentation.Lines = append([]string(nil), presentation.Lines...)
+	presentation.Diff = append([]agent.ToolDiffLine(nil), presentation.Diff...)
 	return presentation
 }
 

@@ -151,7 +151,7 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates a
 	if updates != nil {
 		presentation := bashPresentation(args.Command)
 		presentation.Outcome = strings.Trim(status, "[]")
-		if err := updates(presentation); err != nil {
+		if err := updates.Update(presentation); err != nil {
 			return result, err
 		}
 	}

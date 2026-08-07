@@ -21,6 +21,9 @@ type theme struct {
 	muted                 terminalColor
 	dimmed                terminalColor
 	error                 terminalColor
+	diffAdded             terminalColor
+	diffRemoved           terminalColor
+	diffContext           terminalColor
 	toolPendingBackground terminalColor
 	toolSuccessBackground terminalColor
 	toolErrorBackground   terminalColor
@@ -37,6 +40,9 @@ var ayuMirageTheme = theme{
 	muted:                 terminalColor{red: 0x84, green: 0x90, blue: 0xa5},
 	dimmed:                terminalColor{red: 0x6a, green: 0x76, blue: 0x87},
 	error:                 terminalColor{red: 0xf2, green: 0x87, blue: 0x79},
+	diffAdded:             terminalColor{red: 0xaa, green: 0xd9, blue: 0x4c},
+	diffRemoved:           terminalColor{red: 0xf2, green: 0x87, blue: 0x79},
+	diffContext:           terminalColor{red: 0x84, green: 0x90, blue: 0xa5},
 	toolPendingBackground: terminalColor{red: 0x1a, green: 0x20, blue: 0x30},
 	toolSuccessBackground: terminalColor{red: 0x1f, green: 0x28, blue: 0x2f},
 	toolErrorBackground:   terminalColor{red: 0x25, green: 0x20, blue: 0x29},

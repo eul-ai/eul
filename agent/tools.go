@@ -18,16 +18,37 @@ type ToolDefinition struct {
 	Parameters  JSONSchema
 }
 
+type ToolDiffLineKind uint8
+
+const (
+	ToolDiffLineContext ToolDiffLineKind = iota
+	ToolDiffLineAdded
+	ToolDiffLineRemoved
+	ToolDiffLineOmitted
+)
+
+type ToolDiffLine struct {
+	Kind    ToolDiffLineKind
+	OldLine int
+	NewLine int
+	Text    string
+}
+
 type ToolPresentation struct {
 	Title     string
 	Arguments string
 	Lines     []string
+	Diff      []ToolDiffLine
 	Markdown  bool
 	Outcome   string
 }
 
 // ToolUpdateSink may be called concurrently before Execute returns.
-type ToolUpdateSink func(ToolPresentation) error
+type ToolUpdateSink interface {
+	Update(ToolPresentation) error
+	// SetFinal replaces the presentation attached to the tool-end event and ignores later updates.
+	SetFinal(ToolPresentation)
+}
 
 type ToolResult struct {
 	CallID  string

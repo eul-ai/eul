@@ -15,8 +15,22 @@ type toolEventTracker struct {
 }
 
 type streamedTool struct {
-	call         ToolCall
-	presentation ToolPresentation
+	call                  ToolCall
+	presentation          ToolPresentation
+	presentationFinalized bool
+}
+
+type trackedToolUpdateSink struct {
+	tracker *toolEventTracker
+	call    ToolCall
+}
+
+func (sink *trackedToolUpdateSink) Update(presentation ToolPresentation) error {
+	return sink.tracker.publishUpdate(sink.call, presentation)
+}
+
+func (sink *trackedToolUpdateSink) SetFinal(presentation ToolPresentation) {
+	sink.tracker.setFinal(sink.call, presentation)
 }
 
 func newToolEventTracker(tools Toolbox, sink EventSink) *toolEventTracker {
@@ -110,26 +124,41 @@ func (tracker *toolEventTracker) beginExecution(call ToolCall) error {
 }
 
 func (tracker *toolEventTracker) update(call ToolCall) ToolUpdateSink {
-	return func(next ToolPresentation) error {
-		tracker.mu.Lock()
-		defer tracker.mu.Unlock()
+	return &trackedToolUpdateSink{tracker: tracker, call: call}
+}
 
-		if tracker.updateErr != nil {
-			return tracker.updateErr
-		}
-		streamed := tracker.streamed[call.ID]
-		next = clonePresentation(next)
-		if presentationsEqual(streamed.presentation, next) {
-			return nil
-		}
-		if err := emit(tracker.sink, Event{Kind: EventToolUpdate, Call: call, Presentation: next}); err != nil {
-			tracker.updateErr = err
-			return err
-		}
-		streamed.presentation = next
-		tracker.streamed[call.ID] = streamed
+func (tracker *toolEventTracker) publishUpdate(call ToolCall, next ToolPresentation) error {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+
+	if tracker.updateErr != nil {
+		return tracker.updateErr
+	}
+	streamed := tracker.streamed[call.ID]
+	if streamed.presentationFinalized {
 		return nil
 	}
+	next = clonePresentation(next)
+	if presentationsEqual(streamed.presentation, next) {
+		return nil
+	}
+	if err := emit(tracker.sink, Event{Kind: EventToolUpdate, Call: call, Presentation: next}); err != nil {
+		tracker.updateErr = err
+		return err
+	}
+	streamed.presentation = next
+	tracker.streamed[call.ID] = streamed
+	return nil
+}
+
+func (tracker *toolEventTracker) setFinal(call ToolCall, final ToolPresentation) {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+
+	streamed := tracker.streamed[call.ID]
+	streamed.presentation = clonePresentation(final)
+	streamed.presentationFinalized = true
+	tracker.streamed[call.ID] = streamed
 }
 
 func (tracker *toolEventTracker) updateError() error {
@@ -186,15 +215,21 @@ func completeToolCallSnapshot(call ToolCall) ToolCallSnapshot {
 
 func clonePresentation(presentation ToolPresentation) ToolPresentation {
 	presentation.Lines = append([]string(nil), presentation.Lines...)
+	presentation.Diff = append([]ToolDiffLine(nil), presentation.Diff...)
 	return presentation
 }
 
 func presentationsEqual(left, right ToolPresentation) bool {
-	if left.Title != right.Title || left.Arguments != right.Arguments || left.Markdown != right.Markdown || left.Outcome != right.Outcome || len(left.Lines) != len(right.Lines) {
+	if left.Title != right.Title || left.Arguments != right.Arguments || left.Markdown != right.Markdown || left.Outcome != right.Outcome || len(left.Lines) != len(right.Lines) || len(left.Diff) != len(right.Diff) {
 		return false
 	}
 	for index := range left.Lines {
 		if left.Lines[index] != right.Lines[index] {
+			return false
+		}
+	}
+	for index := range left.Diff {
+		if left.Diff[index] != right.Diff[index] {
 			return false
 		}
 	}

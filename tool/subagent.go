@@ -229,7 +229,7 @@ func publishSubagentUpdate(updates agent.ToolUpdateSink, tasks []string, statuse
 	if updates == nil {
 		return nil
 	}
-	return updates(subagentPresentation(tasks, statuses, now))
+	return updates.Update(subagentPresentation(tasks, statuses, now))
 }
 
 func subagentPresentation(tasks []string, statuses []subagentStatus, now time.Time) agent.ToolPresentation {

@@ -201,6 +201,68 @@ func TestCompleteToolCallSnapshotUsesStrictJSON(t *testing.T) {
 	}
 }
 
+func TestToolPresentationDiffIsClonedAndCompared(t *testing.T) {
+	presentation := ToolPresentation{Diff: []ToolDiffLine{{Kind: ToolDiffLineAdded, NewLine: 2, Text: "new"}}}
+	cloned := clonePresentation(presentation)
+	if !presentationsEqual(presentation, cloned) {
+		t.Fatalf("cloned presentation differs: original=%+v clone=%+v", presentation, cloned)
+	}
+
+	cloned.Diff[0].Text = "changed"
+	if presentation.Diff[0].Text != "new" {
+		t.Fatalf("clone shares diff storage: original=%+v clone=%+v", presentation, cloned)
+	}
+	if presentationsEqual(presentation, cloned) {
+		t.Fatalf("different presentations compare equal: original=%+v clone=%+v", presentation, cloned)
+	}
+}
+
+func TestEngineUsesFinalPresentationOnlyOnToolEnd(t *testing.T) {
+	providerCalls := 0
+	provider := streamingProviderFunc(func(_ context.Context, _ Request, _ TextSink, _ TextSink, _ ToolCallSink) (Response, error) {
+		providerCalls++
+		if providerCalls == 1 {
+			return Response{ToolCalls: []ToolCall{{ID: "edit-1", Name: "edit", Arguments: json.RawMessage(`{}`)}}}, nil
+		}
+		return Response{Text: "done"}, nil
+	})
+	final := ToolPresentation{
+		Title: "edit", Arguments: "demo.go",
+		Diff: []ToolDiffLine{{Kind: ToolDiffLineAdded, NewLine: 1, Text: "new"}},
+	}
+	toolbox := &fakeToolbox{executeWithUpdates: func(_ context.Context, _ ToolCall, updates ToolUpdateSink) (ToolResult, error) {
+		updates.SetFinal(final)
+		if err := updates.Update(ToolPresentation{Title: "edit", Lines: []string{"late update"}}); err != nil {
+			t.Fatalf("late update error = %v", err)
+		}
+		final.Diff[0].Text = "mutated after finalization"
+		return ToolResult{Output: "edited demo.go"}, nil
+	}}
+	var events []Event
+	engine := newTestEngine(t, provider, toolbox, Options{})
+	if _, err := engine.Run(context.Background(), "edit", func(event Event) error {
+		events = append(events, event)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, event := range events {
+		if event.Kind == EventToolUpdate {
+			t.Fatalf("final presentation emitted as a tool update: %+v", events)
+		}
+	}
+	for _, event := range events {
+		if event.Kind == EventToolEnd {
+			if len(event.Presentation.Diff) != 1 || event.Presentation.Diff[0].Text != "new" {
+				t.Fatalf("tool end presentation = %+v", event.Presentation)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing tool end event: %+v", events)
+}
+
 func TestEngineStreamsToolPresentationBeforeGenerationAndExecutionFinish(t *testing.T) {
 	providerCalls := 0
 	executed := false
@@ -236,7 +298,10 @@ func TestEngineStreamsToolPresentationBeforeGenerationAndExecutionFinish(t *test
 		},
 		executeWithUpdates: func(_ context.Context, _ ToolCall, updates ToolUpdateSink) (ToolResult, error) {
 			executed = true
-			if err := updates(ToolPresentation{Title: "write demo.go", Lines: []string{"written"}}); err != nil {
+			if err := updates.Update(ToolPresentation{
+				Title: "write demo.go", Lines: []string{"written"},
+				Diff: []ToolDiffLine{{Kind: ToolDiffLineAdded, NewLine: 1, Text: "written"}},
+			}); err != nil {
 				return ToolResult{}, err
 			}
 			return ToolResult{Output: "wrote file"}, nil
@@ -255,7 +320,7 @@ func TestEngineStreamsToolPresentationBeforeGenerationAndExecutionFinish(t *test
 	if got := eventKinds(events); !slices.Equal(got, want) {
 		t.Fatalf("events = %v, want %v", got, want)
 	}
-	if events[0].Presentation.Lines[0] != "hel" || events[1].Presentation.Lines[0] != "hello" || events[4].Presentation.Lines[0] != "written" {
+	if events[0].Presentation.Lines[0] != "hel" || events[1].Presentation.Lines[0] != "hello" || events[4].Presentation.Lines[0] != "written" || events[4].Presentation.Diff[0].Text != "written" || events[5].Presentation.Diff[0].Text != "written" {
 		t.Fatalf("presentations = %+v", events)
 	}
 }
@@ -291,7 +356,7 @@ func TestEngineSerializesConcurrentToolSnapshots(t *testing.T) {
 			wait.Add(1)
 			go func() {
 				defer wait.Done()
-				if err := updates(ToolPresentation{Title: "write " + call.ID, Lines: []string{line}}); err != nil {
+				if err := updates.Update(ToolPresentation{Title: "write " + call.ID, Lines: []string{line}}); err != nil {
 					t.Errorf("update %s: %v", call.ID, err)
 				}
 			}()
@@ -513,7 +578,7 @@ func TestEngineEventSinkFailuresPreserveResponseContinuation(t *testing.T) {
 			failKind: EventToolUpdate,
 			response: Response{State: []byte("calls"), ToolCalls: []ToolCall{{ID: "one", Name: "write", Arguments: json.RawMessage(`{}`)}}},
 			toolbox: &fakeToolbox{executeWithUpdates: func(_ context.Context, _ ToolCall, updates ToolUpdateSink) (ToolResult, error) {
-				_ = updates(ToolPresentation{Title: "write", Lines: []string{"changed"}})
+				_ = updates.Update(ToolPresentation{Title: "write", Lines: []string{"changed"}})
 				return ToolResult{Output: "changed"}, nil
 			}},
 			wantPending:  []Input{{Kind: InputToolResult, CallID: "one", Tool: "write", Text: "changed", IsError: true}},
@@ -523,7 +588,10 @@ func TestEngineEventSinkFailuresPreserveResponseContinuation(t *testing.T) {
 			name:     "tool end",
 			failKind: EventToolEnd,
 			response: Response{State: []byte("calls"), ToolCalls: []ToolCall{{ID: "one", Name: "write", Arguments: json.RawMessage(`{}`)}}},
-			toolbox: &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
+			toolbox: &fakeToolbox{executeWithUpdates: func(_ context.Context, _ ToolCall, updates ToolUpdateSink) (ToolResult, error) {
+				updates.SetFinal(ToolPresentation{
+					Title: "edit", Diff: []ToolDiffLine{{Kind: ToolDiffLineAdded, NewLine: 1, Text: "changed"}},
+				})
 				return ToolResult{Output: "changed"}, nil
 			}},
 			wantPending:  []Input{{Kind: InputToolResult, CallID: "one", Tool: "write", Text: "changed"}},

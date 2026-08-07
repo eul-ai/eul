@@ -57,8 +57,9 @@ horizontal inset while block backgrounds retain the full width, with one blank
 row above and below the viewport content. Reasoning summaries use muted italic
 text, while compact tool blocks use padded pending,
 success, and error backgrounds. Tool names use the accent color while their arguments
-and detail text use the regular foreground color. Inline Markdown is rendered in tool
-detail lines. Tool blocks are correlated by call ID and may replace their content while
+and detail text use the regular foreground color. Successful `edit` calls show the committed
+change with green additions, red removals, and muted context lines. Inline Markdown is rendered
+in tool detail lines. Tool blocks are correlated by call ID and may replace their content while
 arguments or execution progress streams. The OpenAI
 adapter exposes partial function-call arguments, so `write` previews its first
 ten lines before execution and reports how many additional lines were omitted;
@@ -101,7 +102,9 @@ before returning to the model.
   creates parent directories. Its TUI block previews at most ten lines and 4 KiB
   while arguments stream; previews never mutate the filesystem.
 - `edit(path, oldText, newText)` replaces one uniquely matching fragment using
-  a same-directory temporary file and rename.
+  a same-directory temporary file and rename, then shows the committed diff with
+  up to four unchanged context lines on each side. Diff presentations are capped
+  at 2,000 lines or 50 KiB.
 - `bash(command, timeout?)` runs `bash -c` without subprocess stdin and keeps
   the last 2,000 lines or 50 KiB.
 - `lsp_diagnostics(path)` returns current language-server diagnostics.

@@ -197,6 +197,49 @@ func TestToolPlainTextDetailsPreserveMarkdownMarkers(t *testing.T) {
 	t.Fatalf("plain tool line missing: %+v", lines)
 }
 
+func TestToolDiffLinesUseAddedRemovedAndContextColors(t *testing.T) {
+	lines := conversationLines([]conversationBlock{{
+		kind: blockTool,
+		tool: agent.ToolPresentation{
+			Title: "edit", Arguments: "sample.txt",
+			Diff: []agent.ToolDiffLine{
+				{Kind: agent.ToolDiffLineContext, OldLine: 1, NewLine: 1, Text: "before"},
+				{Kind: agent.ToolDiffLineRemoved, OldLine: 2, Text: "old"},
+				{Kind: agent.ToolDiffLineAdded, NewLine: 2, Text: "new"},
+				{Kind: agent.ToolDiffLineContext, OldLine: 3, NewLine: 3, Text: "after"},
+				{Kind: agent.ToolDiffLineOmitted, Text: "… (diff truncated)"},
+			},
+		},
+	}}, 80)
+
+	want := map[string]terminalColor{
+		" 1 before":             currentTheme.diffContext,
+		"-2 old":                currentTheme.diffRemoved,
+		"+2 new":                currentTheme.diffAdded,
+		" 3 after":              currentTheme.diffContext,
+		"   … (diff truncated)": currentTheme.diffContext,
+	}
+	for _, line := range lines {
+		color, exists := want[line.text]
+		if !exists {
+			continue
+		}
+		if line.style.foreground != color || line.style.background != currentTheme.toolSuccessBackground || !line.style.paintBackground {
+			t.Fatalf("diff line %q style = %+v", line.text, line.style)
+		}
+
+		var rendered strings.Builder
+		renderLine(&rendered, 1, 80, line)
+		if !strings.Contains(rendered.String(), ansiForeground(color)) {
+			t.Fatalf("diff line %q does not render color %+v: %q", line.text, color, rendered.String())
+		}
+		delete(want, line.text)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing diff lines: %+v in %+v", want, lines)
+	}
+}
+
 func TestToolBlockHasHorizontalAndVerticalPadding(t *testing.T) {
 	lines := conversationLines([]conversationBlock{{kind: blockTool, text: "tool output"}}, 40)
 	if len(lines) != 3 {
@@ -425,7 +468,10 @@ func TestTUIModelCorrelatesAndSanitizesStreamingToolBlocks(t *testing.T) {
 	})
 	model.applyAgentEvent(agent.Event{
 		Kind: agent.EventToolUpdate, Call: agent.ToolCall{ID: "one", Name: "write"},
-		Presentation: agent.ToolPresentation{Title: "write one", Lines: []string{"safe\x1b[31m"}},
+		Presentation: agent.ToolPresentation{
+			Title: "write one", Lines: []string{"safe\x1b[31m"},
+			Diff: []agent.ToolDiffLine{{Kind: agent.ToolDiffLineAdded, NewLine: 1, Text: "new\x1b[32m"}},
+		},
 	})
 	model.applyAgentEvent(agent.Event{
 		Kind: agent.EventToolEnd, Call: agent.ToolCall{ID: "two", Name: "subagent"},
@@ -435,7 +481,7 @@ func TestTUIModelCorrelatesAndSanitizesStreamingToolBlocks(t *testing.T) {
 
 	first := model.blocks[model.toolBlockIndex("one")]
 	second := model.blocks[model.toolBlockIndex("two")]
-	if first.kind != blockToolPending || first.tool.Lines[0] != "safe�[31m" {
+	if first.kind != blockToolPending || first.tool.Lines[0] != "safe�[31m" || first.tool.Diff[0].Text != "new�[32m" {
 		t.Fatalf("first block = %+v", first)
 	}
 	if second.kind != blockTool || second.tool.Lines[0] != "complete" || second.toolOutcome != "ok" {

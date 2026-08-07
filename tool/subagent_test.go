@@ -115,10 +115,10 @@ func TestSubagentPublishesOutOfOrderLiveStatuses(t *testing.T) {
 		err    error
 	}, 1)
 	go func() {
-		result, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["first","second"]}`), func(presentation agent.ToolPresentation) error {
+		result, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["first","second"]}`), toolUpdateSinkFunc(func(presentation agent.ToolPresentation) error {
 			updates <- presentation
 			return nil
-		})
+		}))
 		done <- struct {
 			result agent.ToolResult
 			err    error
@@ -160,10 +160,10 @@ func TestSubagentPublishesTokenUsageWhileRunning(t *testing.T) {
 	updates := make(chan agent.ToolPresentation, 4)
 	done := make(chan error, 1)
 	go func() {
-		_, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"]}`), func(presentation agent.ToolPresentation) error {
+		_, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"]}`), toolUpdateSinkFunc(func(presentation agent.ToolPresentation) error {
 			updates <- presentation
 			return nil
-		})
+		}))
 		done <- err
 	}()
 
@@ -212,13 +212,13 @@ func TestSubagentUpdateFailureCancelsRemainingChildren(t *testing.T) {
 		return agent.RunResult{}, ctx.Err()
 	})
 	updates := 0
-	_, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["first","second"]}`), func(agent.ToolPresentation) error {
+	_, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["first","second"]}`), toolUpdateSinkFunc(func(agent.ToolPresentation) error {
 		updates++
 		if updates > 1 {
 			return updateErr
 		}
 		return nil
-	})
+	}))
 	if !errors.Is(err, updateErr) {
 		t.Fatalf("Execute() error = %v", err)
 	}

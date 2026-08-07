@@ -274,6 +274,10 @@ func sanitizeToolPresentation(call agent.ToolCall, presentation agent.ToolPresen
 	for index := range presentation.Lines {
 		presentation.Lines[index] = sanitizeAssistantText(presentation.Lines[index])
 	}
+	presentation.Diff = append([]agent.ToolDiffLine(nil), presentation.Diff...)
+	for index := range presentation.Diff {
+		presentation.Diff[index].Text = sanitizeAssistantText(presentation.Diff[index].Text)
+	}
 	return presentation
 }
 

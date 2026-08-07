@@ -42,14 +42,18 @@ func (*Edit) Definition() agent.ToolDefinition {
 }
 
 func (*Edit) Presentation(snapshot agent.ToolCallSnapshot) agent.ToolPresentation {
+	return editPresentation(snapshotString(snapshot, "path"))
+}
+
+func editPresentation(path string) agent.ToolPresentation {
 	arguments := ""
-	if path := snapshotString(snapshot, "path"); path != "" {
+	if path != "" {
 		arguments = displayToolArgument(path)
 	}
 	return agent.ToolPresentation{Title: editToolName, Arguments: arguments}
 }
 
-func (e *Edit) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
+func (e *Edit) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
@@ -138,5 +142,10 @@ func (e *Edit) Execute(ctx context.Context, arguments json.RawMessage, _ agent.T
 	}
 
 	committed = true
+	if updates != nil {
+		presentation := editPresentation(args.Path)
+		presentation.Diff = buildEditDiff(original, replacement)
+		updates.SetFinal(presentation)
+	}
 	return successResult(fmt.Sprintf("edited %s", escapeOutputName(e.workspace.display(requestedPath)))), nil
 }
