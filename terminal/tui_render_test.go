@@ -68,8 +68,8 @@ func TestConversationBlocksUseCurrentTheme(t *testing.T) {
 		if !ok {
 			continue
 		}
-		if line.style != style {
-			t.Fatalf("line %q = %+v, want style %+v", line.text, line, style)
+		if line.style != style || line.padding != conversationPadding {
+			t.Fatalf("line %q = %+v, want style %+v and padding %d", line.text, line, style, conversationPadding)
 		}
 		delete(want, line.text)
 	}
@@ -84,12 +84,23 @@ func TestToolBlockHasHorizontalAndVerticalPadding(t *testing.T) {
 		t.Fatalf("lines = %+v", lines)
 	}
 	for index, line := range lines {
-		if line.padding != toolPadding || line.style.background != currentTheme.toolSuccessBackground || !line.style.paintBackground {
+		if line.padding != conversationPadding || line.style.background != currentTheme.toolSuccessBackground || !line.style.paintBackground {
 			t.Fatalf("line %d = %+v", index, line)
 		}
 	}
 	if lines[0].text != "" || lines[1].text != "tool output" || lines[2].text != "" {
 		t.Fatalf("lines = %+v", lines)
+	}
+}
+
+func TestPaddedBlockBackgroundFillsWidth(t *testing.T) {
+	style := blockPresentation(blockTool)
+	var frame strings.Builder
+	renderLine(&frame, 1, 6, styledLine{text: "x", style: style, padding: conversationPadding})
+
+	want := ansiColors(style.foreground, style.background, true) + " x    " + ansiReset
+	if !strings.Contains(frame.String(), want) {
+		t.Fatalf("line = %q, want full-width background sequence %q", frame.String(), want)
 	}
 }
 

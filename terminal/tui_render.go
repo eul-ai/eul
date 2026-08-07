@@ -8,11 +8,11 @@ import (
 )
 
 const (
-	ansiHideCursor = "\x1b[?25l"
-	ansiShowCursor = "\x1b[?25h"
-	ansiReset      = "\x1b[0m"
-	ansiItalic     = "\x1b[3m"
-	toolPadding    = 1
+	ansiHideCursor      = "\x1b[?25l"
+	ansiShowCursor      = "\x1b[?25h"
+	ansiReset           = "\x1b[0m"
+	ansiItalic          = "\x1b[3m"
+	conversationPadding = 1
 )
 
 type lineStyle struct {
@@ -206,14 +206,12 @@ func conversationLines(blocks []conversationBlock, width int) []styledLine {
 			text = strings.Trim(text, "\n")
 		}
 
-		padding := 0
-		contentWidth := width
+		padding := conversationPadding
+		contentWidth := width - padding*2
+		if contentWidth < 1 {
+			contentWidth = 1
+		}
 		if isToolBlock(block.kind) {
-			padding = toolPadding
-			contentWidth -= padding * 2
-			if contentWidth < 1 {
-				contentWidth = 1
-			}
 			lines = append(lines, styledLine{style: style, padding: padding})
 		}
 		for _, line := range wrapText(text, contentWidth) {
