@@ -33,18 +33,28 @@ The first version will not include:
 - multiple panes, sessions, or dialogs;
 - queued prompts while a turn is active;
 - exact grapheme-cluster editing for every emoji sequence;
-- interactive operation through pipes or redirected terminal streams;
+- a line-oriented interactive REPL for redirected streams;
 - Windows support; or
 - a reusable widget or terminal framework.
 
 ## Mode selection and terminal requirement
 
-The CLI has two execution modes:
+The CLI selects a mode from its prompt argument and stdin:
 
-- a prompt argument selects `RunOneShot`, which remains line-oriented and preserves its current stdout/stderr behavior; and
-- no prompt argument selects `terminal.Run`, which always means the full-screen TUI.
+- a prompt argument selects `RunOneShot`, which preserves its current stdout/stderr behavior;
+- without a prompt argument, non-terminal stdin is read to EOF as one prompt and passed to `RunOneShot`; and
+- without a prompt argument, terminal stdin selects `terminal.Run`, which always means the full-screen TUI.
 
-`terminal.Run` will require both interactive input and UI output to expose file descriptors accepted by `term.IsTerminal`. If either side is not a terminal, it will return a clear error instructing the user to provide a prompt for one-shot mode. Piped prompts and a redirected interactive REPL will not be supported.
+Piped and file-redirected prompts therefore use one-shot mode automatically:
+
+```sh
+printf 'explain this package' | yaah --model gpt-5.6-sol
+yaah --model gpt-5.6-sol < prompt.txt > answer.txt
+```
+
+A piped prompt must be non-empty, valid UTF-8, contain no NUL, and remain within the input size limit. A prompt argument takes precedence if both an argument and piped stdin are present.
+
+`terminal.Run` will require both its input and UI output to expose file descriptors accepted by `term.IsTerminal`. After mode selection, terminal stdin with redirected output is an error because there is neither a screen for the TUI nor a prompt to run one-shot. There is no redirected interactive REPL.
 
 The TUI will use one output stream for the entire frame; engine events must not write independently to stdout or stderr while it is active.
 
@@ -52,7 +62,7 @@ A failure after TUI setup begins must restore terminal state before returning an
 
 ## Layout
 
-The normal layout reserves the last two rows for input and status. All remaining rows form the conversation viewport.
+The normal layout reserves the last four rows for the input bar, its two horizontal rules, and the status bar. All remaining rows form the conversation viewport.
 
 ```text
  You
@@ -63,16 +73,18 @@ The normal layout reserves the last two rows for input and status. All remaining
 
 ────────────────────────────────────────────────────────────
  > write the next prompt here█
- ⠋ thinking                         gpt-5.6 · ~/Code/yaah
+────────────────────────────────────────────────────────────
+ gpt-5.6-sol (xhigh) · context 31%               ⠋ thinking
 ```
 
-The separator may be omitted when space is tight. The renderer will degrade by clipping content and prioritizing, in order:
+The input bar sits between horizontal rules in the style of Claude Code and Pi. The rules may be omitted when space is tight. The renderer will degrade by clipping content and prioritizing, in order:
 
 1. the status and activity state;
-2. the input bar; and
-3. the conversation.
+2. the input bar;
+3. its horizontal rules; and
+4. the conversation.
 
-The status bar will prioritize the activity label over model and directory metadata on narrow terminals.
+On narrow terminals, the status bar will preserve the activity label and compact context percentage before truncating the model and effort.
 
 ## Conversation model
 
@@ -126,7 +138,11 @@ Commands retain their current meaning:
 
 ## Status bar
 
-The status bar contains a left-aligned activity indicator and optional right-aligned session metadata. Active states use a small spinner driven by a ticker; idle and error states are static.
+The status bar contains three items: model with reasoning effort, context usage, and the activity indicator. Model and context are left-aligned; activity is right-aligned. Active states use a small spinner driven by a ticker; idle and error states are static.
+
+Context usage is the latest provider-reported context token count as a percentage of the selected model's context window. Known models may also show the compact count on wider terminals. Before the first response it is zero; `/clear` resets it to zero. Unknown context-window sizes display the token count without a percentage.
+
+The CLI must pass reasoning effort and model context-window metadata into the terminal options. The agent will emit a context-usage event after each provider response so the status reflects the current context rather than the cumulative usage returned for the whole turn. An empty effort is displayed as `default`.
 
 | Trigger | Displayed state |
 | --- | --- |
@@ -205,10 +221,11 @@ The final names may be adjusted while implementing, but input decoding, state tr
 
 ## Implementation sequence
 
-### 1. Establish the TUI-only interactive mode
+### 1. Establish mode selection and TUI-only interactive mode
 
 - Add `golang.org/x/term`.
-- Require usable terminal file descriptors in `terminal.Run` and return a clear non-terminal error otherwise.
+- Route non-terminal stdin without a prompt argument to one-shot mode.
+- Require usable terminal input and output file descriptors in `terminal.Run` and return a clear error otherwise.
 - Keep `RunOneShot` and its output behavior unchanged.
 - Remove the interactive line reader once its commands and interruption behavior are represented in the TUI.
 
@@ -235,6 +252,8 @@ The final names may be adjusted while implementing, but input decoding, state tr
 ### 5. Integrate engine streaming and status
 
 - Route engine events into the UI loop.
+- Pass reasoning effort and model context-window metadata to the TUI.
+- Emit current context usage after each provider response and reset it with the conversation.
 - Add explicit compaction start/end events.
 - Implement status transitions and the active spinner.
 - Preserve cancellation, error, and reset behavior.
@@ -253,10 +272,12 @@ Most behavior should be tested without a live terminal:
 - UTF-8 editing, history, paste normalization, and input limits;
 - conversation block transitions and streaming append behavior;
 - every status transition, including compaction completion and cancellation;
+- model, effort, context count, context percentage, and narrow-width status formatting;
 - wrapping, clipping, scrolling, and resize at narrow and short dimensions;
 - ANSI sanitization of assistant, reasoning, tool, error, and pasted text;
 - frame snapshots with cursor placement;
-- rejection of non-file and non-terminal streams with guidance to use one-shot mode;
+- piped and file-redirected stdin routed to one-shot mode, including empty and invalid input;
+- rejection of terminal-input TUI mode when its output is not a terminal;
 - terminal restoration when the turn, renderer, or output fails; and
 - preservation of the existing one-shot behavior.
 
@@ -267,8 +288,9 @@ A manual smoke test should cover Linux and macOS terminals:
 3. cancel before and during a tool call;
 4. trigger `/clear` and `/exit`;
 5. paste multiline and non-ASCII text;
-6. redirect one-shot output successfully and confirm interactive mode rejects a non-terminal input or output; and
-7. verify terminal echo and cursor state after every exit path.
+6. pipe and file-redirect a prompt into one-shot mode, including redirected output;
+7. confirm terminal-input TUI mode rejects non-terminal output; and
+8. verify terminal echo and cursor state after every exit path.
 
 Final verification:
 
