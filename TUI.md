@@ -65,16 +65,14 @@ A failure after TUI setup begins must restore terminal state before returning an
 The normal layout reserves the last four rows for the input bar, its two horizontal rules, and the status bar. All remaining rows form the conversation viewport.
 
 ```text
- You
- Explain terminal raw mode.
+  Explain terminal raw mode.
 
- Assistant
- Raw mode provides key presses without canonical line buffering...
+  Raw mode provides key presses without canonical line buffering...
 
 ────────────────────────────────────────────────────────────
  > write the next prompt here█
 ────────────────────────────────────────────────────────────
- gpt-5.6-sol (xhigh) · context 31%               ⠋ thinking
+ ⠋ thinking                    gpt-5.6-sol (xhigh) · context 31%
 ```
 
 The input bar sits between horizontal rules in the style of Claude Code and Pi. The rules may be omitted when space is tight. The renderer will degrade by clipping content and prioritizing, in order:
@@ -83,6 +81,8 @@ The input bar sits between horizontal rules in the style of Claude Code and Pi. 
 2. the input bar;
 3. its horizontal rules; and
 4. the conversation.
+
+Conversation text has a small horizontal margin. User messages use the editor-line background, assistant text uses the main background, reasoning summaries use muted text on the panel background, and tool blocks use accent text on a dedicated tool background. Role labels are omitted.
 
 On narrow terminals, the status bar will preserve the activity label and compact context percentage before truncating the model and effort.
 
@@ -138,7 +138,7 @@ Commands retain their current meaning:
 
 ## Status bar
 
-The status bar contains three items: model with reasoning effort, context usage, and the activity indicator. Model and context are left-aligned; activity is right-aligned. Active states use a small spinner driven by a ticker; idle and error states are static.
+The status bar contains three items: model with reasoning effort, context usage, and the activity indicator. Activity is left-aligned; model and context are right-aligned. Active states use a small spinner driven by a ticker; idle and error states are static.
 
 Context usage is the latest provider-reported context token count as a percentage of the selected model's context window. Known models may also show the compact count on wider terminals. Before the first response it is zero; `/clear` resets it to zero. Unknown context-window sizes display the token count without a percentage.
 
@@ -205,6 +205,8 @@ The renderer will build a complete frame from immutable UI state, clear each occ
 
 The implementation will use only `golang.org/x/term` as a new direct dependency. A small local cell-width helper will cover ordinary runes, combining marks, and standard wide-character ranges needed for wrapping and clipping. Input movement remains rune-based, so complex joined emoji may require multiple key presses. A dedicated grapheme-width dependency can be considered later only if this limitation proves material.
 
+The current theme is a minimal Go representation of [Ayu Mirage](https://github.com/iodic/pi-ayu-themes/blob/main/themes/ayu-mirage.json). Only colors used by the terminal UI are retained; the source link remains next to the theme definition for future expansion.
+
 ## Proposed files
 
 Keep the public entry points and one-shot event renderer in `terminal/repl.go`, remove the interactive line REPL after the TUI reaches feature parity, and add focused files along these lines:
@@ -214,6 +216,7 @@ terminal/tui.go          terminal setup, teardown, and event loop
 terminal/tui_model.go    conversation, editor, viewport, and status state
 terminal/tui_input.go    raw byte and escape-sequence decoding
 terminal/tui_render.go   wrapping, clipping, ANSI frame generation
+terminal/theme.go        current terminal theme colors
 terminal/resize_unix.go  SIGWINCH subscription for macOS and Linux
 ```
 

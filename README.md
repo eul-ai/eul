@@ -43,9 +43,10 @@ contract. This mode is experimental.
 
 Interactive mode requires terminal stdin and stdout and opens a full-screen TUI
 with a conversation viewport, a single-line input bar, and a status bar. The
-status shows the model and reasoning effort, context usage, and current activity.
-Reasoning summaries, tool activity, compaction notices, and errors remain visible
-in the conversation.
+status shows current activity on the left and model, reasoning effort, and context
+usage on the right. Reasoning summaries, tool activity, compaction notices, and
+errors remain visible in the conversation. The current palette is based on the
+[Ayu Mirage theme](https://github.com/iodic/pi-ayu-themes/blob/main/themes/ayu-mirage.json).
 
 Interactive controls include:
 

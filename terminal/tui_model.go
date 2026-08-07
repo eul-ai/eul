@@ -15,6 +15,7 @@ const (
 	blockAssistant
 	blockReasoning
 	blockTool
+	blockToolError
 	blockContext
 	blockError
 	blockInfo
@@ -136,7 +137,11 @@ func (m *tuiModel) applyAgentEvent(event agent.Event) {
 		m.appendBlock(blockTool, detail)
 		m.setActiveActivity(activity{kind: activityTool, detail: detail})
 	case agent.EventToolEnd:
-		m.appendBlock(blockTool, summarizeResult(event.Result))
+		kind := blockTool
+		if event.Result.IsError {
+			kind = blockToolError
+		}
+		m.appendBlock(kind, summarizeResult(event.Result))
 		m.setActiveActivity(activity{kind: activityThinking})
 	}
 }

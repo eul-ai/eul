@@ -18,11 +18,37 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 
 	frame := renderFrame(model)
 	for _, want := range []string{
-		"You", "hello", "Assistant", "answer", "> ",
-		"────────────────", "gpt-5.6-sol (xhigh)", "context 84.3k/272k (31%)", "thinking",
+		"hello", "answer", "> ", "────────────────", "gpt-5.6-sol (xhigh)",
+		"context 84.3k/272k (31%)", "thinking", "\x1b[1;3H",
 	} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("frame omits %q:\n%q", want, frame)
+		}
+	}
+	if strings.Contains(frame, "You") || strings.Contains(frame, "Assistant") {
+		t.Fatalf("frame includes role labels: %q", frame)
+	}
+}
+
+func TestConversationBlocksUseCurrentTheme(t *testing.T) {
+	lines := conversationLines([]conversationBlock{
+		{kind: blockUser, text: "user"},
+		{kind: blockAssistant, text: "assistant"},
+		{kind: blockReasoning, text: "summary"},
+		{kind: blockTool, text: "tool"},
+		{kind: blockToolError, text: "tool error"},
+	}, 40)
+	want := []lineStyle{
+		{foreground: currentTheme.foreground, background: currentTheme.editorLine},
+		{foreground: currentTheme.foreground, background: currentTheme.background},
+		{foreground: currentTheme.muted, background: currentTheme.panelBackground},
+		{foreground: currentTheme.accent, background: currentTheme.toolBackground},
+		{foreground: currentTheme.error, background: currentTheme.toolBackground},
+	}
+	for index, style := range want {
+		line := lines[index*2]
+		if line.style != style || line.margin != conversationEdge {
+			t.Fatalf("line %d = %+v, want style %+v and margin %d", index, line, style, conversationEdge)
 		}
 	}
 }
@@ -50,11 +76,11 @@ func TestRenderStatusPrioritizesActivityAndContext(t *testing.T) {
 	model.activity = activity{kind: activityCompacting}
 
 	wide := renderStatus(model, 80)
-	if !strings.Contains(wide, "very-long-model (maximum)") || !strings.Contains(wide, "context 50/100 (50%)") || !strings.Contains(wide, "compacting context") {
+	if !strings.HasPrefix(wide, "⠋ compacting context") || !strings.HasSuffix(wide, "very-long-model (maximum) · context 50/100 (50%)") {
 		t.Fatalf("wide status = %q", wide)
 	}
 	narrow := renderStatus(model, 33)
-	if strings.Contains(narrow, "very-long-model") || !strings.Contains(narrow, "context 50%") || !strings.Contains(narrow, "compacting") {
+	if strings.Contains(narrow, "very-long-model") || !strings.HasPrefix(narrow, "⠋ compacting") || !strings.HasSuffix(narrow, "context 50%") {
 		t.Fatalf("narrow status = %q", narrow)
 	}
 }
@@ -77,9 +103,9 @@ func TestTUIModelTracksActivityAndContext(t *testing.T) {
 	if model.activity.kind != activityTool || !strings.Contains(model.activity.detail, "file.go") {
 		t.Fatalf("activity = %+v", model.activity)
 	}
-	model.applyAgentEvent(agent.Event{Kind: agent.EventToolEnd, Result: agent.ToolResult{Tool: "read"}})
-	if model.activity.kind != activityThinking {
-		t.Fatalf("activity = %+v", model.activity)
+	model.applyAgentEvent(agent.Event{Kind: agent.EventToolEnd, Result: agent.ToolResult{Tool: "read", IsError: true, Output: "failed"}})
+	if model.activity.kind != activityThinking || model.blocks[len(model.blocks)-1].kind != blockToolError {
+		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.blocks)
 	}
 }
 
