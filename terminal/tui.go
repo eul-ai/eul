@@ -290,7 +290,7 @@ func handleKey(
 			model.activity = activity{kind: activityError, detail: detail}
 		}
 	case keyShiftTab:
-		if err := model.cycleEffort(); err != nil {
+		if err := model.cycleThinkingLevel(); err != nil {
 			detail := diagnostic(err.Error(), 200)
 			model.activity = activity{kind: activityError, detail: detail}
 		}

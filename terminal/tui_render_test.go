@@ -10,7 +10,7 @@ import (
 
 func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 	model := newTUIModel(72, 12, Options{
-		Model: "gpt-5.6-sol", Effort: "xhigh", ContextWindow: 272_000,
+		Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, ContextWindow: 272_000,
 	})
 	model.contextTokens = 84_320
 	model.appendBlock(blockUser, "hello")
@@ -35,7 +35,7 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 		t.Fatalf("status metadata is not independently right-aligned in one pass: %q", frame)
 	}
 	if !strings.Contains(frame, ansiColors(currentTheme.error, terminalColor{}, false)) {
-		t.Fatalf("frame does not use the xhigh effort color: %q", frame)
+		t.Fatalf("frame does not use the xhigh thinking color: %q", frame)
 	}
 	if strings.Contains(frame, "\x1b[48;2;23;27;36m") || !strings.Contains(frame, "\x1b[49m") {
 		t.Fatalf("frame does not preserve the terminal background: %q", frame)
@@ -265,7 +265,7 @@ func TestRenderFrameSanitizesConversationText(t *testing.T) {
 }
 
 func TestRenderStatusSanitizesMetadata(t *testing.T) {
-	model := newTUIModel(80, 8, Options{Model: "safe\x1b[31m", Effort: "high\a"})
+	model := newTUIModel(80, 8, Options{Model: "safe\x1b[31m", ThinkingLevel: agent.ThinkingLevel("high\a")})
 	left, right := renderStatus(model, 80)
 	status := left + right
 	if strings.ContainsAny(status, "\x1b\a") || !strings.Contains(right, "safe [31m (high)") {
@@ -274,12 +274,12 @@ func TestRenderStatusSanitizesMetadata(t *testing.T) {
 }
 
 func TestRenderStatusPrioritizesActivityAndContext(t *testing.T) {
-	model := newTUIModel(80, 20, Options{Model: "very-long-model", Effort: "maximum", ContextWindow: 100})
+	model := newTUIModel(80, 20, Options{Model: "very-long-model", ThinkingLevel: agent.ThinkingMax, ContextWindow: 100})
 	model.contextTokens = 50
 	model.activity = activity{kind: activityCompacting}
 
 	wideLeft, wideRight := renderStatus(model, 80)
-	if wideLeft != "⠋ compacting context" || wideRight != "very-long-model (maximum) · context 50/100 (50%)" {
+	if wideLeft != "⠋ compacting context" || wideRight != "very-long-model (max) · context 50/100 (50%)" {
 		t.Fatalf("wide status = %q / %q", wideLeft, wideRight)
 	}
 	narrowLeft, narrowRight := renderStatus(model, 33)
@@ -356,7 +356,7 @@ func TestConversationScrollingStopsAndResumesFollowing(t *testing.T) {
 
 func TestRenderFrameHandlesTinyDimensions(t *testing.T) {
 	for _, size := range [][2]int{{1, 1}, {2, 2}, {3, 3}, {4, 4}} {
-		model := newTUIModel(size[0], size[1], Options{Model: "model", Effort: "high"})
+		model := newTUIModel(size[0], size[1], Options{Model: "model", ThinkingLevel: agent.ThinkingHigh})
 		model.appendBlock(blockAssistant, "界")
 		if frame := renderFrame(model); frame == "" {
 			t.Fatalf("renderFrame(%dx%d) returned empty frame", size[0], size[1])

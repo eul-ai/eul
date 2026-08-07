@@ -19,16 +19,18 @@ catalogs, telemetry, MCP, project indexing, multimodal input, and session persis
 ## Usage
 
 ```text
-yaah --model <model> [--effort <level>] [--cwd <directory>]
-yaah --model <model> [--effort <level>] "one-shot prompt"
-printf 'one-shot prompt' | yaah --model <model> [--effort <level>]
+yaah --model <model> [--thinking <level>] [--cwd <directory>]
+yaah --model <model> [--thinking <level>] "one-shot prompt"
+printf 'one-shot prompt' | yaah --model <model> [--thinking <level>]
 yaah login [--device-auth]
 yaah logout
 ```
 
-`OPENAI_MODEL` and `OPENAI_REASONING_EFFORT` provide flag defaults. Supported
-reasoning efforts are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and
-`max`.
+`OPENAI_MODEL` and `YAAH_THINKING_LEVEL` provide flag defaults. Thinking levels
+are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`; the default is
+`medium`. Provider adapters map these generic levels to model-native controls.
+Unavailable levels are clamped to the nearest level supported by the selected
+model; `xhigh` and `max` require explicit model support.
 
 Yaah uses its own ChatGPT OAuth credential from `YAAH_HOME/auth.json` or the
 operating system's user configuration directory. It does not read Pi or Codex
@@ -43,10 +45,10 @@ contract. This mode is experimental.
 
 Interactive mode requires terminal stdin and stdout and opens a full-screen TUI
 with a conversation viewport, an expanding multiline input area, and a status
-bar. The status shows current activity on the left and model, reasoning effort, and context
+bar. The status shows current activity on the left and model, thinking level, and context
 usage on the right. Reasoning summaries, tool activity, compaction notices, and
 errors remain visible in the conversation. The TUI preserves the terminal's base
-background and uses effort-colored input rules. Conversation text has a one-cell
+background and uses thinking-level-colored input rules. Conversation text has a one-cell
 horizontal inset while block backgrounds retain the full width, with one blank
 row above and below the viewport content. Reasoning summaries use muted italic
 text, while compact tool blocks use padded pending,
@@ -58,7 +60,7 @@ Interactive controls include:
 
 - Enter to submit
 - Shift-Enter to insert a newline
-- Shift-Tab to cycle reasoning effort
+- Shift-Tab to cycle supported thinking levels
 - Left/Right and Home/End to move within the prompt
 - Up/Down to navigate prompt history
 - Page Up/Page Down to scroll the conversation
@@ -115,8 +117,8 @@ output path and become part of the main conversation.
 
 Subagents are read-only: they receive `read` and, when available, the five
 non-mutating LSP tools, but not Bash, file-editing tools, rename, or further
-subagents. They use the main model, reasoning effort, working directory, and
-project instructions, and are not persisted or run in the background.
+subagents. They use the main model, thinking level, working directory, and project
+instructions, and are not persisted or run in the background.
 
 ## Architecture
 
@@ -129,9 +131,11 @@ tool/            coding tools, subagents, LSP client, registry, and output limit
 terminal/        full-screen TUI and one-shot event rendering
 ```
 
-The `agent` package owns the narrow provider and toolbox interfaces. The OpenAI
-adapter owns all wire types and preserves opaque response output items for
-stateless continuation. The agent stores that state without interpreting it.
+The `agent` package owns the narrow provider and toolbox interfaces, including the
+provider-neutral thinking levels carried by each request. Provider adapters own
+model support and native mappings. The OpenAI adapter owns all wire types and
+preserves opaque response output items for stateless continuation. The agent stores
+that state without interpreting it.
 The LSP client uses `go.lsp.dev/protocol` for protocol types and JSON-RPC.
 
 The OpenAI adapter uses bounded SSE streams. Reasoning summaries, output text,

@@ -123,14 +123,15 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestClient(t, token, server.URL, Options{ReasoningEffort: "high"})
+	client := newTestClient(t, token, server.URL, Options{})
 	tools := []agent.ToolDefinition{strictTestTool("read"), strictTestTool("bash")}
 	var sinkText []string
 	first, err := client.Generate(context.Background(), agent.Request{
-		Model:        "test-model",
-		Instructions: "system instructions",
-		Inputs:       []agent.Input{{Kind: agent.InputUser, Text: "inspect"}},
-		Tools:        tools,
+		Model:         "test-model",
+		ThinkingLevel: agent.ThinkingHigh,
+		Instructions:  "system instructions",
+		Inputs:        []agent.Input{{Kind: agent.InputUser, Text: "inspect"}},
+		Tools:         tools,
 	}, func(text string) error {
 		sinkText = append(sinkText, text)
 		return nil
@@ -153,10 +154,11 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	}
 
 	second, err := client.Generate(context.Background(), agent.Request{
-		Model:        "test-model",
-		Instructions: "system instructions",
-		State:        first.State,
-		Tools:        tools,
+		Model:         "test-model",
+		ThinkingLevel: agent.ThinkingHigh,
+		Instructions:  "system instructions",
+		State:         first.State,
+		Tools:         tools,
 		Inputs: []agent.Input{
 			{Kind: agent.InputToolResult, CallID: "call_read", Tool: "read", Text: "file contents"},
 			{Kind: agent.InputToolResult, CallID: "call_bash", Tool: "bash", Text: "exit status 1", IsError: true},
@@ -170,11 +172,12 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	}
 
 	third, err := client.Generate(context.Background(), agent.Request{
-		Model:        "test-model",
-		Instructions: "system instructions",
-		State:        second.State,
-		Tools:        tools,
-		Inputs:       []agent.Input{{Kind: agent.InputUser, Text: "next"}},
+		Model:         "test-model",
+		ThinkingLevel: agent.ThinkingHigh,
+		Instructions:  "system instructions",
+		State:         second.State,
+		Tools:         tools,
+		Inputs:        []agent.Input{{Kind: agent.InputUser, Text: "next"}},
 	}, nil, nil)
 	if err != nil {
 		t.Fatalf("third Generate() error = %v", err)
@@ -266,17 +269,18 @@ func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestClient(t, token, server.URL, Options{ReasoningEffort: "high"})
+	client := newTestClient(t, token, server.URL, Options{})
 	state, err := encodeState(nil, nil, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)}, defaultMaxStateBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
 	compacted, err := client.Compact(context.Background(), agent.Request{
-		Model:        "gpt-5.6-sol",
-		Instructions: "system",
-		State:        state,
-		Inputs:       []agent.Input{{Kind: agent.InputUser, Text: "pending user"}},
-		Tools:        []agent.ToolDefinition{strictTestTool("read")},
+		Model:         "gpt-5.6-sol",
+		ThinkingLevel: agent.ThinkingHigh,
+		Instructions:  "system",
+		State:         state,
+		Inputs:        []agent.Input{{Kind: agent.InputUser, Text: "pending user"}},
+		Tools:         []agent.ToolDefinition{strictTestTool("read")},
 	})
 	if err != nil {
 		t.Fatalf("Compact() error = %v", err)
@@ -290,9 +294,10 @@ func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
 	}
 
 	response, err := client.Generate(context.Background(), agent.Request{
-		Model:  "gpt-5.6-sol",
-		State:  compacted.State,
-		Inputs: []agent.Input{{Kind: agent.InputUser, Text: "after compact"}},
+		Model:         "gpt-5.6-sol",
+		ThinkingLevel: agent.ThinkingHigh,
+		State:         compacted.State,
+		Inputs:        []agent.Input{{Kind: agent.InputUser, Text: "after compact"}},
 	}, nil, nil)
 	if err != nil || response.Text != "continued" || calls != 2 {
 		t.Fatalf("response = %+v, error = %v, calls = %d", response, err, calls)
@@ -680,28 +685,27 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 	})
 }
 
-func TestClientUpdatesReasoningEffort(t *testing.T) {
-	client, err := NewCodex(testTokenSource("token"), Options{ReasoningEffort: "high"})
+func TestClientRejectsUnsupportedThinkingLevelBeforeAuthentication(t *testing.T) {
+	calls := 0
+	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
+		calls++
+		return CodexCredential{AccessToken: "token", AccountID: "account"}, nil
+	}), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.SetReasoningEffort("xhigh"); err != nil {
-		t.Fatal(err)
-	}
-	if client.reasoningEffort != "xhigh" {
-		t.Fatalf("reasoning effort = %q", client.reasoningEffort)
-	}
-	if err := client.SetReasoningEffort("extreme"); err == nil {
-		t.Fatal("invalid reasoning effort accepted")
-	}
-	if client.reasoningEffort != "xhigh" {
-		t.Fatalf("invalid update changed reasoning effort to %q", client.reasoningEffort)
-	}
-}
 
-func TestNewRejectsInvalidReasoningEffort(t *testing.T) {
-	if _, err := NewCodex(testTokenSource("token"), Options{ReasoningEffort: "extreme"}); err == nil {
-		t.Fatal("invalid reasoning effort accepted")
+	request := agent.Request{Model: "unknown", ThinkingLevel: agent.ThinkingXHigh}
+	_, err = client.Generate(context.Background(), request, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), `thinking level "xhigh" is not supported by model "unknown"`) {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	_, err = client.Compact(context.Background(), request)
+	if err == nil || !strings.Contains(err.Error(), `thinking level "xhigh" is not supported by model "unknown"`) {
+		t.Fatalf("Compact() error = %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("token source calls = %d, want 0", calls)
 	}
 }
 

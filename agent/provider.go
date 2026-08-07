@@ -33,11 +33,12 @@ type Usage struct {
 }
 
 type Request struct {
-	Model        string
-	Instructions string
-	Inputs       []Input
-	Tools        []ToolDefinition
-	State        []byte
+	Model         string
+	ThinkingLevel ThinkingLevel
+	Instructions  string
+	Inputs        []Input
+	Tools         []ToolDefinition
+	State         []byte
 }
 
 type Response struct {

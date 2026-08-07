@@ -15,6 +15,7 @@ var (
 
 type Options struct {
 	Model               string
+	ThinkingLevel       ThinkingLevel
 	ProjectInstructions string
 	maxToolRounds       int
 }
@@ -28,6 +29,7 @@ type Engine struct {
 	provider      Provider
 	tools         Toolbox
 	model         string
+	thinkingLevel ThinkingLevel
 	maxToolRounds int
 	instructions  string
 	state         []byte
@@ -40,11 +42,16 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 	if maxToolRounds == 0 {
 		maxToolRounds = defaultMaxToolRounds
 	}
+	thinkingLevel := options.ThinkingLevel
+	if thinkingLevel == "" {
+		thinkingLevel = DefaultThinkingLevel
+	}
 
 	return &Engine{
 		provider:      provider,
 		tools:         tools,
 		model:         options.Model,
+		thinkingLevel: thinkingLevel,
 		maxToolRounds: maxToolRounds,
 		instructions:  buildSystemPrompt(tools.Definitions(), options.ProjectInstructions),
 	}
@@ -71,11 +78,12 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		}
 
 		request := Request{
-			Model:        e.model,
-			Instructions: e.instructions,
-			Inputs:       inputs,
-			Tools:        e.tools.Definitions(),
-			State:        state,
+			Model:         e.model,
+			ThinkingLevel: e.thinkingLevel,
+			Instructions:  e.instructions,
+			Inputs:        inputs,
+			Tools:         e.tools.Definitions(),
+			State:         state,
 		}
 		if compactor, canCompact := e.provider.(Compactor); canCompact && compactor.ShouldCompact(request, contextUsage) {
 			if err := emit(sink, Event{Kind: EventCompactionStart}); err != nil {
@@ -168,6 +176,14 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			})
 		}
 	}
+}
+
+func (e *Engine) SetThinkingLevel(level ThinkingLevel) error {
+	if !level.Valid() {
+		return errors.New("agent: invalid thinking level")
+	}
+	e.thinkingLevel = level
+	return nil
 }
 
 func (e *Engine) NeedsReset() bool {

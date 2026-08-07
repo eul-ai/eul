@@ -30,11 +30,7 @@ const (
 	maxPipedPromptBytes = 1024 * 1024
 )
 
-type providerFactory func(openaiadapter.CodexTokenSource, string) (agent.Provider, error)
-
-type reasoningEffortSetter interface {
-	SetReasoningEffort(string) error
-}
+type providerFactory func(openaiadapter.CodexTokenSource) (agent.Provider, error)
 
 type oauthManager interface {
 	Login(context.Context, oauth.LoginMethod, oauth.Interaction) (oauth.Credentials, error)
@@ -73,8 +69,8 @@ func main() {
 			return oauth.NewManager(path, oauth.Options{}), nil
 		},
 		openURL: openBrowser,
-		newProvider: func(source openaiadapter.CodexTokenSource, reasoningEffort string) (agent.Provider, error) {
-			return openaiadapter.NewCodex(source, openaiadapter.Options{ReasoningEffort: reasoningEffort})
+		newProvider: func(source openaiadapter.CodexTokenSource) (agent.Provider, error) {
+			return openaiadapter.NewCodex(source, openaiadapter.Options{})
 		},
 	})
 
@@ -95,11 +91,15 @@ func run(arguments []string, runtime appRuntime) int {
 	}
 
 	modelDefault := runtime.getenv("OPENAI_MODEL")
-	effortDefault := runtime.getenv("OPENAI_REASONING_EFFORT")
+	thinkingDefault := runtime.getenv("YAAH_THINKING_LEVEL")
+	if thinkingDefault == "" {
+		thinkingDefault = string(agent.DefaultThinkingLevel)
+	}
+
 	flags := flag.NewFlagSet("yaah", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
 	model := flags.String("model", modelDefault, "OpenAI model (or OPENAI_MODEL)")
-	effort := flags.String("effort", effortDefault, "reasoning effort (or OPENAI_REASONING_EFFORT)")
+	thinking := flags.String("thinking", thinkingDefault, "thinking level (or YAAH_THINKING_LEVEL)")
 	cwdFlag := flags.String("cwd", "", "fixed working directory")
 
 	if err := flags.Parse(arguments); err != nil {
@@ -110,6 +110,11 @@ func run(arguments []string, runtime appRuntime) int {
 	}
 	if flags.NArg() > 1 {
 		writeCLIError(runtime.stderr, "usage error: expected at most one prompt argument")
+		return exitUsage
+	}
+	thinkingLevel, err := agent.ParseThinkingLevel(*thinking)
+	if err != nil {
+		writeCLIError(runtime.stderr, "%v", err)
 		return exitUsage
 	}
 
@@ -155,26 +160,15 @@ func run(arguments []string, runtime appRuntime) int {
 		return exitFailure
 	}
 
-	currentEffort := *effort
-	provider, err := runtime.newProvider(tokenSource, currentEffort)
+	currentThinkingLevel := openaiadapter.ClampThinkingLevel(*model, thinkingLevel)
+	provider, err := runtime.newProvider(tokenSource)
 	if err != nil {
 		writeCLIError(runtime.stderr, "configure provider: %v", err)
 		return exitFailure
 	}
 
-	var setEffort func(string) error
-	if setter, ok := provider.(reasoningEffortSetter); ok {
-		setEffort = func(effort string) error {
-			if err := setter.SetReasoningEffort(effort); err != nil {
-				return err
-			}
-			currentEffort = effort
-			return nil
-		}
-	}
-
 	subagent := tool.NewSubagent(func(ctx context.Context, task string) (agent.RunResult, error) {
-		childProvider, err := runtime.newProvider(tokenSource, currentEffort)
+		childProvider, err := runtime.newProvider(tokenSource)
 		if err != nil {
 			return agent.RunResult{}, fmt.Errorf("configure subagent provider: %w", err)
 		}
@@ -182,6 +176,7 @@ func run(arguments []string, runtime appRuntime) int {
 		childTools := buildSubagentTools(cwd)
 		child := agent.New(childProvider, childTools, agent.Options{
 			Model:               *model,
+			ThinkingLevel:       currentThinkingLevel,
 			ProjectInstructions: projectInstructions,
 		})
 		result, runErr := child.Run(ctx, task, func(agent.Event) error { return nil })
@@ -197,18 +192,27 @@ func run(arguments []string, runtime appRuntime) int {
 	registry := buildTools(cwd, subagent)
 	engine := agent.New(provider, registry, agent.Options{
 		Model:               *model,
+		ThinkingLevel:       currentThinkingLevel,
 		ProjectInstructions: projectInstructions,
 	})
+	setThinkingLevel := func(level agent.ThinkingLevel) error {
+		if err := engine.SetThinkingLevel(level); err != nil {
+			return err
+		}
+		currentThinkingLevel = level
+		return nil
+	}
 
 	terminalOptions := terminal.Options{
-		Input:         runtime.stdin,
-		Output:        runtime.stdout,
-		ErrorOutput:   runtime.stderr,
-		Model:         *model,
-		Effort:        currentEffort,
-		ContextWindow: openaiadapter.ContextWindow(*model),
-		Interrupts:    runtime.interrupts,
-		SetEffort:     setEffort,
+		Input:            runtime.stdin,
+		Output:           runtime.stdout,
+		ErrorOutput:      runtime.stderr,
+		Model:            *model,
+		ThinkingLevel:    currentThinkingLevel,
+		ThinkingLevels:   openaiadapter.SupportedThinkingLevels(*model),
+		ContextWindow:    openaiadapter.ContextWindow(*model),
+		Interrupts:       runtime.interrupts,
+		SetThinkingLevel: setThinkingLevel,
 	}
 
 	if oneShot {

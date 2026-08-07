@@ -82,9 +82,9 @@ The input area sits between horizontal rules in the style of Claude Code and Pi.
 3. its horizontal rules; and
 4. the conversation.
 
-The base canvas preserves the terminal's background instead of painting the theme background across the alternate screen. The conversation viewport has one blank row at the top and bottom. Block backgrounds span the full width while their text has a one-cell horizontal inset. User and assistant text use the base background, reasoning summaries use muted italic text with balanced space above and below, and compact tool blocks use horizontal and vertical padding with pending, success, or error backgrounds. Assistant and reasoning blocks render `**bold**`, `*italic*`, and backtick-delimited inline code; other block types preserve the markers literally. Inline emphasis and code spans compose when nested, and code uses the theme's `mdCode` foreground. Role labels are omitted. Input rules use the theme color for the selected reasoning effort.
+The base canvas preserves the terminal's background instead of painting the theme background across the alternate screen. The conversation viewport has one blank row at the top and bottom. Block backgrounds span the full width while their text has a one-cell horizontal inset. User and assistant text use the base background, reasoning summaries use muted italic text with balanced space above and below, and compact tool blocks use horizontal and vertical padding with pending, success, or error backgrounds. Assistant and reasoning blocks render `**bold**`, `*italic*`, and backtick-delimited inline code; other block types preserve the markers literally. Inline emphasis and code spans compose when nested, and code uses the theme's `mdCode` foreground. Role labels are omitted. Input rules use the theme color for the selected thinking level.
 
-On narrow terminals, the status bar will preserve the activity label and compact context percentage before truncating the model and effort.
+On narrow terminals, the status bar will preserve the activity label and compact context percentage before truncating the model and thinking level.
 
 ## Conversation model
 
@@ -115,7 +115,7 @@ The editor expands vertically for explicit newlines and soft-wrapped text while 
 | --- | --- |
 | Enter | Submit non-empty input |
 | Shift-Enter | Insert a newline |
-| Shift-Tab | Cycle through none, minimal, low, medium, high, xhigh, and max reasoning effort |
+| Shift-Tab | Cycle through the model-supported thinking levels from off, minimal, low, medium, high, xhigh, and max |
 | Left/Right | Move by rune |
 | Home/End | Move to start/end |
 | Backspace/Delete | Delete adjacent rune |
@@ -140,11 +140,11 @@ Commands retain their current meaning:
 
 ## Status bar
 
-The status bar contains three items: model with reasoning effort, context usage, and the activity indicator. Activity is left-aligned; model and context are right-aligned. Active states use a small spinner driven by a ticker; idle and error states are static.
+The status bar contains three items: model with thinking level, context usage, and the activity indicator. Activity is left-aligned; model and context are right-aligned. Active states use a small spinner driven by a ticker; idle and error states are static.
 
 Context usage is the latest provider-reported context token count as a percentage of the selected model's context window. Known models may also show the compact count on wider terminals. Before the first response it is zero; `/clear` resets it to zero. Unknown context-window sizes display the token count without a percentage.
 
-The CLI must pass reasoning effort, an effort-update callback, and model context-window metadata into the terminal options. The agent will emit a context-usage event after each provider response so the status reflects the current context rather than the cumulative usage returned for the whole turn. An empty effort is displayed as `default`.
+The CLI must pass the current thinking level, supported model levels, a thinking-level update callback, and model context-window metadata into the terminal options. The agent will emit a context-usage event after each provider response so the status reflects the current context rather than the cumulative usage returned for the whole turn. The provider-neutral default is `medium`.
 
 | Trigger | Displayed state |
 | --- | --- |
@@ -258,7 +258,7 @@ The final names may be adjusted while implementing, but input decoding, state tr
 ### 5. Integrate engine streaming and status
 
 - Route engine events into the UI loop.
-- Pass reasoning effort and model context-window metadata to the TUI.
+- Pass the thinking level, supported model levels, and model context-window metadata to the TUI.
 - Emit current context usage after each provider response and reset it with the conversation.
 - Add explicit compaction start/end events.
 - Implement status transitions and the active spinner.
@@ -278,7 +278,7 @@ Most behavior should be tested without a live terminal:
 - UTF-8 editing, history, paste normalization, and input limits;
 - conversation block transitions and streaming append behavior;
 - every status transition, including compaction completion and cancellation;
-- model, effort, context count, context percentage, and narrow-width status formatting;
+- model, thinking level, context count, context percentage, and narrow-width status formatting;
 - wrapping, clipping, scrolling, and resize at narrow and short dimensions;
 - ANSI sanitization of assistant, reasoning, tool, error, and pasted text;
 - frame snapshots with cursor placement;
@@ -294,7 +294,7 @@ A manual smoke test should cover Linux and macOS terminals:
 3. cancel before and during a tool call;
 4. trigger `/clear` and `/exit`;
 5. paste multiline and non-ASCII text;
-6. insert an intentional newline with Shift-Enter, cycle effort with Shift-Tab, and clear input with Ctrl-C;
+6. insert an intentional newline with Shift-Enter, cycle thinking levels with Shift-Tab, and clear input with Ctrl-C;
 7. pipe and file-redirect a prompt into one-shot mode, including redirected output;
 8. confirm terminal-input TUI mode rejects non-terminal output; and
 9. verify terminal echo and cursor state after every exit path.

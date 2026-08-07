@@ -173,7 +173,7 @@ func buildTerminalFrame(model *tuiModel) terminalFrame {
 	copy(rows, conversation)
 
 	rule := strings.Repeat("─", width)
-	ruleStyle := lineStyle{foreground: currentTheme.effortColor(model.effort)}
+	ruleStyle := lineStyle{foreground: currentTheme.thinkingColor(model.thinkingLevel)}
 	if layout.topRuleRow > 0 {
 		rows[layout.topRuleRow-1] = styledLine{text: rule, style: ruleStyle}
 	}
@@ -479,7 +479,7 @@ func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {
 
 func renderStatus(model *tuiModel, width int) (string, string) {
 	activity := activityText(model)
-	modelText := model.model + " (" + model.effort + ")"
+	modelText := model.model + " (" + string(model.thinkingLevel) + ")"
 	contextLong, contextShort := contextText(model.contextTokens, model.contextWindow)
 
 	candidates := []string{

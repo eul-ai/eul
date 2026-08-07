@@ -1,6 +1,10 @@
 package terminal
 
-import "fmt"
+import (
+	"fmt"
+
+	"yaah/agent"
+)
 
 type terminalColor struct {
 	red   uint8
@@ -43,17 +47,17 @@ var ayuMirageTheme = theme{
 
 var currentTheme = ayuMirageTheme
 
-func (t theme) effortColor(effort string) terminalColor {
-	switch effort {
-	case "none":
+func (t theme) thinkingColor(level agent.ThinkingLevel) terminalColor {
+	switch level {
+	case agent.ThinkingOff:
 		return t.dimmed
-	case "low":
+	case agent.ThinkingLow:
 		return t.blue
-	case "medium":
+	case agent.ThinkingMedium:
 		return t.accent
-	case "high":
+	case agent.ThinkingHigh:
 		return t.orange
-	case "xhigh", "max":
+	case agent.ThinkingXHigh, agent.ThinkingMax:
 		return t.error
 	default:
 		return t.muted

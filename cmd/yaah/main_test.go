@@ -69,18 +69,16 @@ func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	var gotRequest agent.Request
-	factoryEffort := ""
 	factoryCalls := 0
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{
-		"OPENAI_MODEL":            "environment-model",
-		"OPENAI_REASONING_EFFORT": "high",
+		"OPENAI_MODEL":        "environment-model",
+		"YAAH_THINKING_LEVEL": "high",
 	})
-	runtime.newProvider = func(source openaiadapter.CodexTokenSource, reasoningEffort string) (agent.Provider, error) {
+	runtime.newProvider = func(source openaiadapter.CodexTokenSource) (agent.Provider, error) {
 		factoryCalls++
 		if source == nil {
 			t.Fatal("provider token source is nil")
 		}
-		factoryEffort = reasoningEffort
 		return providerFunction(func(_ context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
 			gotRequest = request
 			if err := sink("answer"); err != nil {
@@ -90,12 +88,12 @@ func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 		}), nil
 	}
 
-	code := run([]string{"--model", "flag-model", "--effort", "xhigh", "one shot prompt"}, runtime)
+	code := run([]string{"--model", "gpt-5.6-sol", "--thinking", "xhigh", "one shot prompt"}, runtime)
 	if code != exitSuccess {
 		t.Fatalf("run() code = %d, stderr = %q", code, stderr.String())
 	}
-	if factoryCalls != 1 || factoryEffort != "xhigh" || gotRequest.Model != "flag-model" || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].Text != "one shot prompt" {
-		t.Fatalf("factory calls=%d effort=%q request=%+v", factoryCalls, factoryEffort, gotRequest)
+	if factoryCalls != 1 || gotRequest.Model != "gpt-5.6-sol" || gotRequest.ThinkingLevel != agent.ThinkingXHigh || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].Text != "one shot prompt" {
+		t.Fatalf("factory calls=%d request=%+v", factoryCalls, gotRequest)
 	}
 	if !strings.HasSuffix(gotRequest.Instructions, projectInstructions) {
 		t.Fatalf("instructions omit AGENTS.md:\n%s", gotRequest.Instructions)
@@ -124,12 +122,15 @@ func TestRunOneShotFeedsConcurrentSubagentsBackToMain(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_MODEL": "model"})
+	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{
+		"OPENAI_MODEL":        "model",
+		"YAAH_THINKING_LEVEL": "high",
+	})
 	var mu sync.Mutex
 	factoryCalls := 0
 	var childRequests []agent.Request
 	mainCalls := 0
-	runtime.newProvider = func(openaiadapter.CodexTokenSource, string) (agent.Provider, error) {
+	runtime.newProvider = func(openaiadapter.CodexTokenSource) (agent.Provider, error) {
 		mu.Lock()
 		factoryCalls++
 		call := factoryCalls
@@ -140,6 +141,9 @@ func TestRunOneShotFeedsConcurrentSubagentsBackToMain(t *testing.T) {
 				mainCalls++
 				switch mainCalls {
 				case 1:
+					if request.ThinkingLevel != agent.ThinkingHigh {
+						t.Fatalf("main thinking level = %q", request.ThinkingLevel)
+					}
 					foundSubagent := false
 					for _, definition := range request.Tools {
 						if definition.Name != "subagent" {
@@ -202,7 +206,7 @@ func TestRunOneShotFeedsConcurrentSubagentsBackToMain(t *testing.T) {
 	}
 	var tasks []string
 	for _, request := range childRequests {
-		if request.Model != "model" || !strings.HasSuffix(request.Instructions, projectInstructions) {
+		if request.Model != "model" || request.ThinkingLevel != agent.ThinkingHigh || !strings.HasSuffix(request.Instructions, projectInstructions) {
 			t.Fatalf("child request = %+v", request)
 		}
 		names := make([]string, len(request.Tools))
@@ -234,7 +238,7 @@ func TestRunUsesStoredOAuthAndResolvesTokenAtRequestTime(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_MODEL": "subscription-model"})
 	runtime.newOAuth = fixedOAuth(manager)
-	runtime.newProvider = func(source openaiadapter.CodexTokenSource, _ string) (agent.Provider, error) {
+	runtime.newProvider = func(source openaiadapter.CodexTokenSource) (agent.Provider, error) {
 		if source == nil {
 			t.Fatal("provider token source is nil")
 		}
@@ -314,10 +318,11 @@ func TestRunPipedPromptUsesEnvironmentModelAndResolvedCWD(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	var request agent.Request
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{
-		"OPENAI_MODEL": "environment-model",
+		"OPENAI_MODEL":            "environment-model",
+		"OPENAI_REASONING_EFFORT": "max",
 	})
 	runtime.stdin = strings.NewReader("piped prompt\n")
-	runtime.newProvider = func(openaiadapter.CodexTokenSource, string) (agent.Provider, error) {
+	runtime.newProvider = func(openaiadapter.CodexTokenSource) (agent.Provider, error) {
 		return providerFunction(func(_ context.Context, got agent.Request, sink agent.TextSink) (agent.Response, error) {
 			request = got
 			if err := sink("answer"); err != nil {
@@ -331,7 +336,7 @@ func TestRunPipedPromptUsesEnvironmentModelAndResolvedCWD(t *testing.T) {
 	if code != exitSuccess {
 		t.Fatalf("run() code = %d, stderr = %q", code, stderr.String())
 	}
-	if request.Model != "environment-model" || len(request.Inputs) != 1 || request.Inputs[0].Text != "piped prompt\n" {
+	if request.Model != "environment-model" || request.ThinkingLevel != agent.DefaultThinkingLevel || len(request.Inputs) != 1 || request.Inputs[0].Text != "piped prompt\n" {
 		t.Fatalf("request = %+v", request)
 	}
 	if stdout.String() != "answer\n" {
@@ -368,6 +373,8 @@ func TestRunConfigurationAndUsageErrors(t *testing.T) {
 		{name: "missing model", wantCode: exitFailure, want: "model is required"},
 		{name: "explicit empty model", arguments: []string{"--model="}, environment: map[string]string{"OPENAI_MODEL": "fallback"}, wantCode: exitFailure, want: "model is required"},
 		{name: "model whitespace", arguments: []string{"--model", "bad model"}, wantCode: exitFailure, want: "must not contain whitespace"},
+		{name: "invalid thinking level", arguments: []string{"--thinking", "extreme"}, environment: map[string]string{"OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "thinking level must be one of"},
+		{name: "removed effort flag", arguments: []string{"--effort", "high"}, environment: map[string]string{"OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "flag provided but not defined"},
 		{name: "extra prompts", arguments: []string{"one", "two"}, environment: map[string]string{"OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "at most one prompt"},
 		{name: "empty prompt", arguments: []string{""}, environment: map[string]string{"OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "prompt must be nonempty"},
 		{name: "bad flag", arguments: []string{"--missing"}, wantCode: exitUsage, want: "flag provided but not defined"},
@@ -414,7 +421,7 @@ func TestRunOneShotInterruptReturns130(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_MODEL": "model"})
 	runtime.interrupts = interrupts
-	runtime.newProvider = func(openaiadapter.CodexTokenSource, string) (agent.Provider, error) {
+	runtime.newProvider = func(openaiadapter.CodexTokenSource) (agent.Provider, error) {
 		return providerFunction(func(ctx context.Context, _ agent.Request, _ agent.TextSink) (agent.Response, error) {
 			close(started)
 			<-ctx.Done()
@@ -453,7 +460,7 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[strin
 		stderr: stderr,
 		getenv: func(key string) string { return values[key] },
 		getwd:  func() (string, error) { return cwd, nil },
-		newProvider: func(openaiadapter.CodexTokenSource, string) (agent.Provider, error) {
+		newProvider: func(openaiadapter.CodexTokenSource) (agent.Provider, error) {
 			return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
 				return agent.Response{}, nil
 			}), nil

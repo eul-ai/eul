@@ -45,14 +45,13 @@ type activity struct {
 	detail string
 }
 
-var reasoningEffortLevels = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
-
 type tuiModel struct {
 	width             int
 	height            int
 	model             string
-	effort            string
-	setEffort         func(string) error
+	thinkingLevel     agent.ThinkingLevel
+	thinkingLevels    []agent.ThinkingLevel
+	setThinkingLevel  func(agent.ThinkingLevel) error
 	contextWindow     int64
 	contextTokens     int64
 	blocks            []conversationBlock
@@ -77,17 +76,22 @@ type tuiModel struct {
 }
 
 func newTUIModel(width, height int, options Options) *tuiModel {
-	effort := options.Effort
-	if effort == "" {
-		effort = "default"
+	thinkingLevel := options.ThinkingLevel
+	if thinkingLevel == "" {
+		thinkingLevel = agent.DefaultThinkingLevel
+	}
+	thinkingLevels := append([]agent.ThinkingLevel(nil), options.ThinkingLevels...)
+	if len(thinkingLevels) == 0 {
+		thinkingLevels = agent.ThinkingLevels()
 	}
 
 	return &tuiModel{
 		width:             width,
 		height:            height,
 		model:             singleLine(options.Model, 120),
-		effort:            singleLine(effort, 40),
-		setEffort:         options.SetEffort,
+		thinkingLevel:     agent.ThinkingLevel(singleLine(string(thinkingLevel), 40)),
+		thinkingLevels:    thinkingLevels,
+		setThinkingLevel:  options.SetThinkingLevel,
 		contextWindow:     options.ContextWindow,
 		historyIndex:      -1,
 		activeTool:        -1,
@@ -223,22 +227,22 @@ func (m *tuiModel) clearInput() {
 	m.historyDraft = ""
 }
 
-func (m *tuiModel) cycleEffort() error {
-	if m.setEffort == nil {
-		return errors.New("effort selection is unavailable")
+func (m *tuiModel) cycleThinkingLevel() error {
+	if m.setThinkingLevel == nil || len(m.thinkingLevels) == 0 {
+		return errors.New("thinking level selection is unavailable")
 	}
 
-	next := reasoningEffortLevels[0]
-	for index, effort := range reasoningEffortLevels {
-		if effort == m.effort {
-			next = reasoningEffortLevels[(index+1)%len(reasoningEffortLevels)]
+	next := m.thinkingLevels[0]
+	for index, level := range m.thinkingLevels {
+		if level == m.thinkingLevel {
+			next = m.thinkingLevels[(index+1)%len(m.thinkingLevels)]
 			break
 		}
 	}
-	if err := m.setEffort(next); err != nil {
+	if err := m.setThinkingLevel(next); err != nil {
 		return err
 	}
-	m.effort = next
+	m.thinkingLevel = next
 	return nil
 }
 

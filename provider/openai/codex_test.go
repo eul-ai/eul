@@ -74,13 +74,13 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
 		sourceCalls++
 		return CodexCredential{AccessToken: token, AccountID: accountID}, nil
-	}), Options{BaseURL: server.URL, ReasoningEffort: "xhigh"})
+	}), Options{BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var delivered, reasoning string
-	response, err := client.Generate(context.Background(), agent.Request{Model: "gpt-test", Inputs: []agent.Input{{Kind: agent.InputUser, Text: "hello"}}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, func(text string) error {
+	response, err := client.Generate(context.Background(), agent.Request{Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, Inputs: []agent.Input{{Kind: agent.InputUser, Text: "hello"}}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, func(text string) error {
 		delivered += text
 		return nil
 	}, func(text string) error {

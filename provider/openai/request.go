@@ -41,7 +41,7 @@ type responseText struct {
 
 type responseReasoning struct {
 	Effort  string `json:"effort"`
-	Summary string `json:"summary"`
+	Summary string `json:"summary,omitempty"`
 }
 
 type functionTool struct {

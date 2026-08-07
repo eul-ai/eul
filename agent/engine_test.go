@@ -537,6 +537,37 @@ func TestEngineTreatsToolLocalDeadlineAsRecoverable(t *testing.T) {
 	}
 }
 
+func TestEngineSendsCurrentThinkingLevel(t *testing.T) {
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if request.ThinkingLevel != DefaultThinkingLevel {
+				t.Fatalf("default thinking level = %q", request.ThinkingLevel)
+			}
+			return Response{Text: "first"}, nil
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if request.ThinkingLevel != ThinkingHigh {
+				t.Fatalf("updated thinking level = %q", request.ThinkingLevel)
+			}
+			return Response{Text: "second"}, nil
+		},
+	}}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+
+	if _, err := engine.Run(context.Background(), "first", discardEvents); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.SetThinkingLevel(ThinkingHigh); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Run(context.Background(), "second", discardEvents); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.SetThinkingLevel("extreme"); err == nil {
+		t.Fatal("invalid thinking level accepted")
+	}
+}
+
 func TestEngineReturnsCanceledContextBeforeAcquiringAvailableGate(t *testing.T) {
 	provider := &scriptedProvider{t: t, steps: []providerStep{
 		func(context.Context, Request, TextSink) (Response, error) {

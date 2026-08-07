@@ -25,9 +25,8 @@ const (
 )
 
 type Options struct {
-	HTTPClient      *http.Client
-	BaseURL         string
-	ReasoningEffort string
+	HTTPClient *http.Client
+	BaseURL    string
 }
 
 type CodexCredential struct {
@@ -48,7 +47,6 @@ type Client struct {
 	maxResponseBytes int64
 	maxErrorBytes    int64
 	maxStateBytes    int
-	reasoningEffort  string
 }
 
 var (
@@ -56,22 +54,7 @@ var (
 	_ agent.Compactor = (*Client)(nil)
 )
 
-var validReasoningEfforts = map[string]struct{}{
-	"":        {},
-	"none":    {},
-	"minimal": {},
-	"low":     {},
-	"medium":  {},
-	"high":    {},
-	"xhigh":   {},
-	"max":     {},
-}
-
 func NewCodex(source CodexTokenSource, options Options) (*Client, error) {
-	if err := validateReasoningEffort(options.ReasoningEffort); err != nil {
-		return nil, err
-	}
-
 	baseURL := options.BaseURL
 	if baseURL == "" {
 		baseURL = defaultBaseURL
@@ -98,21 +81,17 @@ func NewCodex(source CodexTokenSource, options Options) (*Client, error) {
 		maxResponseBytes: defaultMaxResponseBytes,
 		maxErrorBytes:    defaultMaxErrorBytes,
 		maxStateBytes:    defaultMaxStateBytes,
-		reasoningEffort:  options.ReasoningEffort,
 	}, nil
-}
-
-func (c *Client) SetReasoningEffort(effort string) error {
-	if err := validateReasoningEffort(effort); err != nil {
-		return err
-	}
-	c.reasoningEffort = effort
-	return nil
 }
 
 func (c *Client) Generate(ctx context.Context, request agent.Request, onText, onReasoning agent.TextSink) (agent.Response, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.Response{}, err
+	}
+
+	reasoning, err := responseReasoningFor(request.Model, request.ThinkingLevel)
+	if err != nil {
+		return agent.Response{}, c.errorf("%v", err)
 	}
 
 	credential, err := c.resolveCredential(ctx)
@@ -125,9 +104,7 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 		return agent.Response{}, c.errorf("build request: %v", err)
 	}
 
-	if c.reasoningEffort != "" {
-		wireRequest.Reasoning = &responseReasoning{Effort: c.reasoningEffort, Summary: "auto"}
-	}
+	wireRequest.Reasoning = reasoning
 	wireRequest.Stream = true
 	wireRequest.Text = &responseText{Verbosity: "low"}
 	wireRequest.ToolChoice = "auto"
@@ -212,6 +189,11 @@ func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.Comp
 		return agent.CompactResponse{}, err
 	}
 
+	reasoning, err := responseReasoningFor(request.Model, request.ThinkingLevel)
+	if err != nil {
+		return agent.CompactResponse{}, c.errorf("%v", err)
+	}
+
 	credential, err := c.resolveCredential(ctx)
 	if err != nil {
 		return agent.CompactResponse{}, err
@@ -221,9 +203,7 @@ func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.Comp
 	if err != nil {
 		return agent.CompactResponse{}, c.errorf("build compact request: %v", err)
 	}
-	if c.reasoningEffort != "" {
-		wireRequest.Reasoning = &responseReasoning{Effort: c.reasoningEffort, Summary: "auto"}
-	}
+	wireRequest.Reasoning = reasoning
 	wireRequest.Text = &responseText{Verbosity: "low"}
 	wireRequest.ParallelToolCalls = true
 
@@ -361,13 +341,6 @@ func (c *Client) wrapf(cause error, format string, arguments ...any) error {
 func (c *Client) errorMessage(format string, arguments ...any) string {
 	message := strings.ToValidUTF8(fmt.Sprintf(format, arguments...), "�")
 	return truncateUTF8("openai: "+message, int(c.maxErrorBytes))
-}
-
-func validateReasoningEffort(effort string) error {
-	if _, ok := validReasoningEfforts[effort]; !ok {
-		return errors.New("openai: reasoning effort must be one of none, minimal, low, medium, high, xhigh, or max")
-	}
-	return nil
 }
 
 type wrappedError struct {

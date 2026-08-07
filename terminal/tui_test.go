@@ -200,12 +200,12 @@ func TestHandleKeyCtrlCClearsInputBeforeExiting(t *testing.T) {
 	}
 }
 
-func TestHandleKeyShiftTabCyclesEffort(t *testing.T) {
-	var configured string
+func TestHandleKeyShiftTabCyclesThinkingLevel(t *testing.T) {
+	var configured agent.ThinkingLevel
 	model := newTUIModel(80, 24, Options{
-		Effort: "medium",
-		SetEffort: func(effort string) error {
-			configured = effort
+		ThinkingLevel: agent.ThinkingMedium,
+		SetThinkingLevel: func(level agent.ThinkingLevel) error {
+			configured = level
 			return nil
 		},
 	})
@@ -215,11 +215,11 @@ func TestHandleKeyShiftTabCyclesEffort(t *testing.T) {
 	var cancel context.CancelFunc
 
 	exit, err := handleKey(context.Background(), model, &fakeEngine{}, keyEvent{code: keyShiftTab}, messages, stopped, &cancel)
-	if err != nil || exit || model.effort != "high" || configured != "high" {
-		t.Fatalf("exit=%v err=%v effort=%q configured=%q", exit, err, model.effort, configured)
+	if err != nil || exit || model.thinkingLevel != agent.ThinkingHigh || configured != agent.ThinkingHigh {
+		t.Fatalf("exit=%v err=%v thinking=%q configured=%q", exit, err, model.thinkingLevel, configured)
 	}
-	if frame := renderFrame(model); !strings.Contains(frame, ansiColors(currentTheme.effortColor("high"), terminalColor{}, false)) {
-		t.Fatalf("cycled effort color missing from frame: %q", frame)
+	if frame := renderFrame(model); !strings.Contains(frame, ansiColors(currentTheme.thinkingColor(agent.ThinkingHigh), terminalColor{}, false)) {
+		t.Fatalf("cycled thinking color missing from frame: %q", frame)
 	}
 }
 

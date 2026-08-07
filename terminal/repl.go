@@ -34,14 +34,15 @@ type Engine interface {
 }
 
 type Options struct {
-	Input         io.Reader
-	Output        io.Writer
-	ErrorOutput   io.Writer
-	Model         string
-	Effort        string
-	ContextWindow int64
-	Interrupts    <-chan os.Signal
-	SetEffort     func(string) error
+	Input            io.Reader
+	Output           io.Writer
+	ErrorOutput      io.Writer
+	Model            string
+	ThinkingLevel    agent.ThinkingLevel
+	ThinkingLevels   []agent.ThinkingLevel
+	ContextWindow    int64
+	Interrupts       <-chan os.Signal
+	SetThinkingLevel func(agent.ThinkingLevel) error
 }
 
 type fileDescriptor interface {

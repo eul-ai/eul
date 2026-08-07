@@ -2,8 +2,11 @@ package terminal
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
+
+	"yaah/agent"
 )
 
 func TestKeyDecoderHandlesTextAndSplitSequences(t *testing.T) {
@@ -143,26 +146,49 @@ func TestTUIModelInsertsNewlineAndPreservesItInPrompt(t *testing.T) {
 	}
 }
 
-func TestTUIModelCyclesReasoningEffort(t *testing.T) {
-	var configured []string
+func TestTUIModelDefaultsToMediumThinking(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	if model.thinkingLevel != agent.DefaultThinkingLevel {
+		t.Fatalf("thinking level = %q", model.thinkingLevel)
+	}
+}
+
+func TestTUIModelCyclesSupportedThinkingLevels(t *testing.T) {
+	var configured []agent.ThinkingLevel
 	model := newTUIModel(80, 24, Options{
-		Effort: "high",
-		SetEffort: func(effort string) error {
-			configured = append(configured, effort)
+		ThinkingLevel:  agent.ThinkingHigh,
+		ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh},
+		SetThinkingLevel: func(level agent.ThinkingLevel) error {
+			configured = append(configured, level)
 			return nil
 		},
 	})
-	for _, want := range []string{"xhigh", "max", "none", "minimal"} {
-		if err := model.cycleEffort(); err != nil {
+	for _, want := range []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh} {
+		if err := model.cycleThinkingLevel(); err != nil {
 			t.Fatal(err)
 		}
-		if model.effort != want {
-			t.Fatalf("effort = %q, want %q", model.effort, want)
+		if model.thinkingLevel != want {
+			t.Fatalf("thinking level = %q, want %q", model.thinkingLevel, want)
 		}
 	}
-	wantConfigured := []string{"xhigh", "max", "none", "minimal"}
-	if strings.Join(configured, ",") != strings.Join(wantConfigured, ",") {
+	wantConfigured := []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh}
+	if !slices.Equal(configured, wantConfigured) {
 		t.Fatalf("configured = %q, want %q", configured, wantConfigured)
+	}
+}
+
+func TestTUIModelKeepsThinkingLevelWhenUpdateFails(t *testing.T) {
+	model := newTUIModel(80, 24, Options{
+		ThinkingLevel: agent.ThinkingMedium,
+		SetThinkingLevel: func(agent.ThinkingLevel) error {
+			return errors.New("update failed")
+		},
+	})
+	if err := model.cycleThinkingLevel(); err == nil {
+		t.Fatal("cycleThinkingLevel() succeeded")
+	}
+	if model.thinkingLevel != agent.ThinkingMedium {
+		t.Fatalf("thinking level = %q", model.thinkingLevel)
 	}
 }
 
