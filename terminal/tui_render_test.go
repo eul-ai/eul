@@ -84,13 +84,13 @@ func TestConversationBlocksUseCurrentTheme(t *testing.T) {
 func TestAssistantAndReasoningRenderInlineMarkdown(t *testing.T) {
 	lines := conversationLines([]conversationBlock{
 		{kind: blockReasoning, text: "**Planning**"},
-		{kind: blockAssistant, text: "Use *care*"},
-		{kind: blockTool, text: "read *.go"},
+		{kind: blockAssistant, text: "Use *care* and `code`"},
+		{kind: blockTool, text: "read `file` and *.go"},
 	}, 40)
-	if lines[0].text != "Planning" || lines[2].text != "Use care" {
+	if lines[0].text != "Planning" || lines[2].text != "Use care and code" {
 		t.Fatalf("lines = %+v", lines)
 	}
-	if lines[5].text != "read *.go" || len(lines[5].spans) != 0 {
+	if lines[5].text != "read `file` and *.go" || len(lines[5].spans) != 0 {
 		t.Fatalf("tool markdown was interpreted: %+v", lines[5])
 	}
 
@@ -102,7 +102,11 @@ func TestAssistantAndReasoningRenderInlineMarkdown(t *testing.T) {
 	var assistant strings.Builder
 	renderLine(&assistant, 1, 40, lines[2])
 	if !strings.Contains(assistant.String(), ansiItalic+"care"+ansiNotItalic) {
-		t.Fatalf("assistant line = %q", assistant.String())
+		t.Fatalf("assistant italic = %q", assistant.String())
+	}
+	code := ansiForeground(currentTheme.markdownCode) + "code" + ansiForeground(currentTheme.foreground)
+	if !strings.Contains(assistant.String(), code) {
+		t.Fatalf("assistant code = %q", assistant.String())
 	}
 }
 

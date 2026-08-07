@@ -8,6 +8,7 @@ import (
 type inlineStyle struct {
 	bold   bool
 	italic bool
+	code   bool
 }
 
 type inlineSpan struct {
@@ -67,6 +68,13 @@ func parseInlineMarkdown(text string) []inlineSpan {
 		delimiter := ""
 		style := inlineStyle{}
 		switch {
+		case text[index] == '`':
+			end := index
+			for end < len(text) && text[end] == '`' {
+				end++
+			}
+			delimiter = text[index:end]
+			style = inlineStyle{code: true}
 		case strings.HasPrefix(text[index:], "***"):
 			delimiter = "***"
 			style = inlineStyle{bold: true, italic: true}

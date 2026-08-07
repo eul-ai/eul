@@ -20,15 +20,35 @@ func TestParseInlineMarkdown(t *testing.T) {
 	}
 }
 
+func TestParseInlineMarkdownCodeSpans(t *testing.T) {
+	got := parseInlineMarkdown("Use `**name**` and ``a`b``")
+	want := []inlineSpan{
+		{text: "Use ", style: inlineStyle{}},
+		{text: "**name**", style: inlineStyle{code: true}},
+		{text: " and ", style: inlineStyle{}},
+		{text: "a`b", style: inlineStyle{code: true}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("spans = %+v, want %+v", got, want)
+	}
+}
+
 func TestParseInlineMarkdownPreservesUnmatchedMarkers(t *testing.T) {
-	got := parseInlineMarkdown("keep **open and *unfinished")
-	if text := inlineSpanText(got); text != "keep **open and *unfinished" {
+	got := parseInlineMarkdown("keep **open and *unfinished and `code")
+	if text := inlineSpanText(got); text != "keep **open and *unfinished and `code" {
 		t.Fatalf("text = %q", text)
 	}
 	for _, span := range got {
 		if span.style != (inlineStyle{}) {
 			t.Fatalf("unexpected styled span: %+v", span)
 		}
+	}
+}
+
+func TestWrapInlineMarkdownCodeMarkersDoNotUseWidth(t *testing.T) {
+	lines := wrapInlineMarkdown("`abcde`", 5)
+	if len(lines) != 1 || lines[0].text != "abcde" || len(lines[0].spans) != 1 || !lines[0].spans[0].style.code {
+		t.Fatalf("lines = %+v", lines)
 	}
 }
 

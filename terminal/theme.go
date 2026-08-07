@@ -14,6 +14,7 @@ type theme struct {
 	accent                terminalColor
 	orange                terminalColor
 	blue                  terminalColor
+	markdownCode          terminalColor
 	muted                 terminalColor
 	dimmed                terminalColor
 	error                 terminalColor
@@ -30,6 +31,7 @@ var ayuMirageTheme = theme{
 	accent:                terminalColor{red: 0xff, green: 0xcc, blue: 0x66},
 	orange:                terminalColor{red: 0xff, green: 0xa7, blue: 0x59},
 	blue:                  terminalColor{red: 0x73, green: 0xd0, blue: 0xff},
+	markdownCode:          terminalColor{red: 0x95, green: 0xe6, blue: 0xcb},
 	muted:                 terminalColor{red: 0x84, green: 0x90, blue: 0xa5},
 	dimmed:                terminalColor{red: 0x6a, green: 0x76, blue: 0x87},
 	error:                 terminalColor{red: 0xf2, green: 0x87, blue: 0x79},
@@ -59,12 +61,7 @@ func (t theme) effortColor(effort string) terminalColor {
 }
 
 func ansiColors(foreground, background terminalColor, paintBackground bool) string {
-	colors := fmt.Sprintf(
-		"\x1b[38;2;%d;%d;%dm",
-		foreground.red,
-		foreground.green,
-		foreground.blue,
-	)
+	colors := ansiForeground(foreground)
 	if !paintBackground {
 		return colors + "\x1b[49m"
 	}
@@ -73,5 +70,14 @@ func ansiColors(foreground, background terminalColor, paintBackground bool) stri
 		background.red,
 		background.green,
 		background.blue,
+	)
+}
+
+func ansiForeground(color terminalColor) string {
+	return fmt.Sprintf(
+		"\x1b[38;2;%d;%d;%dm",
+		color.red,
+		color.green,
+		color.blue,
 	)
 }

@@ -241,18 +241,33 @@ func renderLine(frame *strings.Builder, row, width int, line styledLine) {
 	if len(spans) == 0 {
 		frame.WriteString(text)
 	} else {
+		foreground := style.foreground
 		bold := style.bold
 		italic := style.italic
 		for _, span := range spans {
+			spanForeground := style.foreground
+			if span.style.code {
+				spanForeground = currentTheme.markdownCode
+			}
+			writeTextForeground(frame, spanForeground, &foreground)
 			writeTextAttributes(frame, style.bold || span.style.bold, style.italic || span.style.italic, &bold, &italic)
 			frame.WriteString(span.text)
 		}
+		writeTextForeground(frame, style.foreground, &foreground)
 		writeTextAttributes(frame, style.bold, style.italic, &bold, &italic)
 	}
 	frame.WriteString(strings.Repeat(" ", textWidth-cellWidth(text)))
 	frame.WriteString(right)
 	frame.WriteString(strings.Repeat(" ", rightPadding))
 	frame.WriteString(ansiReset)
+}
+
+func writeTextForeground(output *strings.Builder, foreground terminalColor, current *terminalColor) {
+	if foreground == *current {
+		return
+	}
+	output.WriteString(ansiForeground(foreground))
+	*current = foreground
 }
 
 func writeTextAttributes(output *strings.Builder, bold, italic bool, currentBold, currentItalic *bool) {
