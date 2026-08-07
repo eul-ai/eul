@@ -1,8 +1,8 @@
 # Yaah
 
-Yaah is a small, trusted-local coding agent written in Go. It provides one
-line-oriented executable, an in-memory conversation, coding tools, and an
-OpenAI Responses API adapter.
+Yaah is a small, trusted-local coding agent written in Go. It provides a
+full-screen interactive terminal, one-shot execution, an in-memory conversation,
+coding tools, and an OpenAI Responses API adapter.
 
 ## Scope
 
@@ -12,15 +12,16 @@ OpenAI Responses API adapter.
 - Provider adapters are selected at compile time.
 - Sessions live only in memory and `/clear` discards them.
 
-Yaah deliberately excludes a full-screen TUI, Markdown rendering, dynamic
-plugins, provider negotiation, model catalogs, telemetry, MCP, project indexing,
-multimodal input, and session persistence.
+Yaah deliberately excludes Markdown rendering, dynamic plugins, provider
+negotiation, model catalogs, telemetry, MCP, project indexing, multimodal input,
+and session persistence.
 
 ## Usage
 
 ```text
 yaah --model <model> [--effort <level>] [--cwd <directory>]
 yaah --model <model> [--effort <level>] "one-shot prompt"
+printf 'one-shot prompt' | yaah --model <model> [--effort <level>]
 yaah login [--device-auth]
 yaah logout
 ```
@@ -40,17 +41,27 @@ contract. This mode is experimental.
 
 ## Terminal
 
-Interactive mode supports:
+Interactive mode requires terminal stdin and stdout and opens a full-screen TUI
+with a conversation viewport, a single-line input bar, and a status bar. The
+status shows the model and reasoning effort, context usage, and current activity.
+Reasoning summaries, tool activity, compaction notices, and errors remain visible
+in the conversation.
 
-- `/help`
-- `/clear`
-- `/exit`
-- EOF to exit
+Interactive controls include:
+
+- Enter to submit
+- Left/Right and Home/End to move within the prompt
+- Up/Down to navigate prompt history
+- Page Up/Page Down to scroll the conversation
+- Ctrl-L to redraw
+- Ctrl-D to exit when the prompt is empty
 - Ctrl-C to cancel the active turn or exit while idle
+- `/help`, `/clear`, and `/exit`
 
-Assistant text is streamed to stdout. Reasoning summaries, tool activity,
-compaction notices, and errors go to stderr. The terminal intentionally has no
-raw mode, colors, history, autocomplete, or ANSI rendering.
+A prompt argument runs one-shot without opening the TUI. Non-terminal stdin is
+read to EOF as a single one-shot prompt, so piped input and redirected one-shot output
+are supported. One-shot assistant text is streamed to stdout; reasoning summaries,
+tool activity, compaction notices, and errors go to stderr.
 
 ## Tools
 
@@ -105,7 +116,7 @@ agent/           provider/tool contracts, prompt, and tool-call loop
 auth/openai/     browser and device OAuth plus credential refresh
 provider/openai/ Responses API requests, SSE decoding, and continuation state
 tool/            coding tools, subagents, LSP client, registry, and output limits
-terminal/        line-oriented REPL and event rendering
+terminal/        full-screen TUI and one-shot event rendering
 ```
 
 The `agent` package owns the narrow provider and toolbox interfaces. The OpenAI

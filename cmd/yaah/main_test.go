@@ -304,7 +304,7 @@ func TestRunLoginAndLogoutCommands(t *testing.T) {
 	}
 }
 
-func TestRunInteractiveUsesEnvironmentModelAndResolvedCWD(t *testing.T) {
+func TestRunPipedPromptUsesEnvironmentModelAndResolvedCWD(t *testing.T) {
 	cwd := t.TempDir()
 	nested := filepath.Join(cwd, "nested")
 	if err := os.Mkdir(nested, 0o755); err != nil {
@@ -312,17 +312,44 @@ func TestRunInteractiveUsesEnvironmentModelAndResolvedCWD(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
+	var request agent.Request
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{
 		"OPENAI_MODEL": "environment-model",
 	})
-	runtime.stdin = strings.NewReader("/exit\n")
+	runtime.stdin = strings.NewReader("piped prompt\n")
+	runtime.newProvider = func(openaiadapter.CodexTokenSource, string) (agent.Provider, error) {
+		return providerFunction(func(_ context.Context, got agent.Request, sink agent.TextSink) (agent.Response, error) {
+			request = got
+			if err := sink("answer"); err != nil {
+				return agent.Response{}, err
+			}
+			return agent.Response{Text: "answer"}, nil
+		}), nil
+	}
 
 	code := run([]string{"--cwd", "nested"}, runtime)
 	if code != exitSuccess {
 		t.Fatalf("run() code = %d, stderr = %q", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "openai/environment-model") || !strings.Contains(stderr.String(), nested) {
-		t.Fatalf("stderr = %q", stderr.String())
+	if request.Model != "environment-model" || len(request.Inputs) != 1 || request.Inputs[0].Text != "piped prompt\n" {
+		t.Fatalf("request = %+v", request)
+	}
+	if stdout.String() != "answer\n" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestReadPipedPromptValidation(t *testing.T) {
+	if prompt, err := readPipedPrompt(strings.NewReader("hello\nworld\n")); err != nil || prompt != "hello\nworld\n" {
+		t.Fatalf("readPipedPrompt() = %q, %v", prompt, err)
+	}
+	for _, input := range []string{"", " \n", "bad\x00", strings.Repeat("x", maxPipedPromptBytes+1)} {
+		if _, err := readPipedPrompt(strings.NewReader(input)); err == nil {
+			t.Fatalf("readPipedPrompt(%d bytes) succeeded", len(input))
+		}
+	}
+	if _, err := readPipedPrompt(bytes.NewReader([]byte{0xff})); err == nil {
+		t.Fatal("readPipedPrompt() accepted invalid UTF-8")
 	}
 }
 

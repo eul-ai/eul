@@ -1,7 +1,6 @@
 package terminal
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +12,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"golang.org/x/term"
+
 	"yaah/agent"
 )
 
@@ -20,7 +21,8 @@ const maxInputBytes = 1024 * 1024
 
 var (
 	ErrInterrupted  = errors.New("terminal: interrupted")
-	errInputTooLong = errors.New("terminal: input line is too long")
+	ErrNotTerminal  = errors.New("terminal: interactive mode requires terminal input and output; provide a prompt for one-shot mode")
+	errInputTooLong = errors.New("terminal: input is too long")
 	errInvalidInput = errors.New("terminal: input must be valid UTF-8 text without NUL")
 	errOutput       = errors.New("terminal: write output")
 )
@@ -32,134 +34,31 @@ type Engine interface {
 }
 
 type Options struct {
-	Input       io.Reader
-	Output      io.Writer
-	ErrorOutput io.Writer
-	Model       string
-	CWD         string
-	Interrupts  <-chan os.Signal
+	Input         io.Reader
+	Output        io.Writer
+	ErrorOutput   io.Writer
+	Model         string
+	Effort        string
+	ContextWindow int64
+	Interrupts    <-chan os.Signal
 }
 
-func Run(ctx context.Context, engine Engine, options Options) error {
-	header := singleLine(fmt.Sprintf("yaah · openai/%s · %s", options.Model, options.CWD), 500)
-	if err := writeOutput(options.ErrorOutput, "%s\n", header); err != nil {
-		return err
+type fileDescriptor interface {
+	Fd() uintptr
+}
+
+func IsTerminal(value any) bool {
+	fd, ok := descriptor(value)
+	return ok && term.IsTerminal(fd)
+}
+
+func descriptor(value any) (int, bool) {
+	provider, ok := value.(fileDescriptor)
+	if !ok {
+		return 0, false
 	}
 
-	inputContext, cancelInput := context.WithCancel(ctx)
-	defer cancelInput()
-
-	inputEvents, inputRequests := readInput(inputContext, options.Input, maxInputBytes)
-	for {
-		if err := writeOutput(options.ErrorOutput, "> "); err != nil {
-			return err
-		}
-		select {
-		case inputRequests <- struct{}{}:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case _, ok := <-options.Interrupts:
-			if !ok {
-				options.Interrupts = nil
-				continue
-			}
-			if err := writeOutput(options.ErrorOutput, "\n"); err != nil {
-				return err
-			}
-			return ErrInterrupted
-		case event, ok := <-inputEvents:
-			if !ok {
-				if err := writeOutput(options.ErrorOutput, "\n"); err != nil {
-					return err
-				}
-				return nil
-			}
-			if errors.Is(event.err, io.EOF) {
-				if err := writeOutput(options.ErrorOutput, "\n"); err != nil {
-					return err
-				}
-				return nil
-			}
-			if errors.Is(event.err, errInputTooLong) {
-				if err := writeOutput(options.ErrorOutput, "error: input line exceeds %d bytes\n", maxInputBytes); err != nil {
-					return err
-				}
-				continue
-			}
-			if errors.Is(event.err, errInvalidInput) {
-				if err := writeOutput(options.ErrorOutput, "error: input must be valid UTF-8 text without NUL\n"); err != nil {
-					return err
-				}
-				continue
-			}
-			if event.err != nil {
-				return fmt.Errorf("terminal: read input: %w", event.err)
-			}
-
-			trimmed := strings.TrimSpace(event.line)
-			if trimmed == "" {
-				continue
-			}
-			switch trimmed {
-			case "/help":
-				if err := writeOutput(options.Output, "Commands:\n  /help   show this help\n  /clear  discard conversation state\n  /exit   exit yaah\n"); err != nil {
-					return err
-				}
-				continue
-			case "/clear":
-				engine.Reset()
-				if err := writeOutput(options.ErrorOutput, "[conversation cleared]\n"); err != nil {
-					return err
-				}
-				continue
-			case "/exit":
-				return nil
-			}
-			if strings.HasPrefix(trimmed, "/") {
-				if err := writeOutput(options.ErrorOutput, "error: unknown command %s\n", diagnostic(trimmed, 120)); err != nil {
-					return err
-				}
-				continue
-			}
-
-			runErr, interrupted := runTurn(ctx, engine, event.line, options)
-			if contextErr := ctx.Err(); contextErr != nil {
-				resetIfNeeded(engine)
-				return contextErr
-			}
-
-			if errors.Is(runErr, errOutput) {
-				return runErr
-			}
-
-			if interrupted {
-				cleared := resetIfNeeded(engine)
-				message := "[interrupted]"
-				if cleared {
-					message = "[interrupted; conversation cleared after incomplete tool turn]"
-				}
-				if err := writeOutput(options.ErrorOutput, "%s\n", message); err != nil {
-					return err
-				}
-				continue
-			}
-
-			if runErr != nil {
-				if err := writeOutput(options.ErrorOutput, "error: %s\n", diagnostic(runErr.Error(), 500)); err != nil {
-					return err
-				}
-				if resetIfNeeded(engine) {
-					if err := writeOutput(options.ErrorOutput, "[conversation cleared after incomplete tool turn]\n"); err != nil {
-						return err
-					}
-				}
-			}
-		}
-	}
+	return int(provider.Fd()), true
 }
 
 func RunOneShot(ctx context.Context, engine Engine, prompt string, options Options) error {
@@ -269,7 +168,7 @@ func (r *eventRenderer) render(event agent.Event) error {
 		if text != "" {
 			r.reasoningOpen = !strings.HasSuffix(text, "\n")
 		}
-	case agent.EventCompaction:
+	case agent.EventCompactionStart:
 		if err := r.finish(); err != nil {
 			return err
 		}
@@ -417,84 +316,4 @@ func writeOutput(writer io.Writer, format string, arguments ...any) error {
 		return fmt.Errorf("%w: %v", errOutput, err)
 	}
 	return nil
-}
-
-type inputEvent struct {
-	line string
-	err  error
-}
-
-func readInput(ctx context.Context, input io.Reader, maximum int) (<-chan inputEvent, chan<- struct{}) {
-	events := make(chan inputEvent)
-	requests := make(chan struct{}, 1)
-	reader := bufio.NewReader(input)
-
-	go func() {
-		defer close(events)
-		for {
-			select {
-			case <-requests:
-			case <-ctx.Done():
-				return
-			}
-
-			line, err := readLine(reader, maximum)
-			select {
-			case events <- inputEvent{line: line, err: err}:
-			case <-ctx.Done():
-				return
-			}
-
-			if errors.Is(err, io.EOF) || err != nil && !errors.Is(err, errInputTooLong) && !errors.Is(err, errInvalidInput) {
-				return
-			}
-		}
-	}()
-	return events, requests
-}
-
-func readLine(reader *bufio.Reader, maximum int) (string, error) {
-	var line strings.Builder
-	tooLong := false
-	for {
-		fragment, err := reader.ReadSlice('\n')
-		if !tooLong && !writeLineFragment(&line, fragment, maximum) {
-			tooLong = true
-		}
-		if errors.Is(err, bufio.ErrBufferFull) {
-			continue
-		}
-		if err != nil && !errors.Is(err, io.EOF) {
-			return "", err
-		}
-		if tooLong {
-			return "", errInputTooLong
-		}
-		if errors.Is(err, io.EOF) && line.Len() == 0 {
-			return "", io.EOF
-		}
-
-		value := strings.TrimSuffix(line.String(), "\n")
-		value = strings.TrimSuffix(value, "\r")
-		if !utf8.ValidString(value) || strings.IndexByte(value, 0) >= 0 {
-			return "", errInvalidInput
-		}
-		return value, nil
-	}
-}
-
-func writeLineFragment(line *strings.Builder, fragment []byte, maximum int) bool {
-	contentBytes := len(fragment)
-	if len(fragment) > 0 && fragment[len(fragment)-1] == '\n' {
-		contentBytes--
-		if contentBytes > 0 && fragment[contentBytes-1] == '\r' {
-			contentBytes--
-		}
-	}
-
-	if line.Len()+contentBytes > maximum {
-		return false
-	}
-	line.Write(fragment)
-	return true
 }

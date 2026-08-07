@@ -153,11 +153,11 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 	if result.Usage != (Usage{InputTokens: 18, OutputTokens: 5, TotalTokens: 23}) {
 		t.Fatalf("usage = %+v", result.Usage)
 	}
-	wantKinds := []EventKind{EventAssistantReasoning, EventAssistantText, EventToolStart, EventToolEnd, EventAssistantText}
+	wantKinds := []EventKind{EventAssistantReasoning, EventAssistantText, EventContextUsage, EventToolStart, EventToolEnd, EventAssistantText, EventContextUsage}
 	if got := eventKinds(events); !slices.Equal(got, wantKinds) {
 		t.Fatalf("event kinds = %v, want %v", got, wantKinds)
 	}
-	if events[0].Text != "Assessing files" || events[1].Text != "Checking" || events[2].Call.ID != "call-1" || events[3].Result.CallID != "call-1" || events[4].Text != " done" {
+	if events[0].Text != "Assessing files" || events[1].Text != "Checking" || events[2].Usage.TotalTokens != 12 || events[3].Call.ID != "call-1" || events[4].Result.CallID != "call-1" || events[5].Text != " done" || events[6].Usage.TotalTokens != 11 {
 		t.Fatalf("unexpected event payloads: %+v", events)
 	}
 
@@ -215,8 +215,11 @@ func TestEngineCompactsBeforeNextUserGeneration(t *testing.T) {
 	if result.Text != "second answer" || result.Usage != (Usage{InputTokens: 120, OutputTokens: 8, TotalTokens: 128}) || compactCalls != 1 {
 		t.Fatalf("result = %+v, compact calls = %d", result, compactCalls)
 	}
-	if got := eventKinds(events); !slices.Equal(got, []EventKind{EventCompaction}) {
+	if got := eventKinds(events); !slices.Equal(got, []EventKind{EventCompactionStart, EventCompactionEnd, EventContextUsage}) {
 		t.Fatalf("event kinds = %v", got)
+	}
+	if events[2].Usage.TotalTokens != 23 {
+		t.Fatalf("context usage event = %+v", events[2])
 	}
 }
 

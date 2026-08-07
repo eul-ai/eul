@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"yaah/agent"
 	oauth "yaah/auth/openai"
@@ -22,10 +23,11 @@ import (
 )
 
 const (
-	exitSuccess     = 0
-	exitFailure     = 1
-	exitUsage       = 2
-	exitInterrupted = 130
+	exitSuccess         = 0
+	exitFailure         = 1
+	exitUsage           = 2
+	exitInterrupted     = 130
+	maxPipedPromptBytes = 1024 * 1024
 )
 
 type providerFactory func(openaiadapter.CodexTokenSource, string) (agent.Provider, error)
@@ -107,6 +109,24 @@ func run(arguments []string, runtime appRuntime) int {
 		return exitUsage
 	}
 
+	prompt := ""
+	oneShot := flags.NArg() == 1
+	if oneShot {
+		prompt = flags.Arg(0)
+		if strings.TrimSpace(prompt) == "" {
+			writeCLIError(runtime.stderr, "one-shot prompt must be nonempty")
+			return exitUsage
+		}
+	} else if !terminal.IsTerminal(runtime.stdin) {
+		pipedPrompt, err := readPipedPrompt(runtime.stdin)
+		if err != nil {
+			writeCLIError(runtime.stderr, "%v", err)
+			return exitUsage
+		}
+		prompt = pipedPrompt
+		oneShot = true
+	}
+
 	tokenSource, err := resolveTokenSource(runtime)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -129,16 +149,6 @@ func run(arguments []string, runtime appRuntime) int {
 	if err != nil {
 		writeCLIError(runtime.stderr, "%v", err)
 		return exitFailure
-	}
-
-	prompt := ""
-	oneShot := flags.NArg() == 1
-	if oneShot {
-		prompt = flags.Arg(0)
-		if strings.TrimSpace(prompt) == "" {
-			writeCLIError(runtime.stderr, "one-shot prompt must be nonempty")
-			return exitUsage
-		}
 	}
 
 	provider, err := runtime.newProvider(tokenSource, *effort)
@@ -175,18 +185,38 @@ func run(arguments []string, runtime appRuntime) int {
 	})
 
 	terminalOptions := terminal.Options{
-		Input:       runtime.stdin,
-		Output:      runtime.stdout,
-		ErrorOutput: runtime.stderr,
-		Model:       *model,
-		CWD:         cwd,
-		Interrupts:  runtime.interrupts,
+		Input:         runtime.stdin,
+		Output:        runtime.stdout,
+		ErrorOutput:   runtime.stderr,
+		Model:         *model,
+		Effort:        *effort,
+		ContextWindow: openaiadapter.ContextWindow(*model),
+		Interrupts:    runtime.interrupts,
 	}
 
 	if oneShot {
 		return finishRun(terminal.RunOneShot(context.Background(), engine, prompt, terminalOptions), runtime.stderr)
 	}
 	return finishRun(terminal.Run(context.Background(), engine, terminalOptions), runtime.stderr)
+}
+
+func readPipedPrompt(reader io.Reader) (string, error) {
+	content, err := io.ReadAll(io.LimitReader(reader, maxPipedPromptBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("read piped prompt: %w", err)
+	}
+	if len(content) > maxPipedPromptBytes {
+		return "", fmt.Errorf("piped prompt exceeds %d bytes", maxPipedPromptBytes)
+	}
+	if !utf8.Valid(content) || strings.IndexByte(string(content), 0) >= 0 {
+		return "", errors.New("piped prompt must be valid UTF-8 text without NUL")
+	}
+
+	prompt := string(content)
+	if strings.TrimSpace(prompt) == "" {
+		return "", errors.New("piped prompt must be nonempty")
+	}
+	return prompt, nil
 }
 
 func finishRun(runErr error, errorOutput io.Writer) int {

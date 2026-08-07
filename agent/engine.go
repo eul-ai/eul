@@ -78,7 +78,7 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			State:        state,
 		}
 		if compactor, canCompact := e.provider.(Compactor); canCompact && compactor.ShouldCompact(request, contextUsage) {
-			if err := emit(sink, Event{Kind: EventCompaction}); err != nil {
+			if err := emit(sink, Event{Kind: EventCompactionStart}); err != nil {
 				return RunResult{}, err
 			}
 
@@ -98,6 +98,10 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			addUsage(&result.Usage, compacted.Usage)
 			request.State = state
 			request.Inputs = nil
+
+			if err := emit(sink, Event{Kind: EventCompactionEnd}); err != nil {
+				return RunResult{}, err
+			}
 		}
 
 		response, err := e.provider.Generate(ctx, request, func(text string) error {
@@ -115,6 +119,9 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		state = response.State
 		contextUsage = response.Usage
 		addUsage(&result.Usage, response.Usage)
+		if err := emit(sink, Event{Kind: EventContextUsage, Usage: response.Usage}); err != nil {
+			return RunResult{}, err
+		}
 
 		if len(response.ToolCalls) == 0 {
 			e.state = state

@@ -6,6 +6,15 @@ import (
 	"yaah/agent"
 )
 
+func TestContextWindow(t *testing.T) {
+	if got := ContextWindow("gpt-5.6-sol"); got != 272_000 {
+		t.Fatalf("ContextWindow() = %d", got)
+	}
+	if got := ContextWindow("unknown"); got != 0 {
+		t.Fatalf("ContextWindow(unknown) = %d", got)
+	}
+}
+
 func TestClientShouldCompact(t *testing.T) {
 	client := &Client{}
 	solLimit := modelContextWindows["gpt-5.6-sol"] * 9 / 10

@@ -8,6 +8,10 @@ var modelContextWindows = map[string]int64{
 	"gpt-5.6-sol":   272_000,
 }
 
+func ContextWindow(model string) int64 {
+	return modelContextWindows[model]
+}
+
 func (*Client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
 	if len(request.State) == 0 || usage.TotalTokens <= 0 {
 		return false
