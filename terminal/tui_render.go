@@ -37,8 +37,15 @@ type tuiLayout struct {
 	conversationHeight int
 	topRuleRow         int
 	inputRow           int
+	inputHeight        int
 	bottomRuleRow      int
 	statusRow          int
+}
+
+type renderedInput struct {
+	lines        []string
+	cursorRow    int
+	cursorColumn int
 }
 
 type terminalFrame struct {
@@ -59,7 +66,7 @@ type tuiRenderer struct {
 	cursorVisible bool
 }
 
-func calculateLayout(height int) tuiLayout {
+func calculateLayout(height, inputHeight int) tuiLayout {
 	if height <= 0 {
 		return tuiLayout{}
 	}
@@ -70,16 +77,31 @@ func calculateLayout(height int) tuiLayout {
 		return tuiLayout{
 			conversationHeight: height - 2,
 			inputRow:           height - 1,
+			inputHeight:        1,
 			statusRow:          height,
 		}
 	}
 
+	inputHeight = max(1, min(inputHeight, height-3))
+	conversationHeight := height - inputHeight - 3
 	return tuiLayout{
-		conversationHeight: height - 4,
-		topRuleRow:         height - 3,
-		inputRow:           height - 2,
+		conversationHeight: conversationHeight,
+		topRuleRow:         conversationHeight + 1,
+		inputRow:           conversationHeight + 2,
+		inputHeight:        inputHeight,
 		bottomRuleRow:      height - 1,
 		statusRow:          height,
+	}
+}
+
+func maximumInputHeight(height int) int {
+	switch {
+	case height <= 1:
+		return 0
+	case height < 5:
+		return 1
+	default:
+		return height - 4
 	}
 }
 
@@ -139,7 +161,8 @@ func buildTerminalFrame(model *tuiModel) terminalFrame {
 		return terminalFrame{}
 	}
 
-	layout := calculateLayout(height)
+	input := renderInput(model, width, maximumInputHeight(height))
+	layout := calculateLayout(height, len(input.lines))
 	rows := make([]styledLine, height)
 	conversation := conversationViewport(model, width, layout.conversationHeight)
 	copy(rows, conversation)
@@ -149,18 +172,13 @@ func buildTerminalFrame(model *tuiModel) terminalFrame {
 	if layout.topRuleRow > 0 {
 		rows[layout.topRuleRow-1] = styledLine{text: rule, style: ruleStyle}
 	}
-	cursorColumn := 1
-	if layout.inputRow > 0 {
-		input, column := renderInput(model, width)
-		rows[layout.inputRow-1] = styledLine{
-			text: input,
-			style: lineStyle{
-				foreground:      currentTheme.foreground,
-				background:      currentTheme.editorLine,
-				paintBackground: true,
-			},
-		}
-		cursorColumn = column
+	inputStyle := lineStyle{
+		foreground:      currentTheme.foreground,
+		background:      currentTheme.editorLine,
+		paintBackground: true,
+	}
+	for index, line := range input.lines {
+		rows[layout.inputRow-1+index] = styledLine{text: line, style: inputStyle}
 	}
 	if layout.bottomRuleRow > 0 {
 		rows[layout.bottomRuleRow-1] = styledLine{text: rule, style: ruleStyle}
@@ -184,8 +202,8 @@ func buildTerminalFrame(model *tuiModel) terminalFrame {
 		width:         width,
 		height:        height,
 		rows:          renderedRows,
-		cursorRow:     layout.inputRow,
-		cursorColumn:  cursorColumn,
+		cursorRow:     layout.inputRow + input.cursorRow,
+		cursorColumn:  input.cursorColumn,
 		cursorVisible: layout.inputRow > 0 && !model.running,
 	}
 }
@@ -321,33 +339,78 @@ func blockPresentation(kind blockKind) lineStyle {
 	}
 }
 
-func renderInput(model *tuiModel, width int) (string, int) {
+func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {
+	if width < 1 || maximumHeight < 1 {
+		return renderedInput{}
+	}
 	if width <= 2 {
-		return truncateCells("> ", width, false), width
+		return renderedInput{lines: []string{truncateCells("> ", width, false)}, cursorColumn: width}
 	}
 
-	available := width - 2
-	start := 0
-	for start < model.cursor && runesWidth(model.input[start:model.cursor]) > available-1 {
-		start++
+	contentWidth := width - 2
+	contents := make([]string, 0, 1)
+	var line strings.Builder
+	lineWidth := 0
+	cursorRow := 0
+	cursorColumn := 3
+	cursorFound := false
+	flush := func() {
+		contents = append(contents, line.String())
+		line.Reset()
+		lineWidth = 0
 	}
 
-	var visible strings.Builder
-	used := 0
-	for _, character := range model.input[start:] {
-		characterWidth := runeWidth(character)
-		if used+characterWidth > available {
-			break
+	for index, character := range model.input {
+		if character == '\n' {
+			if index == model.cursor {
+				cursorRow = len(contents)
+				cursorColumn = min(width, 3+lineWidth)
+				cursorFound = true
+			}
+			flush()
+			continue
 		}
-		visible.WriteRune(character)
-		used += characterWidth
+
+		characterWidth := runeWidth(character)
+		if lineWidth > 0 && lineWidth+characterWidth > contentWidth {
+			flush()
+		}
+		if index == model.cursor {
+			cursorRow = len(contents)
+			cursorColumn = min(width, 3+lineWidth)
+			cursorFound = true
+		}
+		line.WriteRune(character)
+		lineWidth += characterWidth
+	}
+	if !cursorFound {
+		cursorRow = len(contents)
+		cursorColumn = min(width, 3+lineWidth)
+	}
+	flush()
+
+	lines := make([]string, len(contents))
+	for index, content := range contents {
+		prefix := "  "
+		if index == 0 {
+			prefix = "> "
+		}
+		lines[index] = truncateCells(prefix+content, width, false)
 	}
 
-	cursorColumn := 3 + runesWidth(model.input[start:model.cursor])
-	if cursorColumn > width {
-		cursorColumn = width
+	height := min(maximumHeight, len(lines))
+	start := 0
+	if cursorRow >= height {
+		start = cursorRow - height + 1
 	}
-	return "> " + visible.String(), cursorColumn
+	if start+height > len(lines) {
+		start = len(lines) - height
+	}
+	return renderedInput{
+		lines:        lines[start : start+height],
+		cursorRow:    cursorRow - start,
+		cursorColumn: cursorColumn,
+	}
 }
 
 func renderStatus(model *tuiModel, width int) (string, string) {
@@ -425,7 +488,8 @@ func formatTokens(tokens int64) string {
 }
 
 func scrollConversation(model *tuiModel, direction int) {
-	layout := calculateLayout(model.height)
+	input := renderInput(model, model.width, maximumInputHeight(model.height))
+	layout := calculateLayout(model.height, len(input.lines))
 	page := layout.conversationHeight
 	if page <= 0 {
 		return

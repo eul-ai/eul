@@ -5,7 +5,7 @@
 Replace the interactive line REPL with a minimal full-screen terminal interface made of:
 
 1. a scrollable conversation window;
-2. a single-line input bar; and
+2. an expanding multiline input area; and
 3. a status bar with an activity indicator.
 
 Use `golang.org/x/term` for terminal detection, raw mode, restoration, and dimensions. Do not add a TUI framework. Keep one-shot execution line-oriented; interactive execution requires the full TUI.
@@ -75,14 +75,14 @@ Raw mode provides key presses without canonical line buffering...
  ⠋ thinking                    gpt-5.6-sol (xhigh) · context 31%
 ```
 
-The input bar sits between horizontal rules in the style of Claude Code and Pi. The rules may be omitted when space is tight. The renderer will degrade by clipping content and prioritizing, in order:
+The input area sits between horizontal rules in the style of Claude Code and Pi. The rules may be omitted when space is tight. The renderer will degrade by clipping content and prioritizing, in order:
 
 1. the status and activity state;
-2. the input bar;
+2. the input area;
 3. its horizontal rules; and
 4. the conversation.
 
-The base canvas preserves the terminal's background instead of painting the theme background across the alternate screen. The conversation viewport has one blank row at the top and bottom. Block backgrounds span the full width while their text has a two-cell horizontal inset. User and assistant text use the base background, reasoning summaries use muted italic text with balanced space above and below, and compact tool blocks use horizontal and vertical padding with pending, success, or error backgrounds. Role labels are omitted. Input rules use the theme color for the selected reasoning effort.
+The base canvas preserves the terminal's background instead of painting the theme background across the alternate screen. The conversation viewport has one blank row at the top and bottom. Block backgrounds span the full width while their text has a one-cell horizontal inset. User and assistant text use the base background, reasoning summaries use muted italic text with balanced space above and below, and compact tool blocks use horizontal and vertical padding with pending, success, or error backgrounds. Role labels are omitted. Input rules use the theme color for the selected reasoning effort.
 
 On narrow terminals, the status bar will preserve the activity label and compact context percentage before truncating the model and effort.
 
@@ -109,23 +109,25 @@ All untrusted text must pass through the existing control-character sanitization
 
 ## Input behavior
 
-The initial editor remains single-line to preserve the current prompt semantics.
+The editor expands vertically for explicit newlines and soft-wrapped text while preserving space for the status, rules, and at least one conversation row.
 
 | Key | Behavior |
 | --- | --- |
 | Enter | Submit non-empty input |
+| Shift-Enter | Insert a newline |
+| Shift-Tab | Cycle through none, minimal, low, medium, high, xhigh, and max reasoning effort |
 | Left/Right | Move by rune |
 | Home/End | Move to start/end |
 | Backspace/Delete | Delete adjacent rune |
 | Up/Down | Navigate submitted prompt history |
 | Page Up/Page Down | Scroll the conversation |
 | Ctrl-L | Force a complete redraw |
-| Ctrl-C | Cancel the active turn, or exit while idle |
+| Ctrl-C | Clear non-empty input, cancel the active turn, or exit when idle input is empty |
 | Ctrl-D | Exit when the input is empty |
 
-Raw mode turns Ctrl-C into an input byte rather than a terminal-generated SIGINT, so keyboard Ctrl-C and externally delivered `os.Interrupt` must enter the same cancellation path.
+Raw mode turns Ctrl-C into an input event rather than a terminal-generated SIGINT. The TUI enables enhanced keyboard reporting so modified Enter and Tab remain distinguishable, and restores the previous keyboard mode during cleanup.
 
-Bracketed paste will be enabled so pasted escape sequences and newlines are handled as input rather than terminal commands. Newlines in a paste will be normalized to spaces for the single-line editor. Input remains subject to `maxInputBytes`, valid UTF-8, and NUL rejection.
+Bracketed paste will be enabled so pasted escape sequences and newlines are handled as input rather than terminal commands. Newlines in a paste remain normalized to spaces; Shift-Enter creates intentional editor line breaks. Input remains subject to `maxInputBytes`, valid UTF-8, and NUL rejection.
 
 The editor is disabled during an active turn. Scrolling and cancellation remain available. The submitted prompt is added to the conversation immediately and the editor is cleared.
 
@@ -142,7 +144,7 @@ The status bar contains three items: model with reasoning effort, context usage,
 
 Context usage is the latest provider-reported context token count as a percentage of the selected model's context window. Known models may also show the compact count on wider terminals. Before the first response it is zero; `/clear` resets it to zero. Unknown context-window sizes display the token count without a percentage.
 
-The CLI must pass reasoning effort and model context-window metadata into the terminal options. The agent will emit a context-usage event after each provider response so the status reflects the current context rather than the cumulative usage returned for the whole turn. An empty effort is displayed as `default`.
+The CLI must pass reasoning effort, an effort-update callback, and model context-window metadata into the terminal options. The agent will emit a context-usage event after each provider response so the status reflects the current context rather than the cumulative usage returned for the whole turn. An empty effort is displayed as `default`.
 
 | Trigger | Displayed state |
 | --- | --- |
@@ -291,9 +293,10 @@ A manual smoke test should cover Linux and macOS terminals:
 3. cancel before and during a tool call;
 4. trigger `/clear` and `/exit`;
 5. paste multiline and non-ASCII text;
-6. pipe and file-redirect a prompt into one-shot mode, including redirected output;
-7. confirm terminal-input TUI mode rejects non-terminal output; and
-8. verify terminal echo and cursor state after every exit path.
+6. insert an intentional newline with Shift-Enter, cycle effort with Shift-Tab, and clear input with Ctrl-C;
+7. pipe and file-redirect a prompt into one-shot mode, including redirected output;
+8. confirm terminal-input TUI mode rejects non-terminal output; and
+9. verify terminal echo and cursor state after every exit path.
 
 Final verification:
 

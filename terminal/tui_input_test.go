@@ -20,6 +20,28 @@ func TestKeyDecoderHandlesTextAndSplitSequences(t *testing.T) {
 	assertKeyEvents(t, events, want)
 }
 
+func TestKeyDecoderHandlesModifiedKeys(t *testing.T) {
+	for sequence, code := range map[string]keyCode{
+		"\x1b[13;2u":    keyNewline,
+		"\x1b[13;2~":    keyNewline,
+		"\x1b[27;2;13~": keyNewline,
+		"\x1b\r":        keyNewline,
+		"\n":            keyNewline,
+		"\x1b[13u":      keyEnter,
+		"\x1b[Z":        keyShiftTab,
+		"\x1b[9;2u":     keyShiftTab,
+		"\x1b[27;2;9~":  keyShiftTab,
+		"\x1b[99;5u":    keyCtrlC,
+		"\x1b[100;5u":   keyCtrlD,
+		"\x1b[108;5u":   keyCtrlL,
+		"\x1b[127u":     keyBackspace,
+	} {
+		decoder := &keyDecoder{}
+		events := decoder.feed([]byte(sequence), false)
+		assertKeyEvents(t, events, []keyEvent{{code: code}})
+	}
+}
+
 func TestKeyDecoderHandlesBracketedPaste(t *testing.T) {
 	decoder := &keyDecoder{}
 	if events := decoder.feed([]byte("\x1b[200~first\n"), false); len(events) != 0 {
@@ -79,6 +101,45 @@ func TestTUIModelEditsAndNavigatesHistory(t *testing.T) {
 	model.historyDown()
 	if got := string(model.input); got != "draft" {
 		t.Fatalf("history down = %q", got)
+	}
+}
+
+func TestTUIModelInsertsNewlineAndPreservesItInPrompt(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	if err := model.insertInput("firstsecond"); err != nil {
+		t.Fatal(err)
+	}
+	model.cursor = len([]rune("first"))
+	if err := model.insertNewline(); err != nil {
+		t.Fatal(err)
+	}
+
+	prompt, ok := model.takePrompt()
+	if !ok || prompt != "first\nsecond" {
+		t.Fatalf("takePrompt() = %q, %v", prompt, ok)
+	}
+}
+
+func TestTUIModelCyclesReasoningEffort(t *testing.T) {
+	var configured []string
+	model := newTUIModel(80, 24, Options{
+		Effort: "high",
+		SetEffort: func(effort string) error {
+			configured = append(configured, effort)
+			return nil
+		},
+	})
+	for _, want := range []string{"xhigh", "max", "none", "minimal"} {
+		if err := model.cycleEffort(); err != nil {
+			t.Fatal(err)
+		}
+		if model.effort != want {
+			t.Fatalf("effort = %q, want %q", model.effort, want)
+		}
+	}
+	wantConfigured := []string{"xhigh", "max", "none", "minimal"}
+	if strings.Join(configured, ",") != strings.Join(wantConfigured, ",") {
+		t.Fatalf("configured = %q, want %q", configured, wantConfigured)
 	}
 }
 

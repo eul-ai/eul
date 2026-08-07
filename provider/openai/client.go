@@ -102,6 +102,14 @@ func NewCodex(source CodexTokenSource, options Options) (*Client, error) {
 	}, nil
 }
 
+func (c *Client) SetReasoningEffort(effort string) error {
+	if err := validateReasoningEffort(effort); err != nil {
+		return err
+	}
+	c.reasoningEffort = effort
+	return nil
+}
+
 func (c *Client) Generate(ctx context.Context, request agent.Request, onText, onReasoning agent.TextSink) (agent.Response, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.Response{}, err

@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	enterScreen = "\x1b[?1049h\x1b[?2004h\x1b[2J\x1b[H"
-	leaveScreen = ansiEndSynchronizedOutput + "\x1b[?2004l\x1b[?25h\x1b[?1049l"
+	enterScreen = "\x1b[?1049h\x1b[?2004h\x1b[>1u\x1b[2J\x1b[H"
+	leaveScreen = ansiEndSynchronizedOutput + "\x1b[<u\x1b[?2004l\x1b[?25h\x1b[?1049l"
 )
 
 type engineMessage struct {
@@ -255,7 +255,14 @@ func handleKey(
 	case keyEOF:
 		return true, nil
 	case keyCtrlC:
-		return false, interruptTUI(model, *turnCancel)
+		if model.running {
+			return false, interruptTUI(model, *turnCancel)
+		}
+		if len(model.input) > 0 {
+			model.clearInput()
+			return false, nil
+		}
+		return false, ErrInterrupted
 	case keyCtrlL:
 		model.forceRedraw = true
 		return false, nil
@@ -274,6 +281,16 @@ func handleKey(
 	switch key.code {
 	case keyText:
 		if err := model.insertInput(key.text); err != nil {
+			detail := diagnostic(err.Error(), 200)
+			model.activity = activity{kind: activityError, detail: detail}
+		}
+	case keyNewline:
+		if err := model.insertNewline(); err != nil {
+			detail := diagnostic(err.Error(), 200)
+			model.activity = activity{kind: activityError, detail: detail}
+		}
+	case keyShiftTab:
+		if err := model.cycleEffort(); err != nil {
 			detail := diagnostic(err.Error(), 200)
 			model.activity = activity{kind: activityError, detail: detail}
 		}

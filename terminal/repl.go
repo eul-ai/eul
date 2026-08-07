@@ -41,6 +41,7 @@ type Options struct {
 	Effort        string
 	ContextWindow int64
 	Interrupts    <-chan os.Signal
+	SetEffort     func(string) error
 }
 
 type fileDescriptor interface {

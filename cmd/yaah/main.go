@@ -32,6 +32,10 @@ const (
 
 type providerFactory func(openaiadapter.CodexTokenSource, string) (agent.Provider, error)
 
+type reasoningEffortSetter interface {
+	SetReasoningEffort(string) error
+}
+
 type oauthManager interface {
 	Login(context.Context, oauth.LoginMethod, oauth.Interaction) (oauth.Credentials, error)
 	Resolve(context.Context) (oauth.Credentials, error)
@@ -151,14 +155,26 @@ func run(arguments []string, runtime appRuntime) int {
 		return exitFailure
 	}
 
-	provider, err := runtime.newProvider(tokenSource, *effort)
+	currentEffort := *effort
+	provider, err := runtime.newProvider(tokenSource, currentEffort)
 	if err != nil {
 		writeCLIError(runtime.stderr, "configure provider: %v", err)
 		return exitFailure
 	}
 
+	var setEffort func(string) error
+	if setter, ok := provider.(reasoningEffortSetter); ok {
+		setEffort = func(effort string) error {
+			if err := setter.SetReasoningEffort(effort); err != nil {
+				return err
+			}
+			currentEffort = effort
+			return nil
+		}
+	}
+
 	subagent := tool.NewSubagent(func(ctx context.Context, task string) (agent.RunResult, error) {
-		childProvider, err := runtime.newProvider(tokenSource, *effort)
+		childProvider, err := runtime.newProvider(tokenSource, currentEffort)
 		if err != nil {
 			return agent.RunResult{}, fmt.Errorf("configure subagent provider: %w", err)
 		}
@@ -189,9 +205,10 @@ func run(arguments []string, runtime appRuntime) int {
 		Output:        runtime.stdout,
 		ErrorOutput:   runtime.stderr,
 		Model:         *model,
-		Effort:        *effort,
+		Effort:        currentEffort,
 		ContextWindow: openaiadapter.ContextWindow(*model),
 		Interrupts:    runtime.interrupts,
+		SetEffort:     setEffort,
 	}
 
 	if oneShot {

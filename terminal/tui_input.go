@@ -13,6 +13,8 @@ type keyCode uint8
 const (
 	keyText keyCode = iota
 	keyEnter
+	keyNewline
+	keyShiftTab
 	keyLeft
 	keyRight
 	keyUp
@@ -48,6 +50,18 @@ var keySequences = []struct {
 	sequence string
 	code     keyCode
 }{
+	{sequence: "\x1b[13;2u", code: keyNewline},
+	{sequence: "\x1b[13;2~", code: keyNewline},
+	{sequence: "\x1b[27;2;13~", code: keyNewline},
+	{sequence: "\x1b\r", code: keyNewline},
+	{sequence: "\x1b[13u", code: keyEnter},
+	{sequence: "\x1b[Z", code: keyShiftTab},
+	{sequence: "\x1b[9;2u", code: keyShiftTab},
+	{sequence: "\x1b[27;2;9~", code: keyShiftTab},
+	{sequence: "\x1b[99;5u", code: keyCtrlC},
+	{sequence: "\x1b[100;5u", code: keyCtrlD},
+	{sequence: "\x1b[108;5u", code: keyCtrlL},
+	{sequence: "\x1b[127u", code: keyBackspace},
 	{sequence: "\x1b[200~", code: keyText},
 	{sequence: "\x1b[1~", code: keyHome},
 	{sequence: "\x1b[4~", code: keyEnd},
@@ -139,8 +153,12 @@ func (d *keyDecoder) feed(data []byte, final bool) []keyEvent {
 			events = append(events, keyEvent{code: keyFailure, err: errInvalidInput})
 			d.buffer = d.buffer[1:]
 			continue
-		case '\r', '\n':
+		case '\r':
 			events = append(events, keyEvent{code: keyEnter})
+			d.buffer = d.buffer[1:]
+			continue
+		case '\n':
+			events = append(events, keyEvent{code: keyNewline})
 			d.buffer = d.buffer[1:]
 			continue
 		case 0x7f, 0x08:

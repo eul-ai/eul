@@ -12,6 +12,12 @@ import (
 	"yaah/agent"
 )
 
+func TestScreenModesRestoreEnhancedKeyboardReporting(t *testing.T) {
+	if !strings.Contains(enterScreen, "\x1b[>1u") || !strings.Contains(leaveScreen, "\x1b[<u") {
+		t.Fatalf("enter=%q leave=%q", enterScreen, leaveScreen)
+	}
+}
+
 func TestRunTUIParentCancellationWinsOverEOF(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -172,6 +178,49 @@ type terminalErrorReader struct {
 
 func (r terminalErrorReader) Read([]byte) (int, error) {
 	return 0, r.err
+}
+
+func TestHandleKeyCtrlCClearsInputBeforeExiting(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	if err := model.insertInput("draft"); err != nil {
+		t.Fatal(err)
+	}
+	messages := make(chan engineMessage, 1)
+	stopped := make(chan struct{})
+	defer close(stopped)
+	var cancel context.CancelFunc
+
+	exit, err := handleKey(context.Background(), model, &fakeEngine{}, keyEvent{code: keyCtrlC}, messages, stopped, &cancel)
+	if err != nil || exit || len(model.input) != 0 {
+		t.Fatalf("first Ctrl-C: exit=%v err=%v input=%q", exit, err, model.input)
+	}
+	exit, err = handleKey(context.Background(), model, &fakeEngine{}, keyEvent{code: keyCtrlC}, messages, stopped, &cancel)
+	if exit || !errors.Is(err, ErrInterrupted) {
+		t.Fatalf("second Ctrl-C: exit=%v err=%v", exit, err)
+	}
+}
+
+func TestHandleKeyShiftTabCyclesEffort(t *testing.T) {
+	var configured string
+	model := newTUIModel(80, 24, Options{
+		Effort: "medium",
+		SetEffort: func(effort string) error {
+			configured = effort
+			return nil
+		},
+	})
+	messages := make(chan engineMessage, 1)
+	stopped := make(chan struct{})
+	defer close(stopped)
+	var cancel context.CancelFunc
+
+	exit, err := handleKey(context.Background(), model, &fakeEngine{}, keyEvent{code: keyShiftTab}, messages, stopped, &cancel)
+	if err != nil || exit || model.effort != "high" || configured != "high" {
+		t.Fatalf("exit=%v err=%v effort=%q configured=%q", exit, err, model.effort, configured)
+	}
+	if frame := renderFrame(model); !strings.Contains(frame, ansiColors(currentTheme.effortColor("high"), terminalColor{}, false)) {
+		t.Fatalf("cycled effort color missing from frame: %q", frame)
+	}
 }
 
 func TestHandleKeyCtrlLRequestsFullRedraw(t *testing.T) {

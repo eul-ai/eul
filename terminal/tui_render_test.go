@@ -106,6 +106,49 @@ func TestConversationWindowHasVerticalPadding(t *testing.T) {
 	}
 }
 
+func TestMultilineInputExpandsEditorAndMovesCursor(t *testing.T) {
+	model := newTUIModel(20, 8, Options{})
+	if err := model.insertInput("first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.insertNewline(); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.insertInput("second"); err != nil {
+		t.Fatal(err)
+	}
+
+	input := renderInput(model, model.width, maximumInputHeight(model.height))
+	if len(input.lines) != 2 || input.lines[0] != "> first" || input.lines[1] != "  second" {
+		t.Fatalf("input = %+v", input)
+	}
+	if input.cursorRow != 1 || input.cursorColumn != 9 {
+		t.Fatalf("cursor = %d,%d", input.cursorRow, input.cursorColumn)
+	}
+	layout := calculateLayout(model.height, len(input.lines))
+	if layout.conversationHeight != 3 || layout.inputRow != 5 || layout.inputHeight != 2 {
+		t.Fatalf("layout = %+v", layout)
+	}
+	frame := buildTerminalFrame(model)
+	if frame.cursorRow != 6 || frame.cursorColumn != 9 {
+		t.Fatalf("frame cursor = %d,%d", frame.cursorRow, frame.cursorColumn)
+	}
+}
+
+func TestInputWrapsAndKeepsCursorVisible(t *testing.T) {
+	model := newTUIModel(8, 6, Options{})
+	if err := model.insertInput("1234567"); err != nil {
+		t.Fatal(err)
+	}
+	input := renderInput(model, model.width, 2)
+	if len(input.lines) != 2 || input.lines[0] != "> 123456" || input.lines[1] != "  7" {
+		t.Fatalf("input = %+v", input)
+	}
+	if input.cursorRow != 1 || input.cursorColumn != 4 {
+		t.Fatalf("cursor = %d,%d", input.cursorRow, input.cursorColumn)
+	}
+}
+
 func TestPaddedBlockBackgroundFillsWidth(t *testing.T) {
 	style := blockPresentation(blockTool)
 	var frame strings.Builder
@@ -256,7 +299,7 @@ func TestConversationScrollingStopsAndResumesFollowing(t *testing.T) {
 	for index := 0; index < 8; index++ {
 		model.appendBlock(blockInfo, strings.Repeat(string(rune('a'+index)), 20))
 	}
-	conversationViewport(model, model.width, calculateLayout(model.height).conversationHeight)
+	conversationViewport(model, model.width, calculateLayout(model.height, 1).conversationHeight)
 	bottom := model.scrollTop
 	if bottom == 0 {
 		t.Fatal("conversation did not overflow")
@@ -268,7 +311,7 @@ func TestConversationScrollingStopsAndResumesFollowing(t *testing.T) {
 	}
 	oldTop := model.scrollTop
 	model.appendBlock(blockInfo, "new output")
-	conversationViewport(model, model.width, calculateLayout(model.height).conversationHeight)
+	conversationViewport(model, model.width, calculateLayout(model.height, 1).conversationHeight)
 	if model.scrollTop != oldTop {
 		t.Fatalf("scrolled viewport moved from %d to %d", oldTop, model.scrollTop)
 	}

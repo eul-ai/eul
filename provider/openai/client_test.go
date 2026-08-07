@@ -680,6 +680,25 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 	})
 }
 
+func TestClientUpdatesReasoningEffort(t *testing.T) {
+	client, err := NewCodex(testTokenSource("token"), Options{ReasoningEffort: "high"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetReasoningEffort("xhigh"); err != nil {
+		t.Fatal(err)
+	}
+	if client.reasoningEffort != "xhigh" {
+		t.Fatalf("reasoning effort = %q", client.reasoningEffort)
+	}
+	if err := client.SetReasoningEffort("extreme"); err == nil {
+		t.Fatal("invalid reasoning effort accepted")
+	}
+	if client.reasoningEffort != "xhigh" {
+		t.Fatalf("invalid update changed reasoning effort to %q", client.reasoningEffort)
+	}
+}
+
 func TestNewRejectsInvalidReasoningEffort(t *testing.T) {
 	if _, err := NewCodex(testTokenSource("token"), Options{ReasoningEffort: "extreme"}); err == nil {
 		t.Fatal("invalid reasoning effort accepted")

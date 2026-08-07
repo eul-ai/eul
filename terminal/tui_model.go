@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"errors"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -44,11 +45,14 @@ type activity struct {
 	detail string
 }
 
+var reasoningEffortLevels = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+
 type tuiModel struct {
 	width             int
 	height            int
 	model             string
 	effort            string
+	setEffort         func(string) error
 	contextWindow     int64
 	contextTokens     int64
 	blocks            []conversationBlock
@@ -83,6 +87,7 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 		height:            height,
 		model:             singleLine(options.Model, 120),
 		effort:            singleLine(effort, 40),
+		setEffort:         options.SetEffort,
 		contextWindow:     options.ContextWindow,
 		historyIndex:      -1,
 		activeTool:        -1,
@@ -191,12 +196,49 @@ func (m *tuiModel) insertInput(text string) error {
 		return errInputTooLong
 	}
 
+	m.insertRunes([]rune(text))
+	return nil
+}
+
+func (m *tuiModel) insertNewline() error {
+	if len(string(m.input))+1 > maxInputBytes {
+		return errInputTooLong
+	}
+	m.insertRunes([]rune{'\n'})
+	return nil
+}
+
+func (m *tuiModel) insertRunes(inserted []rune) {
 	m.leaveHistory()
-	inserted := []rune(text)
 	m.input = append(m.input, inserted...)
 	copy(m.input[m.cursor+len(inserted):], m.input[m.cursor:len(m.input)-len(inserted)])
 	copy(m.input[m.cursor:], inserted)
 	m.cursor += len(inserted)
+}
+
+func (m *tuiModel) clearInput() {
+	m.input = nil
+	m.cursor = 0
+	m.historyIndex = -1
+	m.historyDraft = ""
+}
+
+func (m *tuiModel) cycleEffort() error {
+	if m.setEffort == nil {
+		return errors.New("effort selection is unavailable")
+	}
+
+	next := reasoningEffortLevels[0]
+	for index, effort := range reasoningEffortLevels {
+		if effort == m.effort {
+			next = reasoningEffortLevels[(index+1)%len(reasoningEffortLevels)]
+			break
+		}
+	}
+	if err := m.setEffort(next); err != nil {
+		return err
+	}
+	m.effort = next
 	return nil
 }
 
@@ -284,10 +326,7 @@ func (m *tuiModel) takePrompt() (string, bool) {
 	if len(m.history) == 0 || m.history[len(m.history)-1] != prompt {
 		m.history = append(m.history, prompt)
 	}
-	m.input = nil
-	m.cursor = 0
-	m.historyIndex = -1
-	m.historyDraft = ""
+	m.clearInput()
 	return prompt, true
 }
 
