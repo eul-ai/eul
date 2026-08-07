@@ -21,7 +21,7 @@ The first version will support:
 - scrolling through the conversation;
 - resize handling;
 - `/help`, `/clear`, and `/exit`;
-- Ctrl-C cancellation with the existing reset behavior;
+- Ctrl-C cancellation without discarding conversation state;
 - a visible status for thinking, responding, compacting, tools, cancellation, errors, and readiness; and
 - safe terminal restoration on every normal return path.
 
@@ -182,7 +182,7 @@ A turn runs in a goroutine with its own cancelable context. Its `agent.EventSink
 
 - the first interrupt during a turn requests cancellation and changes the status to `canceling`;
 - further interrupts are ignored until the engine returns;
-- an incomplete tool turn resets the engine and adds the existing cleared-conversation notice; and
+- an incomplete tool turn retains the provider continuation, records error results for unfinished calls, and warns that tool side effects may remain; and
 - an interrupt while idle exits with `ErrInterrupted`.
 
 Parent context cancellation cancels the turn, restores the terminal, and returns the context error without adding a recoverable error entry.
@@ -265,7 +265,7 @@ The final names may be adjusted while implementing, but input decoding, state tr
 - Emit current context usage after each provider response and reset it with the conversation.
 - Add explicit compaction start/end events.
 - Implement status transitions and the active spinner.
-- Preserve cancellation, error, and reset behavior.
+- Preserve conversation state across cancellation and errors; reserve reset behavior for explicit `/clear`.
 
 ### 6. Documentation and cleanup
 

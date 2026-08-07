@@ -57,6 +57,7 @@ type tuiModel struct {
 	setThinkingLevel  func(agent.ThinkingLevel) error
 	contextWindow     int64
 	contextTokens     int64
+	turnExecutedTool  bool
 	blocks            []conversationBlock
 	conversationLines []styledLine
 	wrappedWidth      int
@@ -151,6 +152,7 @@ func (m *tuiModel) applyAgentEvent(event agent.Event) {
 	case agent.EventToolUpdate:
 		m.updateTool(event.Call, event.Presentation)
 	case agent.EventToolExecute:
+		m.turnExecutedTool = true
 		m.updateTool(event.Call, event.Presentation)
 		index := m.toolBlockIndex(event.Call.ID)
 		m.setActiveActivity(activity{kind: activityTool, detail: toolActivityDetail(event.Call, m.blocks[index].tool)})
@@ -393,6 +395,7 @@ func (m *tuiModel) clearConversation() {
 	m.conversationDirty = true
 	m.closeStream()
 	m.contextTokens = 0
+	m.turnExecutedTool = false
 	m.scrollTop = 0
 	m.following = true
 	m.activity = activity{kind: activityReady}
@@ -413,20 +416,21 @@ func (m *tuiModel) beginTurn(prompt string) {
 	m.appendBlock(blockUser, prompt)
 	m.running = true
 	m.interrupted = false
+	m.turnExecutedTool = false
 	m.activity = activity{kind: activityThinking}
 }
 
-func (m *tuiModel) finishTurn(runErr error, engine Engine) {
+func (m *tuiModel) finishTurn(runErr error) {
 	m.running = false
 	m.closeStream()
+	executedTool := m.turnExecutedTool
+	m.turnExecutedTool = false
 
 	if m.interrupted {
 		m.finishPendingTools("canceled")
-		cleared := resetIfNeeded(engine)
 		message := "Interrupted"
-		if cleared {
-			m.contextTokens = 0
-			message = "Interrupted; conversation cleared after incomplete tool turn"
+		if executedTool {
+			message = "Interrupted; tool side effects may remain"
 		}
 		m.appendBlock(blockInfo, message)
 		m.activity = activity{kind: activityReady}
@@ -441,9 +445,8 @@ func (m *tuiModel) finishTurn(runErr error, engine Engine) {
 	m.finishPendingTools("failed")
 	detail := diagnostic(runErr.Error(), 500)
 	m.appendBlock(blockError, detail)
-	m.activity = activity{kind: activityError, detail: detail}
-	if resetIfNeeded(engine) {
-		m.contextTokens = 0
-		m.appendBlock(blockInfo, "Conversation cleared after incomplete tool turn")
+	if executedTool {
+		m.appendBlock(blockInfo, "Tool turn interrupted; tool side effects may remain")
 	}
+	m.activity = activity{kind: activityError, detail: detail}
 }

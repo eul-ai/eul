@@ -118,7 +118,7 @@ func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width
 		case <-resizes:
 			newWidth, newHeight, err := term.GetSize(outputFD)
 			if err != nil {
-				cancelActiveTurn(turnCancel, engineMessages, engine)
+				cancelActiveTurn(turnCancel, engineMessages)
 				return fmt.Errorf("terminal: get size: %w", err)
 			}
 			model.width = newWidth
@@ -128,7 +128,7 @@ func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width
 		case key := <-keys:
 			exit, err := handleKey(ctx, model, engine, key, engineMessages, stopped, &turnCancel)
 			if err != nil {
-				cancelActiveTurn(turnCancel, engineMessages, engine)
+				cancelActiveTurn(turnCancel, engineMessages)
 				if ctxErr := ctx.Err(); ctxErr != nil {
 					return ctxErr
 				}
@@ -161,17 +161,15 @@ func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width
 				turnCancel = nil
 			}
 			if contextErr := ctx.Err(); contextErr != nil {
-				resetIfNeeded(engine)
 				return contextErr
 			}
 			if exitAfterTurn != nil {
-				resetIfNeeded(engine)
 				if errors.Is(exitAfterTurn, io.EOF) {
 					return nil
 				}
 				return exitAfterTurn
 			}
-			model.finishTurn(message.err, engine)
+			model.finishTurn(message.err)
 			dirty = true
 
 		case <-spinnerTicker.C:
@@ -182,14 +180,14 @@ func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width
 
 		case <-renderTicker.C:
 			if err := renderIfDirty(renderer, model, options.Output, &dirty); err != nil {
-				cancelActiveTurn(turnCancel, engineMessages, engine)
+				cancelActiveTurn(turnCancel, engineMessages)
 				return err
 			}
 		}
 	}
 }
 
-func cancelActiveTurn(cancel context.CancelFunc, messages <-chan engineMessage, engine Engine) {
+func cancelActiveTurn(cancel context.CancelFunc, messages <-chan engineMessage) {
 	if cancel == nil {
 		return
 	}
@@ -198,7 +196,6 @@ func cancelActiveTurn(cancel context.CancelFunc, messages <-chan engineMessage, 
 	for {
 		message := <-messages
 		if message.done {
-			resetIfNeeded(engine)
 			return
 		}
 	}

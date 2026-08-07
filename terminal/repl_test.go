@@ -19,7 +19,6 @@ type fakeEngine struct {
 	mu          sync.Mutex
 	calls       []string
 	resets      int
-	needsReset  bool
 	runFunction func(context.Context, string, agent.EventSink) (agent.RunResult, error)
 }
 
@@ -39,19 +38,6 @@ func (e *fakeEngine) Reset() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.resets++
-	e.needsReset = false
-}
-
-func (e *fakeEngine) NeedsReset() bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.needsReset
-}
-
-func (e *fakeEngine) setNeedsReset(value bool) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.needsReset = value
 }
 
 func (e *fakeEngine) snapshot() ([]string, int) {
@@ -176,12 +162,11 @@ func TestRunOneShotSummarizesBashExit(t *testing.T) {
 	}
 }
 
-func TestRunOneShotInterruptWaitsAndResets(t *testing.T) {
+func TestRunOneShotInterruptWaitsWithoutResettingConversation(t *testing.T) {
 	started := make(chan struct{})
 	engine := &fakeEngine{}
 	engine.runFunction = func(ctx context.Context, _ string, _ agent.EventSink) (agent.RunResult, error) {
 		close(started)
-		engine.setNeedsReset(true)
 		<-ctx.Done()
 		return agent.RunResult{}, ctx.Err()
 	}
@@ -199,7 +184,7 @@ func TestRunOneShotInterruptWaitsAndResets(t *testing.T) {
 	select {
 	case err := <-done:
 		_, resets := engine.snapshot()
-		if !errors.Is(err, ErrInterrupted) || resets != 1 {
+		if !errors.Is(err, ErrInterrupted) || resets != 0 {
 			t.Fatalf("RunOneShot() error = %v, resets = %d", err, resets)
 		}
 	case <-time.After(2 * time.Second):
@@ -207,12 +192,11 @@ func TestRunOneShotInterruptWaitsAndResets(t *testing.T) {
 	}
 }
 
-func TestRunOneShotReturnsParentCancellation(t *testing.T) {
+func TestRunOneShotReturnsParentCancellationWithoutResettingConversation(t *testing.T) {
 	started := make(chan struct{})
 	engine := &fakeEngine{}
 	engine.runFunction = func(ctx context.Context, _ string, _ agent.EventSink) (agent.RunResult, error) {
 		close(started)
-		engine.setNeedsReset(true)
 		<-ctx.Done()
 		return agent.RunResult{}, ctx.Err()
 	}
@@ -228,7 +212,7 @@ func TestRunOneShotReturnsParentCancellation(t *testing.T) {
 	select {
 	case err := <-done:
 		_, resets := engine.snapshot()
-		if !errors.Is(err, context.Canceled) || resets != 1 {
+		if !errors.Is(err, context.Canceled) || resets != 0 {
 			t.Fatalf("RunOneShot() error = %v, resets = %d", err, resets)
 		}
 	case <-time.After(2 * time.Second):

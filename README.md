@@ -156,9 +156,10 @@ and refusals are delivered incrementally. Completed output items are retained
 for tool calls and continuation replay. Requests use `store: false` and follow
 the experimental Codex wire contract.
 
-The engine permits at most 20 tool rounds per user turn. Once tool execution
-has begun, cancellation or an incomplete continuation requires `/clear` before
-another turn so provider state cannot be confused with external side effects.
+The engine permits at most 20 tool rounds per user turn. If a turn is interrupted,
+it preserves the existing conversation plus pending user and tool-result inputs for
+the next prompt. Calls that could not execute receive synthetic error results so the
+provider continuation remains valid; tool side effects that already occurred remain.
 
 ## Compaction
 

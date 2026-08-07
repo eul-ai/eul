@@ -31,7 +31,6 @@ var (
 type Engine interface {
 	Run(context.Context, string, agent.EventSink) (agent.RunResult, error)
 	Reset()
-	NeedsReset() bool
 }
 
 type Options struct {
@@ -67,12 +66,10 @@ func descriptor(value any) (int, bool) {
 func RunOneShot(ctx context.Context, engine Engine, prompt string, options Options) error {
 	runErr, interrupted := runTurn(ctx, engine, prompt, options)
 	if contextErr := ctx.Err(); contextErr != nil {
-		resetIfNeeded(engine)
 		return contextErr
 	}
 
 	if interrupted {
-		resetIfNeeded(engine)
 		return ErrInterrupted
 	}
 	return runErr
@@ -129,15 +126,6 @@ func runTurn(parent context.Context, engine Engine, prompt string, options Optio
 			cancel()
 		}
 	}
-}
-
-func resetIfNeeded(engine Engine) bool {
-	if !engine.NeedsReset() {
-		return false
-	}
-
-	engine.Reset()
-	return true
 }
 
 type eventRenderer struct {

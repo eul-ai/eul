@@ -10,10 +10,7 @@ import (
 
 const defaultMaxToolRounds = 20
 
-var (
-	errToolRoundLimit = errors.New("agent: maximum tool rounds exceeded")
-	errResetRequired  = errors.New("agent: reset required after incomplete tool turn")
-)
+var errToolRoundLimit = errors.New("agent: maximum tool rounds exceeded")
 
 type Options struct {
 	Model               string
@@ -36,7 +33,7 @@ type Engine struct {
 	instructions  string
 	state         []byte
 	contextUsage  Usage
-	resetRequired bool
+	pendingInputs []Input
 }
 
 func New(provider Provider, tools Toolbox, options Options) *Engine {
@@ -64,13 +61,10 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		return RunResult{}, err
 	}
 
-	if e.resetRequired {
-		return RunResult{}, errResetRequired
-	}
-
 	state := e.state
 	contextUsage := e.contextUsage
-	inputs := []Input{{Kind: InputUser, Text: userText}}
+	inputs := append([]Input(nil), e.pendingInputs...)
+	inputs = append(inputs, Input{Kind: InputUser, Text: userText})
 	var result RunResult
 	toolRounds := 0
 
@@ -94,12 +88,14 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 
 			compacted, err := compactor.Compact(ctx, request)
 			if err != nil {
+				e.preserveContinuation(request.State, contextUsage, request.Inputs)
 				if ctxErr := ctx.Err(); ctxErr != nil {
 					return RunResult{}, ctxErr
 				}
 				return RunResult{}, fmt.Errorf("agent: compact context: %w", err)
 			}
 			if len(compacted.State) == 0 {
+				e.preserveContinuation(request.State, contextUsage, request.Inputs)
 				return RunResult{}, errors.New("agent: compact context: provider returned empty state")
 			}
 
@@ -154,6 +150,7 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			return nil
 		})
 		if err != nil {
+			e.preserveContinuation(request.State, contextUsage, request.Inputs)
 			closeErr := closeStreamedTools(sink, streamedTools, streamedOrder, err)
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return RunResult{}, ctxErr
@@ -193,12 +190,13 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		if len(response.ToolCalls) == 0 {
 			e.state = state
 			e.contextUsage = contextUsage
-			e.resetRequired = false
+			e.pendingInputs = nil
 			result.Text = response.Text
 			return result, nil
 		}
 
 		if toolRounds >= e.maxToolRounds {
+			e.preserveContinuation(state, contextUsage, unexecutedToolInputs(response.ToolCalls, errToolRoundLimit))
 			if err := closeStreamedTools(sink, streamedTools, streamedOrder, errToolRoundLimit); err != nil {
 				return RunResult{}, err
 			}
@@ -207,8 +205,10 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		toolRounds++
 
 		inputs = make([]Input, 0, len(response.ToolCalls))
-		for _, call := range response.ToolCalls {
+		for callIndex, call := range response.ToolCalls {
 			if ctxErr := ctx.Err(); ctxErr != nil {
+				inputs = append(inputs, unexecutedToolInputs(response.ToolCalls[callIndex:], ctxErr)...)
+				e.preserveContinuation(state, contextUsage, inputs)
 				_ = closeStreamedTools(sink, streamedTools, streamedOrder, ctxErr)
 				return RunResult{}, ctxErr
 			}
@@ -234,10 +234,6 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 				return RunResult{}, err
 			}
 
-			// A tool may change external state before failing or being canceled.
-			// Reject another Run until a final provider response supplies coherent
-			// continuation state or the caller invokes Reset.
-			e.resetRequired = true
 			var toolUpdateMu sync.Mutex
 			var updateErr error
 			toolResult, err := e.executeTool(ctx, call, func(next ToolPresentation) error {
@@ -263,6 +259,10 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			streamed = streamedTools[call.ID]
 			toolUpdateMu.Unlock()
 			if currentUpdateErr != nil {
+				toolResult = failedToolResult(call, toolResult, currentUpdateErr)
+				inputs = append(inputs, toolResultInput(toolResult))
+				inputs = append(inputs, unexecutedToolInputs(response.ToolCalls[callIndex+1:], currentUpdateErr)...)
+				e.preserveContinuation(state, contextUsage, inputs)
 				return RunResult{}, currentUpdateErr
 			}
 			if err != nil {
@@ -273,6 +273,9 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 				endErr := emit(sink, Event{Kind: EventToolEnd, Call: call, Presentation: streamed.presentation, Result: toolResult})
 				delete(streamedTools, call.ID)
 				closeErr := closeStreamedTools(sink, streamedTools, streamedOrder, err)
+				inputs = append(inputs, toolResultInput(toolResult))
+				inputs = append(inputs, unexecutedToolInputs(response.ToolCalls[callIndex+1:], err)...)
+				e.preserveContinuation(state, contextUsage, inputs)
 				if ctxErr := ctx.Err(); ctxErr != nil {
 					return RunResult{}, ctxErr
 				}
@@ -286,17 +289,14 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			}
 
 			if err := emit(sink, Event{Kind: EventToolEnd, Call: call, Presentation: streamed.presentation, Result: toolResult}); err != nil {
+				inputs = append(inputs, toolResultInput(toolResult))
+				inputs = append(inputs, unexecutedToolInputs(response.ToolCalls[callIndex+1:], err)...)
+				e.preserveContinuation(state, contextUsage, inputs)
 				return RunResult{}, err
 			}
 			delete(streamedTools, call.ID)
 
-			inputs = append(inputs, Input{
-				Kind:    InputToolResult,
-				Text:    toolResult.Output,
-				CallID:  toolResult.CallID,
-				Tool:    toolResult.Tool,
-				IsError: toolResult.IsError,
-			})
+			inputs = append(inputs, toolResultInput(toolResult))
 		}
 	}
 }
@@ -309,14 +309,49 @@ func (e *Engine) SetThinkingLevel(level ThinkingLevel) error {
 	return nil
 }
 
-func (e *Engine) NeedsReset() bool {
-	return e.resetRequired
-}
-
 func (e *Engine) Reset() {
 	e.state = nil
 	e.contextUsage = Usage{}
-	e.resetRequired = false
+	e.pendingInputs = nil
+}
+
+func (e *Engine) preserveContinuation(state []byte, usage Usage, inputs []Input) {
+	e.state = append([]byte(nil), state...)
+	e.contextUsage = usage
+	e.pendingInputs = append([]Input(nil), inputs...)
+}
+
+func toolResultInput(result ToolResult) Input {
+	return Input{
+		Kind:    InputToolResult,
+		Text:    result.Output,
+		CallID:  result.CallID,
+		Tool:    result.Tool,
+		IsError: result.IsError,
+	}
+}
+
+func unexecutedToolInputs(calls []ToolCall, cause error) []Input {
+	inputs := make([]Input, len(calls))
+	for index, call := range calls {
+		inputs[index] = toolResultInput(ToolResult{
+			CallID:  call.ID,
+			Tool:    call.Name,
+			Output:  "tool was not executed: " + cause.Error(),
+			IsError: true,
+		})
+	}
+	return inputs
+}
+
+func failedToolResult(call ToolCall, result ToolResult, cause error) ToolResult {
+	result.CallID = call.ID
+	result.Tool = call.Name
+	if result.Output == "" {
+		result.Output = cause.Error()
+	}
+	result.IsError = true
+	return result
 }
 
 func (e *Engine) executeTool(ctx context.Context, call ToolCall, updates ToolUpdateSink) (ToolResult, error) {

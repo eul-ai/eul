@@ -430,7 +430,7 @@ func TestInterruptedTurnClosesPendingToolBlocks(t *testing.T) {
 		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "write-1", Name: "write"},
 		Presentation: agent.ToolPresentation{Title: "write file.go", Lines: []string{"partial"}},
 	})
-	model.finishTurn(context.Canceled, &fakeEngine{})
+	model.finishTurn(context.Canceled)
 	block := model.blocks[model.toolBlockIndex("write-1")]
 	if block.kind != blockToolError || block.toolOutcome != "canceled" {
 		t.Fatalf("block = %+v", block)

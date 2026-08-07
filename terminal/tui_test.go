@@ -111,7 +111,7 @@ func TestHandleKeyRunsTurnAndAppliesOrderedEvents(t *testing.T) {
 		case message := <-messages:
 			if message.done {
 				cancel()
-				model.finishTurn(message.err, engine)
+				model.finishTurn(message.err)
 				if model.running || model.activity.kind != activityReady || model.contextTokens != 42 {
 					t.Fatalf("model after turn = %+v", model)
 				}
@@ -127,12 +127,17 @@ func TestHandleKeyRunsTurnAndAppliesOrderedEvents(t *testing.T) {
 	}
 }
 
-func TestHandleKeyCancelsTurnAndResetsIncompleteToolState(t *testing.T) {
+func TestHandleKeyCancelsIncompleteToolTurnWithoutResettingConversation(t *testing.T) {
 	started := make(chan struct{})
 	engine := &fakeEngine{}
-	engine.runFunction = func(ctx context.Context, _ string, _ agent.EventSink) (agent.RunResult, error) {
+	engine.runFunction = func(ctx context.Context, _ string, sink agent.EventSink) (agent.RunResult, error) {
+		if err := sink(agent.Event{Kind: agent.EventContextUsage, Usage: agent.Usage{TotalTokens: 456}}); err != nil {
+			return agent.RunResult{}, err
+		}
+		if err := sink(agent.Event{Kind: agent.EventToolExecute, Call: agent.ToolCall{ID: "call-1", Name: "write"}}); err != nil {
+			return agent.RunResult{}, err
+		}
 		close(started)
-		engine.setNeedsReset(true)
 		<-ctx.Done()
 		return agent.RunResult{}, ctx.Err()
 	}
@@ -157,18 +162,24 @@ func TestHandleKeyCancelsTurnAndResetsIncompleteToolState(t *testing.T) {
 		t.Fatalf("activity = %+v", model.activity)
 	}
 
-	select {
-	case message := <-messages:
-		if !message.done {
-			t.Fatalf("message = %+v", message)
+	timeout := time.After(2 * time.Second)
+	for {
+		select {
+		case message := <-messages:
+			if !message.done {
+				model.applyAgentEvent(*message.event)
+				continue
+			}
+			model.finishTurn(message.err)
+			_, resets := engine.snapshot()
+			last := model.blocks[len(model.blocks)-1].text
+			if resets != 0 || model.contextTokens != 456 || model.activity.kind != activityReady || !strings.Contains(last, "tool side effects may remain") || strings.Contains(last, "cleared") {
+				t.Fatalf("resets=%d context=%d activity=%+v blocks=%+v", resets, model.contextTokens, model.activity, model.blocks)
+			}
+			return
+		case <-timeout:
+			t.Fatal("canceled turn did not complete")
 		}
-		model.finishTurn(message.err, engine)
-		_, resets := engine.snapshot()
-		if resets != 1 || model.contextTokens != 0 || model.activity.kind != activityReady || !strings.Contains(model.blocks[len(model.blocks)-1].text, "conversation cleared") {
-			t.Fatalf("resets=%d context=%d activity=%+v blocks=%+v", resets, model.contextTokens, model.activity, model.blocks)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("canceled turn did not complete")
 	}
 }
 
