@@ -1,6 +1,9 @@
 package agent
 
-import "context"
+import (
+	"context"
+	"slices"
+)
 
 type JSONSchema struct {
 	Type                 string                `json:"type,omitempty"`
@@ -41,6 +44,21 @@ type ToolPresentation struct {
 	Diff      []ToolDiffLine
 	Markdown  bool
 	Outcome   string
+}
+
+func (presentation ToolPresentation) Clone() ToolPresentation {
+	presentation.Lines = slices.Clone(presentation.Lines)
+	presentation.Diff = slices.Clone(presentation.Diff)
+	return presentation
+}
+
+func (presentation ToolPresentation) Equal(other ToolPresentation) bool {
+	return presentation.Title == other.Title &&
+		presentation.Arguments == other.Arguments &&
+		presentation.Markdown == other.Markdown &&
+		presentation.Outcome == other.Outcome &&
+		slices.Equal(presentation.Lines, other.Lines) &&
+		slices.Equal(presentation.Diff, other.Diff)
 }
 
 // ToolUpdateSink may be called concurrently before Execute returns.

@@ -66,9 +66,7 @@ func (r *Registry) Presentation(snapshot agent.ToolCallSnapshot) agent.ToolPrese
 	if presentation.Title == "" {
 		presentation.Title = snapshot.Name
 	}
-	presentation.Lines = append([]string(nil), presentation.Lines...)
-	presentation.Diff = append([]agent.ToolDiffLine(nil), presentation.Diff...)
-	return presentation
+	return presentation.Clone()
 }
 
 func (r *Registry) Execute(ctx context.Context, call agent.ToolCall, updates agent.ToolUpdateSink) (agent.ToolResult, error) {

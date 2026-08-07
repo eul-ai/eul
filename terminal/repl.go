@@ -267,14 +267,13 @@ func toolResultOutcome(result agent.ToolResult, presentation agent.ToolPresentat
 }
 
 func sanitizeToolPresentation(call agent.ToolCall, presentation agent.ToolPresentation) agent.ToolPresentation {
+	presentation = presentation.Clone()
 	presentation.Title = diagnostic(toolTitle(call, presentation), maxToolPresentationSummaryBytes)
 	presentation.Arguments = diagnostic(presentation.Arguments, maxToolPresentationSummaryBytes)
 	presentation.Outcome = diagnostic(presentation.Outcome, maxToolPresentationSummaryBytes)
-	presentation.Lines = append([]string(nil), presentation.Lines...)
 	for index := range presentation.Lines {
 		presentation.Lines[index] = sanitizeAssistantText(presentation.Lines[index])
 	}
-	presentation.Diff = append([]agent.ToolDiffLine(nil), presentation.Diff...)
 	for index := range presentation.Diff {
 		presentation.Diff[index].Text = sanitizeAssistantText(presentation.Diff[index].Text)
 	}

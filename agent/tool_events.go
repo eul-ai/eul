@@ -54,10 +54,10 @@ func (tracker *toolEventTracker) observeSnapshot(snapshot ToolCallSnapshot) erro
 	if snapshot.ID == "" || snapshot.Name == "" {
 		return nil
 	}
-	presentation := clonePresentation(tracker.tools.Presentation(snapshot))
+	presentation := tracker.tools.Presentation(snapshot).Clone()
 	call := ToolCall{ID: snapshot.ID, Name: snapshot.Name, Arguments: []byte(snapshot.RawArguments)}
 	current, exists := tracker.streamed[snapshot.ID]
-	if exists && presentationsEqual(current.presentation, presentation) {
+	if exists && current.presentation.Equal(presentation) {
 		current.call = call
 		tracker.streamed[snapshot.ID] = current
 		return nil
@@ -104,7 +104,7 @@ func (tracker *toolEventTracker) beginExecution(call ToolCall) error {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
-	presentation := clonePresentation(tracker.tools.Presentation(completeToolCallSnapshot(call)))
+	presentation := tracker.tools.Presentation(completeToolCallSnapshot(call)).Clone()
 	streamed, exists := tracker.streamed[call.ID]
 	if !exists {
 		if err := emit(tracker.sink, Event{Kind: EventToolStart, Call: call, Presentation: presentation}); err != nil {
@@ -112,7 +112,7 @@ func (tracker *toolEventTracker) beginExecution(call ToolCall) error {
 		}
 		streamed = streamedTool{call: call, presentation: presentation}
 		tracker.order = append(tracker.order, call.ID)
-	} else if !presentationsEqual(streamed.presentation, presentation) {
+	} else if !streamed.presentation.Equal(presentation) {
 		if err := emit(tracker.sink, Event{Kind: EventToolUpdate, Call: call, Presentation: presentation}); err != nil {
 			return err
 		}
@@ -138,8 +138,8 @@ func (tracker *toolEventTracker) publishUpdate(call ToolCall, next ToolPresentat
 	if streamed.presentationFinalized {
 		return nil
 	}
-	next = clonePresentation(next)
-	if presentationsEqual(streamed.presentation, next) {
+	next = next.Clone()
+	if streamed.presentation.Equal(next) {
 		return nil
 	}
 	if err := emit(tracker.sink, Event{Kind: EventToolUpdate, Call: call, Presentation: next}); err != nil {
@@ -156,7 +156,7 @@ func (tracker *toolEventTracker) setFinal(call ToolCall, final ToolPresentation)
 	defer tracker.mu.Unlock()
 
 	streamed := tracker.streamed[call.ID]
-	streamed.presentation = clonePresentation(final)
+	streamed.presentation = final.Clone()
 	streamed.presentationFinalized = true
 	tracker.streamed[call.ID] = streamed
 }
@@ -211,27 +211,4 @@ func completeToolCallSnapshot(call ToolCall) ToolCallSnapshot {
 		Arguments:    arguments,
 		Complete:     true,
 	}
-}
-
-func clonePresentation(presentation ToolPresentation) ToolPresentation {
-	presentation.Lines = append([]string(nil), presentation.Lines...)
-	presentation.Diff = append([]ToolDiffLine(nil), presentation.Diff...)
-	return presentation
-}
-
-func presentationsEqual(left, right ToolPresentation) bool {
-	if left.Title != right.Title || left.Arguments != right.Arguments || left.Markdown != right.Markdown || left.Outcome != right.Outcome || len(left.Lines) != len(right.Lines) || len(left.Diff) != len(right.Diff) {
-		return false
-	}
-	for index := range left.Lines {
-		if left.Lines[index] != right.Lines[index] {
-			return false
-		}
-	}
-	for index := range left.Diff {
-		if left.Diff[index] != right.Diff[index] {
-			return false
-		}
-	}
-	return true
 }

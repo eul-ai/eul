@@ -201,10 +201,10 @@ func TestCompleteToolCallSnapshotUsesStrictJSON(t *testing.T) {
 	}
 }
 
-func TestToolPresentationDiffIsClonedAndCompared(t *testing.T) {
+func TestToolPresentationCloneAndEqual(t *testing.T) {
 	presentation := ToolPresentation{Diff: []ToolDiffLine{{Kind: ToolDiffLineAdded, NewLine: 2, Text: "new"}}}
-	cloned := clonePresentation(presentation)
-	if !presentationsEqual(presentation, cloned) {
+	cloned := presentation.Clone()
+	if !presentation.Equal(cloned) {
 		t.Fatalf("cloned presentation differs: original=%+v clone=%+v", presentation, cloned)
 	}
 
@@ -212,7 +212,7 @@ func TestToolPresentationDiffIsClonedAndCompared(t *testing.T) {
 	if presentation.Diff[0].Text != "new" {
 		t.Fatalf("clone shares diff storage: original=%+v clone=%+v", presentation, cloned)
 	}
-	if presentationsEqual(presentation, cloned) {
+	if presentation.Equal(cloned) {
 		t.Fatalf("different presentations compare equal: original=%+v clone=%+v", presentation, cloned)
 	}
 }
