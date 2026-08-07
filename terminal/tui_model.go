@@ -14,6 +14,7 @@ const (
 	blockUser blockKind = iota
 	blockAssistant
 	blockReasoning
+	blockToolPending
 	blockTool
 	blockToolError
 	blockContext
@@ -56,6 +57,7 @@ type tuiModel struct {
 	conversationDirty bool
 	streamKind        blockKind
 	streamOpen        bool
+	activeTool        int
 	input             []rune
 	cursor            int
 	history           []string
@@ -82,6 +84,7 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 		effort:            singleLine(effort, 40),
 		contextWindow:     options.ContextWindow,
 		historyIndex:      -1,
+		activeTool:        -1,
 		following:         true,
 		conversationDirty: true,
 		activity:          activity{kind: activityReady},
@@ -134,16 +137,32 @@ func (m *tuiModel) applyAgentEvent(event agent.Event) {
 		m.contextTokens = event.Usage.TotalTokens
 	case agent.EventToolStart:
 		detail := summarizeCall(event.Call)
-		m.appendBlock(blockTool, detail)
+		m.appendBlock(blockToolPending, detail)
+		m.activeTool = len(m.blocks) - 1
 		m.setActiveActivity(activity{kind: activityTool, detail: detail})
 	case agent.EventToolEnd:
-		kind := blockTool
-		if event.Result.IsError {
-			kind = blockToolError
-		}
-		m.appendBlock(kind, summarizeResult(event.Result))
+		m.finishTool(event.Result)
 		m.setActiveActivity(activity{kind: activityThinking})
 	}
+}
+
+func (m *tuiModel) finishTool(result agent.ToolResult) {
+	kind := blockTool
+	if result.IsError {
+		kind = blockToolError
+	}
+	if m.activeTool < 0 || m.activeTool >= len(m.blocks) {
+		m.activeTool = -1
+		m.appendBlock(kind, summarizeResult(result))
+		return
+	}
+
+	summary := summarizeResult(result)
+	outcome := strings.TrimPrefix(summary, diagnostic(result.Tool, 200)+" — ")
+	m.blocks[m.activeTool].kind = kind
+	m.blocks[m.activeTool].text += " — " + outcome
+	m.activeTool = -1
+	m.conversationDirty = true
 }
 
 func (m *tuiModel) setActiveActivity(next activity) {
@@ -275,6 +294,7 @@ func (m *tuiModel) clearConversation() {
 	m.blocks = nil
 	m.conversationLines = nil
 	m.conversationDirty = true
+	m.activeTool = -1
 	m.closeStream()
 	m.contextTokens = 0
 	m.scrollTop = 0

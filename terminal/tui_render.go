@@ -8,21 +8,25 @@ import (
 )
 
 const (
-	ansiHideCursor   = "\x1b[?25l"
-	ansiShowCursor   = "\x1b[?25h"
-	ansiReset        = "\x1b[0m"
-	conversationEdge = 2
+	ansiHideCursor = "\x1b[?25l"
+	ansiShowCursor = "\x1b[?25h"
+	ansiReset      = "\x1b[0m"
+	ansiItalic     = "\x1b[3m"
+	toolPadding    = 1
 )
 
 type lineStyle struct {
-	foreground terminalColor
-	background terminalColor
+	foreground      terminalColor
+	background      terminalColor
+	paintBackground bool
+	italic          bool
 }
 
 type styledLine struct {
-	text   string
-	style  lineStyle
-	margin int
+	text      string
+	rightText string
+	style     lineStyle
+	padding   int
 }
 
 type tuiLayout struct {
@@ -70,7 +74,7 @@ func renderFrame(model *tuiModel) string {
 	copy(rows, conversation)
 
 	rule := strings.Repeat("─", width)
-	ruleStyle := lineStyle{foreground: currentTheme.muted, background: currentTheme.background}
+	ruleStyle := lineStyle{foreground: currentTheme.effortColor(model.effort)}
 	if layout.topRuleRow > 0 {
 		rows[layout.topRuleRow-1] = styledLine{text: rule, style: ruleStyle}
 	}
@@ -78,8 +82,12 @@ func renderFrame(model *tuiModel) string {
 	if layout.inputRow > 0 {
 		input, column := renderInput(model, width)
 		rows[layout.inputRow-1] = styledLine{
-			text:  input,
-			style: lineStyle{foreground: currentTheme.foreground, background: currentTheme.editorLine},
+			text: input,
+			style: lineStyle{
+				foreground:      currentTheme.foreground,
+				background:      currentTheme.editorLine,
+				paintBackground: true,
+			},
 		}
 		cursorColumn = column
 	}
@@ -87,9 +95,11 @@ func renderFrame(model *tuiModel) string {
 		rows[layout.bottomRuleRow-1] = styledLine{text: rule, style: ruleStyle}
 	}
 	if layout.statusRow > 0 {
+		left, right := renderStatus(model, width)
 		rows[layout.statusRow-1] = styledLine{
-			text:  renderStatus(model, width),
-			style: lineStyle{foreground: currentTheme.muted, background: currentTheme.background},
+			text:      left,
+			rightText: right,
+			style:     lineStyle{foreground: currentTheme.muted},
 		}
 	}
 
@@ -110,31 +120,41 @@ func renderFrame(model *tuiModel) string {
 }
 
 func renderLine(frame *strings.Builder, row, width int, line styledLine) {
-	base := lineStyle{foreground: currentTheme.foreground, background: currentTheme.background}
+	base := lineStyle{foreground: currentTheme.foreground}
 	frame.WriteString("\x1b[")
 	frame.WriteString(strconv.Itoa(row))
 	frame.WriteString(";1H")
-	frame.WriteString(ansiColors(base.foreground, base.background))
+	frame.WriteString(ansiColors(base.foreground, base.background, base.paintBackground))
 	frame.WriteString(strings.Repeat(" ", width))
 
-	innerWidth := width - line.margin*2
-	if innerWidth <= 0 {
-		frame.WriteString(ansiReset)
-		return
-	}
 	style := line.style
 	if style == (lineStyle{}) {
 		style = base
 	}
 	frame.WriteString("\x1b[")
 	frame.WriteString(strconv.Itoa(row))
-	frame.WriteByte(';')
-	frame.WriteString(strconv.Itoa(line.margin + 1))
-	frame.WriteByte('H')
-	frame.WriteString(ansiColors(style.foreground, style.background))
-	text := truncateCells(line.text, innerWidth, false)
+	frame.WriteString(";1H")
+	frame.WriteString(ansiColors(style.foreground, style.background, style.paintBackground))
+	if style.italic {
+		frame.WriteString(ansiItalic)
+	}
+	contentWidth := width - line.padding*2
+	if contentWidth < 0 {
+		contentWidth = 0
+	}
+	text := truncateCells(line.text, contentWidth, false)
+	frame.WriteString(strings.Repeat(" ", line.padding))
 	frame.WriteString(text)
-	frame.WriteString(strings.Repeat(" ", innerWidth-cellWidth(text)))
+	frame.WriteString(strings.Repeat(" ", width-line.padding-cellWidth(text)))
+	if line.rightText != "" {
+		right := truncateCells(line.rightText, width, false)
+		frame.WriteString("\x1b[")
+		frame.WriteString(strconv.Itoa(row))
+		frame.WriteByte(';')
+		frame.WriteString(strconv.Itoa(width - cellWidth(right) + 1))
+		frame.WriteByte('H')
+		frame.WriteString(right)
+	}
 	frame.WriteString(ansiReset)
 }
 
@@ -178,13 +198,29 @@ func modelConversationLines(model *tuiModel, width int) []styledLine {
 }
 
 func conversationLines(blocks []conversationBlock, width int) []styledLine {
-	margin := conversationMargin(width)
-	contentWidth := width - margin*2
 	var lines []styledLine
 	for index, block := range blocks {
 		style := blockPresentation(block.kind)
-		for _, line := range wrapText(block.text, contentWidth) {
-			lines = append(lines, styledLine{text: line, style: style, margin: margin})
+		text := block.text
+		if block.kind == blockReasoning {
+			text = strings.Trim(text, "\n")
+		}
+
+		padding := 0
+		contentWidth := width
+		if isToolBlock(block.kind) {
+			padding = toolPadding
+			contentWidth -= padding * 2
+			if contentWidth < 1 {
+				contentWidth = 1
+			}
+			lines = append(lines, styledLine{style: style, padding: padding})
+		}
+		for _, line := range wrapText(text, contentWidth) {
+			lines = append(lines, styledLine{text: line, style: style, padding: padding})
+		}
+		if isToolBlock(block.kind) {
+			lines = append(lines, styledLine{style: style, padding: padding})
 		}
 		if index < len(blocks)-1 {
 			lines = append(lines, styledLine{})
@@ -193,34 +229,30 @@ func conversationLines(blocks []conversationBlock, width int) []styledLine {
 	return lines
 }
 
-func conversationMargin(width int) int {
-	if width > conversationEdge*2 {
-		return conversationEdge
-	}
-	if width > 2 {
-		return 1
-	}
-	return 0
+func isToolBlock(kind blockKind) bool {
+	return kind == blockToolPending || kind == blockTool || kind == blockToolError
 }
 
 func blockPresentation(kind blockKind) lineStyle {
 	switch kind {
-	case blockUser:
-		return lineStyle{foreground: currentTheme.foreground, background: currentTheme.editorLine}
-	case blockAssistant:
-		return lineStyle{foreground: currentTheme.foreground, background: currentTheme.background}
-	case blockReasoning, blockContext:
-		return lineStyle{foreground: currentTheme.muted, background: currentTheme.panelBackground}
+	case blockUser, blockAssistant:
+		return lineStyle{foreground: currentTheme.foreground}
+	case blockReasoning:
+		return lineStyle{foreground: currentTheme.muted, italic: true}
+	case blockContext:
+		return lineStyle{foreground: currentTheme.muted}
+	case blockToolPending:
+		return lineStyle{foreground: currentTheme.accent, background: currentTheme.toolPendingBackground, paintBackground: true}
 	case blockTool:
-		return lineStyle{foreground: currentTheme.accent, background: currentTheme.toolBackground}
+		return lineStyle{foreground: currentTheme.accent, background: currentTheme.toolSuccessBackground, paintBackground: true}
 	case blockToolError:
-		return lineStyle{foreground: currentTheme.error, background: currentTheme.toolBackground}
+		return lineStyle{foreground: currentTheme.error, background: currentTheme.toolErrorBackground, paintBackground: true}
 	case blockError:
-		return lineStyle{foreground: currentTheme.error, background: currentTheme.panelBackground}
+		return lineStyle{foreground: currentTheme.error}
 	case blockInfo:
-		return lineStyle{foreground: currentTheme.muted, background: currentTheme.background}
+		return lineStyle{foreground: currentTheme.muted}
 	default:
-		return lineStyle{foreground: currentTheme.foreground, background: currentTheme.background}
+		return lineStyle{foreground: currentTheme.foreground}
 	}
 }
 
@@ -253,7 +285,7 @@ func renderInput(model *tuiModel, width int) (string, int) {
 	return "> " + visible.String(), cursorColumn
 }
 
-func renderStatus(model *tuiModel, width int) string {
+func renderStatus(model *tuiModel, width int) (string, string) {
 	activity := activityText(model)
 	modelText := model.model + " (" + model.effort + ")"
 	contextLong, contextShort := contextText(model.contextTokens, model.contextWindow)
@@ -269,12 +301,11 @@ func renderStatus(model *tuiModel, width int) string {
 		if right != "" && activity != "" {
 			gap = 1
 		}
-		if cellWidth(activity)+gap+cellWidth(right) > width {
-			continue
+		if cellWidth(activity)+gap+cellWidth(right) <= width {
+			return activity, right
 		}
-		return activity + strings.Repeat(" ", width-cellWidth(activity)-cellWidth(right)) + right
 	}
-	return truncateCells(activity, width, true)
+	return truncateCells(activity, width, true), ""
 }
 
 func activityText(model *tuiModel) string {

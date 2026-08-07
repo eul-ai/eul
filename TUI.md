@@ -65,9 +65,9 @@ A failure after TUI setup begins must restore terminal state before returning an
 The normal layout reserves the last four rows for the input bar, its two horizontal rules, and the status bar. All remaining rows form the conversation viewport.
 
 ```text
-  Explain terminal raw mode.
+Explain terminal raw mode.
 
-  Raw mode provides key presses without canonical line buffering...
+Raw mode provides key presses without canonical line buffering...
 
 ────────────────────────────────────────────────────────────
  > write the next prompt here█
@@ -82,7 +82,7 @@ The input bar sits between horizontal rules in the style of Claude Code and Pi. 
 3. its horizontal rules; and
 4. the conversation.
 
-Conversation text has a small horizontal margin. User messages use the editor-line background, assistant text uses the main background, reasoning summaries use muted text on the panel background, and tool blocks use accent text on a dedicated tool background. Role labels are omitted.
+The base canvas preserves the terminal's background instead of painting the theme background across the alternate screen. Conversation blocks use the full width without a horizontal margin. User and assistant text use the base background, reasoning summaries use muted italic text with balanced space above and below, and compact tool blocks use horizontal and vertical padding with pending, success, or error backgrounds. Role labels are omitted. Input rules use the theme color for the selected reasoning effort.
 
 On narrow terminals, the status bar will preserve the activity label and compact context percentage before truncating the model and effort.
 
@@ -99,7 +99,7 @@ Block types are:
 - context/compaction notice; and
 - error or informational notice.
 
-Assistant and reasoning deltas append to the currently open block of the same type. A transition to a tool, compaction, user, or other block closes the previous streaming block. Tool calls and results use the existing concise summaries rather than raw arguments or output.
+Assistant and reasoning deltas append to the currently open block of the same type. A transition to a tool, compaction, user, or other block closes the previous streaming block. Tool calls and results use the existing concise summaries rather than raw arguments or output. A result updates its pending tool block instead of creating a second block.
 
 Reasoning, tool, and context blocks should be visually subdued but remain readable. This preserves information currently written to stderr instead of hiding it in the status bar.
 
@@ -205,7 +205,7 @@ The renderer will build a complete frame from immutable UI state, clear each occ
 
 The implementation will use only `golang.org/x/term` as a new direct dependency. A small local cell-width helper will cover ordinary runes, combining marks, and standard wide-character ranges needed for wrapping and clipping. Input movement remains rune-based, so complex joined emoji may require multiple key presses. A dedicated grapheme-width dependency can be considered later only if this limitation proves material.
 
-The current theme is a minimal Go representation of [Ayu Mirage](https://github.com/iodic/pi-ayu-themes/blob/main/themes/ayu-mirage.json). Only colors used by the terminal UI are retained; the source link remains next to the theme definition for future expansion.
+The current theme is a minimal Go representation of [Ayu Mirage](https://github.com/iodic/pi-ayu-themes/blob/main/themes/ayu-mirage.json). Only the core palette and state colors needed by the terminal UI are retained; the source link remains next to the theme definition for future expansion.
 
 ## Proposed files
 
