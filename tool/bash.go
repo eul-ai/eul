@@ -19,6 +19,8 @@ const (
 	defaultBashTimeout = 120 * time.Second
 	maximumBashTimeout = 10 * time.Minute
 	defaultWaitDelay   = time.Second
+	bashPreviewLines   = 5
+	bashUpdateInterval = 100 * time.Millisecond
 )
 
 var bashToolDefinition = agent.ToolDefinition{
@@ -105,18 +107,37 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates a
 	capture := newTailCapture(defaultMaxBytes)
 	command.Stdout = capture
 	command.Stderr = capture
+	started := time.Now()
+	var streamer *bashOutputStreamer
+	if updates != nil {
+		streamer = newBashOutputStreamer(capture, updates, args.Command, started, cancel)
+		command.Stdout = streamer
+		command.Stderr = streamer
+	}
 	if err := command.Start(); err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			result := errorResult(bashToolName, fmt.Errorf("canceled before shell started; exit status: unavailable: %w", contextErr))
+			setFinalBashPresentation(updates, args.Command, "", "", time.Since(started))
 			return result, contextErr
 		}
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-			return errorResult(bashToolName, fmt.Errorf("timed out after %s before shell started; exit status: unavailable", timeout)), nil
+			result := errorResult(bashToolName, fmt.Errorf("timed out after %s before shell started; exit status: unavailable", timeout))
+			setFinalBashPresentation(updates, args.Command, "", "", time.Since(started))
+			return result, nil
 		}
-		return errorResult(bashToolName, fmt.Errorf("failed to start shell: %w; exit status: unavailable", err)), nil
+		result := errorResult(bashToolName, fmt.Errorf("failed to start shell: %w; exit status: unavailable", err))
+		setFinalBashPresentation(updates, args.Command, "", "", time.Since(started))
+		return result, nil
+	}
+	if streamer != nil {
+		streamer.start()
 	}
 
 	waitErr := command.Wait()
+	var updateErr error
+	if streamer != nil {
+		updateErr = streamer.stop()
+	}
 	output, captureTruncated := capture.String()
 	exitStatus := -1
 	if command.ProcessState != nil {
@@ -148,17 +169,123 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates a
 		notice = "earlier command output truncated"
 	}
 	result := agent.ToolResult{Output: boundTail(text, notice), IsError: isError}
-	if updates != nil {
-		presentation := bashPresentation(args.Command)
-		presentation.Outcome = strings.Trim(status, "[]")
-		if err := updates.Update(presentation); err != nil {
-			return result, err
-		}
+	setFinalBashPresentation(updates, args.Command, output, strings.Trim(status, "[]"), time.Since(started))
+	if updateErr != nil {
+		return result, updateErr
 	}
 	if parentErr != nil {
 		return result, parentErr
 	}
 	return result, nil
+}
+
+func setFinalBashPresentation(updates agent.ToolUpdateSink, command, output, outcome string, elapsed time.Duration) {
+	if updates != nil {
+		updates.SetFinal(bashOutputPresentation(command, output, outcome, elapsed))
+	}
+}
+
+func bashOutputPresentation(command, output, outcome string, elapsed time.Duration) agent.ToolPresentation {
+	presentation := bashPresentation(command)
+	presentation.Outcome = outcome
+	if trimmed := strings.TrimSpace(output); trimmed != "" {
+		presentation.Lines = strings.Split(trimmed, "\n")
+	}
+	presentation.TailLines = bashPreviewLines
+	presentation.Elapsed = max(time.Nanosecond, elapsed)
+	return presentation
+}
+
+type bashOutputStreamer struct {
+	capture  *tailCapture
+	updates  agent.ToolUpdateSink
+	command  string
+	started  time.Time
+	cancel   context.CancelFunc
+	dirty    chan struct{}
+	stopNow  chan struct{}
+	stopped  chan struct{}
+	stopOnce sync.Once
+	errMu    sync.Mutex
+	err      error
+}
+
+func newBashOutputStreamer(
+	capture *tailCapture,
+	updates agent.ToolUpdateSink,
+	command string,
+	started time.Time,
+	cancel context.CancelFunc,
+) *bashOutputStreamer {
+	streamer := &bashOutputStreamer{
+		capture: capture,
+		updates: updates,
+		command: command,
+		started: started,
+		cancel:  cancel,
+		dirty:   make(chan struct{}, 1),
+		stopNow: make(chan struct{}),
+		stopped: make(chan struct{}),
+	}
+	return streamer
+}
+
+func (s *bashOutputStreamer) start() {
+	go s.run()
+}
+
+func (s *bashOutputStreamer) Write(data []byte) (int, error) {
+	written, err := s.capture.Write(data)
+	if written > 0 {
+		select {
+		case s.dirty <- struct{}{}:
+		default:
+		}
+	}
+	return written, err
+}
+
+func (s *bashOutputStreamer) run() {
+	defer close(s.stopped)
+	ticker := time.NewTicker(bashUpdateInterval)
+	defer ticker.Stop()
+
+	dirty := false
+	lastElapsedSecond := int64(-1)
+	for {
+		select {
+		case <-s.dirty:
+			dirty = true
+		case now := <-ticker.C:
+			elapsed := now.Sub(s.started)
+			elapsedSecond := int64(elapsed / time.Second)
+			if !dirty && elapsedSecond == lastElapsedSecond {
+				continue
+			}
+			output, _ := s.capture.String()
+			if err := s.updates.Update(bashOutputPresentation(s.command, output, "", elapsed)); err != nil {
+				s.errMu.Lock()
+				s.err = err
+				s.errMu.Unlock()
+				s.cancel()
+				return
+			}
+			dirty = false
+			lastElapsedSecond = elapsedSecond
+		case <-s.stopNow:
+			return
+		}
+	}
+}
+
+func (s *bashOutputStreamer) stop() error {
+	s.stopOnce.Do(func() {
+		close(s.stopNow)
+	})
+	<-s.stopped
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+	return s.err
 }
 
 type tailCapture struct {

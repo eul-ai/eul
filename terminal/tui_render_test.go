@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -194,6 +195,79 @@ func TestAssistantReasoningAndToolDetailsRenderInlineMarkdown(t *testing.T) {
 	renderLine(&renderedDetail, 1, 80, *detail)
 	if strings.Contains(detail.text, "`") || !strings.Contains(renderedDetail.String(), ansiForeground(currentTheme.markdownCode)+"./terminal/repl.go"+ansiForeground(currentTheme.foreground)) {
 		t.Fatalf("tool detail = %q", renderedDetail.String())
+	}
+}
+
+func TestBashToolShowsOutputTailAndDuration(t *testing.T) {
+	lines := conversationLines([]conversationBlock{{
+		kind: blockTool,
+		tool: agent.ToolPresentation{
+			Title:     "bash",
+			Arguments: "go test ./...",
+			Lines:     []string{"one", "two", "three", "ok yaah/cmd", "ok yaah/provider", "ok yaah/terminal", "ok yaah/tool", "ok yaah/terminal race"},
+			TailLines: 5,
+			Elapsed:   2*time.Second + 900*time.Millisecond,
+		},
+		toolOutcome: "exit status: 0",
+	}}, 80)
+
+	var texts []string
+	for _, line := range lines {
+		texts = append(texts, line.text)
+	}
+	for _, want := range []string{"bash go test ./... — exit status: 0", "... (3 earlier lines)", "ok yaah/cmd", "ok yaah/terminal race", "Took 2.9s"} {
+		if !slices.Contains(texts, want) {
+			t.Fatalf("lines = %+v, missing %q", lines, want)
+		}
+	}
+	for _, hidden := range []string{"one", "two", "three"} {
+		if slices.Contains(texts, hidden) {
+			t.Fatalf("lines = %+v, retained hidden line %q", lines, hidden)
+		}
+	}
+}
+
+func TestPendingBashToolShowsElapsedTime(t *testing.T) {
+	lines := conversationLines([]conversationBlock{{
+		kind: blockToolPending,
+		tool: agent.ToolPresentation{
+			Title:   "bash",
+			Lines:   []string{"running"},
+			Elapsed: time.Second + 200*time.Millisecond,
+		},
+	}}, 80)
+
+	var texts []string
+	for _, line := range lines {
+		texts = append(texts, line.text)
+	}
+	if !slices.Contains(texts, "running") || !slices.Contains(texts, "Elapsed 1.2s") || slices.Contains(texts, "Took 1.2s") {
+		t.Fatalf("lines = %+v", lines)
+	}
+}
+
+func TestToolTailLimitCountsWrappedVisualLines(t *testing.T) {
+	lines := conversationLines([]conversationBlock{{
+		kind: blockTool,
+		tool: agent.ToolPresentation{
+			Title:     "bash",
+			Lines:     []string{strings.Repeat("x", 100)},
+			TailLines: 5,
+		},
+	}}, 12)
+
+	bodyLines := 0
+	foundOmission := false
+	for _, line := range lines {
+		if line.text == "... (+5)" {
+			foundOmission = true
+		}
+		if line.text == strings.Repeat("x", 10) {
+			bodyLines++
+		}
+	}
+	if !foundOmission || bodyLines != 5 {
+		t.Fatalf("lines = %+v", lines)
 	}
 }
 

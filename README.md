@@ -58,7 +58,7 @@ row above and below the viewport content. Reasoning summaries use muted italic
 text, while compact tool blocks use padded pending,
 success, and error backgrounds. Tool names use the accent color while their arguments
 and detail text use the regular foreground color. Successful `edit` calls show the committed
-change with green additions, red removals, and muted context lines. Inline Markdown is rendered
+change with green additions, red removals, and muted context lines. `bash` calls stream the last five visible output lines, report how many earlier lines were omitted, and show live elapsed time followed by the final duration. Inline Markdown is rendered
 in tool detail lines. Tool blocks are correlated by call ID and may replace their content while
 arguments or execution progress streams. The OpenAI
 adapter exposes partial function-call arguments, so `write` previews its first

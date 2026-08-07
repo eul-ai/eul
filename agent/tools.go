@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"slices"
+	"time"
 )
 
 type JSONSchema struct {
@@ -44,6 +45,8 @@ type ToolPresentation struct {
 	Diff      []ToolDiffLine
 	Markdown  bool
 	Outcome   string
+	TailLines int
+	Elapsed   time.Duration
 }
 
 func (presentation ToolPresentation) Clone() ToolPresentation {
@@ -57,6 +60,8 @@ func (presentation ToolPresentation) Equal(other ToolPresentation) bool {
 		presentation.Arguments == other.Arguments &&
 		presentation.Markdown == other.Markdown &&
 		presentation.Outcome == other.Outcome &&
+		presentation.TailLines == other.TailLines &&
+		presentation.Elapsed == other.Elapsed &&
 		slices.Equal(presentation.Lines, other.Lines) &&
 		slices.Equal(presentation.Diff, other.Diff)
 }

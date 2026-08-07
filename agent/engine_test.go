@@ -202,10 +202,24 @@ func TestCompleteToolCallSnapshotUsesStrictJSON(t *testing.T) {
 }
 
 func TestToolPresentationCloneAndEqual(t *testing.T) {
-	presentation := ToolPresentation{Diff: []ToolDiffLine{{Kind: ToolDiffLineAdded, NewLine: 2, Text: "new"}}}
+	presentation := ToolPresentation{
+		Diff:      []ToolDiffLine{{Kind: ToolDiffLineAdded, NewLine: 2, Text: "new"}},
+		TailLines: 5,
+		Elapsed:   2 * time.Second,
+	}
 	cloned := presentation.Clone()
 	if !presentation.Equal(cloned) {
 		t.Fatalf("cloned presentation differs: original=%+v clone=%+v", presentation, cloned)
+	}
+	changed := cloned
+	changed.TailLines++
+	if presentation.Equal(changed) {
+		t.Fatal("presentations with different tail limits compare equal")
+	}
+	changed = cloned
+	changed.Elapsed++
+	if presentation.Equal(changed) {
+		t.Fatal("presentations with different elapsed times compare equal")
 	}
 
 	cloned.Diff[0].Text = "changed"

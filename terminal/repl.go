@@ -272,6 +272,8 @@ func sanitizeToolPresentation(call agent.ToolCall, presentation agent.ToolPresen
 	presentation.Title = diagnostic(toolTitle(call, presentation), maxToolPresentationSummaryBytes)
 	presentation.Arguments = diagnostic(presentation.Arguments, maxToolPresentationSummaryBytes)
 	presentation.Outcome = diagnostic(presentation.Outcome, maxToolPresentationSummaryBytes)
+	presentation.TailLines = max(0, presentation.TailLines)
+	presentation.Elapsed = max(0, presentation.Elapsed)
 	for index := range presentation.Lines {
 		presentation.Lines[index] = sanitizeAssistantText(presentation.Lines[index])
 	}

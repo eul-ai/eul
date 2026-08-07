@@ -439,28 +439,63 @@ func toolConversationLines(block conversationBlock, width int, style lineStyle, 
 		appendInlineSpan(&heading, " — "+outcome, inlineStyle{foreground: titleForeground})
 	}
 
-	lines := make([]styledLine, 0, len(block.tool.Lines)+len(block.tool.Diff)+2)
+	lines := make([]styledLine, 0, len(block.tool.Lines)+len(block.tool.Diff)+4)
 	for _, line := range wrapInlineSpans(heading, width) {
 		lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding})
 	}
-	if len(block.tool.Lines) == 0 && len(block.tool.Diff) == 0 {
+	if len(block.tool.Lines) == 0 && len(block.tool.Diff) == 0 && block.tool.Elapsed == 0 {
 		return lines
 	}
 	lines = append(lines, styledLine{style: style, padding: padding})
+
+	contentAdded := false
 	if len(block.tool.Lines) > 0 {
+		var bodyLines []styledLine
 		body := strings.Join(block.tool.Lines, "\n")
 		if block.tool.Markdown {
 			for _, line := range wrapInlineMarkdown(body, width) {
-				lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding})
+				bodyLines = append(bodyLines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding})
 			}
 		} else {
 			for _, line := range wrapText(body, width) {
-				lines = append(lines, styledLine{text: line, style: style, padding: padding})
+				bodyLines = append(bodyLines, styledLine{text: line, style: style, padding: padding})
 			}
 		}
+		if limit := block.tool.TailLines; limit > 0 && len(bodyLines) > limit {
+			omitted := len(bodyLines) - limit
+			omittedStyle := style
+			omittedStyle.foreground = currentTheme.muted
+			lines = append(lines, styledLine{text: toolOmissionMarker(omitted, width), style: omittedStyle, padding: padding})
+			bodyLines = bodyLines[omitted:]
+		}
+		lines = append(lines, bodyLines...)
+		contentAdded = true
 	}
-	lines = append(lines, toolDiffConversationLines(block.tool.Diff, width, style, padding)...)
+	if len(block.tool.Diff) > 0 {
+		lines = append(lines, toolDiffConversationLines(block.tool.Diff, width, style, padding)...)
+		contentAdded = true
+	}
+	if block.tool.Elapsed > 0 {
+		if contentAdded {
+			lines = append(lines, styledLine{style: style, padding: padding})
+		}
+		elapsedStyle := style
+		elapsedStyle.foreground = currentTheme.muted
+		label := "Took"
+		if block.kind == blockToolPending {
+			label = "Elapsed"
+		}
+		lines = append(lines, styledLine{text: fmt.Sprintf("%s %.1fs", label, block.tool.Elapsed.Seconds()), style: elapsedStyle, padding: padding})
+	}
 	return lines
+}
+
+func toolOmissionMarker(omitted, width int) string {
+	marker := fmt.Sprintf("... (%d earlier lines)", omitted)
+	if cellWidth(marker) <= width {
+		return marker
+	}
+	return truncateCells(fmt.Sprintf("... (+%d)", omitted), width, false)
 }
 
 func toolDiffConversationLines(diff []agent.ToolDiffLine, width int, style lineStyle, padding int) []styledLine {
