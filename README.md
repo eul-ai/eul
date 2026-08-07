@@ -63,7 +63,7 @@ in tool detail lines. Tool blocks are correlated by call ID and may replace thei
 arguments or execution progress streams. The OpenAI
 adapter exposes partial function-call arguments, so `write` previews its first
 ten lines before execution and reports how many additional lines were omitted;
-the file is still written only after the complete call is validated. Rendering uses synchronized differential row updates to avoid
+the file is still written only after the complete call is validated. Typing `@` at a token boundary opens a project-file search between the input and status bar; it uses `fd` when available and falls back to filesystem traversal. Selecting a result inserts its project-relative reference into the prompt. Rendering uses synchronized differential row updates to avoid
 flicker during streaming. The current palette is based on the
 [Ayu Mirage theme](https://github.com/iodic/pi-ayu-themes/blob/main/themes/ayu-mirage.json).
 
@@ -72,6 +72,7 @@ Interactive controls include:
 - Enter or keypad Enter to submit
 - Shift-Enter to insert a newline
 - Shift-Tab to cycle supported thinking levels
+- `@` to search project files; Up/Down select, Enter/Tab insert, and Escape dismisses
 - Left/Right and Home/End to move within the prompt
 - Up/Down to navigate prompt history
 - Page Up/Page Down to scroll the conversation

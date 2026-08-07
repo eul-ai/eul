@@ -65,6 +65,10 @@ func wrapRestoreError(err error) error {
 
 func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width, height int) error {
 	model := newTUIModel(width, height, options)
+	fileSearch := newFileSearchRunner(options.WorkingDirectory)
+	defer fileSearch.close()
+	fileSearchMessages := make(chan fileSearchResult, 64)
+
 	keys := make(chan keyEvent, 64)
 	engineMessages := make(chan engineMessage, 256)
 	stopped := make(chan struct{})
@@ -150,6 +154,7 @@ func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width
 				}
 				return err
 			}
+			fileSearch.update(ctx, model.takeFileSearchCommand(), fileSearchMessages)
 			if exit {
 				if !model.running {
 					if ctxErr := ctx.Err(); ctxErr != nil {
@@ -192,6 +197,11 @@ func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width
 		case message := <-usageMessages:
 			if message.err == nil {
 				model.providerUsage = agent.ProviderUsage{Windows: append([]agent.UsageWindow(nil), message.usage.Windows...)}
+				dirty = true
+			}
+
+		case result := <-fileSearchMessages:
+			if model.applyFileSearchResult(result) {
 				dirty = true
 			}
 

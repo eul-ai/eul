@@ -60,6 +60,9 @@ func reduceKey(model *tuiModel, key keyEvent) (tuiAction, error) {
 	if model.running {
 		return tuiAction{}, nil
 	}
+	if reduceFilePickerKey(model, key) {
+		return tuiAction{}, nil
+	}
 
 	switch key.code {
 	case keyText:
@@ -83,8 +86,10 @@ func reduceKey(model *tuiModel, key keyEvent) (tuiAction, error) {
 		model.moveRight()
 	case keyHome:
 		model.cursor = 0
+		model.refreshFilePicker(false)
 	case keyEnd:
 		model.cursor = len(model.input)
+		model.refreshFilePicker(false)
 	case keyBackspace:
 		model.backspace()
 	case keyDelete:
@@ -101,6 +106,34 @@ func reduceKey(model *tuiModel, key keyEvent) (tuiAction, error) {
 		return reducePrompt(model), nil
 	}
 	return tuiAction{}, nil
+}
+
+func reduceFilePickerKey(model *tuiModel, key keyEvent) bool {
+	if key.code == keyEscape && model.filePicker.active {
+		model.dismissFilePicker()
+		return true
+	}
+	if !model.filePickerVisible() {
+		return false
+	}
+
+	switch key.code {
+	case keyUp:
+		model.moveFilePickerSelection(-1)
+	case keyDown:
+		model.moveFilePickerSelection(1)
+	case keyEnter, keyTab:
+		if !model.filePicker.loading {
+			if err := model.applyFilePickerSelection(); err != nil {
+				setInputError(model, err)
+			}
+		}
+	case keyEscape:
+		model.dismissFilePicker()
+	default:
+		return false
+	}
+	return true
 }
 
 func reduceInterrupt(model *tuiModel) (tuiAction, error) {

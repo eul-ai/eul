@@ -24,6 +24,26 @@ func TestKeyDecoderHandlesTextAndSplitSequences(t *testing.T) {
 	assertKeyEvents(t, events, want)
 }
 
+func TestKeyDecoderRecognizesTabAndEscape(t *testing.T) {
+	decoder := &keyDecoder{}
+	assertKeyEvents(t, decoder.feed([]byte("\t\x1b[27u"), false), []keyEvent{{code: keyTab}, {code: keyEscape}})
+
+	decoder = &keyDecoder{}
+	if events := decoder.feed([]byte("\x1b"), false); len(events) != 0 {
+		t.Fatalf("partial escape events = %+v", events)
+	}
+	assertKeyEvents(t, decoder.flushPendingEscape(), []keyEvent{{code: keyEscape}})
+
+	decoder = &keyDecoder{}
+	if events := decoder.feed([]byte("\x1b["), false); len(events) != 0 {
+		t.Fatalf("partial arrow events = %+v", events)
+	}
+	if events := decoder.flushPendingEscape(); len(events) != 0 {
+		t.Fatalf("timed-out partial arrow events = %+v", events)
+	}
+	assertKeyEvents(t, decoder.feed([]byte("A"), false), []keyEvent{{code: keyUp}})
+}
+
 func TestKeyDecoderHandlesModifiedKeys(t *testing.T) {
 	for sequence, code := range map[string]keyCode{
 		"\x1b[13;2u":      keyNewline,

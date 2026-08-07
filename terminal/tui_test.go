@@ -73,7 +73,7 @@ func TestRunTUILoadsProviderUsageAtStartupAndAfterTurn(t *testing.T) {
 	reader, writer := io.Pipe()
 	defer reader.Close()
 	calls := make(chan struct{}, 3)
-	output := newSignalingWriter("5h limit 75% left")
+	output := newSignalingWriter("limit 75%")
 	options := Options{
 		Input:  reader,
 		Output: output,

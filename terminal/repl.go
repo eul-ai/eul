@@ -38,6 +38,7 @@ type Options struct {
 	Output           io.Writer
 	ErrorOutput      io.Writer
 	Model            string
+	WorkingDirectory string
 	ThinkingLevel    agent.ThinkingLevel
 	ThinkingLevels   []agent.ThinkingLevel
 	ContextWindow    int64

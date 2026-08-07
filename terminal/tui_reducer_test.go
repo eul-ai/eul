@@ -6,6 +6,83 @@ import (
 	"yaah/agent"
 )
 
+func TestFilePickerKeysTakePriorityOverEditorActions(t *testing.T) {
+	model := newTUIModel(80, 24, Options{WorkingDirectory: t.TempDir()})
+	if _, err := reduceKey(model, keyEvent{code: keyText, text: "@"}); err != nil {
+		t.Fatal(err)
+	}
+	request := takePickerRequest(t, model)
+	model.applyFileSearchResult(fileSearchResult{id: request.id, paths: []string{"a.go", "b.go"}})
+	if !model.filePickerVisible() {
+		t.Fatal("picker did not open")
+	}
+
+	if action, err := reduceKey(model, keyEvent{code: keyDown}); err != nil || action.kind != tuiActionNone {
+		t.Fatalf("down action = %+v, err = %v", action, err)
+	}
+	if action, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil || action.kind != tuiActionNone {
+		t.Fatalf("enter action = %+v, err = %v", action, err)
+	}
+	if got := string(model.input); got != "@b.go " {
+		t.Fatalf("input = %q", got)
+	}
+	if model.running || len(model.history) != 0 {
+		t.Fatalf("selection submitted prompt: running=%t history=%q", model.running, model.history)
+	}
+
+	model.clearInput()
+	if _, err := reduceKey(model, keyEvent{code: keyText, text: "@"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reduceKey(model, keyEvent{code: keyEscape}); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(model.input); got != "@" || model.filePickerVisible() {
+		t.Fatalf("escape left input=%q picker=%+v", got, model.filePicker)
+	}
+}
+
+func TestFilePickerKeepsResultsButCannotApplyThemDuringSearch(t *testing.T) {
+	model := newTUIModel(80, 24, Options{WorkingDirectory: t.TempDir()})
+	if _, err := reduceKey(model, keyEvent{code: keyText, text: "@"}); err != nil {
+		t.Fatal(err)
+	}
+	request := takePickerRequest(t, model)
+	model.applyFileSearchResult(fileSearchResult{id: request.id, paths: []string{"a.go", "b.go", "c.go"}})
+	originalHeight := model.filePickerHeight()
+
+	if _, err := reduceKey(model, keyEvent{code: keyText, text: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if !model.filePicker.loading || model.filePickerHeight() != originalHeight || len(model.filePicker.matches) != 3 {
+		t.Fatalf("picker changed while searching: %+v", model.filePicker)
+	}
+	if action, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil || action.kind != tuiActionNone {
+		t.Fatalf("enter action = %+v, err = %v", action, err)
+	}
+	if got := string(model.input); got != "@a" {
+		t.Fatalf("stale selection changed input to %q", got)
+	}
+}
+
+func TestHiddenFilePickerDoesNotInterceptEditorKeys(t *testing.T) {
+	model := newTUIModel(80, 5, Options{WorkingDirectory: t.TempDir()})
+	if err := model.insertInput("@"); err != nil {
+		t.Fatal(err)
+	}
+	if model.filePickerVisible() {
+		t.Fatal("picker is visible without layout space")
+	}
+
+	action, err := reduceKey(model, keyEvent{code: keyEnter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.kind != tuiActionSubmit || action.prompt != "@" {
+		t.Fatalf("enter action = %+v", action)
+	}
+}
+
 func TestReduceKeyActions(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -57,6 +57,7 @@ func newAgentSession(config agentConfig, runtime appRuntime, tokenSource openaia
 			Output:           runtime.stdout,
 			ErrorOutput:      runtime.stderr,
 			Model:            config.model,
+			WorkingDirectory: config.cwd,
 			ThinkingLevel:    currentThinkingLevel,
 			ThinkingLevels:   openaiadapter.SupportedThinkingLevels(config.model),
 			ContextWindow:    openaiadapter.ContextWindow(config.model),

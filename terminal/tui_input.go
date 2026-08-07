@@ -6,6 +6,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -16,7 +17,9 @@ const (
 	keyText keyCode = iota
 	keyEnter
 	keyNewline
+	keyTab
 	keyShiftTab
+	keyEscape
 	keyLeft
 	keyRight
 	keyUp
@@ -164,6 +167,10 @@ func (d *keyDecoder) feed(data []byte, final bool) []keyEvent {
 			continue
 		case '\n':
 			events = append(events, keyEvent{code: keyNewline})
+			d.buffer = d.buffer[1:]
+			continue
+		case '\t':
+			events = append(events, keyEvent{code: keyTab})
 			d.buffer = d.buffer[1:]
 			continue
 		case 0x7f, 0x08:
@@ -345,6 +352,10 @@ func matchKittyKeySequence(buffer []byte) (int, bool, keyEvent, bool) {
 		return consumed, false, keyEvent{code: keyEnter}, true
 	case codepoint == 9 && shift:
 		return consumed, false, keyEvent{code: keyShiftTab}, true
+	case codepoint == 9:
+		return consumed, false, keyEvent{code: keyTab}, true
+	case codepoint == 27:
+		return consumed, false, keyEvent{code: keyEscape}, true
 	case (control && codepoint == 99) || codepoint == 3:
 		return consumed, false, keyEvent{code: keyCtrlC}, true
 	case (control && codepoint == 100) || codepoint == 4:
@@ -382,32 +393,112 @@ func appendTextEvent(events []keyEvent, text string) []keyEvent {
 	return append(events, keyEvent{code: keyText, text: text})
 }
 
+const escapeSequenceTimeout = 30 * time.Millisecond
+
+type inputReadResult struct {
+	data []byte
+	err  error
+}
+
+func (d *keyDecoder) hasPendingEscape() bool {
+	return !d.inPaste && len(d.buffer) > 0 && d.buffer[0] == '\x1b'
+}
+
+func (d *keyDecoder) flushPendingEscape() []keyEvent {
+	if !d.hasPendingEscape() || len(d.buffer) != 1 {
+		return nil
+	}
+	d.buffer = nil
+	return []keyEvent{{code: keyEscape}}
+}
+
+func (d *keyDecoder) discardPendingEscape() {
+	if d.hasPendingEscape() {
+		d.buffer = nil
+	}
+}
+
 func readKeyEvents(input io.Reader, output chan<- keyEvent, stopped <-chan struct{}) {
+	reads := make(chan inputReadResult, 1)
+	go readInput(input, reads, stopped)
+
 	decoder := &keyDecoder{}
+	var escapeTimer *time.Timer
+	var escapeClock <-chan time.Time
+	stopEscapeTimer := func() {
+		if escapeTimer != nil {
+			escapeTimer.Stop()
+		}
+		escapeTimer = nil
+		escapeClock = nil
+	}
+	startEscapeTimer := func() {
+		stopEscapeTimer()
+		if decoder.hasPendingEscape() {
+			escapeTimer = time.NewTimer(escapeSequenceTimeout)
+			escapeClock = escapeTimer.C
+		}
+	}
+	defer stopEscapeTimer()
+
+	for {
+		select {
+		case result := <-reads:
+			stopEscapeTimer()
+			if !sendKeyEvents(output, decoder.feed(result.data, false), stopped) {
+				return
+			}
+			if result.err == nil {
+				startEscapeTimer()
+				continue
+			}
+
+			if !sendKeyEvents(output, decoder.flushPendingEscape(), stopped) {
+				return
+			}
+			decoder.discardPendingEscape()
+			if !sendKeyEvents(output, decoder.feed(nil, true), stopped) {
+				return
+			}
+			event := keyEvent{code: keyFailure, err: result.err, fatal: true}
+			if errors.Is(result.err, io.EOF) {
+				event = keyEvent{code: keyEOF}
+			}
+			select {
+			case output <- event:
+			case <-stopped:
+			}
+			return
+
+		case <-escapeClock:
+			escapeTimer = nil
+			escapeClock = nil
+			if !sendKeyEvents(output, decoder.flushPendingEscape(), stopped) {
+				return
+			}
+
+		case <-stopped:
+			return
+		}
+	}
+}
+
+func readInput(input io.Reader, output chan<- inputReadResult, stopped <-chan struct{}) {
 	buffer := make([]byte, 4096)
 	for {
 		count, err := input.Read(buffer)
+		result := inputReadResult{err: err}
 		if count > 0 {
-			if !sendKeyEvents(output, decoder.feed(buffer[:count], false), stopped) {
-				return
-			}
-		}
-		if err == nil {
-			continue
-		}
-
-		if !sendKeyEvents(output, decoder.feed(nil, true), stopped) {
-			return
-		}
-		event := keyEvent{code: keyFailure, err: err, fatal: true}
-		if errors.Is(err, io.EOF) {
-			event = keyEvent{code: keyEOF}
+			result.data = append([]byte(nil), buffer[:count]...)
 		}
 		select {
-		case output <- event:
+		case output <- result:
 		case <-stopped:
+			return
 		}
-		return
+		if err != nil {
+			return
+		}
 	}
 }
 

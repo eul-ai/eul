@@ -27,7 +27,7 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 	frame := renderFrame(model)
 	for _, want := range []string{
 		"hello", "answer", "> ", "────────────────", "gpt-5.6-sol (xhigh)",
-		"context 84.3k/272k (31%)", "thinking",
+		"context 31%", "thinking",
 	} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("frame omits %q:\n%q", want, frame)
@@ -62,15 +62,31 @@ func TestStatusShowsProviderUsageWindows(t *testing.T) {
 	}}
 
 	_, wide := renderStatusAt(model, 180, now)
-	for _, want := range []string{"model (medium)", "context 0", "5h limit 58% left (resets in 3h 5m) · 7d limit 80% left (resets in 3d 5h)"} {
+	for _, want := range []string{"model (medium)", "context 0", "5h limit 58% (resets in 3h 5m) · 7d limit 80% (resets in 3d 5h)"} {
 		if !strings.Contains(wide, want) {
 			t.Fatalf("wide status %q omits %q", wide, want)
 		}
 	}
 
 	_, narrow := renderStatusAt(model, 70, now)
-	if narrow != "5h 58% left (resets in 3h 5m) · 7d 80% left (resets in 3d 5h)" {
+	if narrow != "context 0 · 5h 58% (resets in 3h 5m) · 7d 80% (resets in 3d 5h)" {
 		t.Fatalf("narrow status = %q", narrow)
+	}
+}
+
+func TestStatusUsesCompactContextAndSingleLimit(t *testing.T) {
+	now := time.Date(2027, time.January, 2, 10, 0, 0, 0, time.UTC)
+	model := newTUIModel(120, 12, Options{
+		Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, ContextWindow: 272_000,
+	})
+	model.providerUsage = agent.ProviderUsage{Windows: []agent.UsageWindow{{
+		Duration: 7 * 24 * time.Hour, UsedPercent: 59, ResetsAt: now.Add(9*time.Hour + 41*time.Minute),
+	}}}
+
+	_, status := renderStatusAt(model, 120, now)
+	want := "gpt-5.6-sol (xhigh) · context 0% · limit 41% (resets in 9h 41m)"
+	if status != want {
+		t.Fatalf("status = %q, want %q", status, want)
 	}
 }
 
@@ -277,14 +293,14 @@ func TestMultilineInputExpandsEditorAndMovesCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	input := renderInput(model, model.width, maximumInputHeight(model.height))
+	input := renderInput(model, model.width, maximumInputHeight(model.height, 0))
 	if len(input.lines) != 2 || input.lines[0] != "> first" || input.lines[1] != "  second" {
 		t.Fatalf("input = %+v", input)
 	}
 	if input.cursorRow != 1 || input.cursorColumn != 9 {
 		t.Fatalf("cursor = %d,%d", input.cursorRow, input.cursorColumn)
 	}
-	layout := calculateLayout(model.height, len(input.lines))
+	layout := calculateLayout(model.height, len(input.lines), 0)
 	if layout.conversationHeight != 3 || layout.inputRow != 5 || layout.inputHeight != 2 {
 		t.Fatalf("layout = %+v", layout)
 	}
@@ -294,13 +310,47 @@ func TestMultilineInputExpandsEditorAndMovesCursor(t *testing.T) {
 	}
 }
 
+func TestFilePickerExpandsBetweenInputAndStatus(t *testing.T) {
+	model := newTUIModel(30, 12, Options{WorkingDirectory: t.TempDir()})
+	if err := model.insertInput("@"); err != nil {
+		t.Fatal(err)
+	}
+	request := takePickerRequest(t, model)
+	model.applyFileSearchResult(fileSearchResult{id: request.id, paths: []string{"a.go", "b.go", "c.go", "d.go", "e.go", "f.go"}})
+
+	_, layout := modelInputLayout(model)
+	if layout.conversationHeight != 3 || layout.inputRow != 5 || layout.bottomRuleRow != 6 || layout.pickerRow != 7 || layout.pickerHeight != 5 || layout.statusRow != 12 {
+		t.Fatalf("layout = %+v", layout)
+	}
+	picker := renderFilePicker(model, layout.pickerHeight)
+	if len(picker) != 5 || picker[0].prefixText != "> " || !picker[0].style.paintBackground || picker[0].style.background != currentTheme.selectedBackground {
+		t.Fatalf("picker = %+v", picker)
+	}
+
+	frame := buildTerminalFrame(model)
+	if frame.cursorRow != layout.inputRow || !strings.Contains(frame.rows[layout.pickerRow-1], "a.go") || layout.statusRow != frame.height {
+		t.Fatalf("frame cursor=%d layout=%+v rows=%q", frame.cursorRow, layout, frame.rows)
+	}
+}
+
+func TestFilePickerShowsLoadingRow(t *testing.T) {
+	model := newTUIModel(30, 8, Options{WorkingDirectory: t.TempDir()})
+	if err := model.insertInput("@"); err != nil {
+		t.Fatal(err)
+	}
+	lines := renderFilePicker(model, model.filePickerHeight())
+	if len(lines) != 1 || lines[0].text != "  searching files…" {
+		t.Fatalf("loading picker = %+v", lines)
+	}
+}
+
 func TestInputPreservesBlankPastedLines(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
 	if err := model.insertInput("abc\n\ndef"); err != nil {
 		t.Fatal(err)
 	}
 
-	input := renderInput(model, model.width, maximumInputHeight(model.height))
+	input := renderInput(model, model.width, maximumInputHeight(model.height, 0))
 	if len(input.lines) != 3 || input.lines[0] != "> abc" || input.lines[1] != "  " || input.lines[2] != "  def" {
 		t.Fatalf("input = %+v", input)
 	}
@@ -421,7 +471,7 @@ func TestRenderStatusPrioritizesActivityAndContext(t *testing.T) {
 	model.activity = activity{kind: activityCompacting}
 
 	wideLeft, wideRight := renderStatus(model, 80)
-	if wideLeft != "⠋ compacting context" || wideRight != "very-long-model (max) · context 50/100 (50%)" {
+	if wideLeft != "⠋ compacting context" || wideRight != "very-long-model (max) · context 50%" {
 		t.Fatalf("wide status = %q / %q", wideLeft, wideRight)
 	}
 	narrowLeft, narrowRight := renderStatus(model, 33)
@@ -533,7 +583,7 @@ func TestConversationScrollingStopsAndResumesFollowing(t *testing.T) {
 	for index := 0; index < 8; index++ {
 		model.appendBlock(blockInfo, strings.Repeat(string(rune('a'+index)), 20))
 	}
-	conversationViewport(model, model.width, calculateLayout(model.height, 1).conversationHeight)
+	conversationViewport(model, model.width, calculateLayout(model.height, 1, 0).conversationHeight)
 	bottom := model.scrollTop
 	if bottom == 0 {
 		t.Fatal("conversation did not overflow")
@@ -545,7 +595,7 @@ func TestConversationScrollingStopsAndResumesFollowing(t *testing.T) {
 	}
 	oldTop := model.scrollTop
 	model.appendBlock(blockInfo, "new output")
-	conversationViewport(model, model.width, calculateLayout(model.height, 1).conversationHeight)
+	conversationViewport(model, model.width, calculateLayout(model.height, 1, 0).conversationHeight)
 	if model.scrollTop != oldTop {
 		t.Fatalf("scrolled viewport moved from %d to %d", oldTop, model.scrollTop)
 	}

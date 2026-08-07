@@ -68,6 +68,7 @@ type tuiModel struct {
 	streamOpen        bool
 	input             []rune
 	cursor            int
+	filePicker        filePickerState
 	history           []string
 	historyIndex      int
 	historyDraft      string
@@ -97,6 +98,7 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 		thinkingLevels:    thinkingLevels,
 		setThinkingLevel:  options.SetThinkingLevel,
 		contextWindow:     options.ContextWindow,
+		filePicker:        filePickerState{enabled: options.WorkingDirectory != ""},
 		historyIndex:      -1,
 		following:         true,
 		conversationDirty: true,
@@ -257,6 +259,7 @@ func (m *tuiModel) insertInput(text string) error {
 	}
 
 	m.insertRunes([]rune(text))
+	m.refreshFilePicker(true)
 	return nil
 }
 
@@ -265,6 +268,7 @@ func (m *tuiModel) insertNewline() error {
 		return errInputTooLong
 	}
 	m.insertRunes([]rune{'\n'})
+	m.clearFilePicker()
 	return nil
 }
 
@@ -281,6 +285,7 @@ func (m *tuiModel) clearInput() {
 	m.cursor = 0
 	m.historyIndex = -1
 	m.historyDraft = ""
+	m.clearFilePicker()
 }
 
 func (m *tuiModel) nextThinkingLevel() (agent.ThinkingLevel, error) {
@@ -307,6 +312,7 @@ func (m *tuiModel) backspace() {
 	copy(m.input[m.cursor-1:], m.input[m.cursor:])
 	m.input = m.input[:len(m.input)-1]
 	m.cursor--
+	m.refreshFilePicker(true)
 }
 
 func (m *tuiModel) delete() {
@@ -317,17 +323,20 @@ func (m *tuiModel) delete() {
 	m.leaveHistory()
 	copy(m.input[m.cursor:], m.input[m.cursor+1:])
 	m.input = m.input[:len(m.input)-1]
+	m.refreshFilePicker(true)
 }
 
 func (m *tuiModel) moveLeft() {
 	if m.cursor > 0 {
 		m.cursor--
+		m.refreshFilePicker(false)
 	}
 }
 
 func (m *tuiModel) moveRight() {
 	if m.cursor < len(m.input) {
 		m.cursor++
+		m.refreshFilePicker(false)
 	}
 }
 
@@ -371,6 +380,7 @@ func (m *tuiModel) leaveHistory() {
 func (m *tuiModel) setInput(value string) {
 	m.input = []rune(value)
 	m.cursor = len(m.input)
+	m.clearFilePicker()
 }
 
 func (m *tuiModel) takePrompt() (string, bool) {

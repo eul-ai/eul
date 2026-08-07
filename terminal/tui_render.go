@@ -51,6 +51,8 @@ type tuiLayout struct {
 	inputRow           int
 	inputHeight        int
 	bottomRuleRow      int
+	pickerRow          int
+	pickerHeight       int
 	statusRow          int
 }
 
@@ -78,7 +80,7 @@ type tuiRenderer struct {
 	cursorVisible bool
 }
 
-func calculateLayout(height, inputHeight int) tuiLayout {
+func calculateLayout(height, inputHeight, pickerHeight int) tuiLayout {
 	if height <= 0 {
 		return tuiLayout{}
 	}
@@ -94,27 +96,45 @@ func calculateLayout(height, inputHeight int) tuiLayout {
 		}
 	}
 
-	inputHeight = max(1, min(inputHeight, height-3))
-	conversationHeight := height - inputHeight - 3
+	pickerHeight = max(0, min(pickerHeight, height-4))
+	inputHeight = max(1, min(inputHeight, height-pickerHeight-3))
+	conversationHeight := height - inputHeight - pickerHeight - 3
+	bottomRuleRow := conversationHeight + inputHeight + 2
+	pickerRow := 0
+	if pickerHeight > 0 {
+		pickerRow = bottomRuleRow + 1
+	}
 	return tuiLayout{
 		conversationHeight: conversationHeight,
 		topRuleRow:         conversationHeight + 1,
 		inputRow:           conversationHeight + 2,
 		inputHeight:        inputHeight,
-		bottomRuleRow:      height - 1,
+		bottomRuleRow:      bottomRuleRow,
+		pickerRow:          pickerRow,
+		pickerHeight:       pickerHeight,
 		statusRow:          height,
 	}
 }
 
-func maximumInputHeight(height int) int {
+func maximumInputHeight(height, pickerHeight int) int {
 	switch {
 	case height <= 1:
 		return 0
 	case height < 5:
 		return 1
 	default:
-		return height - 4
+		return max(1, height-pickerHeight-4)
 	}
+}
+
+func maximumFilePickerHeight(height int) int {
+	return max(0, height-5)
+}
+
+func modelInputLayout(model *tuiModel) (renderedInput, tuiLayout) {
+	pickerHeight := min(model.filePickerHeight(), maximumFilePickerHeight(model.height))
+	input := renderInput(model, model.width, maximumInputHeight(model.height, pickerHeight))
+	return input, calculateLayout(model.height, len(input.lines), pickerHeight)
 }
 
 func (r *tuiRenderer) render(model *tuiModel) string {
@@ -168,8 +188,7 @@ func buildTerminalFrame(model *tuiModel) terminalFrame {
 		return terminalFrame{}
 	}
 
-	input := renderInput(model, width, maximumInputHeight(height))
-	layout := calculateLayout(height, len(input.lines))
+	input, layout := modelInputLayout(model)
 	rows := make([]styledLine, height)
 	conversation := conversationViewport(model, width, layout.conversationHeight)
 	copy(rows, conversation)
@@ -189,6 +208,11 @@ func buildTerminalFrame(model *tuiModel) terminalFrame {
 	}
 	if layout.bottomRuleRow > 0 {
 		rows[layout.bottomRuleRow-1] = styledLine{text: rule, style: ruleStyle}
+	}
+	if layout.pickerRow > 0 {
+		for index, line := range renderFilePicker(model, layout.pickerHeight) {
+			rows[layout.pickerRow-1+index] = line
+		}
 	}
 	if layout.statusRow > 0 {
 		left, right := renderStatus(model, width)
@@ -574,6 +598,36 @@ func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {
 	}
 }
 
+func renderFilePicker(model *tuiModel, height int) []styledLine {
+	if height <= 0 {
+		return nil
+	}
+	if model.filePicker.loading && len(model.filePicker.matches) == 0 {
+		return []styledLine{{text: "  searching files…", style: lineStyle{foreground: currentTheme.muted}}}
+	}
+
+	selectedPath := ""
+	if model.filePicker.selected >= 0 && model.filePicker.selected < len(model.filePicker.matches) {
+		selectedPath = model.filePicker.matches[model.filePicker.selected]
+	}
+	matches := model.visibleFilePickerMatches()
+	lines := make([]styledLine, 0, min(height, len(matches)))
+	for _, match := range matches[:min(height, len(matches))] {
+		line := styledLine{prefixText: "  ", text: match, style: lineStyle{foreground: currentTheme.muted}}
+		if match == selectedPath {
+			line.prefixText = "> "
+			line.prefixForeground = &currentTheme.accent
+			line.style = lineStyle{
+				foreground:      currentTheme.foreground,
+				background:      currentTheme.selectedBackground,
+				paintBackground: true,
+			}
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
 func renderStatus(model *tuiModel, width int) (string, string) {
 	return renderStatusAt(model, width, time.Now())
 }
@@ -620,16 +674,27 @@ func providerUsageText(usage agent.ProviderUsage, now time.Time) (string, string
 		return windows[left].Duration < windows[right].Duration
 	})
 
-	long := make([]string, 0, len(windows))
-	short := make([]string, 0, len(windows))
+	validWindows := 0
+	for _, window := range windows {
+		if window.Duration > 0 {
+			validWindows++
+		}
+	}
+
+	long := make([]string, 0, validWindows)
+	short := make([]string, 0, validWindows)
 	for _, window := range windows {
 		if window.Duration <= 0 {
 			continue
 		}
-		label := usageWindowLabel(window.Duration)
 		remaining := 100 - min(100, max(0, window.UsedPercent))
-		longText := fmt.Sprintf("%s limit %d%% left", label, remaining)
-		shortText := fmt.Sprintf("%s %d%% left", label, remaining)
+		longText := fmt.Sprintf("limit %d%%", remaining)
+		shortText := longText
+		if validWindows > 1 {
+			label := usageWindowLabel(window.Duration)
+			longText = fmt.Sprintf("%s limit %d%%", label, remaining)
+			shortText = fmt.Sprintf("%s %d%%", label, remaining)
+		}
 		if !window.ResetsAt.IsZero() {
 			reset := resetCountdown(window.ResetsAt, now)
 			if reset == "now" {
@@ -727,10 +792,8 @@ func contextText(tokens, window int64) (string, string) {
 		return text, text
 	}
 
-	percentage := tokens * 100 / window
-	long := fmt.Sprintf("context %s/%s (%d%%)", formatTokens(tokens), formatTokens(window), percentage)
-	short := fmt.Sprintf("context %d%%", percentage)
-	return long, short
+	text := fmt.Sprintf("context %d%%", tokens*100/window)
+	return text, text
 }
 
 func formatTokens(tokens int64) string {
@@ -749,8 +812,7 @@ func formatTokens(tokens int64) string {
 }
 
 func scrollConversation(model *tuiModel, direction int) {
-	input := renderInput(model, model.width, maximumInputHeight(model.height))
-	layout := calculateLayout(model.height, len(input.lines))
+	_, layout := modelInputLayout(model)
 	page := layout.conversationHeight
 	if page <= 0 {
 		return

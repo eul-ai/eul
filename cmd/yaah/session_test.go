@@ -46,13 +46,17 @@ func TestNewAgentSessionWiresOptionalProviderUsage(t *testing.T) {
 	runtime := appRuntime{newProvider: func(openaiadapter.CodexTokenSource) (agent.Provider, error) {
 		return provider, nil
 	}}
-	session, err := newAgentSession(agentConfig{model: "model", thinkingLevel: agent.ThinkingMedium, cwd: t.TempDir()}, runtime, nil)
+	cwd := t.TempDir()
+	session, err := newAgentSession(agentConfig{model: "model", thinkingLevel: agent.ThinkingMedium, cwd: cwd}, runtime, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer session.tools.Close()
 	if session.terminalOptions.LoadUsage == nil {
 		t.Fatal("provider usage was not wired to the terminal")
+	}
+	if session.terminalOptions.WorkingDirectory != cwd {
+		t.Fatalf("terminal working directory = %q, want %q", session.terminalOptions.WorkingDirectory, cwd)
 	}
 }
 

@@ -28,6 +28,7 @@ type theme struct {
 	toolSuccessBackground terminalColor
 	toolErrorBackground   terminalColor
 	editorLine            terminalColor
+	selectedBackground    terminalColor
 }
 
 // Source: https://github.com/iodic/pi-ayu-themes/blob/main/themes/ayu-mirage.json
@@ -47,6 +48,7 @@ var ayuMirageTheme = theme{
 	toolSuccessBackground: terminalColor{red: 0x1f, green: 0x28, blue: 0x2f},
 	toolErrorBackground:   terminalColor{red: 0x25, green: 0x20, blue: 0x29},
 	editorLine:            terminalColor{red: 0x1e, green: 0x24, blue: 0x30},
+	selectedBackground:    terminalColor{red: 0x16, green: 0x1a, blue: 0x24},
 }
 
 var currentTheme = ayuMirageTheme
