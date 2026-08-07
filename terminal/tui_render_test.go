@@ -29,16 +29,19 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 	if strings.Contains(frame, "You") || strings.Contains(frame, "Assistant") {
 		t.Fatalf("frame includes role labels: %q", frame)
 	}
-	_, right := renderStatus(model, model.width)
-	rightPosition := "\x1b[12;" + strconv.Itoa(model.width-cellWidth(right)+1) + "H" + right
-	if !strings.Contains(frame, rightPosition) {
-		t.Fatalf("status metadata is not independently right-aligned: %q", frame)
+	left, right := renderStatus(model, model.width)
+	status := left + strings.Repeat(" ", model.width-cellWidth(left)-cellWidth(right)) + right
+	if !strings.Contains(frame, status) || strings.Count(frame, "\x1b[12;") != 1 {
+		t.Fatalf("status metadata is not independently right-aligned in one pass: %q", frame)
 	}
 	if !strings.Contains(frame, ansiColors(currentTheme.error, terminalColor{}, false)) {
 		t.Fatalf("frame does not use the xhigh effort color: %q", frame)
 	}
 	if strings.Contains(frame, "\x1b[48;2;23;27;36m") || !strings.Contains(frame, "\x1b[49m") {
 		t.Fatalf("frame does not preserve the terminal background: %q", frame)
+	}
+	if !strings.HasPrefix(frame, ansiBeginSynchronizedOutput+ansiHideCursor) || !strings.HasSuffix(frame, ansiEndSynchronizedOutput) {
+		t.Fatalf("frame does not use synchronized output: %q", frame)
 	}
 }
 
@@ -111,6 +114,58 @@ func TestPaddedBlockBackgroundFillsWidth(t *testing.T) {
 	want := ansiColors(style.foreground, style.background, true) + strings.Repeat(" ", conversationPadding) + "x" + strings.Repeat(" ", 6-conversationPadding-1) + ansiReset
 	if !strings.Contains(frame.String(), want) {
 		t.Fatalf("line = %q, want full-width background sequence %q", frame.String(), want)
+	}
+	if strings.Count(frame.String(), "\x1b[1;1H") != 1 {
+		t.Fatalf("line was painted more than once: %q", frame.String())
+	}
+}
+
+func TestRendererOnlyWritesChangedRows(t *testing.T) {
+	model := newTUIModel(40, 8, Options{Model: "model"})
+	model.running = true
+	model.activity = activity{kind: activityThinking}
+	var renderer tuiRenderer
+
+	first := renderer.render(model)
+	for row := 1; row <= model.height; row++ {
+		position := "\x1b[" + strconv.Itoa(row) + ";1H"
+		if !strings.Contains(first, position) {
+			t.Fatalf("initial frame omits row %d: %q", row, first)
+		}
+	}
+	if unchanged := renderer.render(model); unchanged != "" {
+		t.Fatalf("unchanged frame = %q", unchanged)
+	}
+
+	model.spinner++
+	update := renderer.render(model)
+	statusPosition := "\x1b[8;1H"
+	if !strings.Contains(update, statusPosition) || strings.Count(update, "\x1b[8;") != 1 {
+		t.Fatalf("spinner update does not paint the status row once: %q", update)
+	}
+	for row := 1; row < model.height; row++ {
+		position := "\x1b[" + strconv.Itoa(row) + ";1H"
+		if strings.Contains(update, position) {
+			t.Fatalf("spinner update repaints row %d: %q", row, update)
+		}
+	}
+}
+
+func TestRendererForcesFullRedrawAfterResizeOrCtrlL(t *testing.T) {
+	model := newTUIModel(20, 8, Options{})
+	var renderer tuiRenderer
+	_ = renderer.render(model)
+
+	model.width++
+	resized := renderer.render(model)
+	if !strings.Contains(resized, ansiClearScreen) {
+		t.Fatalf("resize did not clear the screen: %q", resized)
+	}
+
+	model.forceRedraw = true
+	forced := renderer.render(model)
+	if !strings.Contains(forced, ansiClearScreen) || model.forceRedraw {
+		t.Fatalf("forced redraw = %q, forceRedraw=%v", forced, model.forceRedraw)
 	}
 }
 

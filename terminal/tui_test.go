@@ -174,6 +174,19 @@ func (r terminalErrorReader) Read([]byte) (int, error) {
 	return 0, r.err
 }
 
+func TestHandleKeyCtrlLRequestsFullRedraw(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	messages := make(chan engineMessage, 1)
+	stopped := make(chan struct{})
+	defer close(stopped)
+	var cancel context.CancelFunc
+
+	exit, err := handleKey(context.Background(), model, &fakeEngine{}, keyEvent{code: keyCtrlL}, messages, stopped, &cancel)
+	if err != nil || exit || !model.forceRedraw {
+		t.Fatalf("exit=%v err=%v forceRedraw=%v", exit, err, model.forceRedraw)
+	}
+}
+
 func TestHandleKeyCommands(t *testing.T) {
 	engine := &fakeEngine{}
 	model := newTUIModel(80, 24, Options{})

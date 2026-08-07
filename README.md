@@ -50,7 +50,8 @@ background and uses effort-colored input rules. Conversation text has a two-cell
 horizontal inset while block backgrounds retain the full width, with one blank
 row above and below the viewport content. Reasoning
 summaries use muted italic text, while compact tool blocks use padded pending,
-success, and error backgrounds. The current palette is based on the
+success, and error backgrounds. Rendering uses synchronized differential row
+updates to avoid flicker during streaming. The current palette is based on the
 [Ayu Mirage theme](https://github.com/iodic/pi-ayu-themes/blob/main/themes/ayu-mirage.json).
 
 Interactive controls include:

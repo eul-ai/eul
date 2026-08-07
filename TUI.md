@@ -192,16 +192,16 @@ The TUI session will:
 4. enter raw mode with `term.MakeRaw`;
 5. enter the alternate screen, enable bracketed paste, and configure cursor visibility;
 6. run the event loop;
-7. disable bracketed paste, show the cursor, and leave the alternate screen; and
+7. end synchronized output, disable bracketed paste, show the cursor, and leave the alternate screen; and
 8. restore the saved terminal state with `term.Restore`.
 
-Cleanup must be registered immediately after each successful setup step. Screen output should be buffered into a `strings.Builder` and written as one frame so resize and streaming updates do not interleave or visibly tear.
+Cleanup must be registered immediately after each successful setup step. Screen updates should be buffered into a `strings.Builder`, wrapped in DEC synchronized-output sequences, and written in one operation so resize and streaming updates do not interleave or visibly tear.
 
 `golang.org/x/term` does not provide resize notifications. A small Unix-specific signal adapter will subscribe to `SIGWINCH` and send resize events to the UI loop, which then calls `term.GetSize` and performs a complete redraw.
 
 ## Rendering and text width
 
-The renderer will build a complete frame from immutable UI state, clear each occupied row, place the cursor explicitly, and write the frame in one operation. It should avoid clearing the entire terminal between ordinary spinner frames to reduce flicker.
+The renderer builds a complete logical frame from UI state and compares its rendered rows with the previous frame. It writes each changed row once, places the cursor explicitly, and sends the update as synchronized output. Ordinary streaming and spinner updates do not clear or repaint unchanged rows. Resize and Ctrl-L invalidate the previous frame and perform a synchronized complete redraw.
 
 The implementation will use only `golang.org/x/term` as a new direct dependency. A small local cell-width helper will cover ordinary runes, combining marks, and standard wide-character ranges needed for wrapping and clipping. Input movement remains rune-based, so complex joined emoji may require multiple key presses. A dedicated grapheme-width dependency can be considered later only if this limitation proves material.
 

@@ -15,7 +15,7 @@ import (
 
 const (
 	enterScreen = "\x1b[?1049h\x1b[?2004h\x1b[2J\x1b[H"
-	leaveScreen = "\x1b[?2004l\x1b[?25h\x1b[?1049l"
+	leaveScreen = ansiEndSynchronizedOutput + "\x1b[?2004l\x1b[?25h\x1b[?1049l"
 )
 
 type engineMessage struct {
@@ -82,8 +82,9 @@ func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width
 	spinnerTicker := time.NewTicker(80 * time.Millisecond)
 	defer spinnerTicker.Stop()
 
+	renderer := &tuiRenderer{}
 	dirty := true
-	if err := renderIfDirty(model, options.Output, &dirty); err != nil {
+	if err := renderIfDirty(renderer, model, options.Output, &dirty); err != nil {
 		return err
 	}
 
@@ -180,7 +181,7 @@ func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width
 			}
 
 		case <-renderTicker.C:
-			if err := renderIfDirty(model, options.Output, &dirty); err != nil {
+			if err := renderIfDirty(renderer, model, options.Output, &dirty); err != nil {
 				cancelActiveTurn(turnCancel, engineMessages, engine)
 				return err
 			}
@@ -203,12 +204,15 @@ func cancelActiveTurn(cancel context.CancelFunc, messages <-chan engineMessage, 
 	}
 }
 
-func renderIfDirty(model *tuiModel, output io.Writer, dirty *bool) error {
+func renderIfDirty(renderer *tuiRenderer, model *tuiModel, output io.Writer, dirty *bool) error {
 	if !*dirty {
 		return nil
 	}
-	if err := writeOutput(output, "%s", renderFrame(model)); err != nil {
-		return err
+	frame := renderer.render(model)
+	if frame != "" {
+		if err := writeOutput(output, "%s", frame); err != nil {
+			return err
+		}
 	}
 	*dirty = false
 	return nil
@@ -253,6 +257,7 @@ func handleKey(
 	case keyCtrlC:
 		return false, interruptTUI(model, *turnCancel)
 	case keyCtrlL:
+		model.forceRedraw = true
 		return false, nil
 	case keyPageUp:
 		scrollConversation(model, -1)

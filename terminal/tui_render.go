@@ -12,6 +12,9 @@ const (
 	ansiShowCursor              = "\x1b[?25h"
 	ansiReset                   = "\x1b[0m"
 	ansiItalic                  = "\x1b[3m"
+	ansiBeginSynchronizedOutput = "\x1b[?2026h"
+	ansiEndSynchronizedOutput   = "\x1b[?2026l"
+	ansiClearScreen             = "\x1b[2J"
 	conversationPadding         = 1
 	conversationVerticalPadding = 1
 )
@@ -36,6 +39,24 @@ type tuiLayout struct {
 	inputRow           int
 	bottomRuleRow      int
 	statusRow          int
+}
+
+type terminalFrame struct {
+	width         int
+	height        int
+	rows          []string
+	cursorRow     int
+	cursorColumn  int
+	cursorVisible bool
+}
+
+type tuiRenderer struct {
+	previousRows  []string
+	width         int
+	height        int
+	cursorRow     int
+	cursorColumn  int
+	cursorVisible bool
 }
 
 func calculateLayout(height int) tuiLayout {
@@ -63,10 +84,59 @@ func calculateLayout(height int) tuiLayout {
 }
 
 func renderFrame(model *tuiModel) string {
+	var renderer tuiRenderer
+	return renderer.render(model)
+}
+
+func (r *tuiRenderer) render(model *tuiModel) string {
+	next := buildTerminalFrame(model)
+	if next.width < 1 || next.height < 1 {
+		return ""
+	}
+
+	resized := r.width != 0 && (r.width != next.width || r.height != next.height)
+	full := r.width == 0 || resized || model.forceRedraw || len(r.previousRows) != len(next.rows)
+	changed := make([]int, 0, len(next.rows))
+	for index, row := range next.rows {
+		if full || row != r.previousRows[index] {
+			changed = append(changed, index)
+		}
+	}
+	cursorChanged := r.cursorRow != next.cursorRow || r.cursorColumn != next.cursorColumn || r.cursorVisible != next.cursorVisible
+	if len(changed) == 0 && !cursorChanged {
+		return ""
+	}
+
+	var output strings.Builder
+	output.WriteString(ansiBeginSynchronizedOutput)
+	output.WriteString(ansiHideCursor)
+	if resized || model.forceRedraw {
+		output.WriteString(ansiClearScreen)
+	}
+	for _, index := range changed {
+		output.WriteString(next.rows[index])
+	}
+	if next.cursorVisible {
+		writeCursorPosition(&output, next.cursorRow, next.cursorColumn)
+		output.WriteString(ansiShowCursor)
+	}
+	output.WriteString(ansiEndSynchronizedOutput)
+
+	r.previousRows = next.rows
+	r.width = next.width
+	r.height = next.height
+	r.cursorRow = next.cursorRow
+	r.cursorColumn = next.cursorColumn
+	r.cursorVisible = next.cursorVisible
+	model.forceRedraw = false
+	return output.String()
+}
+
+func buildTerminalFrame(model *tuiModel) terminalFrame {
 	width := model.width
 	height := model.height
 	if width < 1 || height < 1 {
-		return ""
+		return terminalFrame{}
 	}
 
 	layout := calculateLayout(height)
@@ -104,59 +174,51 @@ func renderFrame(model *tuiModel) string {
 		}
 	}
 
-	var frame strings.Builder
-	frame.WriteString(ansiHideCursor)
+	renderedRows := make([]string, height)
 	for row, line := range rows {
-		renderLine(&frame, row+1, width, line)
+		var rendered strings.Builder
+		renderLine(&rendered, row+1, width, line)
+		renderedRows[row] = rendered.String()
 	}
-	if layout.inputRow > 0 && !model.running {
-		frame.WriteString("\x1b[")
-		frame.WriteString(strconv.Itoa(layout.inputRow))
-		frame.WriteByte(';')
-		frame.WriteString(strconv.Itoa(cursorColumn))
-		frame.WriteByte('H')
-		frame.WriteString(ansiShowCursor)
+	return terminalFrame{
+		width:         width,
+		height:        height,
+		rows:          renderedRows,
+		cursorRow:     layout.inputRow,
+		cursorColumn:  cursorColumn,
+		cursorVisible: layout.inputRow > 0 && !model.running,
 	}
-	return frame.String()
 }
 
 func renderLine(frame *strings.Builder, row, width int, line styledLine) {
-	base := lineStyle{foreground: currentTheme.foreground}
-	frame.WriteString("\x1b[")
-	frame.WriteString(strconv.Itoa(row))
-	frame.WriteString(";1H")
-	frame.WriteString(ansiColors(base.foreground, base.background, base.paintBackground))
-	frame.WriteString(strings.Repeat(" ", width))
-
 	style := line.style
 	if style == (lineStyle{}) {
-		style = base
+		style = lineStyle{foreground: currentTheme.foreground}
 	}
-	frame.WriteString("\x1b[")
-	frame.WriteString(strconv.Itoa(row))
-	frame.WriteString(";1H")
+	writeCursorPosition(frame, row, 1)
 	frame.WriteString(ansiColors(style.foreground, style.background, style.paintBackground))
 	if style.italic {
 		frame.WriteString(ansiItalic)
 	}
-	contentWidth := width - line.padding*2
-	if contentWidth < 0 {
-		contentWidth = 0
-	}
-	text := truncateCells(line.text, contentWidth, false)
-	frame.WriteString(strings.Repeat(" ", line.padding))
+	leftPadding := min(line.padding, width)
+	rightPadding := min(line.padding, width-leftPadding)
+	contentWidth := width - leftPadding - rightPadding
+	right := truncateCells(line.rightText, contentWidth, false)
+	text := truncateCells(line.text, contentWidth-cellWidth(right), false)
+	frame.WriteString(strings.Repeat(" ", leftPadding))
 	frame.WriteString(text)
-	frame.WriteString(strings.Repeat(" ", width-line.padding-cellWidth(text)))
-	if line.rightText != "" {
-		right := truncateCells(line.rightText, width, false)
-		frame.WriteString("\x1b[")
-		frame.WriteString(strconv.Itoa(row))
-		frame.WriteByte(';')
-		frame.WriteString(strconv.Itoa(width - cellWidth(right) + 1))
-		frame.WriteByte('H')
-		frame.WriteString(right)
-	}
+	frame.WriteString(strings.Repeat(" ", contentWidth-cellWidth(text)-cellWidth(right)))
+	frame.WriteString(right)
+	frame.WriteString(strings.Repeat(" ", rightPadding))
 	frame.WriteString(ansiReset)
+}
+
+func writeCursorPosition(output *strings.Builder, row, column int) {
+	output.WriteString("\x1b[")
+	output.WriteString(strconv.Itoa(row))
+	output.WriteByte(';')
+	output.WriteString(strconv.Itoa(column))
+	output.WriteByte('H')
 }
 
 func conversationViewport(model *tuiModel, width, height int) []styledLine {

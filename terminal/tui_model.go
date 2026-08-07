@@ -55,6 +55,7 @@ type tuiModel struct {
 	conversationLines []styledLine
 	wrappedWidth      int
 	conversationDirty bool
+	forceRedraw       bool
 	streamKind        blockKind
 	streamOpen        bool
 	activeTool        int
