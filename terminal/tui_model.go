@@ -57,6 +57,7 @@ type tuiModel struct {
 	setThinkingLevel  func(agent.ThinkingLevel) error
 	contextWindow     int64
 	contextTokens     int64
+	providerUsage     agent.ProviderUsage
 	turnExecutedTool  bool
 	blocks            []conversationBlock
 	conversationLines []styledLine

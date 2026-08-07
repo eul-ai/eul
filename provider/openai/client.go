@@ -42,6 +42,7 @@ type Client struct {
 	httpClient       *http.Client
 	endpoint         string
 	compactEndpoint  string
+	usageEndpoint    string
 	tokenSource      CodexTokenSource
 	maxRequestBytes  int64
 	maxResponseBytes int64
@@ -50,8 +51,9 @@ type Client struct {
 }
 
 var (
-	_ agent.Provider  = (*Client)(nil)
-	_ agent.Compactor = (*Client)(nil)
+	_ agent.Provider      = (*Client)(nil)
+	_ agent.Compactor     = (*Client)(nil)
+	_ agent.UsageProvider = (*Client)(nil)
 )
 
 func NewCodex(source CodexTokenSource, options Options) (*Client, error) {
@@ -71,11 +73,18 @@ func NewCodex(source CodexTokenSource, options Options) (*Client, error) {
 		return http.ErrUseLastResponse
 	}
 
-	endpoint := strings.TrimRight(baseURL, "/") + "/codex/responses"
+	baseURL = strings.TrimRight(baseURL, "/")
+	endpoint := baseURL + "/codex/responses"
+	usageEndpoint := baseURL + "/api/codex/usage"
+	if strings.Contains(baseURL, "/backend-api") {
+		usageEndpoint = baseURL + "/wham/usage"
+	}
+
 	return &Client{
 		httpClient:       httpClient,
 		endpoint:         endpoint,
 		compactEndpoint:  endpoint + "/compact",
+		usageEndpoint:    usageEndpoint,
 		tokenSource:      source,
 		maxRequestBytes:  defaultMaxRequestBytes,
 		maxResponseBytes: defaultMaxResponseBytes,
@@ -232,7 +241,15 @@ func marshalBoundedJSON(value any, maximum int64) ([]byte, bool, error) {
 }
 
 func (c *Client) post(ctx context.Context, endpoint, accept string, body []byte, credential CodexCredential, operation string) (*http.Response, error) {
-	request, err := c.newRequest(ctx, endpoint, accept, body, credential)
+	return c.do(ctx, http.MethodPost, endpoint, accept, body, credential, operation)
+}
+
+func (c *Client) get(ctx context.Context, endpoint string, credential CodexCredential, operation string) (*http.Response, error) {
+	return c.do(ctx, http.MethodGet, endpoint, "application/json", nil, credential, operation)
+}
+
+func (c *Client) do(ctx context.Context, method, endpoint, accept string, body []byte, credential CodexCredential, operation string) (*http.Response, error) {
+	request, err := c.newRequest(ctx, method, endpoint, accept, body, credential)
 	if err != nil {
 		return nil, c.errorf("create %s: %v", operation, err)
 	}
@@ -275,18 +292,20 @@ func (c *Client) resolveCredential(ctx context.Context) (CodexCredential, error)
 	return CodexCredential{}, c.wrapf(err, "resolve authentication: %v", err)
 }
 
-func (c *Client) newRequest(ctx context.Context, endpoint, accept string, body []byte, credential CodexCredential) (*http.Request, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+func (c *Client) newRequest(ctx context.Context, method, endpoint, accept string, body []byte, credential CodexCredential) (*http.Request, error) {
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	request.Header.Set("Authorization", "Bearer "+credential.AccessToken)
-	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", accept)
 	request.Header.Set("chatgpt-account-id", credential.AccountID)
 	request.Header.Set("originator", "yaah")
 	request.Header.Set("User-Agent", "yaah")
-	request.Header.Set("OpenAI-Beta", "responses=experimental")
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("OpenAI-Beta", "responses=experimental")
+	}
 	return request, nil
 }
 

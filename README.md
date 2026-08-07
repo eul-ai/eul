@@ -46,8 +46,11 @@ contract. This mode is experimental.
 
 Interactive mode requires terminal stdin and stdout and opens a full-screen TUI
 with a conversation viewport, an expanding multiline input area, and a status
-bar. The status shows current activity on the left and model, thinking level, and context
-usage on the right. Reasoning summaries, tool activity, compaction notices, and
+bar. The status shows current activity on the left and model, thinking level, context
+usage, and provider-reported usage limits on the right. Available reset times are shown
+as relative countdowns and updated locally once a minute. Usage limits are loaded once
+when the TUI starts and refreshed after each completed turn when the active provider
+supports them. Reasoning summaries, tool activity, compaction notices, and
 errors remain visible in the conversation. The TUI preserves the terminal's base
 background and uses thinking-level-colored input rules. Conversation text has a one-cell
 horizontal inset while block backgrounds retain the full width, with one blank

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"time"
 )
 
 type InputKind string
@@ -40,6 +41,16 @@ type Usage struct {
 	TotalTokens  int64
 }
 
+type ProviderUsage struct {
+	Windows []UsageWindow
+}
+
+type UsageWindow struct {
+	Duration    time.Duration
+	UsedPercent int
+	ResetsAt    time.Time
+}
+
 type Request struct {
 	Model         string
 	ThinkingLevel ThinkingLevel
@@ -68,6 +79,10 @@ type ToolCallSink func(ToolCallSnapshot) error
 
 type Provider interface {
 	Generate(ctx context.Context, request Request, onText, onReasoning TextSink, onToolCall ToolCallSink) (Response, error)
+}
+
+type UsageProvider interface {
+	Usage(context.Context) (ProviderUsage, error)
 }
 
 type Compactor interface {

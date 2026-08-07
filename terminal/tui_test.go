@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,6 +66,128 @@ func TestRunTUIParentCancellationWinsAfterActiveEOF(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("runTUI() did not return")
+	}
+}
+
+func TestRunTUILoadsProviderUsageAtStartupAndAfterTurn(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	calls := make(chan struct{}, 3)
+	output := newSignalingWriter("5h limit 75% left")
+	options := Options{
+		Input:  reader,
+		Output: output,
+		LoadUsage: func(context.Context) (agent.ProviderUsage, error) {
+			calls <- struct{}{}
+			return agent.ProviderUsage{Windows: []agent.UsageWindow{{Duration: 5 * time.Hour, UsedPercent: 25}}}, nil
+		},
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runTUI(context.Background(), &fakeEngine{}, options, -1, 80, 24)
+	}()
+
+	select {
+	case <-calls:
+	case <-time.After(2 * time.Second):
+		t.Fatal("startup usage request did not start")
+	}
+	select {
+	case <-output.seen:
+	case <-time.After(2 * time.Second):
+		t.Fatal("startup usage was not rendered")
+	}
+	if _, err := io.WriteString(writer, "hello\r"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-calls:
+	case <-time.After(2 * time.Second):
+		t.Fatal("post-turn usage request did not start")
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runTUI did not stop")
+	}
+}
+
+func TestLoadProviderUsageCoalescesRequestsAndRecovers(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	requests := make(chan struct{}, 1)
+	messages := make(chan providerUsageMessage, 1)
+	started := make(chan int, 3)
+	releaseFirst := make(chan struct{})
+	calls := 0
+	load := func(context.Context) (agent.ProviderUsage, error) {
+		calls++
+		started <- calls
+		if calls == 1 {
+			<-releaseFirst
+			return agent.ProviderUsage{}, errors.New("temporarily unavailable")
+		}
+		return agent.ProviderUsage{Windows: []agent.UsageWindow{{Duration: 7 * 24 * time.Hour, UsedPercent: 20}}}, nil
+	}
+	go loadProviderUsage(ctx, load, requests, messages)
+
+	requestProviderUsage(requests)
+	if call := <-started; call != 1 {
+		t.Fatalf("first call = %d", call)
+	}
+	requestProviderUsage(requests)
+	requestProviderUsage(requests)
+	requestProviderUsage(requests)
+	close(releaseFirst)
+	if message := <-messages; message.err == nil {
+		t.Fatal("first usage request unexpectedly succeeded")
+	}
+	if call := <-started; call != 2 {
+		t.Fatalf("second call = %d", call)
+	}
+	message := <-messages
+	if message.err != nil || len(message.usage.Windows) != 1 || message.usage.Windows[0].UsedPercent != 20 {
+		t.Fatalf("second usage result = %+v", message)
+	}
+
+	select {
+	case call := <-started:
+		t.Fatalf("unexpected coalesced call %d", call)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestLoadProviderUsageCancelsActiveRequest(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	requests := make(chan struct{}, 1)
+	messages := make(chan providerUsageMessage, 1)
+	started := make(chan struct{})
+	canceled := make(chan error, 1)
+	load := func(ctx context.Context) (agent.ProviderUsage, error) {
+		close(started)
+		<-ctx.Done()
+		canceled <- ctx.Err()
+		return agent.ProviderUsage{}, ctx.Err()
+	}
+	go loadProviderUsage(ctx, load, requests, messages)
+
+	requestProviderUsage(requests)
+	<-started
+	cancel()
+	select {
+	case err := <-canceled:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("load error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("active usage request was not canceled")
 	}
 }
 
@@ -181,6 +304,30 @@ func TestHandleKeyCancelsIncompleteToolTurnWithoutResettingConversation(t *testi
 			t.Fatal("canceled turn did not complete")
 		}
 	}
+}
+
+type signalingWriter struct {
+	mu    sync.Mutex
+	text  string
+	match string
+	seen  chan struct{}
+}
+
+func newSignalingWriter(match string) *signalingWriter {
+	return &signalingWriter{match: match, seen: make(chan struct{}, 1)}
+}
+
+func (writer *signalingWriter) Write(content []byte) (int, error) {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	writer.text += string(content)
+	if strings.Contains(writer.text, writer.match) {
+		select {
+		case writer.seen <- struct{}{}:
+		default:
+		}
+	}
+	return len(content), nil
 }
 
 type terminalErrorReader struct {

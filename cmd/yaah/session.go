@@ -24,6 +24,10 @@ func newAgentSession(config agentConfig, runtime appRuntime, tokenSource openaia
 	if err != nil {
 		return nil, fmt.Errorf("configure provider: %w", err)
 	}
+	var loadUsage func(context.Context) (agent.ProviderUsage, error)
+	if usageProvider, ok := provider.(agent.UsageProvider); ok {
+		loadUsage = usageProvider.Usage
+	}
 
 	currentThinkingLevel := config.thinkingLevel
 	subagent := tool.NewSubagent(func(ctx context.Context, task string, usage func(agent.Usage)) (agent.RunResult, error) {
@@ -58,6 +62,7 @@ func newAgentSession(config agentConfig, runtime appRuntime, tokenSource openaia
 			ContextWindow:    openaiadapter.ContextWindow(config.model),
 			Interrupts:       runtime.interrupts,
 			SetThinkingLevel: setThinkingLevel,
+			LoadUsage:        loadUsage,
 		},
 	}, nil
 }

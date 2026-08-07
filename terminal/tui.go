@@ -13,14 +13,20 @@ import (
 )
 
 const (
-	enterScreen = "\x1b[?1049h\x1b[?2004h\x1b[>1u\x1b[2J\x1b[H"
-	leaveScreen = ansiEndSynchronizedOutput + "\x1b[<u\x1b[?2004l\x1b[?25h\x1b[?1049l"
+	enterScreen          = "\x1b[?1049h\x1b[?2004h\x1b[>1u\x1b[2J\x1b[H"
+	leaveScreen          = ansiEndSynchronizedOutput + "\x1b[<u\x1b[?2004l\x1b[?25h\x1b[?1049l"
+	providerUsageTimeout = 10 * time.Second
 )
 
 type engineMessage struct {
 	event *agent.Event
 	err   error
 	done  bool
+}
+
+type providerUsageMessage struct {
+	usage agent.ProviderUsage
+	err   error
 }
 
 func Run(ctx context.Context, engine Engine, options Options) (runErr error) {
@@ -65,6 +71,19 @@ func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width
 	defer close(stopped)
 	go readKeyEvents(options.Input, keys, stopped)
 
+	usageContext, cancelUsage := context.WithCancel(ctx)
+	defer cancelUsage()
+	var usageRequests chan struct{}
+	var usageMessages <-chan providerUsageMessage
+	if options.LoadUsage != nil {
+		requests := make(chan struct{}, 1)
+		messages := make(chan providerUsageMessage, 1)
+		usageRequests = requests
+		usageMessages = messages
+		go loadProviderUsage(usageContext, options.LoadUsage, requests, messages)
+		requestProviderUsage(usageRequests)
+	}
+
 	resizes, stopResizes := watchResize()
 	defer stopResizes()
 
@@ -72,6 +91,12 @@ func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width
 	defer renderTicker.Stop()
 	spinnerTicker := time.NewTicker(80 * time.Millisecond)
 	defer spinnerTicker.Stop()
+	var usageClock <-chan time.Time
+	if options.LoadUsage != nil {
+		usageTicker := time.NewTicker(time.Minute)
+		defer usageTicker.Stop()
+		usageClock = usageTicker.C
+	}
 
 	renderer := &tuiRenderer{}
 	dirty := true
@@ -161,7 +186,14 @@ func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width
 				return exitAfterTurn
 			}
 			model.finishTurn(message.err)
+			requestProviderUsage(usageRequests)
 			dirty = true
+
+		case message := <-usageMessages:
+			if message.err == nil {
+				model.providerUsage = agent.ProviderUsage{Windows: append([]agent.UsageWindow(nil), message.usage.Windows...)}
+				dirty = true
+			}
 
 		case <-spinnerTicker.C:
 			if model.activity.kind != activityReady && model.activity.kind != activityError {
@@ -169,11 +201,51 @@ func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width
 				dirty = true
 			}
 
+		case <-usageClock:
+			for _, window := range model.providerUsage.Windows {
+				if !window.ResetsAt.IsZero() {
+					dirty = true
+					break
+				}
+			}
+
 		case <-renderTicker.C:
 			if err := renderIfDirty(renderer, model, options.Output, &dirty); err != nil {
 				cancelActiveTurn(turnCancel, engineMessages)
 				return err
 			}
+		}
+	}
+}
+
+func requestProviderUsage(requests chan<- struct{}) {
+	select {
+	case requests <- struct{}{}:
+	default:
+	}
+}
+
+func loadProviderUsage(
+	ctx context.Context,
+	load func(context.Context) (agent.ProviderUsage, error),
+	requests <-chan struct{},
+	messages chan<- providerUsageMessage,
+) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-requests:
+		}
+
+		requestContext, cancel := context.WithTimeout(ctx, providerUsageTimeout)
+		usage, err := load(requestContext)
+		cancel()
+
+		select {
+		case messages <- providerUsageMessage{usage: usage, err: err}:
+		case <-ctx.Done():
+			return
 		}
 	}
 }

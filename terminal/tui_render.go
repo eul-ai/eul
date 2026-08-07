@@ -2,10 +2,14 @@ package terminal
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"yaah/agent"
 )
 
 const (
@@ -534,15 +538,32 @@ func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {
 }
 
 func renderStatus(model *tuiModel, width int) (string, string) {
+	return renderStatusAt(model, width, time.Now())
+}
+
+func renderStatusAt(model *tuiModel, width int, now time.Time) (string, string) {
 	activity := activityText(model)
 	modelText := model.model + " (" + string(model.thinkingLevel) + ")"
 	contextLong, contextShort := contextText(model.contextTokens, model.contextWindow)
+	usageLong, usageShort := providerUsageText(model.providerUsage, now)
 
 	candidates := []string{
 		modelText + " · " + contextLong,
 		modelText + " · " + contextShort,
 		contextShort,
 		"",
+	}
+	if usageLong != "" {
+		candidates = []string{
+			modelText + " · " + contextLong + " · " + usageLong,
+			modelText + " · " + contextShort + " · " + usageShort,
+			contextShort + " · " + usageShort,
+			usageLong,
+			usageShort,
+			modelText + " · " + contextLong,
+			contextShort,
+			"",
+		}
 	}
 	for _, right := range candidates {
 		gap := 0
@@ -554,6 +575,80 @@ func renderStatus(model *tuiModel, width int) (string, string) {
 		}
 	}
 	return truncateCells(activity, width, true), ""
+}
+
+func providerUsageText(usage agent.ProviderUsage, now time.Time) (string, string) {
+	windows := append([]agent.UsageWindow(nil), usage.Windows...)
+	sort.SliceStable(windows, func(left, right int) bool {
+		return windows[left].Duration < windows[right].Duration
+	})
+
+	long := make([]string, 0, len(windows))
+	short := make([]string, 0, len(windows))
+	for _, window := range windows {
+		if window.Duration <= 0 {
+			continue
+		}
+		label := usageWindowLabel(window.Duration)
+		remaining := 100 - min(100, max(0, window.UsedPercent))
+		longText := fmt.Sprintf("%s limit %d%% left", label, remaining)
+		shortText := fmt.Sprintf("%s %d%% left", label, remaining)
+		if !window.ResetsAt.IsZero() {
+			reset := resetCountdown(window.ResetsAt, now)
+			if reset == "now" {
+				longText += " (resets now)"
+				shortText += " (resets now)"
+			} else {
+				longText += " (resets in " + reset + ")"
+				shortText += " (resets in " + reset + ")"
+			}
+		}
+		long = append(long, longText)
+		short = append(short, shortText)
+	}
+	return strings.Join(long, " · "), strings.Join(short, " · ")
+}
+
+func resetCountdown(reset, now time.Time) string {
+	remaining := reset.Sub(now)
+	if remaining <= 0 {
+		return "now"
+	}
+
+	minutes := int64(remaining / time.Minute)
+	if remaining%time.Minute != 0 {
+		minutes++
+	}
+	days := minutes / (24 * 60)
+	minutes -= days * 24 * 60
+	hours := minutes / 60
+	minutes -= hours * 60
+
+	switch {
+	case days > 0 && hours > 0:
+		return fmt.Sprintf("%dd %dh", days, hours)
+	case days > 0:
+		return fmt.Sprintf("%dd", days)
+	case hours > 0 && minutes > 0:
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	case hours > 0:
+		return fmt.Sprintf("%dh", hours)
+	default:
+		return fmt.Sprintf("%dm", max(int64(1), minutes))
+	}
+}
+
+func usageWindowLabel(duration time.Duration) string {
+	switch {
+	case duration%(24*time.Hour) == 0:
+		return strconv.FormatInt(int64(duration/(24*time.Hour)), 10) + "d"
+	case duration%time.Hour == 0:
+		return strconv.FormatInt(int64(duration/time.Hour), 10) + "h"
+	case duration%time.Minute == 0:
+		return strconv.FormatInt(int64(duration/time.Minute), 10) + "m"
+	default:
+		return duration.String()
+	}
 }
 
 func splitActivitySpinner(model *tuiModel, text string) (string, string) {

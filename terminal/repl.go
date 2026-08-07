@@ -43,6 +43,7 @@ type Options struct {
 	ContextWindow    int64
 	Interrupts       <-chan os.Signal
 	SetThinkingLevel func(agent.ThinkingLevel) error
+	LoadUsage        func(context.Context) (agent.ProviderUsage, error)
 }
 
 type fileDescriptor interface {

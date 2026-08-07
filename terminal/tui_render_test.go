@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"yaah/agent"
 )
@@ -49,6 +50,45 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 	}
 	if !strings.HasPrefix(frame, ansiBeginSynchronizedOutput+ansiHideCursor) || !strings.HasSuffix(frame, ansiEndSynchronizedOutput) {
 		t.Fatalf("frame does not use synchronized output: %q", frame)
+	}
+}
+
+func TestStatusShowsProviderUsageWindows(t *testing.T) {
+	now := time.Date(2027, time.January, 2, 10, 0, 0, 0, time.UTC)
+	model := newTUIModel(180, 12, Options{Model: "model"})
+	model.providerUsage = agent.ProviderUsage{Windows: []agent.UsageWindow{
+		{Duration: 7 * 24 * time.Hour, UsedPercent: 20, ResetsAt: now.Add(3*24*time.Hour + 5*time.Hour)},
+		{Duration: 5 * time.Hour, UsedPercent: 42, ResetsAt: now.Add(3*time.Hour + 5*time.Minute)},
+	}}
+
+	_, wide := renderStatusAt(model, 180, now)
+	for _, want := range []string{"model (medium)", "context 0", "5h limit 58% left (resets in 3h 5m) · 7d limit 80% left (resets in 3d 5h)"} {
+		if !strings.Contains(wide, want) {
+			t.Fatalf("wide status %q omits %q", wide, want)
+		}
+	}
+
+	_, narrow := renderStatusAt(model, 70, now)
+	if narrow != "5h 58% left (resets in 3h 5m) · 7d 80% left (resets in 3d 5h)" {
+		t.Fatalf("narrow status = %q", narrow)
+	}
+}
+
+func TestResetCountdownUsesTwoLargestUnits(t *testing.T) {
+	now := time.Date(2027, time.January, 2, 10, 0, 0, 0, time.UTC)
+	tests := []struct {
+		remaining time.Duration
+		want      string
+	}{
+		{remaining: 3*24*time.Hour + 5*time.Hour + 20*time.Minute, want: "3d 5h"},
+		{remaining: 5*time.Hour + 12*time.Minute, want: "5h 12m"},
+		{remaining: 30 * time.Second, want: "1m"},
+		{remaining: -time.Second, want: "now"},
+	}
+	for _, test := range tests {
+		if got := resetCountdown(now.Add(test.remaining), now); got != test.want {
+			t.Fatalf("resetCountdown(%s) = %q, want %q", test.remaining, got, test.want)
+		}
 	}
 }
 

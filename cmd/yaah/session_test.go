@@ -9,12 +9,21 @@ import (
 	"testing"
 
 	"yaah/agent"
+	openaiadapter "yaah/provider/openai"
 	"yaah/tool"
 )
 
 type closeRecordingTool struct {
 	closeErr error
 	closed   int
+}
+
+type usageCapableProvider struct {
+	providerFunction
+}
+
+func (usageCapableProvider) Usage(context.Context) (agent.ProviderUsage, error) {
+	return agent.ProviderUsage{}, nil
 }
 
 func (*closeRecordingTool) Definition() agent.ToolDefinition {
@@ -28,6 +37,23 @@ func (*closeRecordingTool) Execute(context.Context, json.RawMessage, agent.ToolU
 func (current *closeRecordingTool) Close() error {
 	current.closed++
 	return current.closeErr
+}
+
+func TestNewAgentSessionWiresOptionalProviderUsage(t *testing.T) {
+	provider := usageCapableProvider{providerFunction: func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+		return agent.Response{}, nil
+	}}
+	runtime := appRuntime{newProvider: func(openaiadapter.CodexTokenSource) (agent.Provider, error) {
+		return provider, nil
+	}}
+	session, err := newAgentSession(agentConfig{model: "model", thinkingLevel: agent.ThinkingMedium, cwd: t.TempDir()}, runtime, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.tools.Close()
+	if session.terminalOptions.LoadUsage == nil {
+		t.Fatal("provider usage was not wired to the terminal")
+	}
 }
 
 func TestFinishRegistryClosesToolsAndPreservesRunError(t *testing.T) {
