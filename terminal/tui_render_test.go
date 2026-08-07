@@ -98,7 +98,7 @@ func TestPaddedBlockBackgroundFillsWidth(t *testing.T) {
 	var frame strings.Builder
 	renderLine(&frame, 1, 6, styledLine{text: "x", style: style, padding: conversationPadding})
 
-	want := ansiColors(style.foreground, style.background, true) + " x    " + ansiReset
+	want := ansiColors(style.foreground, style.background, true) + strings.Repeat(" ", conversationPadding) + "x" + strings.Repeat(" ", 6-conversationPadding-1) + ansiReset
 	if !strings.Contains(frame.String(), want) {
 		t.Fatalf("line = %q, want full-width background sequence %q", frame.String(), want)
 	}

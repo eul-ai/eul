@@ -12,7 +12,7 @@ const (
 	ansiShowCursor      = "\x1b[?25h"
 	ansiReset           = "\x1b[0m"
 	ansiItalic          = "\x1b[3m"
-	conversationPadding = 1
+	conversationPadding = 2
 )
 
 type lineStyle struct {
