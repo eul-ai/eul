@@ -167,7 +167,7 @@ func run(arguments []string, runtime appRuntime) int {
 		return exitFailure
 	}
 
-	subagent := tool.NewSubagent(func(ctx context.Context, task string) (agent.RunResult, error) {
+	subagent := tool.NewSubagent(func(ctx context.Context, task string, usage func(agent.Usage)) (agent.RunResult, error) {
 		childProvider, err := runtime.newProvider(tokenSource)
 		if err != nil {
 			return agent.RunResult{}, fmt.Errorf("configure subagent provider: %w", err)
@@ -179,7 +179,17 @@ func run(arguments []string, runtime appRuntime) int {
 			ThinkingLevel:       currentThinkingLevel,
 			ProjectInstructions: projectInstructions,
 		})
-		result, runErr := child.Run(ctx, task, func(agent.Event) error { return nil })
+		var liveUsage agent.Usage
+		result, runErr := child.Run(ctx, task, func(event agent.Event) error {
+			switch event.Kind {
+			case agent.EventCompactionEnd, agent.EventContextUsage:
+				liveUsage.InputTokens += event.Usage.InputTokens
+				liveUsage.OutputTokens += event.Usage.OutputTokens
+				liveUsage.TotalTokens += event.Usage.TotalTokens
+				usage(liveUsage)
+			}
+			return nil
+		})
 		closeErr := childTools.Close()
 		if runErr != nil {
 			return agent.RunResult{}, runErr

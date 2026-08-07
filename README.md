@@ -58,8 +58,8 @@ and detail text use the regular foreground color. Inline Markdown is rendered in
 detail lines. Tool blocks are correlated by call ID and may replace their content while
 arguments or execution progress streams. The OpenAI
 adapter exposes partial function-call arguments, so `write` previews its first
-ten lines before execution; the file is still written only after the complete
-call is validated. Rendering uses synchronized differential row updates to avoid
+ten lines before execution and reports how many additional lines were omitted;
+the file is still written only after the complete call is validated. Rendering uses synchronized differential row updates to avoid
 flicker during streaming. The current palette is based on the
 [Ayu Mirage theme](https://github.com/iodic/pi-ayu-themes/blob/main/themes/ayu-mirage.json).
 
@@ -110,7 +110,8 @@ before returning to the model.
 - `lsp_rename(path, line, character, oldName, newName)` resolves the named
   symbol near the approximate position and renames it across the workspace.
 - `subagent(tasks)` runs one to four explicitly requested, independent tasks
-  concurrently and returns their ordered results.
+  concurrently, shows each child's elapsed time and cumulative reported token
+  usage while it runs, and returns their ordered results.
 
 LSP line numbers and UTF-16 character offsets are zero-based. LSP tools are
 registered only when a configured language server is installed; currently `.go`

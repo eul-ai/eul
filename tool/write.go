@@ -15,7 +15,6 @@ const (
 	writeToolName             = "write"
 	writePresentationMaxLines = 10
 	writePresentationMaxBytes = 4 * 1024
-	writePresentationMarker   = "… (preview truncated)"
 )
 
 var writeToolDefinition = agent.ToolDefinition{
@@ -72,30 +71,62 @@ func writePreview(content string) ([]string, bool) {
 	}
 
 	allLines := strings.Split(content, "\n")
-	truncated := len(allLines) > writePresentationMaxLines
-	if len(allLines) > writePresentationMaxLines {
-		allLines = allLines[:writePresentationMaxLines]
+	totalLines := len(allLines)
+	if totalLines <= writePresentationMaxLines && len(content) <= writePresentationMaxBytes {
+		return allLines, false
 	}
 
-	remaining := writePresentationMaxBytes - len(writePresentationMarker) - 1
-	lines := make([]string, 0, len(allLines)+1)
-	for _, line := range allLines {
-		if remaining <= 0 {
-			truncated = true
+	lineMarker := writePreviewLineMarker(totalLines, totalLines)
+	byteMarker := writePreviewByteMarker(totalLines)
+	markerBytes := max(len(lineMarker), len(byteMarker))
+	bodyBytes := writePresentationMaxBytes - markerBytes - 1
+	lineLimit := min(totalLines, writePresentationMaxLines)
+
+	lines := make([]string, 0, lineLimit+1)
+	usedBytes := 0
+	completeLines := 0
+	partialLine := false
+	for _, line := range allLines[:lineLimit] {
+		separatorBytes := 0
+		if len(lines) > 0 {
+			separatorBytes = 1
+		}
+		available := bodyBytes - usedBytes - separatorBytes
+		if available <= 0 {
 			break
 		}
-		bounded, lineTruncated := truncateLine(line, remaining)
+		bounded, truncated := truncateLine(line, available)
 		lines = append(lines, bounded)
-		remaining -= len(bounded) + 1
-		if lineTruncated {
-			truncated = true
+		usedBytes += separatorBytes + len(bounded)
+		if truncated {
+			partialLine = true
 			break
 		}
+		completeLines++
 	}
-	if truncated {
-		lines = append(lines, writePresentationMarker)
+
+	marker := writePreviewLineMarker(totalLines-completeLines, totalLines)
+	if partialLine {
+		marker = byteMarker
 	}
-	return lines, truncated
+	lines = append(lines, marker)
+	return lines, true
+}
+
+func writePreviewLineMarker(remaining, total int) string {
+	unit := "lines"
+	if remaining == 1 {
+		unit = "line"
+	}
+	return fmt.Sprintf("… (%d more %s, %d total)", remaining, unit, total)
+}
+
+func writePreviewByteMarker(total int) string {
+	unit := "lines"
+	if total == 1 {
+		unit = "line"
+	}
+	return fmt.Sprintf("… (preview truncated, %d total %s)", total, unit)
 }
 
 func (w *Write) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {

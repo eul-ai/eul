@@ -220,7 +220,7 @@ func TestWritePresentationStreamsBoundedPreviewWithoutWriting(t *testing.T) {
 		Arguments: map[string]any{"path": "preview.txt", "content": content},
 	}
 	presentation := writeTool.Presentation(snapshot)
-	if presentation.Title != "write" || presentation.Arguments != "preview.txt" || len(presentation.Lines) != 11 || presentation.Lines[0] != "one" || presentation.Lines[9] != "ten" || !strings.Contains(presentation.Lines[10], "truncated") {
+	if presentation.Title != "write" || presentation.Arguments != "preview.txt" || len(presentation.Lines) != 11 || presentation.Lines[0] != "one" || presentation.Lines[9] != "ten" || presentation.Lines[10] != "… (2 more lines, 12 total)" {
 		t.Fatalf("presentation = %+v", presentation)
 	}
 	if _, err := os.Stat(filepath.Join(cwd, "preview.txt")); !os.IsNotExist(err) {

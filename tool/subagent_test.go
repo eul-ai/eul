@@ -24,7 +24,7 @@ func TestSubagentDefinitionRequiresExplicitRequest(t *testing.T) {
 }
 
 func TestSubagentRunsOneTask(t *testing.T) {
-	subagent := NewSubagent(func(_ context.Context, task string) (agent.RunResult, error) {
+	subagent := NewSubagent(func(_ context.Context, task string, _ func(agent.Usage)) (agent.RunResult, error) {
 		return agent.RunResult{Text: "result for " + task}, nil
 	})
 
@@ -41,7 +41,7 @@ func TestSubagentRunsConcurrentlyAndReturnsInputOrder(t *testing.T) {
 		"second": make(chan struct{}),
 	}
 	secondFinished := make(chan struct{})
-	subagent := NewSubagent(func(_ context.Context, task string) (agent.RunResult, error) {
+	subagent := NewSubagent(func(_ context.Context, task string, _ func(agent.Usage)) (agent.RunResult, error) {
 		started <- task
 		<-releases[task]
 		if task == "second" {
@@ -100,10 +100,14 @@ func TestSubagentPublishesOutOfOrderLiveStatuses(t *testing.T) {
 		"first":  make(chan struct{}),
 		"second": make(chan struct{}),
 	}
-	subagent := NewSubagent(func(_ context.Context, task string) (agent.RunResult, error) {
+	subagent := NewSubagent(func(_ context.Context, task string, _ func(agent.Usage)) (agent.RunResult, error) {
 		started <- task
 		<-releases[task]
-		return agent.RunResult{Text: task + " result"}, nil
+		tokens := int64(100)
+		if task == "second" {
+			tokens = 200
+		}
+		return agent.RunResult{Text: task + " result", Usage: agent.Usage{TotalTokens: tokens}}, nil
 	})
 	updates := make(chan agent.ToolPresentation, 8)
 	done := make(chan struct {
@@ -122,7 +126,7 @@ func TestSubagentPublishesOutOfOrderLiveStatuses(t *testing.T) {
 	}()
 
 	initial := <-updates
-	if initial.Title != "subagent" || initial.Arguments != "(2)" || !initial.Markdown || len(initial.Lines) != 2 || !strings.Contains(initial.Lines[0], "running") || !strings.Contains(initial.Lines[1], "running") {
+	if initial.Title != "subagent" || initial.Arguments != "(2)" || !initial.Markdown || len(initial.Lines) != 2 || !strings.Contains(initial.Lines[0], "running (0s)") || !strings.Contains(initial.Lines[1], "running (0s)") {
 		t.Fatalf("initial update = %+v", initial)
 	}
 	for range 2 {
@@ -130,7 +134,7 @@ func TestSubagentPublishesOutOfOrderLiveStatuses(t *testing.T) {
 	}
 	close(releases["second"])
 	secondDone := <-updates
-	if !strings.Contains(secondDone.Lines[0], "running") || !strings.Contains(secondDone.Lines[1], "complete") {
+	if !strings.Contains(secondDone.Lines[0], "running") || !strings.Contains(secondDone.Lines[1], "complete") || !strings.Contains(secondDone.Lines[1], "200 tokens") {
 		t.Fatalf("second completion update = %+v", secondDone)
 	}
 	close(releases["first"])
@@ -144,10 +148,62 @@ func TestSubagentPublishesOutOfOrderLiveStatuses(t *testing.T) {
 	}
 }
 
+func TestSubagentPublishesTokenUsageWhileRunning(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	subagent := NewSubagent(func(_ context.Context, _ string, usage func(agent.Usage)) (agent.RunResult, error) {
+		usage(agent.Usage{TotalTokens: 321})
+		close(started)
+		<-release
+		return agent.RunResult{Text: "done", Usage: agent.Usage{TotalTokens: 321}}, nil
+	})
+	updates := make(chan agent.ToolPresentation, 4)
+	done := make(chan error, 1)
+	go func() {
+		_, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"]}`), func(presentation agent.ToolPresentation) error {
+			updates <- presentation
+			return nil
+		})
+		done <- err
+	}()
+
+	<-updates
+	<-started
+	select {
+	case update := <-updates:
+		if !strings.Contains(update.Lines[0], "running") || !strings.Contains(update.Lines[0], "321 tokens") {
+			t.Fatalf("live usage update = %+v", update)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("live usage update was not published")
+	}
+
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+}
+
+func TestSubagentPresentationShowsElapsedTimeAndTokenCount(t *testing.T) {
+	started := time.Unix(100, 0)
+	presentation := subagentPresentation(
+		[]string{"still working", "finished"},
+		[]subagentStatus{
+			{state: "running", started: started},
+			{state: "complete", elapsed: 2*time.Second + 900*time.Millisecond, tokens: 1234},
+		},
+		started.Add(time.Minute+5*time.Second),
+	)
+
+	if !strings.Contains(presentation.Lines[0], "running (1m5s)") || !strings.Contains(presentation.Lines[1], "complete (2s, 1234 tokens)") {
+		t.Fatalf("presentation = %+v", presentation)
+	}
+}
+
 func TestSubagentUpdateFailureCancelsRemainingChildren(t *testing.T) {
 	updateErr := errors.New("update failed")
 	canceled := make(chan struct{})
-	subagent := NewSubagent(func(ctx context.Context, task string) (agent.RunResult, error) {
+	subagent := NewSubagent(func(ctx context.Context, task string, _ func(agent.Usage)) (agent.RunResult, error) {
 		if task == "first" {
 			return agent.RunResult{Text: "done"}, nil
 		}
@@ -175,7 +231,7 @@ func TestSubagentUpdateFailureCancelsRemainingChildren(t *testing.T) {
 
 func TestSubagentWaitsForMixedResults(t *testing.T) {
 	failure := errors.New("child failed")
-	subagent := NewSubagent(func(_ context.Context, task string) (agent.RunResult, error) {
+	subagent := NewSubagent(func(_ context.Context, task string, _ func(agent.Usage)) (agent.RunResult, error) {
 		if task == "bad" {
 			return agent.RunResult{}, failure
 		}
@@ -190,7 +246,7 @@ func TestSubagentWaitsForMixedResults(t *testing.T) {
 
 func TestSubagentValidatesAllTasksBeforeLaunching(t *testing.T) {
 	var calls atomic.Int64
-	subagent := NewSubagent(func(context.Context, string) (agent.RunResult, error) {
+	subagent := NewSubagent(func(context.Context, string, func(agent.Usage)) (agent.RunResult, error) {
 		calls.Add(1)
 		return agent.RunResult{}, nil
 	})
@@ -215,7 +271,7 @@ func TestSubagentPropagatesCancellationToAllTasks(t *testing.T) {
 	started := make(chan struct{}, 2)
 	var finished sync.WaitGroup
 	finished.Add(2)
-	subagent := NewSubagent(func(ctx context.Context, _ string) (agent.RunResult, error) {
+	subagent := NewSubagent(func(ctx context.Context, _ string, _ func(agent.Usage)) (agent.RunResult, error) {
 		started <- struct{}{}
 		<-ctx.Done()
 		finished.Done()
@@ -248,7 +304,7 @@ func TestSubagentPropagatesCancellationToAllTasks(t *testing.T) {
 }
 
 func TestSubagentBoundsCombinedOutput(t *testing.T) {
-	subagent := NewSubagent(func(context.Context, string) (agent.RunResult, error) {
+	subagent := NewSubagent(func(context.Context, string, func(agent.Usage)) (agent.RunResult, error) {
 		return agent.RunResult{Text: strings.Repeat("x", defaultMaxBytes)}, nil
 	})
 

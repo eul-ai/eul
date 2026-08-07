@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"yaah/agent"
 )
 
 const (
-	subagentToolName = "subagent"
-	maxSubagents     = 4
+	subagentToolName       = "subagent"
+	maxSubagents           = 4
+	subagentUpdateInterval = time.Second
 )
 
 var subagentToolDefinition = agent.ToolDefinition{
@@ -27,7 +29,7 @@ var subagentToolDefinition = agent.ToolDefinition{
 }
 
 type Subagent struct {
-	run func(context.Context, string) (agent.RunResult, error)
+	run func(context.Context, string, func(agent.Usage)) (agent.RunResult, error)
 }
 
 type subagentArguments struct {
@@ -35,16 +37,30 @@ type subagentArguments struct {
 }
 
 type subagentResult struct {
-	text string
-	err  error
+	text  string
+	usage agent.Usage
+	err   error
 }
 
 type subagentCompletion struct {
-	index  int
-	result subagentResult
+	index   int
+	elapsed time.Duration
+	result  subagentResult
 }
 
-func NewSubagent(run func(context.Context, string) (agent.RunResult, error)) *Subagent {
+type subagentProgress struct {
+	index int
+	usage agent.Usage
+}
+
+type subagentStatus struct {
+	state   string
+	started time.Time
+	elapsed time.Duration
+	tokens  int64
+}
+
+func NewSubagent(run func(context.Context, string, func(agent.Usage)) (agent.RunResult, error)) *Subagent {
 	return &Subagent{run: run}
 }
 
@@ -60,7 +76,7 @@ func (*Subagent) Presentation(snapshot agent.ToolCallSnapshot) agent.ToolPresent
 			tasks = append(tasks, task)
 		}
 	}
-	return subagentPresentation(tasks, "pending", nil)
+	return subagentPresentation(tasks, nil, time.Time{})
 }
 
 func (s *Subagent) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
@@ -87,39 +103,77 @@ func (s *Subagent) Execute(ctx context.Context, arguments json.RawMessage, updat
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	statuses := make([]string, len(args.Tasks))
+	started := time.Now()
+	statuses := make([]subagentStatus, len(args.Tasks))
 	for index := range statuses {
-		statuses[index] = "running"
+		statuses[index] = subagentStatus{state: "running", started: started}
 	}
-	if err := publishSubagentUpdate(updates, args.Tasks, statuses); err != nil {
+	if err := publishSubagentUpdate(updates, args.Tasks, statuses, started); err != nil {
 		return agent.ToolResult{}, err
 	}
 
 	completions := make(chan subagentCompletion, len(args.Tasks))
+	progress := make(chan subagentProgress, len(args.Tasks))
 	for index, task := range args.Tasks {
 		go func() {
-			result, runErr := s.run(runCtx, task)
+			result, runErr := s.run(runCtx, task, func(usage agent.Usage) {
+				select {
+				case progress <- subagentProgress{index: index, usage: usage}:
+				case <-runCtx.Done():
+				}
+			})
 			completions <- subagentCompletion{
-				index:  index,
-				result: subagentResult{text: result.Text, err: runErr},
+				index:   index,
+				elapsed: time.Since(started),
+				result:  subagentResult{text: result.Text, usage: result.Usage, err: runErr},
 			}
 		}()
 	}
 
+	ticker := time.NewTicker(subagentUpdateInterval)
+	defer ticker.Stop()
+
 	results := make([]subagentResult, len(args.Tasks))
+	remaining := len(args.Tasks)
 	var updateErr error
-	for range args.Tasks {
-		completion := <-completions
-		results[completion.index] = completion.result
-		if completion.result.err != nil {
-			statuses[completion.index] = "failed"
-		} else {
-			statuses[completion.index] = "complete"
-		}
-		if updateErr == nil {
-			updateErr = publishSubagentUpdate(updates, args.Tasks, statuses)
-			if updateErr != nil {
-				cancel()
+	for remaining > 0 {
+		select {
+		case completion := <-completions:
+			remaining--
+			results[completion.index] = completion.result
+			status := &statuses[completion.index]
+			status.elapsed = completion.elapsed
+			if completion.result.usage.TotalTokens > 0 {
+				status.tokens = completion.result.usage.TotalTokens
+			}
+			if completion.result.err != nil {
+				status.state = "failed"
+			} else {
+				status.state = "complete"
+			}
+			if updateErr == nil {
+				updateErr = publishSubagentUpdate(updates, args.Tasks, statuses, time.Now())
+				if updateErr != nil {
+					cancel()
+				}
+			}
+		case childProgress := <-progress:
+			if statuses[childProgress.index].state != "running" {
+				continue
+			}
+			statuses[childProgress.index].tokens = childProgress.usage.TotalTokens
+			if updateErr == nil {
+				updateErr = publishSubagentUpdate(updates, args.Tasks, statuses, time.Now())
+				if updateErr != nil {
+					cancel()
+				}
+			}
+		case now := <-ticker.C:
+			if updateErr == nil {
+				updateErr = publishSubagentUpdate(updates, args.Tasks, statuses, now)
+				if updateErr != nil {
+					cancel()
+				}
 			}
 		}
 	}
@@ -153,29 +207,44 @@ func (s *Subagent) Execute(ctx context.Context, arguments json.RawMessage, updat
 	return agent.ToolResult{Output: formatted, IsError: failed}, nil
 }
 
-func publishSubagentUpdate(updates agent.ToolUpdateSink, tasks, statuses []string) error {
+func publishSubagentUpdate(updates agent.ToolUpdateSink, tasks []string, statuses []subagentStatus, now time.Time) error {
 	if updates == nil {
 		return nil
 	}
-	return updates(subagentPresentation(tasks, "", statuses))
+	return updates(subagentPresentation(tasks, statuses, now))
 }
 
-func subagentPresentation(tasks []string, defaultStatus string, statuses []string) agent.ToolPresentation {
+func subagentPresentation(tasks []string, statuses []subagentStatus, now time.Time) agent.ToolPresentation {
 	presentation := agent.ToolPresentation{Title: subagentToolName, Markdown: true}
 	if len(tasks) > 1 {
 		presentation.Arguments = fmt.Sprintf("(%d)", len(tasks))
 	}
 	presentation.Lines = make([]string, len(tasks))
 	for index, task := range tasks {
-		status := defaultStatus
+		status := "pending"
 		if index < len(statuses) {
-			status = statuses[index]
+			status = formatSubagentStatus(statuses[index], now)
 		}
 		label := strings.TrimSpace(strings.SplitN(task, "\n", 2)[0])
 		label = boundPresentationLabel(label, 120)
 		presentation.Lines[index] = fmt.Sprintf("%d. %s — %s", index+1, status, label)
 	}
 	return presentation
+}
+
+func formatSubagentStatus(status subagentStatus, now time.Time) string {
+	elapsed := status.elapsed
+	if status.state == "running" {
+		elapsed = now.Sub(status.started)
+	}
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	details := []string{elapsed.Truncate(time.Second).String()}
+	if status.tokens > 0 {
+		details = append(details, fmt.Sprintf("%d tokens", status.tokens))
+	}
+	return fmt.Sprintf("%s (%s)", status.state, strings.Join(details, ", "))
 }
 
 func boundPresentationLabel(label string, maximum int) string {
