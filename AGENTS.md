@@ -8,7 +8,6 @@
 - Keep functions small and focused, but refactor only when it clearly improves readability or removes duplication.
 - Preserve existing behavior unless the request requires changing it.
 - If a materially larger design choice is unclear, ask before implementing it.
-- After completing and validating the requested work, commit the changes.
 
 ## Go
 
