@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"strconv"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -50,18 +52,11 @@ var keySequences = []struct {
 	sequence string
 	code     keyCode
 }{
-	{sequence: "\x1b[13;2u", code: keyNewline},
 	{sequence: "\x1b[13;2~", code: keyNewline},
 	{sequence: "\x1b[27;2;13~", code: keyNewline},
 	{sequence: "\x1b\r", code: keyNewline},
-	{sequence: "\x1b[13u", code: keyEnter},
 	{sequence: "\x1b[Z", code: keyShiftTab},
-	{sequence: "\x1b[9;2u", code: keyShiftTab},
 	{sequence: "\x1b[27;2;9~", code: keyShiftTab},
-	{sequence: "\x1b[99;5u", code: keyCtrlC},
-	{sequence: "\x1b[100;5u", code: keyCtrlD},
-	{sequence: "\x1b[108;5u", code: keyCtrlL},
-	{sequence: "\x1b[127u", code: keyBackspace},
 	{sequence: "\x1b[200~", code: keyText},
 	{sequence: "\x1b[1~", code: keyHome},
 	{sequence: "\x1b[4~", code: keyEnd},
@@ -133,7 +128,15 @@ func (d *keyDecoder) feed(data []byte, final bool) []keyEvent {
 				events = append(events, event)
 				continue
 			}
-			if partial && !final {
+			consumed, kittyPartial, event, emit := matchKittyKeySequence(d.buffer)
+			if consumed > 0 {
+				d.buffer = d.buffer[consumed:]
+				if emit {
+					events = append(events, event)
+				}
+				continue
+			}
+			if (partial || kittyPartial) && !final {
 				break
 			}
 			if consumed, complete := consumeUnknownEscape(d.buffer); complete {
@@ -246,6 +249,111 @@ func matchKeySequence(buffer []byte) (bool, bool, keyEvent) {
 		}
 	}
 	return false, partial, keyEvent{}
+}
+
+func matchKittyKeySequence(buffer []byte) (int, bool, keyEvent, bool) {
+	if len(buffer) < 2 || buffer[0] != '\x1b' || buffer[1] != '[' {
+		return 0, false, keyEvent{}, false
+	}
+
+	final := -1
+	for index := 2; index < len(buffer); index++ {
+		if buffer[index] >= 0x40 && buffer[index] <= 0x7e {
+			final = index
+			break
+		}
+	}
+	if final < 0 {
+		return 0, true, keyEvent{}, false
+	}
+	finalByte := buffer[final]
+	if finalByte != 'u' && finalByte != '~' && !strings.ContainsRune("ABCDFHZ", rune(finalByte)) {
+		return 0, false, keyEvent{}, false
+	}
+
+	consumed := final + 1
+	parameters := strings.Split(string(buffer[2:final]), ";")
+	codepoints := strings.Split(parameters[0], ":")
+	codepoint, err := strconv.Atoi(codepoints[0])
+	if err != nil {
+		return consumed, false, keyEvent{}, false
+	}
+
+	modifier := 1
+	eventType := 1
+	if len(parameters) > 1 {
+		modifiers := strings.Split(parameters[1], ":")
+		modifier, err = strconv.Atoi(modifiers[0])
+		if err != nil || modifier < 1 {
+			return consumed, false, keyEvent{}, false
+		}
+		if len(modifiers) > 1 {
+			eventType, err = strconv.Atoi(modifiers[1])
+			if err != nil {
+				return consumed, false, keyEvent{}, false
+			}
+		}
+	}
+	if eventType == 3 {
+		return consumed, false, keyEvent{}, false
+	}
+
+	modifier--
+	shift := modifier&1 != 0
+	control := modifier&4 != 0
+	if finalByte != 'u' {
+		switch finalByte {
+		case 'A':
+			return consumed, false, keyEvent{code: keyUp}, true
+		case 'B':
+			return consumed, false, keyEvent{code: keyDown}, true
+		case 'C':
+			return consumed, false, keyEvent{code: keyRight}, true
+		case 'D':
+			return consumed, false, keyEvent{code: keyLeft}, true
+		case 'H':
+			return consumed, false, keyEvent{code: keyHome}, true
+		case 'F':
+			return consumed, false, keyEvent{code: keyEnd}, true
+		case 'Z':
+			if shift {
+				return consumed, false, keyEvent{code: keyShiftTab}, true
+			}
+		case '~':
+			switch codepoint {
+			case 3:
+				return consumed, false, keyEvent{code: keyDelete}, true
+			case 5:
+				return consumed, false, keyEvent{code: keyPageUp}, true
+			case 6:
+				return consumed, false, keyEvent{code: keyPageDown}, true
+			case 7:
+				return consumed, false, keyEvent{code: keyHome}, true
+			case 8:
+				return consumed, false, keyEvent{code: keyEnd}, true
+			}
+		}
+		return consumed, false, keyEvent{}, false
+	}
+
+	switch {
+	case codepoint == 13 && shift:
+		return consumed, false, keyEvent{code: keyNewline}, true
+	case codepoint == 13:
+		return consumed, false, keyEvent{code: keyEnter}, true
+	case codepoint == 9 && shift:
+		return consumed, false, keyEvent{code: keyShiftTab}, true
+	case (control && codepoint == 99) || codepoint == 3:
+		return consumed, false, keyEvent{code: keyCtrlC}, true
+	case (control && codepoint == 100) || codepoint == 4:
+		return consumed, false, keyEvent{code: keyCtrlD}, true
+	case (control && codepoint == 108) || codepoint == 12:
+		return consumed, false, keyEvent{code: keyCtrlL}, true
+	case codepoint == 127:
+		return consumed, false, keyEvent{code: keyBackspace}, true
+	default:
+		return consumed, false, keyEvent{}, false
+	}
 }
 
 func consumeUnknownEscape(buffer []byte) (int, bool) {

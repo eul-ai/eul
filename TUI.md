@@ -125,7 +125,7 @@ The editor expands vertically for explicit newlines and soft-wrapped text while 
 | Ctrl-C | Clear non-empty input, cancel the active turn, or exit when idle input is empty |
 | Ctrl-D | Exit when the input is empty |
 
-Raw mode turns Ctrl-C into an input event rather than a terminal-generated SIGINT. The TUI enables enhanced keyboard reporting so modified Enter and Tab remain distinguishable, and restores the previous keyboard mode during cleanup.
+Raw mode turns Ctrl-C into an input event rather than a terminal-generated SIGINT. The TUI pushes Kitty keyboard-protocol disambiguation mode so modified Enter and Tab remain distinguishable, accepts optional Kitty event and alternate-key subparameters, and pops the mode during cleanup.
 
 Bracketed paste will be enabled so pasted escape sequences and newlines are handled as input rather than terminal commands. Newlines in a paste remain normalized to spaces; Shift-Enter creates intentional editor line breaks. Input remains subject to `maxInputBytes`, valid UTF-8, and NUL rejection.
 

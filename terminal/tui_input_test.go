@@ -22,24 +22,47 @@ func TestKeyDecoderHandlesTextAndSplitSequences(t *testing.T) {
 
 func TestKeyDecoderHandlesModifiedKeys(t *testing.T) {
 	for sequence, code := range map[string]keyCode{
-		"\x1b[13;2u":    keyNewline,
-		"\x1b[13;2~":    keyNewline,
-		"\x1b[27;2;13~": keyNewline,
-		"\x1b\r":        keyNewline,
-		"\n":            keyNewline,
-		"\x1b[13u":      keyEnter,
-		"\x1b[Z":        keyShiftTab,
-		"\x1b[9;2u":     keyShiftTab,
-		"\x1b[27;2;9~":  keyShiftTab,
-		"\x1b[99;5u":    keyCtrlC,
-		"\x1b[100;5u":   keyCtrlD,
-		"\x1b[108;5u":   keyCtrlL,
-		"\x1b[127u":     keyBackspace,
+		"\x1b[13;2u":      keyNewline,
+		"\x1b[13;2:1u":    keyNewline,
+		"\x1b[13:13;2:1u": keyNewline,
+		"\x1b[13;2~":      keyNewline,
+		"\x1b[27;2;13~":   keyNewline,
+		"\x1b\r":          keyNewline,
+		"\n":              keyNewline,
+		"\x1b[13u":        keyEnter,
+		"\x1b[Z":          keyShiftTab,
+		"\x1b[9;2u":       keyShiftTab,
+		"\x1b[9;2:1u":     keyShiftTab,
+		"\x1b[27;2;9~":    keyShiftTab,
+		"\x1b[99;5u":      keyCtrlC,
+		"\x1b[99;69:1u":   keyCtrlC,
+		"\x1b[3u":         keyCtrlC,
+		"\x1b[100;5u":     keyCtrlD,
+		"\x1b[108;5u":     keyCtrlL,
+		"\x1b[127u":       keyBackspace,
+		"\x1b[1;1:1D":     keyLeft,
+		"\x1b[1;1:1C":     keyRight,
+		"\x1b[1;1:1A":     keyUp,
+		"\x1b[1;1:1B":     keyDown,
+		"\x1b[1;1:1H":     keyHome,
+		"\x1b[1;1:1F":     keyEnd,
+		"\x1b[3;1:1~":     keyDelete,
+		"\x1b[5;1:1~":     keyPageUp,
+		"\x1b[6;1:1~":     keyPageDown,
 	} {
 		decoder := &keyDecoder{}
 		events := decoder.feed([]byte(sequence), false)
 		assertKeyEvents(t, events, []keyEvent{{code: code}})
 	}
+}
+
+func TestKeyDecoderHandlesSplitKittySequenceAndIgnoresRelease(t *testing.T) {
+	decoder := &keyDecoder{}
+	if events := decoder.feed([]byte("\x1b[13;2:"), false); len(events) != 0 {
+		t.Fatalf("partial events = %+v", events)
+	}
+	events := decoder.feed([]byte("1u\x1b[99;5:3u\x1b[?7u"), false)
+	assertKeyEvents(t, events, []keyEvent{{code: keyNewline}})
 }
 
 func TestKeyDecoderHandlesBracketedPaste(t *testing.T) {
