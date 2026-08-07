@@ -93,7 +93,7 @@ func TestBashParentCancellationIsFatalAndReported(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		result, runErr := bashTool.Execute(ctx, json.RawMessage(`{"command":": > \"$YAAH_READY\"; printf ready; while :; do :; done"}`))
+		result, runErr := bashTool.Execute(ctx, json.RawMessage(`{"command":": > \"$YAAH_READY\"; printf ready; while :; do :; done"}`), nil)
 		done <- outcome{result: result, err: runErr}
 	}()
 	waitForPath(t, readyPath)
@@ -154,7 +154,7 @@ func TestBashValidationAndStartFailuresAreRecoverableAndBounded(t *testing.T) {
 		{name: "wrong type", json: `{"command":3}`, want: "decode arguments"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			result, runErr := regular.Execute(context.Background(), json.RawMessage(test.json))
+			result, runErr := regular.Execute(context.Background(), json.RawMessage(test.json), nil)
 			if runErr != nil || !result.IsError || !strings.Contains(result.Output, test.want) {
 				t.Fatalf("validation result = %+v err=%v, want %q", result, runErr, test.want)
 			}
@@ -163,7 +163,7 @@ func TestBashValidationAndStartFailuresAreRecoverableAndBounded(t *testing.T) {
 
 	largeField := strings.Repeat("x", defaultMaxBytes*2)
 	encoded := fmt.Sprintf(`{"command":"echo no",%q:true}`, largeField)
-	result, err := regular.Execute(context.Background(), json.RawMessage(encoded))
+	result, err := regular.Execute(context.Background(), json.RawMessage(encoded), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

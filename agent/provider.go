@@ -26,6 +26,14 @@ type ToolCall struct {
 	Arguments json.RawMessage
 }
 
+type ToolCallSnapshot struct {
+	ID           string
+	Name         string
+	RawArguments string
+	Arguments    map[string]any
+	Complete     bool
+}
+
 type Usage struct {
 	InputTokens  int64
 	OutputTokens int64
@@ -55,8 +63,11 @@ type CompactResponse struct {
 
 type TextSink func(text string) error
 
+// ToolCallSink may be called concurrently while Generate is running.
+type ToolCallSink func(ToolCallSnapshot) error
+
 type Provider interface {
-	Generate(ctx context.Context, request Request, onText, onReasoning TextSink) (Response, error)
+	Generate(ctx context.Context, request Request, onText, onReasoning TextSink, onToolCall ToolCallSink) (Response, error)
 }
 
 type Compactor interface {

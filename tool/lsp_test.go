@@ -192,7 +192,7 @@ func executeLSPTestTool(t *testing.T, ctx context.Context, registry *Registry, n
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := registry.Execute(ctx, agent.ToolCall{ID: "call", Name: name, Arguments: encoded})
+	result, err := registry.Execute(ctx, agent.ToolCall{ID: "call", Name: name, Arguments: encoded}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

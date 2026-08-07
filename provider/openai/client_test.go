@@ -135,7 +135,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	}, func(text string) error {
 		sinkText = append(sinkText, text)
 		return nil
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("first Generate() error = %v", err)
 	}
@@ -163,7 +163,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 			{Kind: agent.InputToolResult, CallID: "call_read", Tool: "read", Text: "file contents"},
 			{Kind: agent.InputToolResult, CallID: "call_bash", Tool: "bash", Text: "exit status 1", IsError: true},
 		},
-	}, nil, nil)
+	}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("second Generate() error = %v", err)
 	}
@@ -178,7 +178,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 		State:         second.State,
 		Tools:         tools,
 		Inputs:        []agent.Input{{Kind: agent.InputUser, Text: "next"}},
-	}, nil, nil)
+	}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("third Generate() error = %v", err)
 	}
@@ -298,7 +298,7 @@ func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
 		ThinkingLevel: agent.ThinkingHigh,
 		State:         compacted.State,
 		Inputs:        []agent.Input{{Kind: agent.InputUser, Text: "after compact"}},
-	}, nil, nil)
+	}, nil, nil, nil)
 	if err != nil || response.Text != "continued" || calls != 2 {
 		t.Fatalf("response = %+v, error = %v, calls = %d", response, err, calls)
 	}
@@ -427,7 +427,7 @@ func TestClientStreamsTextDeltas(t *testing.T) {
 			deltas = append(deltas, delta)
 			seenDelta <- delta
 			return nil
-		}, nil)
+		}, nil, nil)
 		done <- outcome{response: response, err: err}
 	}()
 	select {
@@ -460,7 +460,7 @@ func TestClientStreamsRefusal(t *testing.T) {
 
 	client := newTestClient(t, "key", server.URL, Options{})
 	var delivered string
-	response, err := client.Generate(context.Background(), baseRequest(), func(delta string) error { delivered += delta; return nil }, nil)
+	response, err := client.Generate(context.Background(), baseRequest(), func(delta string) error { delivered += delta; return nil }, nil, nil)
 	if err != nil || response.Text != "Cannot comply." || delivered != response.Text {
 		t.Fatalf("response=%+v delivered=%q error=%v", response, delivered, err)
 	}
@@ -476,7 +476,7 @@ func TestClientDecodesRefusalAndPreservesMalformedToolArguments(t *testing.T) {
 	}`)
 	defer server.Close()
 	client := newTestClient(t, "key", server.URL, Options{})
-	response, err := client.Generate(context.Background(), baseRequest(), nil, nil)
+	response, err := client.Generate(context.Background(), baseRequest(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -509,7 +509,7 @@ func TestClientRejectsMalformedResponses(t *testing.T) {
 			_, err := client.Generate(context.Background(), baseRequest(), func(string) error {
 				t.Fatal("text sink called for malformed response")
 				return nil
-			}, nil)
+			}, nil, nil)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Generate() error = %v, want containing %q", err, test.want)
 			}
@@ -523,7 +523,7 @@ func TestClientBoundsHTTPErrors(t *testing.T) {
 	defer server.Close()
 	client := newTestClient(t, key, server.URL, Options{})
 	client.maxErrorBytes = 160
-	_, err := client.Generate(context.Background(), baseRequest(), nil, nil)
+	_, err := client.Generate(context.Background(), baseRequest(), nil, nil, nil)
 	if err == nil {
 		t.Fatal("Generate() succeeded")
 	}
@@ -536,7 +536,7 @@ func TestClientParsesStructuredHTTPError(t *testing.T) {
 	server := responseServer(t, http.StatusTooManyRequests, `{"error":{"type":"rate_limit_error","code":"rate_limit","message":"slow down"}}`)
 	defer server.Close()
 	client := newTestClient(t, "key", server.URL, Options{})
-	_, err := client.Generate(context.Background(), baseRequest(), nil, nil)
+	_, err := client.Generate(context.Background(), baseRequest(), nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "HTTP 429") || !strings.Contains(err.Error(), "rate_limit_error/rate_limit: slow down") {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -548,7 +548,7 @@ func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
 		defer server.Close()
 		client := newTestClient(t, "key", server.URL, Options{})
 		client.maxResponseBytes = 100
-		_, err := client.Generate(context.Background(), baseRequest(), nil, nil)
+		_, err := client.Generate(context.Background(), baseRequest(), nil, nil, nil)
 		if err == nil || !strings.Contains(err.Error(), "response exceeds 100 bytes") {
 			t.Fatalf("Generate() error = %v", err)
 		}
@@ -561,7 +561,7 @@ func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
 		client.maxRequestBytes = 100
 		request := baseRequest()
 		request.Inputs[0].Text = strings.Repeat("x", 200)
-		_, err := client.Generate(context.Background(), request, nil, nil)
+		_, err := client.Generate(context.Background(), request, nil, nil, nil)
 		if err == nil || !strings.Contains(err.Error(), "request exceeds 100 bytes") || calls.Load() != 0 {
 			t.Fatalf("Generate() error = %v, HTTP calls = %d", err, calls.Load())
 		}
@@ -577,7 +577,7 @@ func TestClientRejectsOversizedReturnedStateBeforeTextSink(t *testing.T) {
 	_, err := client.Generate(context.Background(), baseRequest(), func(string) error {
 		sinkCalled = true
 		return nil
-	}, nil)
+	}, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "continuation state exceeds 100 bytes") || sinkCalled {
 		t.Fatalf("Generate() error = %v, sink called = %v", err, sinkCalled)
 	}
@@ -588,7 +588,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		client := newTestClient(t, "key", "http://127.0.0.1:1", Options{})
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		_, err := client.Generate(ctx, baseRequest(), nil, nil)
+		_, err := client.Generate(ctx, baseRequest(), nil, nil, nil)
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("Generate() error = %v", err)
 		}
@@ -599,7 +599,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 			<-release
 		}))
 		client := newTestClient(t, "key", server.URL, Options{HTTPClient: &http.Client{Timeout: 30 * time.Millisecond}})
-		_, err := client.Generate(context.Background(), baseRequest(), nil, nil)
+		_, err := client.Generate(context.Background(), baseRequest(), nil, nil, nil)
 		close(release)
 		server.Close()
 		if !errors.Is(err, context.DeadlineExceeded) {
@@ -614,7 +614,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = client.Generate(context.Background(), baseRequest(), nil, nil)
+		_, err = client.Generate(context.Background(), baseRequest(), nil, nil, nil)
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("Generate() error = %v", err)
 		}
@@ -624,7 +624,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		defer server.Close()
 		client := newTestClient(t, "key", server.URL, Options{})
 		sinkError := errors.New("sink failed")
-		_, err := client.Generate(context.Background(), baseRequest(), func(string) error { return sinkError }, nil)
+		_, err := client.Generate(context.Background(), baseRequest(), func(string) error { return sinkError }, nil, nil)
 		if !errors.Is(err, sinkError) {
 			t.Fatalf("Generate() error = %v", err)
 		}
@@ -637,7 +637,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		defer server.Close()
 		client := newTestClient(t, "key", server.URL, Options{})
 		sinkError := errors.New("streaming sink failed")
-		_, err := client.Generate(context.Background(), baseRequest(), func(string) error { return sinkError }, nil)
+		_, err := client.Generate(context.Background(), baseRequest(), func(string) error { return sinkError }, nil, nil)
 		if !errors.Is(err, sinkError) {
 			t.Fatalf("Generate() error = %v", err)
 		}
@@ -655,7 +655,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		seen := make(chan struct{}, 1)
 		done := make(chan error, 1)
 		go func() {
-			_, err := client.Generate(ctx, baseRequest(), func(string) error { seen <- struct{}{}; return nil }, nil)
+			_, err := client.Generate(ctx, baseRequest(), func(string) error { seen <- struct{}{}; return nil }, nil, nil)
 			done <- err
 		}()
 		select {
@@ -678,7 +678,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		}))
 		defer origin.Close()
 		client := newTestClient(t, "key", origin.URL, Options{})
-		_, err := client.Generate(context.Background(), baseRequest(), nil, nil)
+		_, err := client.Generate(context.Background(), baseRequest(), nil, nil, nil)
 		if err == nil || !strings.Contains(err.Error(), "HTTP 307") || destinationCalls.Load() != 0 {
 			t.Fatalf("Generate() error = %v, destination calls = %d", err, destinationCalls.Load())
 		}
@@ -696,7 +696,7 @@ func TestClientRejectsUnsupportedThinkingLevelBeforeAuthentication(t *testing.T)
 	}
 
 	request := agent.Request{Model: "unknown", ThinkingLevel: agent.ThinkingXHigh}
-	_, err = client.Generate(context.Background(), request, nil, nil)
+	_, err = client.Generate(context.Background(), request, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), `thinking level "xhigh" is not supported by model "unknown"`) {
 		t.Fatalf("Generate() error = %v", err)
 	}

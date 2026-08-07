@@ -18,7 +18,7 @@ type fakeTool struct {
 
 func (t fakeTool) Definition() agent.ToolDefinition { return t.definition }
 
-func (t fakeTool) Execute(ctx context.Context, arguments json.RawMessage) (agent.ToolResult, error) {
+func (t fakeTool) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if t.execute == nil {
 		return agent.ToolResult{}, nil
 	}
@@ -58,7 +58,7 @@ func TestRegistryDispatchesAndCorrelatesResult(t *testing.T) {
 		},
 	})
 
-	result, err := registry.Execute(context.Background(), agent.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"README.md"}`)})
+	result, err := registry.Execute(context.Background(), agent.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{"path":"README.md"}`)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,11 +96,11 @@ func TestRegistryCorrelatesErrorsAndRejectsUnknownTools(t *testing.T) {
 		},
 	})
 
-	result, err := registry.Execute(context.Background(), agent.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{}`)})
+	result, err := registry.Execute(context.Background(), agent.ToolCall{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{}`)}, nil)
 	if !errors.Is(err, toolErr) || result.CallID != "call-1" || result.Tool != "read" {
 		t.Fatalf("result=%+v error=%v", result, err)
 	}
-	if _, err := registry.Execute(context.Background(), agent.ToolCall{Name: "missing"}); !errors.Is(err, errUnknownTool) {
+	if _, err := registry.Execute(context.Background(), agent.ToolCall{Name: "missing"}, nil); !errors.Is(err, errUnknownTool) {
 		t.Fatalf("unknown tool error = %v", err)
 	}
 }

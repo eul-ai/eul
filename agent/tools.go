@@ -18,6 +18,17 @@ type ToolDefinition struct {
 	Parameters  JSONSchema
 }
 
+type ToolPresentation struct {
+	Title     string
+	Arguments string
+	Lines     []string
+	Markdown  bool
+	Outcome   string
+}
+
+// ToolUpdateSink may be called concurrently before Execute returns.
+type ToolUpdateSink func(ToolPresentation) error
+
 type ToolResult struct {
 	CallID  string
 	Tool    string
@@ -27,5 +38,6 @@ type ToolResult struct {
 
 type Toolbox interface {
 	Definitions() []ToolDefinition
-	Execute(ctx context.Context, call ToolCall) (ToolResult, error)
+	Presentation(ToolCallSnapshot) ToolPresentation
+	Execute(ctx context.Context, call ToolCall, updates ToolUpdateSink) (ToolResult, error)
 }

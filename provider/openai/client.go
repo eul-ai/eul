@@ -84,7 +84,7 @@ func NewCodex(source CodexTokenSource, options Options) (*Client, error) {
 	}, nil
 }
 
-func (c *Client) Generate(ctx context.Context, request agent.Request, onText, onReasoning agent.TextSink) (agent.Response, error) {
+func (c *Client) Generate(ctx context.Context, request agent.Request, onText, onReasoning agent.TextSink, onToolCall agent.ToolCallSink) (agent.Response, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.Response{}, err
 	}
@@ -143,7 +143,7 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 		return agent.Response{}, c.decodeHTTPError(httpResponse)
 	}
 
-	observer := streamObserver{onText: onText, onReasoning: onReasoning}
+	observer := streamObserver{onText: onText, onReasoning: onReasoning, onToolCall: onToolCall}
 	wireResponse, err := readResponsesSSE(httpResponse.Body, c.maxResponseBytes, &observer)
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {

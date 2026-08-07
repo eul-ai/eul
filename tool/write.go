@@ -6,11 +6,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"yaah/agent"
 )
 
-const writeToolName = "write"
+const (
+	writeToolName             = "write"
+	writePresentationMaxLines = 10
+	writePresentationMaxBytes = 4 * 1024
+	writePresentationMarker   = "… (preview truncated)"
+)
 
 var writeToolDefinition = agent.ToolDefinition{
 	Name:        writeToolName,
@@ -38,7 +44,61 @@ func (*Write) Definition() agent.ToolDefinition {
 	return writeToolDefinition
 }
 
-func (w *Write) Execute(ctx context.Context, arguments json.RawMessage) (agent.ToolResult, error) {
+func (*Write) Presentation(snapshot agent.ToolCallSnapshot) agent.ToolPresentation {
+	arguments := ""
+	if path := snapshotString(snapshot, "path"); path != "" {
+		arguments = displayToolArgument(path)
+	}
+
+	content, exists := snapshot.Arguments["content"]
+	if !exists {
+		return agent.ToolPresentation{Title: writeToolName, Arguments: arguments}
+	}
+	text, ok := content.(string)
+	if !ok {
+		if snapshot.Complete {
+			return agent.ToolPresentation{Title: writeToolName, Arguments: arguments, Lines: []string{"[invalid content argument]"}}
+		}
+		return agent.ToolPresentation{Title: writeToolName, Arguments: arguments}
+	}
+
+	lines, _ := writePreview(text)
+	return agent.ToolPresentation{Title: writeToolName, Arguments: arguments, Lines: lines}
+}
+
+func writePreview(content string) ([]string, bool) {
+	if content == "" {
+		return nil, false
+	}
+
+	allLines := strings.Split(content, "\n")
+	truncated := len(allLines) > writePresentationMaxLines
+	if len(allLines) > writePresentationMaxLines {
+		allLines = allLines[:writePresentationMaxLines]
+	}
+
+	remaining := writePresentationMaxBytes - len(writePresentationMarker) - 1
+	lines := make([]string, 0, len(allLines)+1)
+	for _, line := range allLines {
+		if remaining <= 0 {
+			truncated = true
+			break
+		}
+		bounded, lineTruncated := truncateLine(line, remaining)
+		lines = append(lines, bounded)
+		remaining -= len(bounded) + 1
+		if lineTruncated {
+			truncated = true
+			break
+		}
+	}
+	if truncated {
+		lines = append(lines, writePresentationMarker)
+	}
+	return lines, truncated
+}
+
+func (w *Write) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}

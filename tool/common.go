@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"yaah/agent"
@@ -120,6 +122,18 @@ func validateText(data []byte) error {
 func escapeOutputName(name string) string {
 	replacer := strings.NewReplacer("\\", "\\\\", "\n", "\\n", "\r", "\\r", "\t", "\\t")
 	return replacer.Replace(name)
+}
+
+func snapshotString(snapshot agent.ToolCallSnapshot, name string) string {
+	value, _ := snapshot.Arguments[name].(string)
+	return value
+}
+
+func displayToolArgument(value string) string {
+	if strings.IndexFunc(value, unicode.IsSpace) >= 0 || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return strconv.Quote(value)
+	}
+	return value
 }
 
 func optionalPositive(value *int, defaultValue, maximum int, field string) (int, error) {

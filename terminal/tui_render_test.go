@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"testing"
@@ -61,9 +62,9 @@ func TestConversationBlocksUseCurrentTheme(t *testing.T) {
 		"user":            {foreground: currentTheme.foreground},
 		"assistant":       {foreground: currentTheme.foreground},
 		"summary":         {foreground: currentTheme.muted, italic: true},
-		"pending tool":    {foreground: currentTheme.accent, background: currentTheme.toolPendingBackground, paintBackground: true},
-		"successful tool": {foreground: currentTheme.accent, background: currentTheme.toolSuccessBackground, paintBackground: true},
-		"failed tool":     {foreground: currentTheme.error, background: currentTheme.toolErrorBackground, paintBackground: true},
+		"pending tool":    {foreground: currentTheme.foreground, background: currentTheme.toolPendingBackground, paintBackground: true},
+		"successful tool": {foreground: currentTheme.foreground, background: currentTheme.toolSuccessBackground, paintBackground: true},
+		"failed tool":     {foreground: currentTheme.foreground, background: currentTheme.toolErrorBackground, paintBackground: true},
 		"context":         {foreground: currentTheme.muted},
 		"error":           {foreground: currentTheme.error},
 	}
@@ -82,26 +83,26 @@ func TestConversationBlocksUseCurrentTheme(t *testing.T) {
 	}
 }
 
-func TestAssistantAndReasoningRenderInlineMarkdown(t *testing.T) {
+func TestAssistantReasoningAndToolDetailsRenderInlineMarkdown(t *testing.T) {
 	lines := conversationLines([]conversationBlock{
 		{kind: blockReasoning, text: "**Planning**"},
 		{kind: blockAssistant, text: "Use *care* and **`code`**"},
-		{kind: blockTool, text: "read `file` and *.go"},
-	}, 40)
+		{kind: blockTool, tool: agent.ToolPresentation{
+			Title: "subagent", Arguments: "(3)", Markdown: true,
+			Lines: []string{"1. complete — Read `./terminal/repl.go`"},
+		}, toolOutcome: "ok"},
+	}, 80)
 	if lines[0].text != "Planning" || lines[2].text != "Use care and code" {
 		t.Fatalf("lines = %+v", lines)
 	}
-	if lines[5].text != "read `file` and *.go" || len(lines[5].spans) != 0 {
-		t.Fatalf("tool markdown was interpreted: %+v", lines[5])
-	}
 
 	var reasoning strings.Builder
-	renderLine(&reasoning, 1, 40, lines[0])
+	renderLine(&reasoning, 1, 80, lines[0])
 	if !strings.Contains(reasoning.String(), ansiBold+"Planning") || !strings.Contains(reasoning.String(), ansiItalic) {
 		t.Fatalf("reasoning line = %q", reasoning.String())
 	}
 	var assistant strings.Builder
-	renderLine(&assistant, 1, 40, lines[2])
+	renderLine(&assistant, 1, 80, lines[2])
 	if !strings.Contains(assistant.String(), ansiItalic+"care"+ansiNotItalic) {
 		t.Fatalf("assistant italic = %q", assistant.String())
 	}
@@ -109,6 +110,46 @@ func TestAssistantAndReasoningRenderInlineMarkdown(t *testing.T) {
 	if !strings.Contains(assistant.String(), code) {
 		t.Fatalf("assistant code = %q", assistant.String())
 	}
+
+	var heading, detail *styledLine
+	for index := range lines {
+		switch lines[index].text {
+		case "subagent (3) — ok":
+			heading = &lines[index]
+		case "1. complete — Read ./terminal/repl.go":
+			detail = &lines[index]
+		}
+	}
+	if heading == nil || detail == nil {
+		t.Fatalf("tool lines = %+v", lines)
+	}
+	var renderedHeading strings.Builder
+	renderLine(&renderedHeading, 1, 80, *heading)
+	headingText := renderedHeading.String()
+	if !strings.Contains(headingText, ansiForeground(currentTheme.accent)+ansiBold+"subagent") || !strings.Contains(headingText, ansiForeground(currentTheme.foreground)+ansiNormalIntensity+" (3)") {
+		t.Fatalf("tool heading = %q", headingText)
+	}
+	var renderedDetail strings.Builder
+	renderLine(&renderedDetail, 1, 80, *detail)
+	if strings.Contains(detail.text, "`") || !strings.Contains(renderedDetail.String(), ansiForeground(currentTheme.markdownCode)+"./terminal/repl.go"+ansiForeground(currentTheme.foreground)) {
+		t.Fatalf("tool detail = %q", renderedDetail.String())
+	}
+}
+
+func TestToolPlainTextDetailsPreserveMarkdownMarkers(t *testing.T) {
+	lines := conversationLines([]conversationBlock{{
+		kind: blockTool,
+		tool: agent.ToolPresentation{Title: "write", Arguments: "README.md", Lines: []string{"Use `literal` and **markers**"}},
+	}}, 80)
+	for _, line := range lines {
+		if line.text == "Use `literal` and **markers**" {
+			if len(line.spans) != 0 {
+				t.Fatalf("plain tool line has spans: %+v", line)
+			}
+			return
+		}
+	}
+	t.Fatalf("plain tool line missing: %+v", lines)
 }
 
 func TestToolBlockHasHorizontalAndVerticalPadding(t *testing.T) {
@@ -315,15 +356,48 @@ func TestTUIModelTracksActivityAndContext(t *testing.T) {
 	if model.contextTokens != 123 {
 		t.Fatalf("context tokens = %d", model.contextTokens)
 	}
-	model.applyAgentEvent(agent.Event{Kind: agent.EventToolStart, Call: agent.ToolCall{Name: "read", Arguments: []byte(`{"path":"file.go"}`)}})
+	model.applyAgentEvent(agent.Event{Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "call-1", Name: "read"}, Presentation: agent.ToolPresentation{Title: "read file.go"}})
 	if model.activity.kind != activityTool || !strings.Contains(model.activity.detail, "file.go") || model.blocks[len(model.blocks)-1].kind != blockToolPending {
 		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.blocks)
 	}
 	toolBlocks := len(model.blocks)
-	model.applyAgentEvent(agent.Event{Kind: agent.EventToolEnd, Result: agent.ToolResult{Tool: "read", IsError: true, Output: "failed"}})
+	model.applyAgentEvent(agent.Event{Kind: agent.EventToolEnd, Call: agent.ToolCall{ID: "call-1", Name: "read"}, Presentation: agent.ToolPresentation{Title: "read file.go"}, Result: agent.ToolResult{Tool: "read", IsError: true, Output: "failed"}})
 	last := model.blocks[len(model.blocks)-1]
-	if model.activity.kind != activityThinking || len(model.blocks) != toolBlocks || last.kind != blockToolError || !strings.Contains(last.text, " — error: failed") {
+	if model.activity.kind != activityThinking || len(model.blocks) != toolBlocks || last.kind != blockToolError || last.toolOutcome != "error: failed" {
 		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.blocks)
+	}
+}
+
+func TestTUIModelCorrelatesAndSanitizesStreamingToolBlocks(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.applyAgentEvent(agent.Event{
+		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "one", Name: "write"},
+		Presentation: agent.ToolPresentation{Title: "write one", Lines: []string{"partial"}},
+	})
+	model.applyAgentEvent(agent.Event{
+		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "two", Name: "subagent"},
+		Presentation: agent.ToolPresentation{Title: "subagent", Lines: []string{"running"}},
+	})
+	model.applyAgentEvent(agent.Event{
+		Kind: agent.EventToolUpdate, Call: agent.ToolCall{ID: "one", Name: "write"},
+		Presentation: agent.ToolPresentation{Title: "write one", Lines: []string{"safe\x1b[31m"}},
+	})
+	model.applyAgentEvent(agent.Event{
+		Kind: agent.EventToolEnd, Call: agent.ToolCall{ID: "two", Name: "subagent"},
+		Presentation: agent.ToolPresentation{Title: "subagent", Lines: []string{"complete"}},
+		Result:       agent.ToolResult{Tool: "subagent"},
+	})
+
+	first := model.blocks[model.toolBlockIndex("one")]
+	second := model.blocks[model.toolBlockIndex("two")]
+	if first.kind != blockToolPending || first.tool.Lines[0] != "safe�[31m" {
+		t.Fatalf("first block = %+v", first)
+	}
+	if second.kind != blockTool || second.tool.Lines[0] != "complete" || second.toolOutcome != "ok" {
+		t.Fatalf("second block = %+v", second)
+	}
+	if model.activity.kind != activityTool || model.activity.detail != "write one" {
+		t.Fatalf("activity = %+v", model.activity)
 	}
 }
 
@@ -333,6 +407,33 @@ func TestCanceledTurnKeepsCancelingActivity(t *testing.T) {
 	model.applyAgentEvent(agent.Event{Kind: agent.EventAssistantText, Text: "late text"})
 	if model.activity.kind != activityCanceling {
 		t.Fatalf("activity = %+v", model.activity)
+	}
+}
+
+func TestTUIToolPresentationBoundsSingleLineSummary(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.applyAgentEvent(agent.Event{
+		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "bash-1", Name: "bash"},
+		Presentation: agent.ToolPresentation{Title: "bash", Arguments: "first\n" + strings.Repeat("x", 1_000)},
+	})
+	block := model.blocks[model.toolBlockIndex("bash-1")]
+	if strings.Contains(block.tool.Arguments, "\n") || len(block.tool.Arguments) > maxToolPresentationSummaryBytes || len(model.activity.detail) > maxToolPresentationSummaryBytes || model.activity.detail != toolActivityDetail(agent.ToolCall{}, block.tool) {
+		t.Fatalf("presentation=%+v activity=%q", block.tool, model.activity.detail)
+	}
+}
+
+func TestInterruptedTurnClosesPendingToolBlocks(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.running = true
+	model.interrupted = true
+	model.applyAgentEvent(agent.Event{
+		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "write-1", Name: "write"},
+		Presentation: agent.ToolPresentation{Title: "write file.go", Lines: []string{"partial"}},
+	})
+	model.finishTurn(context.Canceled, &fakeEngine{})
+	block := model.blocks[model.toolBlockIndex("write-1")]
+	if block.kind != blockToolError || block.toolOutcome != "canceled" {
+		t.Fatalf("block = %+v", block)
 	}
 }
 

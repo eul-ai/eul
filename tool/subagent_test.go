@@ -28,7 +28,7 @@ func TestSubagentRunsOneTask(t *testing.T) {
 		return agent.RunResult{Text: "result for " + task}, nil
 	})
 
-	result, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"]}`))
+	result, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"]}`), nil)
 	if err != nil || result.IsError || result.Output != "Subagent 1:\nresult for inspect" {
 		t.Fatalf("result = %+v, error = %v", result, err)
 	}
@@ -55,7 +55,7 @@ func TestSubagentRunsConcurrentlyAndReturnsInputOrder(t *testing.T) {
 		err    error
 	}, 1)
 	go func() {
-		result, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["first","second"]}`))
+		result, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["first","second"]}`), nil)
 		done <- struct {
 			result agent.ToolResult
 			err    error
@@ -94,6 +94,85 @@ func TestSubagentRunsConcurrentlyAndReturnsInputOrder(t *testing.T) {
 	}
 }
 
+func TestSubagentPublishesOutOfOrderLiveStatuses(t *testing.T) {
+	started := make(chan string, 2)
+	releases := map[string]chan struct{}{
+		"first":  make(chan struct{}),
+		"second": make(chan struct{}),
+	}
+	subagent := NewSubagent(func(_ context.Context, task string) (agent.RunResult, error) {
+		started <- task
+		<-releases[task]
+		return agent.RunResult{Text: task + " result"}, nil
+	})
+	updates := make(chan agent.ToolPresentation, 8)
+	done := make(chan struct {
+		result agent.ToolResult
+		err    error
+	}, 1)
+	go func() {
+		result, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["first","second"]}`), func(presentation agent.ToolPresentation) error {
+			updates <- presentation
+			return nil
+		})
+		done <- struct {
+			result agent.ToolResult
+			err    error
+		}{result: result, err: err}
+	}()
+
+	initial := <-updates
+	if initial.Title != "subagent" || initial.Arguments != "(2)" || !initial.Markdown || len(initial.Lines) != 2 || !strings.Contains(initial.Lines[0], "running") || !strings.Contains(initial.Lines[1], "running") {
+		t.Fatalf("initial update = %+v", initial)
+	}
+	for range 2 {
+		<-started
+	}
+	close(releases["second"])
+	secondDone := <-updates
+	if !strings.Contains(secondDone.Lines[0], "running") || !strings.Contains(secondDone.Lines[1], "complete") {
+		t.Fatalf("second completion update = %+v", secondDone)
+	}
+	close(releases["first"])
+	final := <-updates
+	if !strings.Contains(final.Lines[0], "complete") || !strings.Contains(final.Lines[1], "complete") {
+		t.Fatalf("final update = %+v", final)
+	}
+	result := <-done
+	if result.err != nil || result.result.IsError || strings.Index(result.result.Output, "first result") > strings.Index(result.result.Output, "second result") {
+		t.Fatalf("result=%+v error=%v", result.result, result.err)
+	}
+}
+
+func TestSubagentUpdateFailureCancelsRemainingChildren(t *testing.T) {
+	updateErr := errors.New("update failed")
+	canceled := make(chan struct{})
+	subagent := NewSubagent(func(ctx context.Context, task string) (agent.RunResult, error) {
+		if task == "first" {
+			return agent.RunResult{Text: "done"}, nil
+		}
+		<-ctx.Done()
+		close(canceled)
+		return agent.RunResult{}, ctx.Err()
+	})
+	updates := 0
+	_, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["first","second"]}`), func(agent.ToolPresentation) error {
+		updates++
+		if updates > 1 {
+			return updateErr
+		}
+		return nil
+	})
+	if !errors.Is(err, updateErr) {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	select {
+	case <-canceled:
+	default:
+		t.Fatal("remaining child was not canceled")
+	}
+}
+
 func TestSubagentWaitsForMixedResults(t *testing.T) {
 	failure := errors.New("child failed")
 	subagent := NewSubagent(func(_ context.Context, task string) (agent.RunResult, error) {
@@ -103,7 +182,7 @@ func TestSubagentWaitsForMixedResults(t *testing.T) {
 		return agent.RunResult{Text: "useful finding"}, nil
 	})
 
-	result, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["good","bad"]}`))
+	result, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["good","bad"]}`), nil)
 	if err != nil || !result.IsError || !strings.Contains(result.Output, "useful finding") || !strings.Contains(result.Output, failure.Error()) {
 		t.Fatalf("result = %+v, error = %v", result, err)
 	}
@@ -121,7 +200,7 @@ func TestSubagentValidatesAllTasksBeforeLaunching(t *testing.T) {
 		`{"tasks":["one","two","three","four","five"]}`,
 		`{"tasks":["one","  "]}`,
 	} {
-		result, err := subagent.Execute(context.Background(), json.RawMessage(arguments))
+		result, err := subagent.Execute(context.Background(), json.RawMessage(arguments), nil)
 		if err != nil || !result.IsError {
 			t.Fatalf("arguments = %s, result = %+v, error = %v", arguments, result, err)
 		}
@@ -145,7 +224,7 @@ func TestSubagentPropagatesCancellationToAllTasks(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := subagent.Execute(ctx, json.RawMessage(`{"tasks":["one","two"]}`))
+		_, err := subagent.Execute(ctx, json.RawMessage(`{"tasks":["one","two"]}`), nil)
 		done <- err
 	}()
 	for range 2 {
@@ -173,7 +252,7 @@ func TestSubagentBoundsCombinedOutput(t *testing.T) {
 		return agent.RunResult{Text: strings.Repeat("x", defaultMaxBytes)}, nil
 	})
 
-	result, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["one","two"]}`))
+	result, err := subagent.Execute(context.Background(), json.RawMessage(`{"tasks":["one","two"]}`), nil)
 	if err != nil || len(result.Output) > defaultMaxBytes || !strings.Contains(result.Output, "subagent output truncated") {
 		t.Fatalf("output bytes = %d, error = %v", len(result.Output), err)
 	}

@@ -17,7 +17,11 @@ var errUnknownTool = errors.New("tool: unknown tool")
 
 type Tool interface {
 	Definition() agent.ToolDefinition
-	Execute(ctx context.Context, arguments json.RawMessage) (agent.ToolResult, error)
+	Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error)
+}
+
+type presenter interface {
+	Presentation(agent.ToolCallSnapshot) agent.ToolPresentation
 }
 
 type Registry struct {
@@ -48,13 +52,31 @@ func (r *Registry) Definitions() []agent.ToolDefinition {
 	return r.definitions
 }
 
-func (r *Registry) Execute(ctx context.Context, call agent.ToolCall) (agent.ToolResult, error) {
+func (r *Registry) Presentation(snapshot agent.ToolCallSnapshot) agent.ToolPresentation {
+	registered, exists := r.tools[snapshot.Name]
+	if !exists {
+		return agent.ToolPresentation{Title: snapshot.Name}
+	}
+
+	provider, ok := registered.(presenter)
+	if !ok {
+		return agent.ToolPresentation{Title: snapshot.Name}
+	}
+	presentation := provider.Presentation(snapshot)
+	if presentation.Title == "" {
+		presentation.Title = snapshot.Name
+	}
+	presentation.Lines = append([]string(nil), presentation.Lines...)
+	return presentation
+}
+
+func (r *Registry) Execute(ctx context.Context, call agent.ToolCall, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
 	registered, exists := r.tools[call.Name]
 	if !exists {
 		return agent.ToolResult{}, fmt.Errorf("%w %q", errUnknownTool, call.Name)
 	}
 
-	result, err := registered.Execute(ctx, call.Arguments)
+	result, err := registered.Execute(ctx, call.Arguments, updates)
 	result.CallID = call.ID
 	result.Tool = call.Name
 	return result, err

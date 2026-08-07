@@ -57,7 +57,19 @@ func (*Bash) Definition() agent.ToolDefinition {
 	return bashToolDefinition
 }
 
-func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage) (agent.ToolResult, error) {
+func (*Bash) Presentation(snapshot agent.ToolCallSnapshot) agent.ToolPresentation {
+	return bashPresentation(snapshotString(snapshot, "command"))
+}
+
+func bashPresentation(command string) agent.ToolPresentation {
+	arguments := ""
+	if command != "" {
+		arguments = displayToolArgument(command)
+	}
+	return agent.ToolPresentation{Title: bashToolName, Arguments: arguments}
+}
+
+func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
@@ -136,6 +148,13 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage) (agent.To
 		notice = "earlier command output truncated"
 	}
 	result := agent.ToolResult{Output: boundTail(text, notice), IsError: isError}
+	if updates != nil {
+		presentation := bashPresentation(args.Command)
+		presentation.Outcome = strings.Trim(status, "[]")
+		if err := updates(presentation); err != nil {
+			return result, err
+		}
+	}
 	if parentErr != nil {
 		return result, parentErr
 	}

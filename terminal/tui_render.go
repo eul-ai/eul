@@ -261,6 +261,12 @@ func renderLine(frame *strings.Builder, row, width int, line styledLine) {
 		italic := style.italic
 		for _, span := range spans {
 			spanForeground := style.foreground
+			switch span.style.foreground {
+			case inlineForegroundAccent:
+				spanForeground = currentTheme.accent
+			case inlineForegroundError:
+				spanForeground = currentTheme.error
+			}
 			if span.style.code {
 				spanForeground = currentTheme.markdownCode
 			}
@@ -371,8 +377,9 @@ func conversationLines(blocks []conversationBlock, width int) []styledLine {
 		}
 		if isToolBlock(block.kind) {
 			lines = append(lines, styledLine{style: style, padding: padding})
-		}
-		if block.kind == blockAssistant || block.kind == blockReasoning {
+			lines = append(lines, toolConversationLines(block, contentWidth, style, padding)...)
+			lines = append(lines, styledLine{style: style, padding: padding})
+		} else if block.kind == blockAssistant || block.kind == blockReasoning {
 			for _, line := range wrapInlineMarkdown(text, contentWidth) {
 				lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding})
 			}
@@ -381,12 +388,51 @@ func conversationLines(blocks []conversationBlock, width int) []styledLine {
 				lines = append(lines, styledLine{text: line, style: style, padding: padding})
 			}
 		}
-		if isToolBlock(block.kind) {
-			lines = append(lines, styledLine{style: style, padding: padding})
-		}
 		if index < len(blocks)-1 {
 			lines = append(lines, styledLine{})
 		}
+	}
+	return lines
+}
+
+func toolConversationLines(block conversationBlock, width int, style lineStyle, padding int) []styledLine {
+	title := block.tool.Title
+	if title == "" {
+		title = block.text
+	}
+	titleForeground := inlineForegroundAccent
+	if block.kind == blockToolError {
+		titleForeground = inlineForegroundError
+	}
+	heading := []inlineSpan{{text: title, style: inlineStyle{bold: true, foreground: titleForeground}}}
+	if block.tool.Arguments != "" {
+		appendInlineSpan(&heading, " "+block.tool.Arguments, inlineStyle{})
+	}
+	outcome := block.toolOutcome
+	if outcome == "" && block.kind == blockToolPending {
+		outcome = block.tool.Outcome
+	}
+	if outcome != "" {
+		appendInlineSpan(&heading, " — "+outcome, inlineStyle{foreground: titleForeground})
+	}
+
+	lines := make([]styledLine, 0, len(block.tool.Lines)+2)
+	for _, line := range wrapInlineSpans(heading, width) {
+		lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding})
+	}
+	if len(block.tool.Lines) == 0 {
+		return lines
+	}
+	lines = append(lines, styledLine{style: style, padding: padding})
+	body := strings.Join(block.tool.Lines, "\n")
+	if block.tool.Markdown {
+		for _, line := range wrapInlineMarkdown(body, width) {
+			lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding})
+		}
+		return lines
+	}
+	for _, line := range wrapText(body, width) {
+		lines = append(lines, styledLine{text: line, style: style, padding: padding})
 	}
 	return lines
 }
@@ -404,11 +450,11 @@ func blockPresentation(kind blockKind) lineStyle {
 	case blockContext:
 		return lineStyle{foreground: currentTheme.muted}
 	case blockToolPending:
-		return lineStyle{foreground: currentTheme.accent, background: currentTheme.toolPendingBackground, paintBackground: true}
+		return lineStyle{foreground: currentTheme.foreground, background: currentTheme.toolPendingBackground, paintBackground: true}
 	case blockTool:
-		return lineStyle{foreground: currentTheme.accent, background: currentTheme.toolSuccessBackground, paintBackground: true}
+		return lineStyle{foreground: currentTheme.foreground, background: currentTheme.toolSuccessBackground, paintBackground: true}
 	case blockToolError:
-		return lineStyle{foreground: currentTheme.error, background: currentTheme.toolErrorBackground, paintBackground: true}
+		return lineStyle{foreground: currentTheme.foreground, background: currentTheme.toolErrorBackground, paintBackground: true}
 	case blockError:
 		return lineStyle{foreground: currentTheme.error}
 	case blockInfo:

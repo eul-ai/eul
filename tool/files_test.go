@@ -154,7 +154,7 @@ func TestReadChecksCancellationWhileScanning(t *testing.T) {
 	readTool := NewRead(cwd)
 	ctx := &cancelAfterChecksContext{cancelAfter: 100}
 
-	result, err := readTool.Execute(ctx, json.RawMessage(`{"path":"large.txt","offset":2}`))
+	result, err := readTool.Execute(ctx, json.RawMessage(`{"path":"large.txt","offset":2}`), nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("read cancellation error = %v", err)
 	}
@@ -191,12 +191,61 @@ func TestWriteCreatesParentsOverwritesAndPreservesMode(t *testing.T) {
 	}
 }
 
+func TestFileToolPresentationsSeparateTitleAndArguments(t *testing.T) {
+	snapshot := agent.ToolCallSnapshot{Arguments: map[string]any{"path": "demo.go"}}
+	presentations := []agent.ToolPresentation{
+		NewRead(t.TempDir()).Presentation(snapshot),
+		NewWrite(t.TempDir()).Presentation(snapshot),
+		NewEdit(t.TempDir()).Presentation(snapshot),
+		bashPresentation("go test ./..."),
+	}
+	wantTitles := []string{"read", "write", "edit", "bash"}
+	wantArguments := []string{"demo.go", "demo.go", "demo.go", `"go test ./..."`}
+	for index, presentation := range presentations {
+		if presentation.Title != wantTitles[index] || presentation.Arguments != wantArguments[index] {
+			t.Fatalf("presentation %d = %+v", index, presentation)
+		}
+	}
+}
+
+func TestWritePresentationStreamsBoundedPreviewWithoutWriting(t *testing.T) {
+	cwd := t.TempDir()
+	writeTool := NewWrite(cwd)
+	content := strings.Join([]string{
+		"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+	}, "\n")
+	raw := `{"path":"preview.txt","content":"` + strings.ReplaceAll(content, "\n", `\n`)
+	snapshot := agent.ToolCallSnapshot{
+		ID: "write-1", Name: "write", RawArguments: raw,
+		Arguments: map[string]any{"path": "preview.txt", "content": content},
+	}
+	presentation := writeTool.Presentation(snapshot)
+	if presentation.Title != "write" || presentation.Arguments != "preview.txt" || len(presentation.Lines) != 11 || presentation.Lines[0] != "one" || presentation.Lines[9] != "ten" || !strings.Contains(presentation.Lines[10], "truncated") {
+		t.Fatalf("presentation = %+v", presentation)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "preview.txt")); !os.IsNotExist(err) {
+		t.Fatalf("presentation changed filesystem: %v", err)
+	}
+
+	huge := strings.Repeat("界", writePresentationMaxBytes)
+	hugeSnapshot := agent.ToolCallSnapshot{Arguments: map[string]any{"path": "huge.txt", "content": huge}}
+	hugePresentation := writeTool.Presentation(hugeSnapshot)
+	if len(strings.Join(hugePresentation.Lines, "\n")) > writePresentationMaxBytes || !strings.Contains(hugePresentation.Lines[len(hugePresentation.Lines)-1], "truncated") {
+		t.Fatalf("huge presentation bytes=%d lines=%+v", len(strings.Join(hugePresentation.Lines, "\n")), hugePresentation.Lines)
+	}
+
+	result := executeJSON(t, writeTool, map[string]any{"path": "preview.txt", "content": content})
+	if result.IsError || mustReadFile(t, filepath.Join(cwd, "preview.txt")) != content {
+		t.Fatalf("write result=%+v", result)
+	}
+}
+
 func TestWriteCancellationAfterNonTransactionalWriteIsFatal(t *testing.T) {
 	cwd := t.TempDir()
 	writeTool := NewWrite(cwd)
 	ctx := &cancelAfterChecksContext{cancelAfter: 3}
 
-	result, err := writeTool.Execute(ctx, json.RawMessage(`{"path":"file.txt","content":"written"}`))
+	result, err := writeTool.Execute(ctx, json.RawMessage(`{"path":"file.txt","content":"written"}`), nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("write cancellation error = %v", err)
 	}
@@ -368,7 +417,7 @@ func TestFilesystemToolsHonorPreCanceledContext(t *testing.T) {
 		{editTool, `{"path":"file","oldText":"old","newText":"new"}`},
 	}
 	for _, call := range calls {
-		_, err := call.tool.Execute(ctx, json.RawMessage(call.args))
+		_, err := call.tool.Execute(ctx, json.RawMessage(call.args), nil)
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("%s cancellation error = %v", call.tool.Definition().Name, err)
 		}
@@ -403,7 +452,7 @@ func executeJSON(t *testing.T, current Tool, arguments any) agent.ToolResult {
 		t.Fatal(err)
 	}
 
-	result, err := current.Execute(context.Background(), encoded)
+	result, err := current.Execute(context.Background(), encoded, nil)
 	if err != nil {
 		t.Fatalf("%s.Execute() error = %v", current.Definition().Name, err)
 	}

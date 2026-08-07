@@ -14,6 +14,12 @@ import (
 
 type providerStep func(context.Context, Request, TextSink) (Response, error)
 
+type streamingProviderFunc func(context.Context, Request, TextSink, TextSink, ToolCallSink) (Response, error)
+
+func (function streamingProviderFunc) Generate(ctx context.Context, request Request, onText, onReasoning TextSink, onToolCall ToolCallSink) (Response, error) {
+	return function(ctx, request, onText, onReasoning, onToolCall)
+}
+
 type scriptedProvider struct {
 	t         *testing.T
 	steps     []providerStep
@@ -21,7 +27,7 @@ type scriptedProvider struct {
 	reasoning string
 }
 
-func (p *scriptedProvider) Generate(ctx context.Context, request Request, onText, onReasoning TextSink) (Response, error) {
+func (p *scriptedProvider) Generate(ctx context.Context, request Request, onText, onReasoning TextSink, _ ToolCallSink) (Response, error) {
 	p.t.Helper()
 	if p.calls >= len(p.steps) {
 		p.t.Fatalf("unexpected provider call %d", p.calls+1)
@@ -52,15 +58,27 @@ func (p *compactingProvider) Compact(ctx context.Context, request Request) (Comp
 }
 
 type fakeToolbox struct {
-	definitions []ToolDefinition
-	execute     func(context.Context, ToolCall) (ToolResult, error)
+	definitions        []ToolDefinition
+	presentation       func(ToolCallSnapshot) ToolPresentation
+	execute            func(context.Context, ToolCall) (ToolResult, error)
+	executeWithUpdates func(context.Context, ToolCall, ToolUpdateSink) (ToolResult, error)
 }
 
 func (t *fakeToolbox) Definitions() []ToolDefinition {
 	return slices.Clone(t.definitions)
 }
 
-func (t *fakeToolbox) Execute(ctx context.Context, call ToolCall) (ToolResult, error) {
+func (t *fakeToolbox) Presentation(snapshot ToolCallSnapshot) ToolPresentation {
+	if t.presentation != nil {
+		return t.presentation(snapshot)
+	}
+	return ToolPresentation{Title: snapshot.Name}
+}
+
+func (t *fakeToolbox) Execute(ctx context.Context, call ToolCall, updates ToolUpdateSink) (ToolResult, error) {
+	if t.executeWithUpdates != nil {
+		return t.executeWithUpdates(ctx, call, updates)
+	}
 	if t.execute == nil {
 		return ToolResult{}, fmt.Errorf("unknown tool %q", call.Name)
 	}
@@ -153,11 +171,11 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 	if result.Usage != (Usage{InputTokens: 18, OutputTokens: 5, TotalTokens: 23}) {
 		t.Fatalf("usage = %+v", result.Usage)
 	}
-	wantKinds := []EventKind{EventAssistantReasoning, EventAssistantText, EventContextUsage, EventToolStart, EventToolEnd, EventAssistantText, EventContextUsage}
+	wantKinds := []EventKind{EventAssistantReasoning, EventAssistantText, EventContextUsage, EventToolStart, EventToolExecute, EventToolEnd, EventAssistantText, EventContextUsage}
 	if got := eventKinds(events); !slices.Equal(got, wantKinds) {
 		t.Fatalf("event kinds = %v, want %v", got, wantKinds)
 	}
-	if events[0].Text != "Assessing files" || events[1].Text != "Checking" || events[2].Usage.TotalTokens != 12 || events[3].Call.ID != "call-1" || events[4].Result.CallID != "call-1" || events[5].Text != " done" || events[6].Usage.TotalTokens != 11 {
+	if events[0].Text != "Assessing files" || events[1].Text != "Checking" || events[2].Usage.TotalTokens != 12 || events[3].Call.ID != "call-1" || events[4].Call.ID != "call-1" || events[5].Result.CallID != "call-1" || events[6].Text != " done" || events[7].Usage.TotalTokens != 11 {
 		t.Fatalf("unexpected event payloads: %+v", events)
 	}
 
@@ -168,6 +186,164 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 
 	if next.Text != "next answer" {
 		t.Fatalf("second result text = %q", next.Text)
+	}
+}
+
+func TestCompleteToolCallSnapshotUsesStrictJSON(t *testing.T) {
+	call := ToolCall{ID: "call-1", Name: "write", Arguments: json.RawMessage(`{"path":"demo.go"}`)}
+	snapshot := completeToolCallSnapshot(call)
+	if snapshot.ID != call.ID || snapshot.Name != call.Name || !snapshot.Complete || snapshot.Arguments["path"] != "demo.go" {
+		t.Fatalf("snapshot = %+v", snapshot)
+	}
+
+	for _, raw := range []string{`{"path":"demo.go"`, `{"path":"first"}{"path":"second"}`, `null`} {
+		snapshot := completeToolCallSnapshot(ToolCall{Arguments: json.RawMessage(raw)})
+		if len(snapshot.Arguments) != 0 {
+			t.Fatalf("arguments for %q = %#v", raw, snapshot.Arguments)
+		}
+	}
+}
+
+func TestEngineStreamsToolPresentationBeforeGenerationAndExecutionFinish(t *testing.T) {
+	providerCalls := 0
+	executed := false
+	var events []Event
+	provider := streamingProviderFunc(func(_ context.Context, _ Request, _ TextSink, _ TextSink, onToolCall ToolCallSink) (Response, error) {
+		providerCalls++
+		if providerCalls > 1 {
+			return Response{Text: "done"}, nil
+		}
+
+		if err := onToolCall(ToolCallSnapshot{
+			ID: "write-1", Name: "write", RawArguments: `{"path":"demo.go","content":"hel`,
+			Arguments: map[string]any{"path": "demo.go", "content": "hel"},
+		}); err != nil {
+			return Response{}, err
+		}
+		if executed || len(events) == 0 || events[len(events)-1].Kind != EventToolStart {
+			t.Fatalf("partial tool call was not delivered before execution: executed=%v events=%v", executed, eventKinds(events))
+		}
+		if err := onToolCall(ToolCallSnapshot{
+			ID: "write-1", Name: "write", RawArguments: `{"path":"demo.go","content":"hello"}`,
+			Arguments: map[string]any{"path": "demo.go", "content": "hello"}, Complete: true,
+		}); err != nil {
+			return Response{}, err
+		}
+		return Response{ToolCalls: []ToolCall{{ID: "write-1", Name: "write", Arguments: json.RawMessage(`{"path":"demo.go","content":"hello"}`)}}}, nil
+	})
+	toolbox := &fakeToolbox{
+		definitions: []ToolDefinition{{Name: "write"}},
+		presentation: func(snapshot ToolCallSnapshot) ToolPresentation {
+			content, _ := snapshot.Arguments["content"].(string)
+			return ToolPresentation{Title: "write demo.go", Lines: []string{content}}
+		},
+		executeWithUpdates: func(_ context.Context, _ ToolCall, updates ToolUpdateSink) (ToolResult, error) {
+			executed = true
+			if err := updates(ToolPresentation{Title: "write demo.go", Lines: []string{"written"}}); err != nil {
+				return ToolResult{}, err
+			}
+			return ToolResult{Output: "wrote file"}, nil
+		},
+	}
+
+	engine := newTestEngine(t, provider, toolbox, Options{Model: "test-model"})
+	if _, err := engine.Run(context.Background(), "write", func(event Event) error {
+		events = append(events, event)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []EventKind{EventToolStart, EventToolUpdate, EventContextUsage, EventToolExecute, EventToolUpdate, EventToolEnd, EventContextUsage}
+	if got := eventKinds(events); !slices.Equal(got, want) {
+		t.Fatalf("events = %v, want %v", got, want)
+	}
+	if events[0].Presentation.Lines[0] != "hel" || events[1].Presentation.Lines[0] != "hello" || events[4].Presentation.Lines[0] != "written" {
+		t.Fatalf("presentations = %+v", events)
+	}
+}
+
+func TestEngineSerializesConcurrentToolSnapshots(t *testing.T) {
+	calls := 0
+	provider := streamingProviderFunc(func(_ context.Context, _ Request, _ TextSink, _ TextSink, onToolCall ToolCallSink) (Response, error) {
+		calls++
+		if calls > 1 {
+			return Response{Text: "done"}, nil
+		}
+
+		var wait sync.WaitGroup
+		for _, id := range []string{"one", "two"} {
+			wait.Add(1)
+			go func() {
+				defer wait.Done()
+				raw := `{"path":"` + id + `.txt"}`
+				if err := onToolCall(ToolCallSnapshot{ID: id, Name: "write", RawArguments: raw, Arguments: map[string]any{"path": id + ".txt"}, Complete: true}); err != nil {
+					t.Errorf("snapshot %s: %v", id, err)
+				}
+			}()
+		}
+		wait.Wait()
+		return Response{ToolCalls: []ToolCall{
+			{ID: "one", Name: "write", Arguments: json.RawMessage(`{"path":"one.txt"}`)},
+			{ID: "two", Name: "write", Arguments: json.RawMessage(`{"path":"two.txt"}`)},
+		}}, nil
+	})
+	toolbox := &fakeToolbox{executeWithUpdates: func(_ context.Context, call ToolCall, updates ToolUpdateSink) (ToolResult, error) {
+		var wait sync.WaitGroup
+		for _, line := range []string{"first", "second"} {
+			wait.Add(1)
+			go func() {
+				defer wait.Done()
+				if err := updates(ToolPresentation{Title: "write " + call.ID, Lines: []string{line}}); err != nil {
+					t.Errorf("update %s: %v", call.ID, err)
+				}
+			}()
+		}
+		wait.Wait()
+		return ToolResult{Output: call.ID}, nil
+	}}
+	var events []Event
+	engine := newTestEngine(t, provider, toolbox, Options{Model: "test-model"})
+	if _, err := engine.Run(context.Background(), "write", func(event Event) error {
+		events = append(events, event)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	counts := map[EventKind]int{}
+	for _, event := range events {
+		counts[event.Kind]++
+	}
+	if counts[EventToolStart] != 2 || counts[EventToolExecute] != 2 || counts[EventToolEnd] != 2 {
+		t.Fatalf("event counts = %v", counts)
+	}
+}
+
+func TestEngineClosesStreamedToolsInStartOrderOnProviderFailure(t *testing.T) {
+	failure := errors.New("stream failed")
+	provider := streamingProviderFunc(func(_ context.Context, _ Request, _ TextSink, _ TextSink, onToolCall ToolCallSink) (Response, error) {
+		for _, id := range []string{"one", "two"} {
+			if err := onToolCall(ToolCallSnapshot{ID: id, Name: "write", Arguments: map[string]any{}}); err != nil {
+				return Response{}, err
+			}
+		}
+		return Response{}, failure
+	})
+	var events []Event
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{Model: "test-model"})
+	_, err := engine.Run(context.Background(), "write", func(event Event) error {
+		events = append(events, event)
+		return nil
+	})
+	if !errors.Is(err, failure) {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := eventKinds(events); !slices.Equal(got, []EventKind{EventToolStart, EventToolStart, EventToolEnd, EventToolEnd}) {
+		t.Fatalf("events = %v", got)
+	}
+	if events[2].Call.ID != "one" || events[3].Call.ID != "two" {
+		t.Fatalf("end order = %q, %q", events[2].Call.ID, events[3].Call.ID)
 	}
 }
 
@@ -445,8 +621,12 @@ func TestEngineHonorsCancellationDuringToolExecution(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
+	var events []Event
 	go func() {
-		_, err := engine.Run(ctx, "wait", discardEvents)
+		_, err := engine.Run(ctx, "wait", func(event Event) error {
+			events = append(events, event)
+			return nil
+		})
 		done <- err
 	}()
 
@@ -466,6 +646,12 @@ func TestEngineHonorsCancellationDuringToolExecution(t *testing.T) {
 		t.Fatal("Run() did not stop after cancellation")
 	}
 
+	if got := eventKinds(events); !slices.Equal(got, []EventKind{EventContextUsage, EventToolStart, EventToolExecute, EventToolEnd}) {
+		t.Fatalf("canceled tool events = %v", got)
+	}
+	if !events[len(events)-1].Result.IsError {
+		t.Fatalf("canceled tool result = %+v", events[len(events)-1].Result)
+	}
 	if !engine.NeedsReset() {
 		t.Fatal("canceled tool turn does not report required reset")
 	}

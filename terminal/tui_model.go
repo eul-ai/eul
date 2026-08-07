@@ -24,8 +24,11 @@ const (
 )
 
 type conversationBlock struct {
-	kind blockKind
-	text string
+	kind        blockKind
+	text        string
+	toolCallID  string
+	tool        agent.ToolPresentation
+	toolOutcome string
 }
 
 type activityKind uint8
@@ -61,7 +64,6 @@ type tuiModel struct {
 	forceRedraw       bool
 	streamKind        blockKind
 	streamOpen        bool
-	activeTool        int
 	input             []rune
 	cursor            int
 	history           []string
@@ -94,7 +96,6 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 		setThinkingLevel:  options.SetThinkingLevel,
 		contextWindow:     options.ContextWindow,
 		historyIndex:      -1,
-		activeTool:        -1,
 		following:         true,
 		conversationDirty: true,
 		activity:          activity{kind: activityReady},
@@ -146,33 +147,81 @@ func (m *tuiModel) applyAgentEvent(event agent.Event) {
 	case agent.EventContextUsage:
 		m.contextTokens = event.Usage.TotalTokens
 	case agent.EventToolStart:
-		detail := summarizeCall(event.Call)
-		m.appendBlock(blockToolPending, detail)
-		m.activeTool = len(m.blocks) - 1
-		m.setActiveActivity(activity{kind: activityTool, detail: detail})
+		m.startTool(event.Call, event.Presentation)
+	case agent.EventToolUpdate:
+		m.updateTool(event.Call, event.Presentation)
+	case agent.EventToolExecute:
+		m.updateTool(event.Call, event.Presentation)
+		index := m.toolBlockIndex(event.Call.ID)
+		m.setActiveActivity(activity{kind: activityTool, detail: toolActivityDetail(event.Call, m.blocks[index].tool)})
 	case agent.EventToolEnd:
-		m.finishTool(event.Result)
-		m.setActiveActivity(activity{kind: activityThinking})
+		m.finishTool(event.Call, event.Presentation, event.Result)
+		if detail, ok := m.pendingToolActivity(); ok {
+			m.setActiveActivity(activity{kind: activityTool, detail: detail})
+		} else {
+			m.setActiveActivity(activity{kind: activityThinking})
+		}
 	}
 }
 
-func (m *tuiModel) finishTool(result agent.ToolResult) {
+func (m *tuiModel) startTool(call agent.ToolCall, presentation agent.ToolPresentation) {
+	m.closeStream()
+	m.blocks = append(m.blocks, conversationBlock{
+		kind:       blockToolPending,
+		toolCallID: call.ID,
+		tool:       sanitizeToolPresentation(call, presentation),
+	})
+	m.conversationDirty = true
+	m.setActiveActivity(activity{kind: activityTool, detail: toolActivityDetail(call, m.blocks[len(m.blocks)-1].tool)})
+}
+
+func (m *tuiModel) updateTool(call agent.ToolCall, presentation agent.ToolPresentation) {
+	index := m.toolBlockIndex(call.ID)
+	if index < 0 {
+		m.startTool(call, presentation)
+		return
+	}
+	m.blocks[index].tool = sanitizeToolPresentation(call, presentation)
+	m.conversationDirty = true
+}
+
+func (m *tuiModel) finishTool(call agent.ToolCall, presentation agent.ToolPresentation, result agent.ToolResult) {
+	if call.Name == "" {
+		call.Name = result.Tool
+	}
 	kind := blockTool
 	if result.IsError {
 		kind = blockToolError
 	}
-	if m.activeTool < 0 || m.activeTool >= len(m.blocks) {
-		m.activeTool = -1
-		m.appendBlock(kind, summarizeResult(result))
-		return
+	index := m.toolBlockIndex(call.ID)
+	if index < 0 {
+		m.startTool(call, presentation)
+		index = len(m.blocks) - 1
 	}
 
-	summary := summarizeResult(result)
-	outcome := strings.TrimPrefix(summary, diagnostic(result.Tool, 200)+" — ")
-	m.blocks[m.activeTool].kind = kind
-	m.blocks[m.activeTool].text += " — " + outcome
-	m.activeTool = -1
+	block := &m.blocks[index]
+	block.kind = kind
+	block.tool = sanitizeToolPresentation(call, presentation)
+	block.toolOutcome = sanitizeAssistantText(toolResultOutcome(result, presentation))
 	m.conversationDirty = true
+}
+
+func (m *tuiModel) toolBlockIndex(callID string) int {
+	for index := len(m.blocks) - 1; index >= 0; index-- {
+		if m.blocks[index].toolCallID == callID && isToolBlock(m.blocks[index].kind) {
+			return index
+		}
+	}
+	return -1
+}
+
+func (m *tuiModel) pendingToolActivity() (string, bool) {
+	for index := len(m.blocks) - 1; index >= 0; index-- {
+		if m.blocks[index].kind == blockToolPending {
+			return toolActivityDetail(agent.ToolCall{}, m.blocks[index].tool), true
+		}
+	}
+	return "", false
 }
 
 func (m *tuiModel) setActiveActivity(next activity) {
@@ -342,12 +391,22 @@ func (m *tuiModel) clearConversation() {
 	m.blocks = nil
 	m.conversationLines = nil
 	m.conversationDirty = true
-	m.activeTool = -1
 	m.closeStream()
 	m.contextTokens = 0
 	m.scrollTop = 0
 	m.following = true
 	m.activity = activity{kind: activityReady}
+}
+
+func (m *tuiModel) finishPendingTools(outcome string) {
+	for index := range m.blocks {
+		if m.blocks[index].kind != blockToolPending {
+			continue
+		}
+		m.blocks[index].kind = blockToolError
+		m.blocks[index].toolOutcome = outcome
+		m.conversationDirty = true
+	}
 }
 
 func (m *tuiModel) beginTurn(prompt string) {
@@ -362,6 +421,7 @@ func (m *tuiModel) finishTurn(runErr error, engine Engine) {
 	m.closeStream()
 
 	if m.interrupted {
+		m.finishPendingTools("canceled")
 		cleared := resetIfNeeded(engine)
 		message := "Interrupted"
 		if cleared {
@@ -378,6 +438,7 @@ func (m *tuiModel) finishTurn(runErr error, engine Engine) {
 		return
 	}
 
+	m.finishPendingTools("failed")
 	detail := diagnostic(runErr.Error(), 500)
 	m.appendBlock(blockError, detail)
 	m.activity = activity{kind: activityError, detail: detail}

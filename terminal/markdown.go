@@ -5,10 +5,19 @@ import (
 	"unicode/utf8"
 )
 
+type inlineForeground uint8
+
+const (
+	inlineForegroundDefault inlineForeground = iota
+	inlineForegroundAccent
+	inlineForegroundError
+)
+
 type inlineStyle struct {
-	bold   bool
-	italic bool
-	code   bool
+	bold       bool
+	italic     bool
+	code       bool
+	foreground inlineForeground
 }
 
 type inlineSpan struct {
@@ -22,11 +31,14 @@ type formattedLine struct {
 }
 
 func wrapInlineMarkdown(text string, width int) []formattedLine {
+	return wrapInlineSpans(parseInlineMarkdown(text), width)
+}
+
+func wrapInlineSpans(spans []inlineSpan, width int) []formattedLine {
 	if width <= 0 {
 		return nil
 	}
 
-	spans := parseInlineMarkdown(text)
 	lines := make([]formattedLine, 0, 1)
 	current := make([]inlineSpan, 0, 1)
 	lineWidth := 0
@@ -118,10 +130,15 @@ func parseInlineMarkdownStyle(text string, inherited inlineStyle) []inlineSpan {
 }
 
 func mergeInlineStyles(left, right inlineStyle) inlineStyle {
+	foreground := left.foreground
+	if right.foreground != inlineForegroundDefault {
+		foreground = right.foreground
+	}
 	return inlineStyle{
-		bold:   left.bold || right.bold,
-		italic: left.italic || right.italic,
-		code:   left.code || right.code,
+		bold:       left.bold || right.bold,
+		italic:     left.italic || right.italic,
+		code:       left.code || right.code,
+		foreground: foreground,
 	}
 }
 

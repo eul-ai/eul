@@ -75,8 +75,10 @@ func TestRunOneShotRendersEventsOnce(t *testing.T) {
 		events := []agent.Event{
 			{Kind: agent.EventAssistantReasoning, Text: "Assessing change"},
 			{Kind: agent.EventAssistantText, Text: "Checking"},
-			{Kind: agent.EventToolStart, Call: agent.ToolCall{Name: "write", Arguments: json.RawMessage(`{"path":"file.txt","content":"value"}`)}},
-			{Kind: agent.EventToolEnd, Result: agent.ToolResult{Tool: "write", IsError: true, Output: "write failed"}},
+			{Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "write-1", Name: "write"}, Presentation: agent.ToolPresentation{Title: "write", Arguments: "file.txt"}},
+			{Kind: agent.EventToolUpdate, Call: agent.ToolCall{ID: "write-1", Name: "write"}, Presentation: agent.ToolPresentation{Title: "write", Arguments: "file.txt", Lines: []string{"preview must stay hidden"}}},
+			{Kind: agent.EventToolExecute, Call: agent.ToolCall{ID: "write-1", Name: "write"}, Presentation: agent.ToolPresentation{Title: "write", Arguments: "file.txt"}},
+			{Kind: agent.EventToolEnd, Call: agent.ToolCall{ID: "write-1", Name: "write"}, Presentation: agent.ToolPresentation{Title: "write", Arguments: "file.txt"}, Result: agent.ToolResult{Tool: "write", IsError: true, Output: "write failed"}},
 			{Kind: agent.EventCompactionStart},
 			{Kind: agent.EventCompactionEnd},
 			{Kind: agent.EventContextUsage, Usage: agent.Usage{TotalTokens: 42}},
@@ -96,7 +98,36 @@ func TestRunOneShotRendersEventsOnce(t *testing.T) {
 	if stdout.String() != "Checking\nDone\n" {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "Assessing change\n") || !strings.Contains(stderr.String(), "[tool] write file.txt") || strings.Contains(stderr.String(), "content") || !strings.Contains(stderr.String(), "write — error") || !strings.Contains(stderr.String(), "[context] compacting conversation") {
+	if !strings.Contains(stderr.String(), "Assessing change\n") || !strings.Contains(stderr.String(), "[tool] write file.txt") || strings.Contains(stderr.String(), "content") || strings.Contains(stderr.String(), "preview must stay hidden") || !strings.Contains(stderr.String(), "write file.txt — error") || !strings.Contains(stderr.String(), "[context] compacting conversation") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRunOneShotIgnoresAbandonedStreamedTool(t *testing.T) {
+	engine := &fakeEngine{runFunction: func(_ context.Context, _ string, sink agent.EventSink) (agent.RunResult, error) {
+		if err := sink(agent.Event{Kind: agent.EventAssistantReasoning, Text: "reasoning"}); err != nil {
+			return agent.RunResult{}, err
+		}
+		if err := sink(agent.Event{
+			Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "write-1", Name: "write"},
+			Presentation: agent.ToolPresentation{Title: "write partial.txt"},
+		}); err != nil {
+			return agent.RunResult{}, err
+		}
+		if err := sink(agent.Event{
+			Kind: agent.EventToolEnd, Call: agent.ToolCall{ID: "write-1", Name: "write"},
+			Presentation: agent.ToolPresentation{Title: "write partial.txt"},
+			Result:       agent.ToolResult{IsError: true, Output: "tool call did not complete"},
+		}); err != nil {
+			return agent.RunResult{}, err
+		}
+		return agent.RunResult{}, nil
+	}}
+	var stdout, stderr bytes.Buffer
+	if err := RunOneShot(context.Background(), engine, "prompt", Options{Output: &stdout, ErrorOutput: &stderr}); err != nil {
+		t.Fatal(err)
+	}
+	if stderr.String() != "reasoning\n" {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
@@ -112,7 +143,7 @@ func TestRenderedOutputSanitizesControlsAndTruncatesDiagnostics(t *testing.T) {
 		if err := sink(agent.Event{Kind: agent.EventAssistantText, Text: "safe\x1b[31m\rrewrite\a"}); err != nil {
 			return agent.RunResult{}, err
 		}
-		if err := sink(agent.Event{Kind: agent.EventToolStart, Call: agent.ToolCall{Name: "bash", Arguments: arguments}}); err != nil {
+		if err := sink(agent.Event{Kind: agent.EventToolExecute, Call: agent.ToolCall{Name: "bash", Arguments: arguments}, Presentation: agent.ToolPresentation{Title: "bash", Arguments: value}}); err != nil {
 			return agent.RunResult{}, err
 		}
 		return agent.RunResult{}, nil
@@ -128,10 +159,10 @@ func TestRenderedOutputSanitizesControlsAndTruncatesDiagnostics(t *testing.T) {
 
 func TestRunOneShotSummarizesBashExit(t *testing.T) {
 	engine := &fakeEngine{runFunction: func(_ context.Context, _ string, sink agent.EventSink) (agent.RunResult, error) {
-		if err := sink(agent.Event{Kind: agent.EventToolStart, Call: agent.ToolCall{Name: "bash", Arguments: json.RawMessage(`{"command":"go test ./..."}`)}}); err != nil {
+		if err := sink(agent.Event{Kind: agent.EventToolExecute, Call: agent.ToolCall{Name: "bash", Arguments: json.RawMessage(`{"command":"go test ./..."}`)}, Presentation: agent.ToolPresentation{Title: "bash", Arguments: `"go test ./..."`}}); err != nil {
 			return agent.RunResult{}, err
 		}
-		if err := sink(agent.Event{Kind: agent.EventToolEnd, Result: agent.ToolResult{Tool: "bash", IsError: true, Output: "failed\n[exit status: 1]"}}); err != nil {
+		if err := sink(agent.Event{Kind: agent.EventToolEnd, Call: agent.ToolCall{Name: "bash"}, Presentation: agent.ToolPresentation{Title: "bash", Arguments: `"go test ./..."`, Outcome: "exit status: 1"}, Result: agent.ToolResult{Tool: "bash", IsError: true, Output: "failed\n[exit status: 1]"}}); err != nil {
 			return agent.RunResult{}, err
 		}
 		return agent.RunResult{}, nil
@@ -140,7 +171,7 @@ func TestRunOneShotSummarizesBashExit(t *testing.T) {
 	if err := RunOneShot(context.Background(), engine, "test", Options{Output: &stdout, ErrorOutput: &stderr}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stderr.String(), `[tool] bash "go test ./..."`) || !strings.Contains(stderr.String(), "bash — exit status: 1") {
+	if !strings.Contains(stderr.String(), `[tool] bash "go test ./..."`) || !strings.Contains(stderr.String(), `bash "go test ./..." — exit status: 1`) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

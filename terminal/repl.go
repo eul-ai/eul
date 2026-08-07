@@ -2,12 +2,10 @@ package terminal
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -17,7 +15,10 @@ import (
 	"yaah/agent"
 )
 
-const maxInputBytes = 1024 * 1024
+const (
+	maxInputBytes                   = 1024 * 1024
+	maxToolPresentationSummaryBytes = 500
+)
 
 var (
 	ErrInterrupted  = errors.New("terminal: interrupted")
@@ -140,10 +141,11 @@ func resetIfNeeded(engine Engine) bool {
 }
 
 type eventRenderer struct {
-	output        io.Writer
-	errorOutput   io.Writer
-	assistantOpen bool
-	reasoningOpen bool
+	output         io.Writer
+	errorOutput    io.Writer
+	assistantOpen  bool
+	reasoningOpen  bool
+	executingTools map[string]struct{}
 }
 
 func (r *eventRenderer) render(event agent.Event) error {
@@ -177,15 +179,23 @@ func (r *eventRenderer) render(event agent.Event) error {
 		if err := writeOutput(r.errorOutput, "[context] compacting conversation\n"); err != nil {
 			return err
 		}
-	case agent.EventToolStart:
+	case agent.EventToolExecute:
 		if err := r.finish(); err != nil {
 			return err
 		}
-		if err := writeOutput(r.errorOutput, "[tool] %s\n", summarizeCall(event.Call)); err != nil {
+		if err := writeOutput(r.errorOutput, "[tool] %s\n", summarizeToolExecution(event.Call, event.Presentation)); err != nil {
 			return err
 		}
+		if r.executingTools == nil {
+			r.executingTools = make(map[string]struct{})
+		}
+		r.executingTools[event.Call.ID] = struct{}{}
 	case agent.EventToolEnd:
-		if err := writeOutput(r.errorOutput, "[tool] %s\n", summarizeResult(event.Result)); err != nil {
+		if _, exists := r.executingTools[event.Call.ID]; !exists {
+			return nil
+		}
+		delete(r.executingTools, event.Call.ID)
+		if err := writeOutput(r.errorOutput, "[tool] %s\n", summarizeToolEnd(event.Call, event.Presentation, event.Result)); err != nil {
 			return err
 		}
 	}
@@ -217,65 +227,65 @@ func (r *eventRenderer) finishReasoning() error {
 	return writeOutput(r.errorOutput, "\n")
 }
 
-func summarizeCall(call agent.ToolCall) string {
-	argumentName := ""
-	switch call.Name {
-	case "read", "write", "edit":
-		argumentName = "path"
-	case "bash":
-		argumentName = "command"
-	}
-	if argumentName == "" {
-		return diagnostic(call.Name, 160)
-	}
-
-	var arguments map[string]json.RawMessage
-	if json.Unmarshal(call.Arguments, &arguments) != nil {
-		return diagnostic(call.Name, 160)
-	}
-
-	var value string
-	if json.Unmarshal(arguments[argumentName], &value) != nil || value == "" {
-		return diagnostic(call.Name, 160)
-	}
-	return diagnostic(call.Name+" "+displayArgument(value), 160)
+func summarizeToolExecution(call agent.ToolCall, presentation agent.ToolPresentation) string {
+	return diagnostic(toolHeading(call, presentation), 200)
 }
 
-func summarizeResult(result agent.ToolResult) string {
-	if result.Tool == "bash" {
-		if status := bashStatus(result.Output); status != "" {
-			return diagnostic("bash — "+status, 200)
-		}
+func summarizeToolEnd(call agent.ToolCall, presentation agent.ToolPresentation, result agent.ToolResult) string {
+	if call.Name == "" {
+		call.Name = result.Tool
 	}
+	return diagnostic(toolHeading(call, presentation)+" — "+toolResultOutcome(result, presentation), 200)
+}
 
+func toolTitle(call agent.ToolCall, presentation agent.ToolPresentation) string {
+	if title := strings.TrimSpace(presentation.Title); title != "" {
+		return title
+	}
+	if call.Name != "" {
+		return call.Name
+	}
+	return "tool"
+}
+
+func toolHeading(call agent.ToolCall, presentation agent.ToolPresentation) string {
+	title := toolTitle(call, presentation)
+	if arguments := strings.TrimSpace(presentation.Arguments); arguments != "" {
+		title += " " + arguments
+	}
+	return title
+}
+
+func toolActivityDetail(call agent.ToolCall, presentation agent.ToolPresentation) string {
+	return diagnostic(toolHeading(call, presentation), maxToolPresentationSummaryBytes)
+}
+
+func toolResultOutcome(result agent.ToolResult, presentation agent.ToolPresentation) string {
+	if presentation.Outcome != "" {
+		return presentation.Outcome
+	}
 	if !result.IsError {
-		return diagnostic(result.Tool+" — ok", 200)
+		return "ok"
 	}
 	detail := result.Output
 	if newline := strings.IndexByte(detail, '\n'); newline >= 0 {
 		detail = detail[:newline]
 	}
-	return diagnostic(result.Tool+" — error: "+detail, 200)
+	if detail == "" {
+		return "error"
+	}
+	return "error: " + detail
 }
 
-func bashStatus(output string) string {
-	index := strings.LastIndex(output, "[exit status:")
-	if index < 0 {
-		return ""
+func sanitizeToolPresentation(call agent.ToolCall, presentation agent.ToolPresentation) agent.ToolPresentation {
+	presentation.Title = diagnostic(toolTitle(call, presentation), maxToolPresentationSummaryBytes)
+	presentation.Arguments = diagnostic(presentation.Arguments, maxToolPresentationSummaryBytes)
+	presentation.Outcome = diagnostic(presentation.Outcome, maxToolPresentationSummaryBytes)
+	presentation.Lines = append([]string(nil), presentation.Lines...)
+	for index := range presentation.Lines {
+		presentation.Lines[index] = sanitizeAssistantText(presentation.Lines[index])
 	}
-
-	status := output[index+1:]
-	if end := strings.IndexByte(status, ']'); end >= 0 {
-		status = status[:end]
-	}
-	return status
-}
-
-func displayArgument(value string) string {
-	if strings.IndexFunc(value, unicode.IsSpace) >= 0 || strings.IndexFunc(value, unicode.IsControl) >= 0 {
-		return strconv.Quote(value)
-	}
-	return value
+	return presentation
 }
 
 func diagnostic(value string, maximum int) string {

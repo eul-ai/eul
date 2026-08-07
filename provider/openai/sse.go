@@ -7,32 +7,45 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"yaah/agent"
 )
 
 type streamObserver struct {
 	onText       func(string) error
 	onReasoning  func(string) error
+	onToolCall   agent.ToolCallSink
 	sawDelta     bool
 	sawReasoning bool
 }
 
 type responseStreamEvent struct {
-	Type     string          `json:"type"`
-	Response json.RawMessage `json:"response"`
-	Item     json.RawMessage `json:"item"`
-	Delta    string          `json:"delta"`
-	Error    *responseError  `json:"error"`
-	Code     string          `json:"code"`
-	Message  string          `json:"message"`
+	Type        string          `json:"type"`
+	OutputIndex int             `json:"output_index"`
+	Response    json.RawMessage `json:"response"`
+	Item        json.RawMessage `json:"item"`
+	Delta       string          `json:"delta"`
+	Arguments   string          `json:"arguments"`
+	Error       *responseError  `json:"error"`
+	Code        string          `json:"code"`
+	Message     string          `json:"message"`
+}
+
+type streamedToolCall struct {
+	id        string
+	name      string
+	arguments string
+	complete  bool
 }
 
 type responseStreamDecoder struct {
-	observer *streamObserver
-	output   []json.RawMessage
+	observer    *streamObserver
+	output      []json.RawMessage
+	toolStreams map[int]streamedToolCall
 }
 
 func readResponsesSSE(reader io.Reader, maximum int64, observer *streamObserver) (createResponseEnvelope, error) {
-	decoder := responseStreamDecoder{observer: observer}
+	decoder := responseStreamDecoder{observer: observer, toolStreams: make(map[int]streamedToolCall)}
 	return readSSE(reader, maximum, decoder.handle)
 }
 
@@ -114,9 +127,18 @@ func (decoder *responseStreamDecoder) handle(data []byte) (createResponseEnvelop
 			return createResponseEnvelope{}, false, nil
 		}
 		return createResponseEnvelope{}, false, decoder.deliverReasoning("\n\n")
+	case "response.output_item.added":
+		return createResponseEnvelope{}, false, decoder.startToolCall(event)
+	case "response.function_call_arguments.delta":
+		return createResponseEnvelope{}, false, decoder.updateToolCall(event, false)
+	case "response.function_call_arguments.done":
+		return createResponseEnvelope{}, false, decoder.updateToolCall(event, true)
 	case "response.output_item.done":
 		if err := validateRawObject(event.Item); err != nil {
 			return createResponseEnvelope{}, false, fmt.Errorf("responses completed output item: %w", err)
+		}
+		if err := decoder.finishToolCall(event); err != nil {
+			return createResponseEnvelope{}, false, err
 		}
 		decoder.output = append(decoder.output, event.Item)
 		return createResponseEnvelope{}, false, nil
@@ -126,6 +148,88 @@ func (decoder *responseStreamDecoder) handle(data []byte) (createResponseEnvelop
 	default:
 		return createResponseEnvelope{}, false, nil
 	}
+}
+
+func (decoder *responseStreamDecoder) startToolCall(event responseStreamEvent) error {
+	var item outputItem
+	if len(event.Item) == 0 || json.Unmarshal(event.Item, &item) != nil || item.Type != "function_call" {
+		return nil
+	}
+	if item.CallID == "" || item.Name == "" {
+		return nil
+	}
+
+	streamed := streamedToolCall{id: item.CallID, name: item.Name, arguments: item.Arguments}
+	decoder.toolStreams[event.OutputIndex] = streamed
+	return decoder.deliverToolCall(streamed, false)
+}
+
+func (decoder *responseStreamDecoder) updateToolCall(event responseStreamEvent, complete bool) error {
+	streamed, exists := decoder.toolStreams[event.OutputIndex]
+	if !exists {
+		return nil
+	}
+	previousArguments := streamed.arguments
+	if complete {
+		if event.Arguments != "" {
+			streamed.arguments = event.Arguments
+		}
+		if streamed.complete && streamed.arguments == previousArguments {
+			return nil
+		}
+		streamed.complete = true
+	} else {
+		streamed.arguments += event.Delta
+		if streamed.arguments == previousArguments {
+			return nil
+		}
+	}
+	decoder.toolStreams[event.OutputIndex] = streamed
+	return decoder.deliverToolCall(streamed, complete)
+}
+
+func (decoder *responseStreamDecoder) finishToolCall(event responseStreamEvent) error {
+	var item outputItem
+	if json.Unmarshal(event.Item, &item) != nil || item.Type != "function_call" {
+		return nil
+	}
+	streamed, exists := decoder.toolStreams[event.OutputIndex]
+	if !exists {
+		streamed = streamedToolCall{id: item.CallID, name: item.Name}
+	}
+	previousArguments := streamed.arguments
+	wasComplete := streamed.complete
+	if item.CallID != "" {
+		streamed.id = item.CallID
+	}
+	if item.Name != "" {
+		streamed.name = item.Name
+	}
+	if item.Arguments != "" {
+		streamed.arguments = item.Arguments
+	}
+	delete(decoder.toolStreams, event.OutputIndex)
+	if streamed.id == "" || streamed.name == "" || wasComplete && streamed.arguments == previousArguments {
+		return nil
+	}
+	return decoder.deliverToolCall(streamed, true)
+}
+
+func (decoder *responseStreamDecoder) deliverToolCall(streamed streamedToolCall, complete bool) error {
+	if decoder.observer == nil || decoder.observer.onToolCall == nil {
+		return nil
+	}
+	snapshot := agent.ToolCallSnapshot{
+		ID:           streamed.id,
+		Name:         streamed.name,
+		RawArguments: streamed.arguments,
+		Arguments:    parseStreamingJSONObject(streamed.arguments),
+		Complete:     complete,
+	}
+	if err := decoder.observer.onToolCall(snapshot); err != nil {
+		return fmt.Errorf("deliver tool call: %w", err)
+	}
+	return nil
 }
 
 func (decoder *responseStreamDecoder) deliverText(delta string) error {

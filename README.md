@@ -12,8 +12,9 @@ coding tools, and an OpenAI Responses API adapter.
 - Provider adapters are selected at compile time.
 - Sessions live only in memory and `/clear` discards them.
 
-Yaah supports inline bold, italic, and code Markdown in assistant output, but deliberately
-excludes broader Markdown rendering, dynamic plugins, provider negotiation, model
+Yaah supports inline bold, italic, and code Markdown in assistant output, reasoning,
+and tool-detail lines, but deliberately excludes broader Markdown rendering, dynamic
+plugins, provider negotiation, model
 catalogs, telemetry, MCP, project indexing, multimodal input, and session persistence.
 
 ## Usage
@@ -52,8 +53,14 @@ background and uses thinking-level-colored input rules. Conversation text has a 
 horizontal inset while block backgrounds retain the full width, with one blank
 row above and below the viewport content. Reasoning summaries use muted italic
 text, while compact tool blocks use padded pending,
-success, and error backgrounds. Rendering uses synchronized differential row
-updates to avoid flicker during streaming. The current palette is based on the
+success, and error backgrounds. Tool names use the accent color while their arguments
+and detail text use the regular foreground color. Inline Markdown is rendered in tool
+detail lines. Tool blocks are correlated by call ID and may replace their content while
+arguments or execution progress streams. The OpenAI
+adapter exposes partial function-call arguments, so `write` previews its first
+ten lines before execution; the file is still written only after the complete
+call is validated. Rendering uses synchronized differential row updates to avoid
+flicker during streaming. The current palette is based on the
 [Ayu Mirage theme](https://github.com/iodic/pi-ayu-themes/blob/main/themes/ayu-mirage.json).
 
 Interactive controls include:
@@ -75,7 +82,9 @@ Bracketed multiline paste preserves newlines and blank lines in the editor.
 A prompt argument runs one-shot without opening the TUI. Non-terminal stdin is
 read to EOF as a single one-shot prompt, so piped input and redirected one-shot output
 are supported. One-shot assistant text is streamed to stdout; reasoning summaries,
-tool activity, compaction notices, and errors go to stderr.
+tool activity, compaction notices, and errors go to stderr. Intermediate tool
+presentation snapshots are omitted in one-shot mode, which prints only execution
+start and completion summaries.
 
 ## Tools
 
@@ -86,7 +95,8 @@ before returning to the model.
 - `read(path, offset?, limit?)` reads regular UTF-8 text files, up to 2,000
   lines or 50 KiB.
 - `write(path, content)` creates or directly overwrites a regular file and
-  creates parent directories.
+  creates parent directories. Its TUI block previews at most ten lines and 4 KiB
+  while arguments stream; previews never mutate the filesystem.
 - `edit(path, oldText, newText)` replaces one uniquely matching fragment using
   a same-directory temporary file and rename.
 - `bash(command, timeout?)` runs `bash -c` without subprocess stdin and keeps
@@ -114,8 +124,9 @@ security boundary: absolute paths, shell escape, and side effects are possible.
 
 The main agent may use subagents only when the user explicitly requests them.
 Each call starts up to four fresh child engines concurrently and waits for every
-result before the main agent continues. Results return through the normal tool
-output path and become part of the main conversation.
+result before the main agent continues. Its tool block replaces a compact status
+list as children finish, while final results remain in input order. Results return
+through the normal tool output path and become part of the main conversation.
 
 Subagents are read-only: they receive `read` and, when available, the five
 non-mutating LSP tools, but not Bash, file-editing tools, rename, or further

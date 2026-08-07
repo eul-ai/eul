@@ -155,7 +155,7 @@ func (t *lspTool) Close() error {
 	return nil
 }
 
-func (t *lspTool) Execute(ctx context.Context, arguments json.RawMessage) (agent.ToolResult, error) {
+func (t *lspTool) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}

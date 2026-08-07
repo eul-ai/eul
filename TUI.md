@@ -82,7 +82,7 @@ The input area sits between horizontal rules in the style of Claude Code and Pi.
 3. its horizontal rules; and
 4. the conversation.
 
-The base canvas preserves the terminal's background instead of painting the theme background across the alternate screen. The conversation viewport has one blank row at the top and bottom. Block backgrounds span the full width while their text has a one-cell horizontal inset. User and assistant text use the base background, reasoning summaries use muted italic text with balanced space above and below, and compact tool blocks use horizontal and vertical padding with pending, success, or error backgrounds. Assistant and reasoning blocks render `**bold**`, `*italic*`, and backtick-delimited inline code; other block types preserve the markers literally. Inline emphasis and code spans compose when nested, and code uses the theme's `mdCode` foreground. Role labels are omitted. Input rules use the theme color for the selected thinking level.
+The base canvas preserves the terminal's background instead of painting the theme background across the alternate screen. The conversation viewport has one blank row at the top and bottom. Block backgrounds span the full width while their text has a one-cell horizontal inset. User and assistant text use the base background, reasoning summaries use muted italic text with balanced space above and below, and compact tool blocks use horizontal and vertical padding with pending, success, or error backgrounds. Tool names use the accent color while arguments and detail text use the regular foreground color. Assistant, reasoning, and tool-detail lines render `**bold**`, `*italic*`, and backtick-delimited inline code; other block types preserve the markers literally. Inline emphasis and code spans compose when nested, and code uses the theme's `mdCode` foreground. Role labels are omitted. Input rules use the theme color for the selected thinking level.
 
 On narrow terminals, the status bar will preserve the activity label and compact context percentage before truncating the model and thinking level.
 
@@ -99,7 +99,9 @@ Block types are:
 - context/compaction notice; and
 - error or informational notice.
 
-Assistant and reasoning deltas append to the currently open block of the same type. A transition to a tool, compaction, user, or other block closes the previous streaming block. Tool calls and results use the existing concise summaries rather than raw arguments or output. A result updates its pending tool block instead of creating a second block.
+Assistant and reasoning deltas append to the currently open block of the same type. A transition to a tool, compaction, user, or other block closes the previous streaming block. Tool blocks retain structured, call-ID-correlated presentations. Providers may replace a pending presentation while function-call arguments stream, and tools may replace it again with execution progress; completion updates the latest presentation and success/error state together instead of creating another block. Tools own plain title/body/outcome content, while the terminal owns sanitization, wrapping, padding, and lifecycle styling.
+
+The OpenAI adapter generically parses incomplete JSON argument prefixes for display only. `write` uses the resulting partial argument object to preview at most ten lines and 4 KiB while the model generates content, but executes only once with the complete, strictly decoded raw arguments. Subagent execution similarly replaces a compact child-status list without streaming full child transcripts. One-shot output ignores intermediate replacement snapshots and remains append-only.
 
 Reasoning, tool, and context blocks should be visually subdued but remain readable. This preserves information currently written to stderr instead of hiding it in the status bar.
 
@@ -154,8 +156,9 @@ The CLI must pass the current thinking level, supported model levels, a thinking
 | Assistant text delta | `responding` |
 | Compaction starts | `compacting context` |
 | Compaction completes | `thinking` |
-| Tool starts | concise tool description such as `running bash` or `reading repl.go` |
-| Tool ends | `thinking` |
+| Tool arguments stream | latest tool-owned title for the most recently updated pending call |
+| Tool execution starts | complete tool-owned title |
+| Tool ends | another pending tool title, or `thinking` |
 | Cancellation requested | `canceling` |
 | Turn succeeds | `ready` |
 | Recoverable turn failure | `error` plus a truncated diagnostic |
@@ -169,7 +172,7 @@ The current `EventCompaction` notification only marks the beginning of compactio
 One UI event loop will own all mutable UI state and all terminal writes. Other goroutines communicate with it through typed events:
 
 - decoded key or paste events;
-- `agent.Event` values;
+- `agent.Event` values, including correlated tool start/update/execute/end presentations;
 - turn completion and error;
 - Ctrl-C or external interrupt;
 - terminal resize; and

@@ -56,7 +56,7 @@ func (manager *fakeOAuthManager) Logout(context.Context) error {
 	return manager.logoutErr
 }
 
-func (function providerFunction) Generate(ctx context.Context, request agent.Request, sink, _ agent.TextSink) (agent.Response, error) {
+func (function providerFunction) Generate(ctx context.Context, request agent.Request, sink, _ agent.TextSink, _ agent.ToolCallSink) (agent.Response, error) {
 	return function(ctx, request, sink)
 }
 

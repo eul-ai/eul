@@ -41,7 +41,15 @@ func (*Edit) Definition() agent.ToolDefinition {
 	return editToolDefinition
 }
 
-func (e *Edit) Execute(ctx context.Context, arguments json.RawMessage) (agent.ToolResult, error) {
+func (*Edit) Presentation(snapshot agent.ToolCallSnapshot) agent.ToolPresentation {
+	arguments := ""
+	if path := snapshotString(snapshot, "path"); path != "" {
+		arguments = displayToolArgument(path)
+	}
+	return agent.ToolPresentation{Title: editToolName, Arguments: arguments}
+}
+
+func (e *Edit) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
