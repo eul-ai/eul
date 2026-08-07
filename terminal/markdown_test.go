@@ -33,6 +33,18 @@ func TestParseInlineMarkdownCodeSpans(t *testing.T) {
 	}
 }
 
+func TestParseInlineMarkdownNestedCodeInEmphasis(t *testing.T) {
+	got := parseInlineMarkdown("**`provider/openai/models.go`** and *`SIGWINCH`*")
+	want := []inlineSpan{
+		{text: "provider/openai/models.go", style: inlineStyle{bold: true, code: true}},
+		{text: " and ", style: inlineStyle{}},
+		{text: "SIGWINCH", style: inlineStyle{italic: true, code: true}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("spans = %+v, want %+v", got, want)
+	}
+}
+
 func TestParseInlineMarkdownPreservesUnmatchedMarkers(t *testing.T) {
 	got := parseInlineMarkdown("keep **open and *unfinished and `code")
 	if text := inlineSpanText(got); text != "keep **open and *unfinished and `code" {

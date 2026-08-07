@@ -63,6 +63,10 @@ func wrapInlineMarkdown(text string, width int) []formattedLine {
 }
 
 func parseInlineMarkdown(text string) []inlineSpan {
+	return parseInlineMarkdownStyle(text, inlineStyle{})
+}
+
+func parseInlineMarkdownStyle(text string, inherited inlineStyle) []inlineSpan {
 	var spans []inlineSpan
 	for index := 0; index < len(text); {
 		delimiter := ""
@@ -90,20 +94,35 @@ func parseInlineMarkdown(text string) []inlineSpan {
 			closing := strings.Index(text[contentStart:], delimiter)
 			if closing > 0 {
 				contentEnd := contentStart + closing
-				appendInlineSpan(&spans, text[contentStart:contentEnd], style)
+				content := text[contentStart:contentEnd]
+				if style.code {
+					appendInlineSpan(&spans, content, mergeInlineStyles(inherited, style))
+				} else {
+					for _, span := range parseInlineMarkdownStyle(content, mergeInlineStyles(inherited, style)) {
+						appendInlineSpan(&spans, span.text, span.style)
+					}
+				}
 				index = contentEnd + len(delimiter)
 				continue
 			}
-			appendInlineSpan(&spans, delimiter, inlineStyle{})
+			appendInlineSpan(&spans, delimiter, inherited)
 			index += len(delimiter)
 			continue
 		}
 
 		_, size := utf8.DecodeRuneInString(text[index:])
-		appendInlineSpan(&spans, text[index:index+size], inlineStyle{})
+		appendInlineSpan(&spans, text[index:index+size], inherited)
 		index += size
 	}
 	return spans
+}
+
+func mergeInlineStyles(left, right inlineStyle) inlineStyle {
+	return inlineStyle{
+		bold:   left.bold || right.bold,
+		italic: left.italic || right.italic,
+		code:   left.code || right.code,
+	}
 }
 
 func truncateInlineSpans(spans []inlineSpan, width int) []inlineSpan {
