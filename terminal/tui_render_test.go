@@ -81,6 +81,31 @@ func TestConversationBlocksUseCurrentTheme(t *testing.T) {
 	}
 }
 
+func TestAssistantAndReasoningRenderInlineMarkdown(t *testing.T) {
+	lines := conversationLines([]conversationBlock{
+		{kind: blockReasoning, text: "**Planning**"},
+		{kind: blockAssistant, text: "Use *care*"},
+		{kind: blockTool, text: "read *.go"},
+	}, 40)
+	if lines[0].text != "Planning" || lines[2].text != "Use care" {
+		t.Fatalf("lines = %+v", lines)
+	}
+	if lines[5].text != "read *.go" || len(lines[5].spans) != 0 {
+		t.Fatalf("tool markdown was interpreted: %+v", lines[5])
+	}
+
+	var reasoning strings.Builder
+	renderLine(&reasoning, 1, 40, lines[0])
+	if !strings.Contains(reasoning.String(), ansiBold+"Planning") || !strings.Contains(reasoning.String(), ansiItalic) {
+		t.Fatalf("reasoning line = %q", reasoning.String())
+	}
+	var assistant strings.Builder
+	renderLine(&assistant, 1, 40, lines[2])
+	if !strings.Contains(assistant.String(), ansiItalic+"care"+ansiNotItalic) {
+		t.Fatalf("assistant line = %q", assistant.String())
+	}
+}
+
 func TestToolBlockHasHorizontalAndVerticalPadding(t *testing.T) {
 	lines := conversationLines([]conversationBlock{{kind: blockTool, text: "tool output"}}, 40)
 	if len(lines) != 3 {

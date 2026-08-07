@@ -11,7 +11,10 @@ const (
 	ansiHideCursor              = "\x1b[?25l"
 	ansiShowCursor              = "\x1b[?25h"
 	ansiReset                   = "\x1b[0m"
+	ansiBold                    = "\x1b[1m"
+	ansiNormalIntensity         = "\x1b[22m"
 	ansiItalic                  = "\x1b[3m"
+	ansiNotItalic               = "\x1b[23m"
 	ansiBeginSynchronizedOutput = "\x1b[?2026h"
 	ansiEndSynchronizedOutput   = "\x1b[?2026l"
 	ansiClearScreen             = "\x1b[2J"
@@ -23,12 +26,14 @@ type lineStyle struct {
 	foreground      terminalColor
 	background      terminalColor
 	paintBackground bool
+	bold            bool
 	italic          bool
 }
 
 type styledLine struct {
 	text      string
 	rightText string
+	spans     []inlineSpan
 	style     lineStyle
 	padding   int
 }
@@ -215,6 +220,9 @@ func renderLine(frame *strings.Builder, row, width int, line styledLine) {
 	}
 	writeCursorPosition(frame, row, 1)
 	frame.WriteString(ansiColors(style.foreground, style.background, style.paintBackground))
+	if style.bold {
+		frame.WriteString(ansiBold)
+	}
 	if style.italic {
 		frame.WriteString(ansiItalic)
 	}
@@ -222,13 +230,48 @@ func renderLine(frame *strings.Builder, row, width int, line styledLine) {
 	rightPadding := min(line.padding, width-leftPadding)
 	contentWidth := width - leftPadding - rightPadding
 	right := truncateCells(line.rightText, contentWidth, false)
-	text := truncateCells(line.text, contentWidth-cellWidth(right), false)
+	textWidth := contentWidth - cellWidth(right)
+	text := truncateCells(line.text, textWidth, false)
+	spans := truncateInlineSpans(line.spans, textWidth)
+	if len(spans) > 0 {
+		text = inlineSpanText(spans)
+	}
+
 	frame.WriteString(strings.Repeat(" ", leftPadding))
-	frame.WriteString(text)
-	frame.WriteString(strings.Repeat(" ", contentWidth-cellWidth(text)-cellWidth(right)))
+	if len(spans) == 0 {
+		frame.WriteString(text)
+	} else {
+		bold := style.bold
+		italic := style.italic
+		for _, span := range spans {
+			writeTextAttributes(frame, style.bold || span.style.bold, style.italic || span.style.italic, &bold, &italic)
+			frame.WriteString(span.text)
+		}
+		writeTextAttributes(frame, style.bold, style.italic, &bold, &italic)
+	}
+	frame.WriteString(strings.Repeat(" ", textWidth-cellWidth(text)))
 	frame.WriteString(right)
 	frame.WriteString(strings.Repeat(" ", rightPadding))
 	frame.WriteString(ansiReset)
+}
+
+func writeTextAttributes(output *strings.Builder, bold, italic bool, currentBold, currentItalic *bool) {
+	if bold != *currentBold {
+		if bold {
+			output.WriteString(ansiBold)
+		} else {
+			output.WriteString(ansiNormalIntensity)
+		}
+		*currentBold = bold
+	}
+	if italic != *currentItalic {
+		if italic {
+			output.WriteString(ansiItalic)
+		} else {
+			output.WriteString(ansiNotItalic)
+		}
+		*currentItalic = italic
+	}
 }
 
 func writeCursorPosition(output *strings.Builder, row, column int) {
@@ -299,8 +342,14 @@ func conversationLines(blocks []conversationBlock, width int) []styledLine {
 		if isToolBlock(block.kind) {
 			lines = append(lines, styledLine{style: style, padding: padding})
 		}
-		for _, line := range wrapText(text, contentWidth) {
-			lines = append(lines, styledLine{text: line, style: style, padding: padding})
+		if block.kind == blockAssistant || block.kind == blockReasoning {
+			for _, line := range wrapInlineMarkdown(text, contentWidth) {
+				lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding})
+			}
+		} else {
+			for _, line := range wrapText(text, contentWidth) {
+				lines = append(lines, styledLine{text: line, style: style, padding: padding})
+			}
 		}
 		if isToolBlock(block.kind) {
 			lines = append(lines, styledLine{style: style, padding: padding})
