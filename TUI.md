@@ -127,7 +127,7 @@ The editor expands vertically for explicit newlines and soft-wrapped text while 
 
 Raw mode turns Ctrl-C into an input event rather than a terminal-generated SIGINT. The TUI pushes Kitty keyboard-protocol disambiguation mode so modified Enter and Tab remain distinguishable, accepts optional Kitty event and alternate-key subparameters, and pops the mode during cleanup.
 
-Bracketed paste will be enabled so pasted escape sequences and newlines are handled as input rather than terminal commands. Newlines in a paste remain normalized to spaces; Shift-Enter creates intentional editor line breaks. Input remains subject to `maxInputBytes`, valid UTF-8, and NUL rejection.
+Bracketed paste will be enabled so pasted escape sequences and newlines are handled as input rather than terminal commands. Pasted newlines and blank lines remain editor line breaks, with CRLF and CR normalized to LF. Shift-Enter also creates intentional editor line breaks. Input remains subject to `maxInputBytes`, valid UTF-8, and NUL rejection.
 
 The editor is disabled during an active turn. Scrolling and cancellation remain available. The submitted prompt is added to the conversation immediately and the editor is cleared.
 
@@ -275,7 +275,7 @@ The final names may be adjusted while implementing, but input decoding, state tr
 Most behavior should be tested without a live terminal:
 
 - key decoding, including escape sequences split across reads;
-- UTF-8 editing, history, paste normalization, and input limits;
+- UTF-8 editing, history, pasted line preservation and normalization, and input limits;
 - conversation block transitions and streaming append behavior;
 - every status transition, including compaction completion and cancellation;
 - model, thinking level, context count, context percentage, and narrow-width status formatting;

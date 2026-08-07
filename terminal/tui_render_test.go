@@ -165,6 +165,18 @@ func TestMultilineInputExpandsEditorAndMovesCursor(t *testing.T) {
 	}
 }
 
+func TestInputPreservesBlankPastedLines(t *testing.T) {
+	model := newTUIModel(20, 8, Options{})
+	if err := model.insertInput("abc\n\ndef"); err != nil {
+		t.Fatal(err)
+	}
+
+	input := renderInput(model, model.width, maximumInputHeight(model.height))
+	if len(input.lines) != 3 || input.lines[0] != "> abc" || input.lines[1] != "  " || input.lines[2] != "  def" {
+		t.Fatalf("input = %+v", input)
+	}
+}
+
 func TestInputWrapsAndKeepsCursorVisible(t *testing.T) {
 	model := newTUIModel(8, 6, Options{})
 	if err := model.insertInput("1234567"); err != nil {

@@ -33,6 +33,11 @@ func TestKeyDecoderHandlesModifiedKeys(t *testing.T) {
 		"\x1b\r":          keyNewline,
 		"\n":              keyNewline,
 		"\x1b[13u":        keyEnter,
+		"\x1b[57414u":     keyEnter,
+		"\x1b[57414;1:1u": keyEnter,
+		"\x1bOM":          keyEnter,
+		"\x1b[57414;2u":   keyNewline,
+		"\x1b[57414;2:1u": keyNewline,
 		"\x1b[Z":          keyShiftTab,
 		"\x1b[9;2u":       keyShiftTab,
 		"\x1b[9;2:1u":     keyShiftTab,
@@ -192,12 +197,12 @@ func TestTUIModelKeepsThinkingLevelWhenUpdateFails(t *testing.T) {
 	}
 }
 
-func TestTUIModelNormalizesPasteAndRejectsNUL(t *testing.T) {
+func TestTUIModelPreservesPastedNewlinesAndRejectsNUL(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
-	if err := model.insertInput("one\ntwo\tthree\x1b"); err != nil {
+	if err := model.insertInput("one\r\n\r\ntwo\tthree\x1b"); err != nil {
 		t.Fatal(err)
 	}
-	if got := string(model.input); got != "one two three�" {
+	if got := string(model.input); got != "one\n\ntwo three�" {
 		t.Fatalf("input = %q", got)
 	}
 	if err := model.insertInput("bad\x00"); !errors.Is(err, errInvalidInput) {

@@ -186,9 +186,13 @@ func (m *tuiModel) insertInput(text string) error {
 		return errInvalidInput
 	}
 
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
 	text = strings.Map(func(character rune) rune {
 		switch character {
-		case '\n', '\r', '\t':
+		case '\n':
+			return '\n'
+		case '\t':
 			return ' '
 		}
 		if unicode.IsControl(character) {

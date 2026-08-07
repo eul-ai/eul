@@ -55,6 +55,7 @@ var keySequences = []struct {
 	{sequence: "\x1b[13;2~", code: keyNewline},
 	{sequence: "\x1b[27;2;13~", code: keyNewline},
 	{sequence: "\x1b\r", code: keyNewline},
+	{sequence: "\x1bOM", code: keyEnter},
 	{sequence: "\x1b[Z", code: keyShiftTab},
 	{sequence: "\x1b[27;2;9~", code: keyShiftTab},
 	{sequence: "\x1b[200~", code: keyText},
@@ -80,8 +81,9 @@ var keySequences = []struct {
 }
 
 const (
-	pasteStart = "\x1b[200~"
-	pasteEnd   = "\x1b[201~"
+	kittyKeypadEnter = 57414
+	pasteStart       = "\x1b[200~"
+	pasteEnd         = "\x1b[201~"
 )
 
 func (d *keyDecoder) feed(data []byte, final bool) []keyEvent {
@@ -337,9 +339,9 @@ func matchKittyKeySequence(buffer []byte) (int, bool, keyEvent, bool) {
 	}
 
 	switch {
-	case codepoint == 13 && shift:
+	case (codepoint == 13 || codepoint == kittyKeypadEnter) && shift:
 		return consumed, false, keyEvent{code: keyNewline}, true
-	case codepoint == 13:
+	case codepoint == 13 || codepoint == kittyKeypadEnter:
 		return consumed, false, keyEvent{code: keyEnter}, true
 	case codepoint == 9 && shift:
 		return consumed, false, keyEvent{code: keyShiftTab}, true

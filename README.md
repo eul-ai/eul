@@ -58,7 +58,7 @@ updates to avoid flicker during streaming. The current palette is based on the
 
 Interactive controls include:
 
-- Enter to submit
+- Enter or keypad Enter to submit
 - Shift-Enter to insert a newline
 - Shift-Tab to cycle supported thinking levels
 - Left/Right and Home/End to move within the prompt
@@ -69,6 +69,8 @@ Interactive controls include:
 - Ctrl-C to clear a non-empty prompt, cancel the active turn, or exit with an
   empty prompt
 - `/help`, `/clear`, and `/exit`
+
+Bracketed multiline paste preserves newlines and blank lines in the editor.
 
 A prompt argument runs one-shot without opening the TUI. Non-terminal stdin is
 read to EOF as a single one-shot prompt, so piped input and redirected one-shot output
