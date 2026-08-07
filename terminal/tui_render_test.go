@@ -30,9 +30,10 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 		t.Fatalf("frame includes role labels: %q", frame)
 	}
 	left, right := renderStatus(model, model.width)
-	status := left + strings.Repeat(" ", model.width-cellWidth(left)-cellWidth(right)) + right
+	spinner, activity := splitActivitySpinner(model, left)
+	status := ansiForeground(currentTheme.accent) + spinner + ansiForeground(currentTheme.muted) + activity + strings.Repeat(" ", model.width-cellWidth(left)-cellWidth(right)) + right
 	if !strings.Contains(frame, status) || strings.Count(frame, "\x1b[12;") != 1 {
-		t.Fatalf("status metadata is not independently right-aligned in one pass: %q", frame)
+		t.Fatalf("status metadata is not independently right-aligned with an accented spinner: %q", frame)
 	}
 	if !strings.Contains(frame, ansiColors(currentTheme.error, terminalColor{}, false)) {
 		t.Fatalf("frame does not use the xhigh thinking color: %q", frame)

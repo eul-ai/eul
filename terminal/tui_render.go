@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -31,11 +32,13 @@ type lineStyle struct {
 }
 
 type styledLine struct {
-	text      string
-	rightText string
-	spans     []inlineSpan
-	style     lineStyle
-	padding   int
+	prefixText       string
+	prefixForeground *terminalColor
+	text             string
+	rightText        string
+	spans            []inlineSpan
+	style            lineStyle
+	padding          int
 }
 
 type tuiLayout struct {
@@ -190,10 +193,13 @@ func buildTerminalFrame(model *tuiModel) terminalFrame {
 	}
 	if layout.statusRow > 0 {
 		left, right := renderStatus(model, width)
+		spinner, activity := splitActivitySpinner(model, left)
 		rows[layout.statusRow-1] = styledLine{
-			text:      left,
-			rightText: right,
-			style:     lineStyle{foreground: currentTheme.muted},
+			prefixText:       spinner,
+			prefixForeground: &currentTheme.accent,
+			text:             activity,
+			rightText:        right,
+			style:            lineStyle{foreground: currentTheme.muted},
 		}
 	}
 
@@ -231,17 +237,26 @@ func renderLine(frame *strings.Builder, row, width int, line styledLine) {
 	contentWidth := width - leftPadding - rightPadding
 	right := truncateCells(line.rightText, contentWidth, false)
 	textWidth := contentWidth - cellWidth(right)
-	text := truncateCells(line.text, textWidth, false)
-	spans := truncateInlineSpans(line.spans, textWidth)
+	prefix := truncateCells(line.prefixText, textWidth, false)
+	remainingTextWidth := textWidth - cellWidth(prefix)
+	text := truncateCells(line.text, remainingTextWidth, false)
+	spans := truncateInlineSpans(line.spans, remainingTextWidth)
 	if len(spans) > 0 {
 		text = inlineSpanText(spans)
 	}
 
 	frame.WriteString(strings.Repeat(" ", leftPadding))
+	foreground := style.foreground
+	if prefix != "" {
+		if line.prefixForeground != nil {
+			writeTextForeground(frame, *line.prefixForeground, &foreground)
+		}
+		frame.WriteString(prefix)
+		writeTextForeground(frame, style.foreground, &foreground)
+	}
 	if len(spans) == 0 {
 		frame.WriteString(text)
 	} else {
-		foreground := style.foreground
 		bold := style.bold
 		italic := style.italic
 		for _, span := range spans {
@@ -256,7 +271,7 @@ func renderLine(frame *strings.Builder, row, width int, line styledLine) {
 		writeTextForeground(frame, style.foreground, &foreground)
 		writeTextAttributes(frame, style.bold, style.italic, &bold, &italic)
 	}
-	frame.WriteString(strings.Repeat(" ", textWidth-cellWidth(text)))
+	frame.WriteString(strings.Repeat(" ", textWidth-cellWidth(prefix)-cellWidth(text)))
 	frame.WriteString(right)
 	frame.WriteString(strings.Repeat(" ", rightPadding))
 	frame.WriteString(ansiReset)
@@ -498,6 +513,15 @@ func renderStatus(model *tuiModel, width int) (string, string) {
 		}
 	}
 	return truncateCells(activity, width, true), ""
+}
+
+func splitActivitySpinner(model *tuiModel, text string) (string, string) {
+	if model.activity.kind == activityReady || model.activity.kind == activityError || text == "" {
+		return "", text
+	}
+
+	_, size := utf8.DecodeRuneInString(text)
+	return text[:size], text[size:]
 }
 
 func activityText(model *tuiModel) string {

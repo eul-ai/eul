@@ -140,7 +140,7 @@ Commands retain their current meaning:
 
 ## Status bar
 
-The status bar contains three items: model with thinking level, context usage, and the activity indicator. Activity is left-aligned; model and context are right-aligned. Active states use a small spinner driven by a ticker; idle and error states are static.
+The status bar contains three items: model with thinking level, context usage, and the activity indicator. Activity is left-aligned; model and context are right-aligned. Active states use a small spinner driven by a ticker; the spinner uses the Ayu Mirage accent shared with tool activity while its label remains muted. Idle and error states are static.
 
 Context usage is the latest provider-reported context token count as a percentage of the selected model's context window. Known models may also show the compact count on wider terminals. Before the first response it is zero; `/clear` resets it to zero. Unknown context-window sizes display the token count without a percentage.
 
