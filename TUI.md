@@ -8,7 +8,7 @@ Replace the interactive line REPL with a minimal full-screen terminal interface 
 2. a single-line input bar; and
 3. a status bar with an activity indicator.
 
-Use `golang.org/x/term` for terminal detection, raw mode, restoration, and dimensions. Do not add a TUI framework. Keep one-shot execution and redirected interactive use line-oriented.
+Use `golang.org/x/term` for terminal detection, raw mode, restoration, and dimensions. Do not add a TUI framework. Keep one-shot execution line-oriented; interactive execution requires the full TUI.
 
 The initial targets remain macOS and Linux with an ANSI-compatible terminal.
 
@@ -33,16 +33,22 @@ The first version will not include:
 - multiple panes, sessions, or dialogs;
 - queued prompts while a turn is active;
 - exact grapheme-cluster editing for every emoji sequence;
+- interactive operation through pipes or redirected terminal streams;
 - Windows support; or
 - a reusable widget or terminal framework.
 
-## Activation and fallback
+## Mode selection and terminal requirement
 
-`terminal.Run` will select the full-screen interface only when both interactive input and UI output expose file descriptors accepted by `term.IsTerminal`. The TUI will use one output stream for the entire frame; engine events must not write independently to stdout or stderr while it is active.
+The CLI has two execution modes:
 
-The current implementation will remain available as a line-mode fallback when input or output is redirected. `RunOneShot` will remain line-oriented and preserve its current stdout/stderr behavior.
+- a prompt argument selects `RunOneShot`, which remains line-oriented and preserves its current stdout/stderr behavior; and
+- no prompt argument selects `terminal.Run`, which always means the full-screen TUI.
 
-A failure after TUI setup begins must restore terminal state before returning an error. It must not silently continue in line mode after partially entering raw or alternate-screen mode.
+`terminal.Run` will require both interactive input and UI output to expose file descriptors accepted by `term.IsTerminal`. If either side is not a terminal, it will return a clear error instructing the user to provide a prompt for one-shot mode. Piped prompts and a redirected interactive REPL will not be supported.
+
+The TUI will use one output stream for the entire frame; engine events must not write independently to stdout or stderr while it is active.
+
+A failure after TUI setup begins must restore terminal state before returning an error. It must not attempt to switch to another interface after partially entering raw or alternate-screen mode.
 
 ## Layout
 
@@ -185,7 +191,7 @@ The implementation will use only `golang.org/x/term` as a new direct dependency.
 
 ## Proposed files
 
-Keep the public entry points and line fallback in `terminal/repl.go`, then add focused files along these lines:
+Keep the public entry points and one-shot event renderer in `terminal/repl.go`, remove the interactive line REPL after the TUI reaches feature parity, and add focused files along these lines:
 
 ```text
 terminal/tui.go          terminal setup, teardown, and event loop
@@ -199,12 +205,12 @@ The final names may be adjusted while implementing, but input decoding, state tr
 
 ## Implementation sequence
 
-### 1. Preserve line mode and add TUI selection
+### 1. Establish the TUI-only interactive mode
 
 - Add `golang.org/x/term`.
-- Extract or rename the current interactive implementation as the line fallback.
-- Detect usable terminal file descriptors.
-- Keep `RunOneShot` and non-terminal tests unchanged.
+- Require usable terminal file descriptors in `terminal.Run` and return a clear non-terminal error otherwise.
+- Keep `RunOneShot` and its output behavior unchanged.
+- Remove the interactive line reader once its commands and interruption behavior are represented in the TUI.
 
 ### 2. Add terminal lifecycle and static layout
 
@@ -236,8 +242,8 @@ The final names may be adjusted while implementing, but input decoding, state tr
 ### 6. Documentation and cleanup
 
 - Update `README.md` to replace statements that explicitly exclude raw mode, ANSI rendering, and a full-screen TUI.
-- Document interactive controls and redirected fallback behavior.
-- Remove renderer code that is no longer shared, while keeping one-shot and line-mode output behavior intact.
+- Document interactive controls, the terminal requirement, and one-shot behavior.
+- Remove line-REPL code and renderer code that is no longer shared, while keeping one-shot output behavior intact.
 
 ## Testing
 
@@ -250,7 +256,7 @@ Most behavior should be tested without a live terminal:
 - wrapping, clipping, scrolling, and resize at narrow and short dimensions;
 - ANSI sanitization of assistant, reasoning, tool, error, and pasted text;
 - frame snapshots with cursor placement;
-- line-mode fallback for non-file and non-terminal streams;
+- rejection of non-file and non-terminal streams with guidance to use one-shot mode;
 - terminal restoration when the turn, renderer, or output fails; and
 - preservation of the existing one-shot behavior.
 
@@ -261,7 +267,7 @@ A manual smoke test should cover Linux and macOS terminals:
 3. cancel before and during a tool call;
 4. trigger `/clear` and `/exit`;
 5. paste multiline and non-ASCII text;
-6. redirect stdin or stdout and confirm line fallback; and
+6. redirect one-shot output successfully and confirm interactive mode rejects a non-terminal input or output; and
 7. verify terminal echo and cursor state after every exit path.
 
 Final verification:
