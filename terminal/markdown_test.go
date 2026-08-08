@@ -33,6 +33,14 @@ func TestParseInlineMarkdownCodeSpans(t *testing.T) {
 	}
 }
 
+func TestParseInlineMarkdownPreservesCodeFences(t *testing.T) {
+	got := parseInlineMarkdown("```bash\nabc\n```")
+	want := []inlineSpan{{text: "```bash\nabc\n```", style: inlineStyle{}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("spans = %+v, want %+v", got, want)
+	}
+}
+
 func TestParseInlineMarkdownNestedCodeInEmphasis(t *testing.T) {
 	got := parseInlineMarkdown("**`provider/openai/models.go`** and *`SIGWINCH`*")
 	want := []inlineSpan{

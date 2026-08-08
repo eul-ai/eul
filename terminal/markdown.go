@@ -89,6 +89,11 @@ func parseInlineMarkdownStyle(text string, inherited inlineStyle) []inlineSpan {
 			for end < len(text) && text[end] == '`' {
 				end++
 			}
+			if end-index >= 3 {
+				appendInlineSpan(&spans, text[index:end], inherited)
+				index = end
+				continue
+			}
 			delimiter = text[index:end]
 			style = inlineStyle{code: true}
 		case strings.HasPrefix(text[index:], "***"):
