@@ -9,6 +9,7 @@ import (
 	openaiadapter "yaah/provider/openai"
 	"yaah/terminal"
 	"yaah/tool"
+	lsptool "yaah/tool/lsp"
 )
 
 type agentSession struct {
@@ -39,10 +40,17 @@ func newAgentSession(
 		metadata = metadataProvider.ModelMetadata(config.model)
 	}
 	currentThinkingLevel := metadata.ClampThinkingLevel(config.thinkingLevel)
+	newToolset := runtime.newToolset
+	if newToolset == nil {
+		newToolset = buildToolset
+	}
 	subagent := tool.NewSubagent(func(ctx context.Context, task string, usage func(agent.Usage)) (agent.RunResult, error) {
-		return runChildAgent(ctx, runtime.newProvider, tokenSource, providerOptions, config, currentThinkingLevel, task, usage)
+		return runChildAgent(ctx, runtime.newProvider, newToolset, tokenSource, providerOptions, config, currentThinkingLevel, task, usage)
 	})
-	registry := buildTools(config.cwd, subagent)
+	registry, err := newToolset(config.cwd, fullToolAccess, subagent)
+	if err != nil {
+		return nil, fmt.Errorf("configure tools: %w", err)
+	}
 	engine := agent.New(provider, registry, agent.Options{
 		Model:               config.model,
 		ThinkingLevel:       currentThinkingLevel,
@@ -95,6 +103,7 @@ func (session *agentSession) finish(runErr error) error {
 func runChildAgent(
 	ctx context.Context,
 	newProvider providerFactory,
+	newToolset toolsetFactory,
 	tokenSource openaiadapter.CodexTokenSource,
 	providerOptions openaiadapter.Options,
 	config agentConfig,
@@ -107,7 +116,10 @@ func runChildAgent(
 		return agent.RunResult{}, fmt.Errorf("configure subagent provider: %w", err)
 	}
 
-	registry := buildSubagentTools(config.cwd)
+	registry, err := newToolset(config.cwd, readOnlyToolAccess)
+	if err != nil {
+		return agent.RunResult{}, fmt.Errorf("configure subagent tools: %w", err)
+	}
 	child := agent.New(provider, registry, agent.Options{
 		Model:               config.model,
 		ThinkingLevel:       thinkingLevel,
@@ -135,20 +147,30 @@ func finishRegistry(runErr error, registry *tool.Registry, operation string) err
 	return errors.Join(runErr, closeErr)
 }
 
-func buildTools(cwd string, additional ...tool.Tool) *tool.Registry {
-	tools := []tool.Tool{
-		tool.NewRead(cwd),
-		tool.NewWrite(cwd),
-		tool.NewEdit(cwd),
-		tool.NewBash(cwd),
+func buildToolset(cwd string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
+	var tools []tool.Tool
+	var lsp *lsptool.Set
+	switch access {
+	case fullToolAccess:
+		tools = []tool.Tool{
+			tool.NewRead(cwd),
+			tool.NewWrite(cwd),
+			tool.NewEdit(cwd),
+			tool.NewBash(cwd),
+		}
+		lsp = lsptool.New(cwd)
+	case readOnlyToolAccess:
+		tools = []tool.Tool{tool.NewRead(cwd)}
+		lsp = lsptool.NewReadOnly(cwd)
+	default:
+		return nil, errors.New("unknown tool access")
 	}
-	tools = append(tools, tool.NewLSP(cwd)...)
+	tools = append(tools, lsp.Tools()...)
 	tools = append(tools, additional...)
-	return tool.NewRegistry(tools...)
-}
-
-func buildSubagentTools(cwd string) *tool.Registry {
-	tools := []tool.Tool{tool.NewRead(cwd)}
-	tools = append(tools, tool.NewReadOnlyLSP(cwd)...)
-	return tool.NewRegistry(tools...)
+	registry, err := tool.NewRegistry(tools, lsp)
+	if err != nil {
+		_ = lsp.Close()
+		return nil, err
+	}
+	return registry, nil
 }

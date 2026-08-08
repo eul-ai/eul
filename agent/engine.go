@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 )
 
 const defaultMaxToolRounds = 20
 
-var errToolRoundLimit = errors.New("agent: maximum tool rounds exceeded")
+var (
+	errEngineBusy     = errors.New("agent: engine is busy")
+	errToolRoundLimit = errors.New("agent: maximum tool rounds exceeded")
+)
 
 type Options struct {
 	Model               string
@@ -23,6 +27,7 @@ type RunResult struct {
 }
 
 type Engine struct {
+	mu            sync.Mutex
 	provider      Provider
 	tools         Toolbox
 	model         string
@@ -55,6 +60,11 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 }
 
 func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunResult, error) {
+	if !e.mu.TryLock() {
+		return RunResult{}, errEngineBusy
+	}
+	defer e.mu.Unlock()
+
 	if err := ctx.Err(); err != nil {
 		return RunResult{}, err
 	}
@@ -85,11 +95,15 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		}
 
 		toolEvents := newToolEventTracker(e.tools, sink)
-		response, err := e.provider.Generate(ctx, request, func(text string) error {
-			return toolEvents.emitProvider(Event{Kind: EventAssistantText, Text: text})
-		}, func(text string) error {
-			return toolEvents.emitProvider(Event{Kind: EventAssistantReasoning, Text: text})
-		}, toolEvents.observeSnapshot)
+		response, err := e.provider.Generate(ctx, request, StreamObserver{
+			Text: func(text string) error {
+				return toolEvents.emitProvider(Event{Kind: EventAssistantText, Text: text})
+			},
+			Reasoning: func(text string) error {
+				return toolEvents.emitProvider(Event{Kind: EventAssistantReasoning, Text: text})
+			},
+			ToolCall: toolEvents.observeSnapshot,
+		})
 		if err != nil {
 			current.checkpoint(e)
 			closeErr := toolEvents.closeRemaining(err)
@@ -247,6 +261,11 @@ func (current continuation) checkpoint(engine *Engine) {
 }
 
 func (e *Engine) SetThinkingLevel(level ThinkingLevel) error {
+	if !e.mu.TryLock() {
+		return errEngineBusy
+	}
+	defer e.mu.Unlock()
+
 	if !level.Valid() {
 		return errors.New("agent: invalid thinking level")
 	}
@@ -254,10 +273,16 @@ func (e *Engine) SetThinkingLevel(level ThinkingLevel) error {
 	return nil
 }
 
-func (e *Engine) Reset() {
+func (e *Engine) Reset() error {
+	if !e.mu.TryLock() {
+		return errEngineBusy
+	}
+	defer e.mu.Unlock()
+
 	e.state = nil
 	e.contextUsage = Usage{}
 	e.pendingInputs = nil
+	return nil
 }
 
 func toolResultInput(result ToolResult) Input {

@@ -235,7 +235,7 @@ func TestWriteCreatesParentsOverwritesAndPreservesMode(t *testing.T) {
 }
 
 func TestFileToolPresentationsSeparateTitleAndArguments(t *testing.T) {
-	snapshot := agent.ToolCallSnapshot{Arguments: map[string]any{"path": "demo.go"}}
+	snapshot := PresentationSnapshot{Arguments: map[string]any{"path": "demo.go"}}
 	presentations := []agent.ToolPresentation{
 		NewRead(t.TempDir()).Presentation(snapshot),
 		NewWrite(t.TempDir()).Presentation(snapshot),
@@ -258,7 +258,7 @@ func TestWritePresentationStreamsBoundedPreviewWithoutWriting(t *testing.T) {
 		"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
 	}, "\n")
 	raw := `{"path":"preview.txt","content":"` + strings.ReplaceAll(content, "\n", `\n`)
-	snapshot := agent.ToolCallSnapshot{
+	snapshot := PresentationSnapshot{
 		ID: "write-1", Name: "write", RawArguments: raw,
 		Arguments: map[string]any{"path": "preview.txt", "content": content},
 	}
@@ -271,7 +271,7 @@ func TestWritePresentationStreamsBoundedPreviewWithoutWriting(t *testing.T) {
 	}
 
 	huge := strings.Repeat("界", writePresentationMaxBytes)
-	hugeSnapshot := agent.ToolCallSnapshot{Arguments: map[string]any{"path": "huge.txt", "content": huge}}
+	hugeSnapshot := PresentationSnapshot{Arguments: map[string]any{"path": "huge.txt", "content": huge}}
 	hugePresentation := writeTool.Presentation(hugeSnapshot)
 	if len(strings.Join(hugePresentation.Lines, "\n")) > writePresentationMaxBytes || !strings.Contains(hugePresentation.Lines[len(hugePresentation.Lines)-1], "truncated") {
 		t.Fatalf("huge presentation bytes=%d lines=%+v", len(strings.Join(hugePresentation.Lines, "\n")), hugePresentation.Lines)
@@ -618,7 +618,10 @@ func TestCoreToolsRegisterInDeterministicOrder(t *testing.T) {
 	editTool := NewEdit(cwd)
 	bashTool := NewBash(cwd)
 
-	registry := NewRegistry(readTool, writeTool, editTool, bashTool)
+	registry, err := NewRegistry([]Tool{readTool, writeTool, editTool, bashTool})
+	if err != nil {
+		t.Fatal(err)
+	}
 	definitions := registry.Definitions()
 	names := make([]string, len(definitions))
 	for i, definition := range definitions {

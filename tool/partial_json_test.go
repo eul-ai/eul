@@ -1,4 +1,4 @@
-package openai
+package tool
 
 import (
 	"reflect"

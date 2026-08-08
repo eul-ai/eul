@@ -16,8 +16,8 @@ type providerStep func(context.Context, Request, TextSink) (Response, error)
 
 type streamingProviderFunc func(context.Context, Request, TextSink, TextSink, ToolCallSink) (Response, error)
 
-func (function streamingProviderFunc) Generate(ctx context.Context, request Request, onText, onReasoning TextSink, onToolCall ToolCallSink) (Response, error) {
-	return function(ctx, request, onText, onReasoning, onToolCall)
+func (function streamingProviderFunc) Generate(ctx context.Context, request Request, observer StreamObserver) (Response, error) {
+	return function(ctx, request, observer.Text, observer.Reasoning, observer.ToolCall)
 }
 
 type scriptedProvider struct {
@@ -27,7 +27,9 @@ type scriptedProvider struct {
 	reasoning string
 }
 
-func (p *scriptedProvider) Generate(ctx context.Context, request Request, onText, onReasoning TextSink, _ ToolCallSink) (Response, error) {
+func (p *scriptedProvider) Generate(ctx context.Context, request Request, observer StreamObserver) (Response, error) {
+	onText := observer.Text
+	onReasoning := observer.Reasoning
 	p.t.Helper()
 	if p.calls >= len(p.steps) {
 		p.t.Fatalf("unexpected provider call %d", p.calls+1)
@@ -186,18 +188,11 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 	}
 }
 
-func TestCompleteToolCallSnapshotUsesStrictJSON(t *testing.T) {
+func TestCompleteToolCallSnapshotPreservesRawJSON(t *testing.T) {
 	call := ToolCall{ID: "call-1", Name: "write", Arguments: json.RawMessage(`{"path":"demo.go"}`)}
 	snapshot := completeToolCallSnapshot(call)
-	if snapshot.ID != call.ID || snapshot.Name != call.Name || !snapshot.Complete || snapshot.Arguments["path"] != "demo.go" {
+	if snapshot.ID != call.ID || snapshot.Name != call.Name || !snapshot.Complete || snapshot.RawArguments != string(call.Arguments) {
 		t.Fatalf("snapshot = %+v", snapshot)
-	}
-
-	for _, raw := range []string{`{"path":"demo.go"`, `{"path":"first"}{"path":"second"}`, `null`} {
-		snapshot := completeToolCallSnapshot(ToolCall{Arguments: json.RawMessage(raw)})
-		if len(snapshot.Arguments) != 0 {
-			t.Fatalf("arguments for %q = %#v", raw, snapshot.Arguments)
-		}
 	}
 }
 
@@ -289,7 +284,6 @@ func TestEngineStreamsToolPresentationBeforeGenerationAndExecutionFinish(t *test
 
 		if err := onToolCall(ToolCallSnapshot{
 			ID: "write-1", Name: "write", RawArguments: `{"path":"demo.go","content":"hel`,
-			Arguments: map[string]any{"path": "demo.go", "content": "hel"},
 		}); err != nil {
 			return Response{}, err
 		}
@@ -297,8 +291,7 @@ func TestEngineStreamsToolPresentationBeforeGenerationAndExecutionFinish(t *test
 			t.Fatalf("partial tool call was not delivered before execution: executed=%v events=%v", executed, eventKinds(events))
 		}
 		if err := onToolCall(ToolCallSnapshot{
-			ID: "write-1", Name: "write", RawArguments: `{"path":"demo.go","content":"hello"}`,
-			Arguments: map[string]any{"path": "demo.go", "content": "hello"}, Complete: true,
+			ID: "write-1", Name: "write", RawArguments: `{"path":"demo.go","content":"hello"}`, Complete: true,
 		}); err != nil {
 			return Response{}, err
 		}
@@ -307,7 +300,10 @@ func TestEngineStreamsToolPresentationBeforeGenerationAndExecutionFinish(t *test
 	toolbox := &fakeToolbox{
 		definitions: []ToolDefinition{{Name: "write"}},
 		presentation: func(snapshot ToolCallSnapshot) ToolPresentation {
-			content, _ := snapshot.Arguments["content"].(string)
+			content := "hel"
+			if snapshot.Complete {
+				content = "hello"
+			}
 			return ToolPresentation{Title: "write demo.go", Lines: []string{content}}
 		},
 		executeWithUpdates: func(_ context.Context, _ ToolCall, updates ToolUpdateSink) (ToolResult, error) {
@@ -353,7 +349,7 @@ func TestEngineSerializesConcurrentToolSnapshots(t *testing.T) {
 			go func() {
 				defer wait.Done()
 				raw := `{"path":"` + id + `.txt"}`
-				if err := onToolCall(ToolCallSnapshot{ID: id, Name: "write", RawArguments: raw, Arguments: map[string]any{"path": id + ".txt"}, Complete: true}); err != nil {
+				if err := onToolCall(ToolCallSnapshot{ID: id, Name: "write", RawArguments: raw, Complete: true}); err != nil {
 					t.Errorf("snapshot %s: %v", id, err)
 				}
 			}()
@@ -400,7 +396,7 @@ func TestEngineClosesStreamedToolsInStartOrderOnProviderFailure(t *testing.T) {
 	failure := errors.New("stream failed")
 	provider := streamingProviderFunc(func(_ context.Context, _ Request, _ TextSink, _ TextSink, onToolCall ToolCallSink) (Response, error) {
 		for _, id := range []string{"one", "two"} {
-			if err := onToolCall(ToolCallSnapshot{ID: id, Name: "write", Arguments: map[string]any{}}); err != nil {
+			if err := onToolCall(ToolCallSnapshot{ID: id, Name: "write"}); err != nil {
 				return Response{}, err
 			}
 		}
@@ -572,11 +568,10 @@ func TestEngineEventSinkFailuresPreserveResponseContinuation(t *testing.T) {
 				{ID: "one", Name: "write", Arguments: json.RawMessage(`{"content":"complete"}`)},
 			}},
 			stream: func(sink ToolCallSink) error {
-				return sink(ToolCallSnapshot{ID: "one", Name: "write", RawArguments: `{"content":"partial"}`, Arguments: map[string]any{"content": "partial"}})
+				return sink(ToolCallSnapshot{ID: "one", Name: "write", RawArguments: `{"content":"partial"}`})
 			},
 			toolbox: &fakeToolbox{presentation: func(snapshot ToolCallSnapshot) ToolPresentation {
-				content, _ := snapshot.Arguments["content"].(string)
-				return ToolPresentation{Title: "write", Lines: []string{content}}
+				return ToolPresentation{Title: "write", Lines: []string{snapshot.RawArguments}}
 			}},
 			wantPending: []Input{synthetic("one", "write")},
 		},
@@ -616,7 +611,7 @@ func TestEngineEventSinkFailuresPreserveResponseContinuation(t *testing.T) {
 			failKind: EventToolEnd,
 			response: Response{State: []byte("complete")},
 			stream: func(sink ToolCallSink) error {
-				return sink(ToolCallSnapshot{ID: "ghost", Name: "write", RawArguments: `{}`, Arguments: map[string]any{}})
+				return sink(ToolCallSnapshot{ID: "ghost", Name: "write", RawArguments: `{}`})
 			},
 			toolbox: &fakeToolbox{},
 		},
@@ -1105,6 +1100,41 @@ func TestEngineTreatsToolLocalDeadlineAsRecoverable(t *testing.T) {
 	}
 	if result.Text != "recovered" {
 		t.Fatalf("result text = %q", result.Text)
+	}
+}
+
+func TestEngineRejectsConcurrentOperations(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	provider := streamingProviderFunc(func(context.Context, Request, TextSink, TextSink, ToolCallSink) (Response, error) {
+		close(started)
+		<-release
+		return Response{Text: "done"}, nil
+	})
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := engine.Run(context.Background(), "first", discardEvents)
+		done <- err
+	}()
+	<-started
+
+	if _, err := engine.Run(context.Background(), "second", discardEvents); !errors.Is(err, errEngineBusy) {
+		t.Fatalf("concurrent Run() error = %v", err)
+	}
+	if err := engine.Reset(); !errors.Is(err, errEngineBusy) {
+		t.Fatalf("concurrent Reset() error = %v", err)
+	}
+	if err := engine.SetThinkingLevel(ThinkingHigh); !errors.Is(err, errEngineBusy) {
+		t.Fatalf("concurrent SetThinkingLevel() error = %v", err)
+	}
+
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Reset(); err != nil {
+		t.Fatalf("Reset() after Run = %v", err)
 	}
 }
 

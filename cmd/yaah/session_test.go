@@ -70,13 +70,35 @@ func TestNewAgentSessionWiresOptionalProviderUsage(t *testing.T) {
 	}
 }
 
+func TestNewAgentSessionReportsToolsetConfigurationFailure(t *testing.T) {
+	configureErr := errors.New("toolset failed")
+	runtime := appRuntime{
+		newProvider: func(openaiadapter.CodexTokenSource, openaiadapter.Options) (agent.Provider, error) {
+			return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+				return agent.Response{}, nil
+			}), nil
+		},
+		newToolset: func(string, toolAccess, ...tool.Tool) (*tool.Registry, error) {
+			return nil, configureErr
+		},
+	}
+
+	_, err := newAgentSession(agentConfig{model: "model", cwd: t.TempDir()}, runtime, nil, openaiadapter.Options{})
+	if !errors.Is(err, configureErr) || !strings.Contains(err.Error(), "configure tools") {
+		t.Fatalf("newAgentSession error = %v", err)
+	}
+}
+
 func TestFinishRegistryClosesToolsAndPreservesRunError(t *testing.T) {
 	runErr := context.Canceled
 	closeErr := errors.New("close failed")
 	closer := &closeRecordingTool{closeErr: closeErr}
-	registry := tool.NewRegistry(closer)
+	registry, err := tool.NewRegistry([]tool.Tool{closer})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	err := finishRegistry(runErr, registry, "close subagent tools")
+	err = finishRegistry(runErr, registry, "close subagent tools")
 	if closer.closed != 1 {
 		t.Fatalf("close calls = %d, want 1", closer.closed)
 	}
@@ -97,7 +119,11 @@ func TestFinishRunReportsCleanupFailureJoinedWithInterruption(t *testing.T) {
 
 func TestAgentSessionFinishClosesOwnedRegistry(t *testing.T) {
 	closer := &closeRecordingTool{}
-	session := &agentSession{tools: tool.NewRegistry(closer)}
+	registry, err := tool.NewRegistry([]tool.Tool{closer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := &agentSession{tools: registry}
 	if err := session.finish(nil); err != nil {
 		t.Fatal(err)
 	}

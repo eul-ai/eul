@@ -500,10 +500,10 @@ func TestRendererForcesFullRedrawAfterResizeOrCtrlL(t *testing.T) {
 		t.Fatalf("resize did not clear the screen: %q", resized)
 	}
 
-	model.forceRedraw = true
-	forced := renderer.render(model)
-	if !strings.Contains(forced, ansiClearScreen) || model.forceRedraw {
-		t.Fatalf("forced redraw = %q, forceRedraw=%v", forced, model.forceRedraw)
+	forced, next := renderer.renderPending(model, true)
+	renderer.commit(next)
+	if !strings.Contains(forced, ansiClearScreen) {
+		t.Fatalf("forced redraw = %q", forced)
 	}
 }
 
@@ -657,26 +657,27 @@ func TestConversationScrollingStopsAndResumesFollowing(t *testing.T) {
 	for index := 0; index < 8; index++ {
 		model.appendBlock(blockInfo, strings.Repeat(string(rune('a'+index)), 20))
 	}
-	conversationViewport(model, model.width, calculateLayout(model.height, 1, 0).conversationHeight)
+	var renderer tuiRenderer
+	_ = renderer.render(model)
 	bottom := model.scrollTop
 	if bottom == 0 {
 		t.Fatal("conversation did not overflow")
 	}
 
-	scrollConversation(model, -1)
+	scrollConversation(model, -1, renderer.frame)
 	if model.following || model.scrollTop >= bottom {
 		t.Fatalf("after page up: following=%v top=%d bottom=%d", model.following, model.scrollTop, bottom)
 	}
 	oldTop := model.scrollTop
 	model.appendBlock(blockInfo, "new output")
-	conversationViewport(model, model.width, calculateLayout(model.height, 1, 0).conversationHeight)
+	_ = renderer.render(model)
 	if model.scrollTop != oldTop {
 		t.Fatalf("scrolled viewport moved from %d to %d", oldTop, model.scrollTop)
 	}
 
-	scrollConversation(model, 1)
+	scrollConversation(model, 1, renderer.frame)
 	for !model.following {
-		scrollConversation(model, 1)
+		scrollConversation(model, 1, renderer.frame)
 	}
 	if !model.following {
 		t.Fatal("page down did not resume following")

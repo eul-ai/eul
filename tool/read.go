@@ -44,7 +44,7 @@ func (*Read) Definition() agent.ToolDefinition {
 	return readToolDefinition
 }
 
-func (*Read) Presentation(snapshot agent.ToolCallSnapshot) agent.ToolPresentation {
+func (*Read) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
 	arguments := ""
 	if path := snapshotString(snapshot, "path"); path != "" {
 		arguments = displayToolArgument(path)

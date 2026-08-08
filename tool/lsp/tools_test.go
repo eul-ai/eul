@@ -1,4 +1,4 @@
-package tool
+package lsp
 
 import (
 	"context"
@@ -15,13 +15,14 @@ import (
 	"go.lsp.dev/uri"
 
 	"yaah/agent"
+	"yaah/tool"
 )
 
 func TestNewLSPOmitsToolsWhenServerIsUnavailable(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
-	if tools := NewLSP(t.TempDir()); len(tools) != 0 {
-		t.Fatalf("NewLSP() returned %d tools", len(tools))
+	if tools := New(t.TempDir()).Tools(); len(tools) != 0 {
+		t.Fatalf("New() returned %d tools", len(tools))
 	}
 }
 
@@ -34,44 +35,37 @@ func TestNewLSPRegistersFullAndReadOnlyToolSets(t *testing.T) {
 
 	for _, test := range []struct {
 		name      string
-		tools     []Tool
+		set       *Set
 		wantNames []string
 	}{
 		{
 			name:      "full",
-			tools:     NewLSP(t.TempDir()),
+			set:       New(t.TempDir()),
 			wantNames: []string{lspDiagnosticsToolName, lspHoverToolName, lspDefinitionToolName, lspReferencesToolName, lspSymbolsToolName, lspRenameToolName},
 		},
 		{
 			name:      "read-only",
-			tools:     NewReadOnlyLSP(t.TempDir()),
+			set:       NewReadOnly(t.TempDir()),
 			wantNames: []string{lspDiagnosticsToolName, lspHoverToolName, lspDefinitionToolName, lspReferencesToolName, lspSymbolsToolName},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if len(test.tools) != len(test.wantNames) {
-				t.Fatalf("tool count = %d, want %d", len(test.tools), len(test.wantNames))
+			tools := test.set.Tools()
+			if len(tools) != len(test.wantNames) {
+				t.Fatalf("tool count = %d, want %d", len(tools), len(test.wantNames))
 			}
-			closers := 0
-			for index, current := range test.tools {
+			for index, current := range tools {
 				if current.Definition().Name != test.wantNames[index] {
 					t.Fatalf("tool %d = %q, want %q", index, current.Definition().Name, test.wantNames[index])
 				}
-				if _, ok := current.(interface{ Close() error }); ok {
-					closers++
-				}
-			}
-			if closers != 1 {
-				t.Fatalf("closers = %d, want 1", closers)
-			}
-			owner, ok := test.tools[0].(*lspToolOwner)
-			if !ok {
-				t.Fatalf("owner type = %T", test.tools[0])
 			}
 			stops := 0
-			owner.client.sessions["test"] = &lspSession{stopSession: func() { stops++ }}
-			if err := NewRegistry(test.tools...).Close(); err != nil {
+			test.set.client.sessions["test"] = &lspSession{stopSession: func() { stops++ }}
+			if err := test.set.Close(); err != nil {
 				t.Fatalf("Close() error = %v", err)
+			}
+			if err := test.set.Close(); err != nil {
+				t.Fatalf("second Close() error = %v", err)
 			}
 			if stops != 1 {
 				t.Fatalf("session stops = %d, want 1", stops)
@@ -104,11 +98,15 @@ func Use(value Thing) int {
 		t.Fatal(err)
 	}
 
-	tools := NewLSP(cwd)
+	set := New(cwd)
+	tools := set.Tools()
 	if len(tools) != 6 {
-		t.Fatalf("NewLSP() returned %d tools", len(tools))
+		t.Fatalf("New() returned %d tools", len(tools))
 	}
-	registry := NewRegistry(tools...)
+	registry, err := tool.NewRegistry(tools, set)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer registry.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -351,7 +349,7 @@ func TestLSPPositionOffsetUsesUTF16(t *testing.T) {
 	}
 }
 
-func executeLSPTestTool(t *testing.T, ctx context.Context, registry *Registry, name string, arguments any) agent.ToolResult {
+func executeLSPTestTool(t *testing.T, ctx context.Context, registry *tool.Registry, name string, arguments any) agent.ToolResult {
 	t.Helper()
 
 	encoded, err := json.Marshal(arguments)

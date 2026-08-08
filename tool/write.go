@@ -43,7 +43,7 @@ func (*Write) Definition() agent.ToolDefinition {
 	return writeToolDefinition
 }
 
-func (*Write) Presentation(snapshot agent.ToolCallSnapshot) agent.ToolPresentation {
+func (*Write) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
 	arguments := ""
 	if path := snapshotString(snapshot, "path"); path != "" {
 		arguments = displayToolArgument(path)

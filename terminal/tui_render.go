@@ -65,22 +65,30 @@ type renderedInput struct {
 }
 
 type terminalFrame struct {
-	width         int
-	height        int
-	rows          []string
-	plainRows     []string
-	cursorRow     int
-	cursorColumn  int
-	cursorVisible bool
+	width             int
+	height            int
+	rows              []string
+	plainRows         []string
+	cursorRow         int
+	cursorColumn      int
+	cursorVisible     bool
+	layout            tuiLayout
+	conversationTop   int
+	conversationLines []string
+}
+
+type renderPreparation struct {
+	input             renderedInput
+	layout            tuiLayout
+	conversationLines []styledLine
+	scrollTop         int
 }
 
 type tuiRenderer struct {
-	previousRows  []string
-	width         int
-	height        int
-	cursorRow     int
-	cursorColumn  int
-	cursorVisible bool
+	frame               terminalFrame
+	conversationLines   []styledLine
+	conversationWidth   int
+	conversationVersion uint64
 }
 
 func calculateLayout(height, inputHeight, pickerHeight int) tuiLayout {
@@ -141,28 +149,37 @@ func modelInputLayout(model *tuiModel) (renderedInput, tuiLayout) {
 }
 
 func (r *tuiRenderer) render(model *tuiModel) string {
-	next := buildTerminalFrame(model)
+	r.normalizeViewport(model)
+	output, next := r.renderPending(model, false)
+	r.commit(next)
+	return output
+}
+
+func (r *tuiRenderer) renderPending(model *tuiModel, forceRedraw bool) (string, terminalFrame) {
+	prepared := r.prepare(model)
+	next := projectTerminalFrame(model, prepared)
 	if next.width < 1 || next.height < 1 {
-		return ""
+		return "", next
 	}
 
-	resized := r.width != 0 && (r.width != next.width || r.height != next.height)
-	full := r.width == 0 || resized || model.forceRedraw || len(r.previousRows) != len(next.rows)
+	previous := r.frame
+	resized := previous.width != 0 && (previous.width != next.width || previous.height != next.height)
+	full := previous.width == 0 || resized || forceRedraw || len(previous.rows) != len(next.rows)
 	changed := make([]int, 0, len(next.rows))
 	for index, row := range next.rows {
-		if full || row != r.previousRows[index] {
+		if full || row != previous.rows[index] {
 			changed = append(changed, index)
 		}
 	}
-	cursorChanged := r.cursorRow != next.cursorRow || r.cursorColumn != next.cursorColumn || r.cursorVisible != next.cursorVisible
+	cursorChanged := previous.cursorRow != next.cursorRow || previous.cursorColumn != next.cursorColumn || previous.cursorVisible != next.cursorVisible
 	if len(changed) == 0 && !cursorChanged {
-		return ""
+		return "", next
 	}
 
 	var output strings.Builder
 	output.WriteString(ansiBeginSynchronizedOutput)
 	output.WriteString(ansiHideCursor)
-	if resized || model.forceRedraw {
+	if resized || forceRedraw {
 		output.WriteString(ansiClearScreen)
 	}
 	for _, index := range changed {
@@ -173,27 +190,55 @@ func (r *tuiRenderer) render(model *tuiModel) string {
 		output.WriteString(ansiShowCursor)
 	}
 	output.WriteString(ansiEndSynchronizedOutput)
+	return output.String(), next
+}
 
-	r.previousRows = next.rows
-	r.width = next.width
-	r.height = next.height
-	r.cursorRow = next.cursorRow
-	r.cursorColumn = next.cursorColumn
-	r.cursorVisible = next.cursorVisible
-	model.forceRedraw = false
-	return output.String()
+func (r *tuiRenderer) prepare(model *tuiModel) renderPreparation {
+	input, layout := modelInputLayout(model)
+	if r.conversationWidth != model.width || r.conversationVersion != model.conversationVersion {
+		lines := conversationLines(model.blocks, model.width)
+		r.conversationLines = make([]styledLine, 0, len(lines)+conversationVerticalPadding*2)
+		r.conversationLines = append(r.conversationLines, make([]styledLine, conversationVerticalPadding)...)
+		r.conversationLines = append(r.conversationLines, lines...)
+		r.conversationLines = append(r.conversationLines, make([]styledLine, conversationVerticalPadding)...)
+		r.conversationWidth = model.width
+		r.conversationVersion = model.conversationVersion
+	}
+
+	return renderPreparation{input: input, layout: layout, conversationLines: r.conversationLines, scrollTop: model.scrollTop}
+}
+
+func (r *tuiRenderer) normalizeViewport(model *tuiModel) {
+	prepared := r.prepare(model)
+	bottom := max(0, len(prepared.conversationLines)-prepared.layout.conversationHeight)
+	if model.following {
+		model.scrollTop = bottom
+		return
+	}
+	model.scrollTop = max(0, min(model.scrollTop, bottom))
+}
+
+func (r *tuiRenderer) commit(frame terminalFrame) {
+	r.frame = frame
 }
 
 func buildTerminalFrame(model *tuiModel) terminalFrame {
+	renderer := &tuiRenderer{}
+	renderer.normalizeViewport(model)
+	return projectTerminalFrame(model, renderer.prepare(model))
+}
+
+func projectTerminalFrame(model *tuiModel, prepared renderPreparation) terminalFrame {
 	width := model.width
 	height := model.height
 	if width < 1 || height < 1 {
 		return terminalFrame{}
 	}
 
-	input, layout := modelInputLayout(model)
+	input := prepared.input
+	layout := prepared.layout
 	rows := make([]styledLine, height)
-	conversation := conversationViewport(model, width, layout.conversationHeight)
+	conversation := conversationViewport(prepared.conversationLines, prepared.scrollTop, layout.conversationHeight)
 	copy(rows, conversation)
 
 	rule := strings.Repeat("─", width)
@@ -241,14 +286,21 @@ func buildTerminalFrame(model *tuiModel) terminalFrame {
 		}
 		renderedRows[row] = renderedRow
 	}
+	conversationPlain := make([]string, len(prepared.conversationLines))
+	for index, line := range prepared.conversationLines {
+		conversationPlain[index] = renderedLineText(line, width)
+	}
 	return terminalFrame{
-		width:         width,
-		height:        height,
-		rows:          renderedRows,
-		plainRows:     plainRows,
-		cursorRow:     layout.inputRow + input.cursorRow,
-		cursorColumn:  input.cursorColumn,
-		cursorVisible: layout.inputRow > 0 && !model.running,
+		width:             width,
+		height:            height,
+		rows:              renderedRows,
+		plainRows:         plainRows,
+		cursorRow:         layout.inputRow + input.cursorRow,
+		cursorColumn:      input.cursorColumn,
+		cursorVisible:     layout.inputRow > 0 && !model.running,
+		layout:            layout,
+		conversationTop:   prepared.scrollTop,
+		conversationLines: conversationPlain,
 	}
 }
 
@@ -381,47 +433,25 @@ func writeCursorPosition(output *strings.Builder, row, column int) {
 	output.WriteByte('H')
 }
 
-func conversationViewport(model *tuiModel, width, height int) []styledLine {
+func conversationViewport(lines []styledLine, scrollTop, height int) []styledLine {
 	if height <= 0 {
 		return nil
 	}
-
-	lines := modelConversationLines(model, width)
-	bottom := len(lines) - height
-	if bottom < 0 {
-		bottom = 0
-	}
-	if model.following {
-		model.scrollTop = bottom
-	} else if model.scrollTop > bottom {
-		model.scrollTop = bottom
-	}
-	if model.scrollTop < 0 {
-		model.scrollTop = 0
-	}
-
 	visible := make([]styledLine, height)
-	end := model.scrollTop + height
-	if end > len(lines) {
-		end = len(lines)
-	}
-	if model.scrollTop < end {
-		copy(visible, lines[model.scrollTop:end])
+	end := min(len(lines), scrollTop+height)
+	if scrollTop < end {
+		copy(visible, lines[scrollTop:end])
 	}
 	return visible
 }
 
 func modelConversationLines(model *tuiModel, width int) []styledLine {
-	if model.conversationDirty || model.wrappedWidth != width {
-		lines := conversationLines(model.blocks, width)
-		model.conversationLines = make([]styledLine, 0, len(lines)+conversationVerticalPadding*2)
-		model.conversationLines = append(model.conversationLines, make([]styledLine, conversationVerticalPadding)...)
-		model.conversationLines = append(model.conversationLines, lines...)
-		model.conversationLines = append(model.conversationLines, make([]styledLine, conversationVerticalPadding)...)
-		model.wrappedWidth = width
-		model.conversationDirty = false
-	}
-	return model.conversationLines
+	lines := conversationLines(model.blocks, width)
+	result := make([]styledLine, 0, len(lines)+conversationVerticalPadding*2)
+	result = append(result, make([]styledLine, conversationVerticalPadding)...)
+	result = append(result, lines...)
+	result = append(result, make([]styledLine, conversationVerticalPadding)...)
+	return result
 }
 
 func conversationLines(blocks []conversationBlock, width int) []styledLine {
@@ -886,23 +916,19 @@ func formatTokens(tokens int64) string {
 	}
 }
 
-func scrollConversation(model *tuiModel, direction int) {
-	_, layout := modelInputLayout(model)
-	scrollConversationBy(model, direction*layout.conversationHeight)
+func scrollConversation(model *tuiModel, direction int, frame terminalFrame) {
+	scrollConversationBy(model, direction*frame.layout.conversationHeight, frame)
 }
 
-func scrollConversationBy(model *tuiModel, lines int) {
-	_, layout := modelInputLayout(model)
-	if layout.conversationHeight <= 0 || lines == 0 {
+func scrollConversationBy(model *tuiModel, lines int, frame terminalFrame) {
+	height := frame.layout.conversationHeight
+	if height <= 0 || lines == 0 {
 		return
 	}
 
-	bottom := len(modelConversationLines(model, model.width)) - layout.conversationHeight
-	if bottom < 0 {
-		bottom = 0
-	}
+	bottom := max(0, len(frame.conversationLines)-height)
 	if model.following {
-		model.scrollTop = bottom
+		model.scrollTop = frame.conversationTop
 	}
 	model.following = false
 	model.scrollTop += lines

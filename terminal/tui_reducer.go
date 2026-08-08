@@ -17,6 +17,7 @@ const (
 	tuiActionSubmit
 	tuiActionSetThinking
 	tuiActionCopy
+	tuiActionRedraw
 )
 
 type tuiAction struct {
@@ -26,9 +27,9 @@ type tuiAction struct {
 	thinkingLevel agent.ThinkingLevel
 }
 
-func reduceKey(model *tuiModel, key keyEvent) (tuiAction, error) {
+func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tuiAction, error) {
 	if key.code == keyMouse {
-		return reduceMouse(model, key.mouse), nil
+		return reduceMouse(model, key.mouse, frame), nil
 	}
 
 	switch key.code {
@@ -53,13 +54,12 @@ func reduceKey(model *tuiModel, key keyEvent) (tuiAction, error) {
 		}
 		return tuiAction{}, ErrInterrupted
 	case keyCtrlL:
-		model.forceRedraw = true
-		return tuiAction{}, nil
+		return tuiAction{kind: tuiActionRedraw}, nil
 	case keyPageUp:
-		scrollConversation(model, -1)
+		scrollConversation(model, -1, frame)
 		return tuiAction{}, nil
 	case keyPageDown:
-		scrollConversation(model, 1)
+		scrollConversation(model, 1, frame)
 		return tuiAction{}, nil
 	}
 

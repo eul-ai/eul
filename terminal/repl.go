@@ -30,7 +30,7 @@ var (
 
 type Engine interface {
 	Run(context.Context, string, agent.EventSink) (agent.RunResult, error)
-	Reset()
+	Reset() error
 }
 
 type Options struct {

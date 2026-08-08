@@ -15,6 +15,7 @@ import (
 	oauth "yaah/auth/openai"
 	openaiadapter "yaah/provider/openai"
 	"yaah/terminal"
+	"yaah/tool"
 )
 
 const (
@@ -26,9 +27,18 @@ const (
 
 type providerFactory func(openaiadapter.CodexTokenSource, openaiadapter.Options) (agent.Provider, error)
 
+type toolAccess uint8
+
+const (
+	fullToolAccess toolAccess = iota
+	readOnlyToolAccess
+)
+
+type toolsetFactory func(string, toolAccess, ...tool.Tool) (*tool.Registry, error)
+
 type oauthManager interface {
-	Login(context.Context, oauth.LoginMethod, oauth.Interaction) (oauth.Credentials, error)
-	Resolve(context.Context) (oauth.Credentials, error)
+	Login(context.Context, oauth.LoginMethod, oauth.Interaction) error
+	Resolve(context.Context) (oauth.AccessCredential, error)
 	Logout(context.Context) error
 }
 
@@ -40,6 +50,7 @@ type appRuntime struct {
 	getwd       func() (string, error)
 	interrupts  <-chan os.Signal
 	newProvider providerFactory
+	newToolset  toolsetFactory
 	newOAuth    func() (oauthManager, error)
 	openURL     func(string) error
 }
@@ -62,7 +73,8 @@ func main() {
 			}
 			return oauth.NewManager(path, oauth.Options{}), nil
 		},
-		openURL: openBrowser,
+		openURL:    openBrowser,
+		newToolset: buildToolset,
 		newProvider: func(source openaiadapter.CodexTokenSource, options openaiadapter.Options) (agent.Provider, error) {
 			return openaiadapter.NewCodex(source, options)
 		},
@@ -214,7 +226,7 @@ func runLogin(arguments []string, runtime appRuntime) int {
 	ctx, cancel := contextWithInterrupt(runtime.interrupts)
 	defer cancel()
 
-	_, err = manager.Login(ctx, method, oauth.Interaction{
+	err = manager.Login(ctx, method, oauth.Interaction{
 		AuthURL: func(url string) error {
 			fmt.Fprintf(runtime.stderr, "Open this URL to sign in with ChatGPT:\n%s\n", url)
 			if err := runtime.openURL(url); err != nil {

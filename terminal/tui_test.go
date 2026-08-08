@@ -370,9 +370,15 @@ func TestHandleKeyShiftTabCyclesThinkingLevel(t *testing.T) {
 	messages := make(chan engineMessage, 1)
 	stopped := make(chan struct{})
 	defer close(stopped)
-	var cancel context.CancelFunc
 
-	exit, err := handleKey(context.Background(), model, &fakeEngine{}, keyEvent{code: keyShiftTab}, messages, stopped, &cancel)
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		engineMessages: messages, stopped: stopped, setThinkingLevel: func(level agent.ThinkingLevel) error {
+			configured = level
+			return nil
+		},
+	}
+	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyShiftTab}})
 	if err != nil || exit || model.thinkingLevel != agent.ThinkingHigh || configured != agent.ThinkingHigh {
 		t.Fatalf("exit=%v err=%v thinking=%q configured=%q", exit, err, model.thinkingLevel, configured)
 	}
@@ -386,11 +392,14 @@ func TestHandleKeyCtrlLRequestsFullRedraw(t *testing.T) {
 	messages := make(chan engineMessage, 1)
 	stopped := make(chan struct{})
 	defer close(stopped)
-	var cancel context.CancelFunc
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		engineMessages: messages, stopped: stopped,
+	}
 
-	exit, err := handleKey(context.Background(), model, &fakeEngine{}, keyEvent{code: keyCtrlL}, messages, stopped, &cancel)
-	if err != nil || exit || !model.forceRedraw {
-		t.Fatalf("exit=%v err=%v forceRedraw=%v", exit, err, model.forceRedraw)
+	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyCtrlL}})
+	if err != nil || exit || !controller.forceRedraw {
+		t.Fatalf("exit=%v err=%v forceRedraw=%v", exit, err, controller.forceRedraw)
 	}
 }
 

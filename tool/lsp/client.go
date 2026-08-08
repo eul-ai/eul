@@ -1,4 +1,4 @@
-package tool
+package lsp
 
 import (
 	"context"
@@ -16,6 +16,8 @@ import (
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
+
+	"yaah/tool/textfile"
 )
 
 type lspServerConfig struct {
@@ -86,11 +88,15 @@ func newLSPClient(cwd string) *lspClient {
 }
 
 func (c *lspClient) documentRequest(ctx context.Context, path string, request lspDocumentRequest) (any, error) {
-	config, err := lspServerForPath(path)
+	document, err := textfile.Load(path)
 	if err != nil {
 		return nil, err
 	}
-	content, err := readLSPDocument(path)
+	return c.documentSnapshotRequest(ctx, document, request)
+}
+
+func (c *lspClient) documentSnapshotRequest(ctx context.Context, document textfile.Snapshot, request lspDocumentRequest) (any, error) {
+	config, err := lspServerForPath(document.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +105,7 @@ func (c *lspClient) documentRequest(ctx context.Context, path string, request ls
 		return nil, err
 	}
 
-	return c.withOpenDocument(ctx, config, session, path, content, request)
+	return c.withOpenDocument(ctx, config, session, document.Path, document.Data, request)
 }
 
 func (c *lspClient) withOpenDocument(ctx context.Context, config lspServerConfig, session *lspSession, path string, content []byte, request lspDocumentRequest) (any, error) {
@@ -361,23 +367,4 @@ func lspServerForPath(path string) (lspServerConfig, error) {
 		}
 	}
 	return lspServerConfig{}, fmt.Errorf("no language server configured for %s", extension)
-}
-
-func readLSPDocument(path string) ([]byte, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", filepath.ToSlash(path))
-	}
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateText(content); err != nil {
-		return nil, err
-	}
-	return content, nil
 }

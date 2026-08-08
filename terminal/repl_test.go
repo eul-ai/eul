@@ -19,6 +19,7 @@ type fakeEngine struct {
 	mu          sync.Mutex
 	calls       []string
 	resets      int
+	resetErr    error
 	runFunction func(context.Context, string, agent.EventSink) (agent.RunResult, error)
 }
 
@@ -34,10 +35,11 @@ func (e *fakeEngine) Run(ctx context.Context, prompt string, sink agent.EventSin
 	return function(ctx, prompt, sink)
 }
 
-func (e *fakeEngine) Reset() {
+func (e *fakeEngine) Reset() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.resets++
+	return e.resetErr
 }
 
 func (e *fakeEngine) snapshot() ([]string, int) {

@@ -41,7 +41,12 @@ type Interaction struct {
 	DeviceCode func(DeviceCode) error
 }
 
-type Credentials struct {
+type AccessCredential struct {
+	AccessToken string
+	AccountID   string
+}
+
+type credentials struct {
 	Version      int    `json:"version"`
 	Type         string `json:"type"`
 	AccessToken  string `json:"access_token"`
@@ -122,13 +127,13 @@ func NewManager(path string, options Options) *Manager {
 	}
 }
 
-func (m *Manager) Login(ctx context.Context, method LoginMethod, interaction Interaction) (Credentials, error) {
+func (m *Manager) Login(ctx context.Context, method LoginMethod, interaction Interaction) error {
 	if err := ctx.Err(); err != nil {
-		return Credentials{}, err
+		return err
 	}
 
 	var (
-		credential Credentials
+		credential credentials
 		err        error
 	)
 	switch method {
@@ -137,22 +142,18 @@ func (m *Manager) Login(ctx context.Context, method LoginMethod, interaction Int
 	case LoginDevice:
 		credential, err = m.loginDevice(ctx, interaction)
 	default:
-		return Credentials{}, errors.New("oauth: unsupported login method")
+		return errors.New("oauth: unsupported login method")
 	}
 
 	if err != nil {
-		return Credentials{}, err
+		return err
 	}
 
-	if err := m.withFileLock(ctx, func() error { return writeCredentials(m.path, credential) }); err != nil {
-		return Credentials{}, err
-	}
-
-	return credential, nil
+	return m.withFileLock(ctx, func() error { return writeCredentials(m.path, credential) })
 }
 
-func (m *Manager) Resolve(ctx context.Context) (Credentials, error) {
-	var result Credentials
+func (m *Manager) Resolve(ctx context.Context) (AccessCredential, error) {
+	var result credentials
 	err := m.withFileLock(ctx, func() error {
 		credential, err := readCredentials(m.path)
 		if err != nil {
@@ -176,7 +177,10 @@ func (m *Manager) Resolve(ctx context.Context) (Credentials, error) {
 		result = refreshed
 		return nil
 	})
-	return result, err
+	if err != nil {
+		return AccessCredential{}, err
+	}
+	return AccessCredential{AccessToken: result.AccessToken, AccountID: result.AccountID}, nil
 }
 
 func (m *Manager) Logout(ctx context.Context) error {

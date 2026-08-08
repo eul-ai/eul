@@ -2,7 +2,6 @@ package terminal
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -105,129 +104,66 @@ func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width
 		usageClock = usageTicker.C
 	}
 
-	renderer := &tuiRenderer{}
-	dirty := true
-	if err := renderIfDirty(renderer, model, options.Output, &dirty); err != nil {
+	controller := &tuiController{
+		model:              model,
+		renderer:           &tuiRenderer{},
+		engine:             engine,
+		output:             options.Output,
+		outputFD:           outputFD,
+		engineMessages:     engineMessages,
+		stopped:            stopped,
+		fileSearch:         fileSearch,
+		fileSearchMessages: fileSearchMessages,
+		usageRequests:      usageRequests,
+		setThinkingLevel:   options.SetThinkingLevel,
+		dirty:              true,
+	}
+	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventRender}); err != nil {
 		return err
 	}
 
 	interrupts := options.Interrupts
 	parentDone := ctx.Done()
-	var turnCancel context.CancelFunc
-	var exitAfterTurn error
-
 	for {
+		var event tuiEvent
 		select {
 		case <-parentDone:
 			parentDone = nil
-			if !model.running {
-				return ctx.Err()
-			}
-			exitAfterTurn = ctx.Err()
-			turnCancel()
-			model.activity = activity{kind: activityCanceling}
-			dirty = true
-
+			event = tuiEvent{kind: tuiEventParentCanceled, err: ctx.Err()}
 		case _, ok := <-interrupts:
 			if !ok {
 				interrupts = nil
 				continue
 			}
-			if err := interruptTUI(model, turnCancel); err != nil {
-				return err
-			}
-			dirty = true
-
+			event = tuiEvent{kind: tuiEventInterrupt}
 		case <-resizes:
-			newWidth, newHeight, err := term.GetSize(outputFD)
-			if err != nil {
-				cancelActiveTurn(turnCancel, engineMessages)
-				return fmt.Errorf("terminal: get size: %w", err)
-			}
-			model.width = newWidth
-			model.height = newHeight
-			model.selection = textSelection{}
-			dirty = true
-
+			event = tuiEvent{kind: tuiEventResize}
 		case key := <-keys:
-			exit, err := handleKeyWithOutput(ctx, model, engine, options.Output, key, engineMessages, stopped, &turnCancel)
-			if err != nil {
-				cancelActiveTurn(turnCancel, engineMessages)
-				if ctxErr := ctx.Err(); ctxErr != nil {
-					return ctxErr
-				}
-				return err
-			}
-			fileSearch.update(ctx, model.takeFileSearchCommand(), fileSearchMessages)
-			if exit {
-				if !model.running {
-					if ctxErr := ctx.Err(); ctxErr != nil {
-						return ctxErr
-					}
-					return nil
-				}
-				if exitAfterTurn == nil {
-					exitAfterTurn = io.EOF
-					turnCancel()
-					model.activity = activity{kind: activityCanceling}
-				}
-			}
-			dirty = true
-
+			event = tuiEvent{kind: tuiEventKey, key: key}
 		case message := <-engineMessages:
-			if !message.done {
-				model.applyAgentEvent(*message.event)
-				dirty = true
-				continue
-			}
-
-			if turnCancel != nil {
-				turnCancel()
-				turnCancel = nil
-			}
-			if contextErr := ctx.Err(); contextErr != nil {
-				return contextErr
-			}
-			if exitAfterTurn != nil {
-				if errors.Is(exitAfterTurn, io.EOF) {
-					return nil
-				}
-				return exitAfterTurn
-			}
-			model.finishTurn(message.err)
-			requestProviderUsage(usageRequests)
-			dirty = true
-
+			event = tuiEvent{kind: tuiEventEngine, engine: message}
 		case message := <-usageMessages:
-			if message.err == nil {
-				model.providerUsage = agent.ProviderUsage{Windows: append([]agent.UsageWindow(nil), message.usage.Windows...)}
-				dirty = true
-			}
-
+			event = tuiEvent{kind: tuiEventProviderUsage, providerUsage: message}
 		case result := <-fileSearchMessages:
-			if model.applyFileSearchResult(result) {
-				dirty = true
-			}
-
+			event = tuiEvent{kind: tuiEventFileSearch, fileSearch: result}
 		case <-spinnerTicker.C:
-			if model.activity.kind != activityReady && model.activity.kind != activityError {
-				model.spinner++
-				dirty = true
-			}
-
+			event = tuiEvent{kind: tuiEventSpinner}
 		case <-usageClock:
-			for _, window := range model.providerUsage.Windows {
-				if !window.ResetsAt.IsZero() {
-					dirty = true
-					break
-				}
-			}
-
+			event = tuiEvent{kind: tuiEventUsageClock}
 		case <-renderTicker.C:
-			if err := renderIfDirty(renderer, model, options.Output, &dirty); err != nil {
-				cancelActiveTurn(turnCancel, engineMessages)
-				return err
+			event = tuiEvent{kind: tuiEventRender}
+		}
+
+		done, err := controller.transition(ctx, event)
+		if err != nil {
+			cancelActiveTurn(controller.turnCancel, engineMessages)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
 			}
+			return err
+		}
+		if done {
+			return err
 		}
 	}
 }
@@ -278,85 +214,19 @@ func cancelActiveTurn(cancel context.CancelFunc, messages <-chan engineMessage) 
 	}
 }
 
-func renderIfDirty(renderer *tuiRenderer, model *tuiModel, output io.Writer, dirty *bool) error {
+func renderIfDirty(renderer *tuiRenderer, model *tuiModel, output io.Writer, dirty *bool, forceRedraw bool) error {
 	if !*dirty {
 		return nil
 	}
-	frame := renderer.render(model)
-	if frame != "" {
-		if err := writeOutput(output, "%s", frame); err != nil {
+	outputFrame, next := renderer.renderPending(model, forceRedraw)
+	if outputFrame != "" {
+		if err := writeOutput(output, "%s", outputFrame); err != nil {
 			return err
 		}
 	}
+	renderer.commit(next)
 	*dirty = false
 	return nil
-}
-
-func interruptTUI(model *tuiModel, cancel context.CancelFunc) error {
-	action, err := reduceInterrupt(model)
-	if err != nil {
-		return err
-	}
-	if action.kind == tuiActionCancel {
-		cancel()
-	}
-	return nil
-}
-
-func handleKey(
-	ctx context.Context,
-	model *tuiModel,
-	engine Engine,
-	key keyEvent,
-	messages chan<- engineMessage,
-	stopped <-chan struct{},
-	turnCancel *context.CancelFunc,
-) (bool, error) {
-	return handleKeyWithOutput(ctx, model, engine, io.Discard, key, messages, stopped, turnCancel)
-}
-
-func handleKeyWithOutput(
-	ctx context.Context,
-	model *tuiModel,
-	engine Engine,
-	output io.Writer,
-	key keyEvent,
-	messages chan<- engineMessage,
-	stopped <-chan struct{},
-	turnCancel *context.CancelFunc,
-) (bool, error) {
-	action, err := reduceKey(model, key)
-	if err != nil {
-		return false, err
-	}
-
-	switch action.kind {
-	case tuiActionNone:
-		return false, nil
-	case tuiActionCancel:
-		(*turnCancel)()
-	case tuiActionReset:
-		engine.Reset()
-		model.clearConversation()
-	case tuiActionExit:
-		return true, nil
-	case tuiActionSubmit:
-		turnContext, cancel := context.WithCancel(ctx)
-		*turnCancel = cancel
-		go runEngineTurn(turnContext, engine, action.prompt, messages, stopped)
-	case tuiActionSetThinking:
-		if err := model.setThinkingLevel(action.thinkingLevel); err != nil {
-			setInputError(model, err)
-			return false, nil
-		}
-		model.thinkingLevel = action.thinkingLevel
-	case tuiActionCopy:
-		encoded := base64.StdEncoding.EncodeToString([]byte(action.text))
-		if err := writeOutput(output, "\x1b]52;c;%s\x07", encoded); err != nil {
-			return false, err
-		}
-	}
-	return false, nil
 }
 
 func runEngineTurn(ctx context.Context, engine Engine, prompt string, messages chan<- engineMessage, stopped <-chan struct{}) {

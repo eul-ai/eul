@@ -31,30 +31,30 @@ type cellRange struct {
 	end   int
 }
 
-func reduceMouse(model *tuiModel, event mouseEvent) tuiAction {
+func reduceMouse(model *tuiModel, event mouseEvent, frame terminalFrame) tuiAction {
 	switch event.kind {
 	case mouseWheelUp:
-		scrollConversationBy(model, -mouseWheelScrollLines)
+		scrollConversationBy(model, -mouseWheelScrollLines, frame)
 	case mouseWheelDown:
-		scrollConversationBy(model, mouseWheelScrollLines)
+		scrollConversationBy(model, mouseWheelScrollLines, frame)
 	case mousePress:
-		point := selectionPointAt(model, event, false)
+		point := selectionPointAt(event, false, frame)
 		model.selection = textSelection{anchor: point, focus: point, set: true, pressing: true}
 	case mouseDrag:
 		if model.selection.pressing {
-			model.selection.focus = selectionPointAt(model, event, model.selection.anchor.conversation)
+			model.selection.focus = selectionPointAt(event, model.selection.anchor.conversation, frame)
 		}
 	case mouseRelease:
 		if !model.selection.pressing {
 			return tuiAction{}
 		}
 		model.selection.pressing = false
-		model.selection.focus = selectionPointAt(model, event, model.selection.anchor.conversation)
+		model.selection.focus = selectionPointAt(event, model.selection.anchor.conversation, frame)
 		if _, ok := model.selection.bounds(); !ok {
 			model.selection = textSelection{}
 			return tuiAction{}
 		}
-		text := selectedText(model)
+		text := selectedText(model, frame)
 		model.selection = textSelection{}
 		if text == "" {
 			return tuiAction{}
@@ -64,19 +64,17 @@ func reduceMouse(model *tuiModel, event mouseEvent) tuiAction {
 	return tuiAction{}
 }
 
-func selectionPointAt(model *tuiModel, event mouseEvent, forceConversation bool) selectionPoint {
-	_, layout := modelInputLayout(model)
-	conversationViewport(model, model.width, layout.conversationHeight)
-
-	column := max(0, min(model.width-1, event.column))
+func selectionPointAt(event mouseEvent, forceConversation bool, frame terminalFrame) selectionPoint {
+	layout := frame.layout
+	column := max(0, min(frame.width-1, event.column))
 	if forceConversation || event.row >= 0 && event.row < layout.conversationHeight {
 		viewportRow := max(0, min(layout.conversationHeight-1, event.row))
-		contentRow := model.scrollTop + viewportRow
-		contentRow = max(0, min(len(modelConversationLines(model, model.width))-1, contentRow))
+		contentRow := frame.conversationTop + viewportRow
+		contentRow = max(0, min(len(frame.conversationLines)-1, contentRow))
 		return selectionPoint{row: contentRow, column: column, conversation: true}
 	}
 
-	row := max(0, min(model.height-1, event.row))
+	row := max(0, min(frame.height-1, event.row))
 	return selectionPoint{row: row, column: column}
 }
 
@@ -96,21 +94,15 @@ func (selection textSelection) bounds() (selectionBounds, bool) {
 	return selectionBounds{start: selection.focus, end: selection.anchor}, true
 }
 
-func selectedText(model *tuiModel) string {
+func selectedText(model *tuiModel, frame terminalFrame) string {
 	bounds, ok := model.selection.bounds()
 	if !ok {
 		return ""
 	}
 
-	var lines []string
+	lines := frame.plainRows
 	if bounds.start.conversation {
-		styled := modelConversationLines(model, model.width)
-		lines = make([]string, len(styled))
-		for index, line := range styled {
-			lines[index] = renderedLineText(line, model.width)
-		}
-	} else {
-		lines = buildTerminalFrame(model).plainRows
+		lines = frame.conversationLines
 	}
 	return selectedTextFromLines(lines, bounds)
 }

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func (m *Manager) exchangeCode(ctx context.Context, code, verifier, redirectURI string) (Credentials, error) {
+func (m *Manager) exchangeCode(ctx context.Context, code, verifier, redirectURI string) (credentials, error) {
 	values := url.Values{
 		"grant_type":    {"authorization_code"},
 		"client_id":     {clientID},
@@ -22,12 +22,12 @@ func (m *Manager) exchangeCode(ctx context.Context, code, verifier, redirectURI 
 
 	response, err := m.doForm(ctx, "/oauth/token", values)
 	if err != nil {
-		return Credentials{}, err
+		return credentials{}, err
 	}
 	return m.credentialsFromTokenResponse(response, "")
 }
 
-func (m *Manager) refresh(ctx context.Context, old Credentials) (Credentials, error) {
+func (m *Manager) refresh(ctx context.Context, old credentials) (credentials, error) {
 	values := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {old.RefreshToken},
@@ -36,7 +36,7 @@ func (m *Manager) refresh(ctx context.Context, old Credentials) (Credentials, er
 
 	response, err := m.doForm(ctx, "/oauth/token", values)
 	if err != nil {
-		return Credentials{}, err
+		return credentials{}, err
 	}
 	return m.credentialsFromTokenResponse(response, old.RefreshToken)
 }
@@ -47,28 +47,28 @@ type tokenResponse struct {
 	ExpiresIn    float64 `json:"expires_in"`
 }
 
-func (m *Manager) credentialsFromTokenResponse(response boundedResponse, previousRefresh string) (Credentials, error) {
+func (m *Manager) credentialsFromTokenResponse(response boundedResponse, previousRefresh string) (credentials, error) {
 	if response.status < 200 || response.status >= 300 {
-		return Credentials{}, fmt.Errorf("oauth: token request failed with HTTP %d", response.status)
+		return credentials{}, fmt.Errorf("oauth: token request failed with HTTP %d", response.status)
 	}
 
 	var token tokenResponse
 	if err := json.Unmarshal(response.body, &token); err != nil || token.AccessToken == "" || token.ExpiresIn <= 0 || token.ExpiresIn > 366*24*60*60 {
-		return Credentials{}, errors.New("oauth: invalid token response")
+		return credentials{}, errors.New("oauth: invalid token response")
 	}
 	if token.RefreshToken == "" {
 		token.RefreshToken = previousRefresh
 	}
 	if token.RefreshToken == "" {
-		return Credentials{}, errors.New("oauth: invalid token response")
+		return credentials{}, errors.New("oauth: invalid token response")
 	}
 
 	accountID, err := accountIDFromJWT(token.AccessToken)
 	if err != nil {
-		return Credentials{}, err
+		return credentials{}, err
 	}
 
-	return Credentials{
+	return credentials{
 		Version:      credentialVersion,
 		Type:         "oauth",
 		AccessToken:  token.AccessToken,

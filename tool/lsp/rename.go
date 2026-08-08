@@ -1,4 +1,4 @@
-package tool
+package lsp
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"go.lsp.dev/protocol"
 
 	"yaah/agent"
+	"yaah/tool/textfile"
 )
 
 type lspRenameArguments struct {
@@ -41,16 +42,16 @@ func (t *lspTool) executeRename(ctx context.Context, arguments json.RawMessage) 
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
-	content, err := readLSPDocument(path)
+	document, err := textfile.Load(path)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
-	position, err := resolveLSPRenamePosition(content, hint, *args.OldName)
+	position, err := resolveLSPRenamePosition(document.Data, hint, *args.OldName)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
 
-	response, err := t.client.documentRequest(ctx, path, func(ctx context.Context, session *lspSession, document protocol.TextDocumentIdentifier) (any, error) {
+	response, err := t.client.documentSnapshotRequest(ctx, document, func(ctx context.Context, session *lspSession, document protocol.TextDocumentIdentifier) (any, error) {
 		params := protocol.TextDocumentPositionParams{TextDocument: document, Position: position}
 		return prepareAndRename(ctx, session.server, params, *args.NewName)
 	})
@@ -61,7 +62,7 @@ func (t *lspTool) executeRename(ctx context.Context, arguments json.RawMessage) 
 	if !ok {
 		return agent.ToolResult{}, fmt.Errorf("unexpected rename response %T", response)
 	}
-	changed, err := applyLSPWorkspaceEdit(ctx, workspaceEdit)
+	changed, err := applyLSPWorkspaceEdit(ctx, workspaceEdit, document)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}

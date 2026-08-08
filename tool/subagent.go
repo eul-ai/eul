@@ -68,7 +68,7 @@ func (*Subagent) Definition() agent.ToolDefinition {
 	return subagentToolDefinition
 }
 
-func (*Subagent) Presentation(snapshot agent.ToolCallSnapshot) agent.ToolPresentation {
+func (*Subagent) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
 	values, _ := snapshot.Arguments["tasks"].([]any)
 	tasks := make([]string, 0, len(values))
 	for _, value := range values {

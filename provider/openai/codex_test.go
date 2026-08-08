@@ -81,7 +81,7 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 	}
 
 	var delivered, reasoning string
-	response, err := client.Generate(context.Background(), agent.Request{Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, Inputs: []agent.Input{{Kind: agent.InputUser, Text: "hello"}}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, func(text string) error {
+	response, err := generate(client, context.Background(), agent.Request{Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, Inputs: []agent.Input{{Kind: agent.InputUser, Text: "hello"}}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, func(text string) error {
 		delivered += text
 		return nil
 	}, func(text string) error {
@@ -119,7 +119,7 @@ func TestCodexSSEStopsAtTerminalEventWithoutWaitingForEOF(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		response, err := client.Generate(context.Background(), baseRequest(), nil, nil, nil)
+		response, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		done <- outcome{response: response, err: err}
 	}()
 	select {
@@ -171,14 +171,14 @@ func TestCodexSSEToolCallAndReasoningReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first, err := client.Generate(context.Background(), agent.Request{Model: "model", Inputs: []agent.Input{{Kind: agent.InputUser, Text: "inspect"}}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, nil, nil, nil)
+	first, err := generate(client, context.Background(), agent.Request{Model: "model", Inputs: []agent.Input{{Kind: agent.InputUser, Text: "inspect"}}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(first.ToolCalls) != 1 || first.ToolCalls[0].ID != "call_read" || string(first.ToolCalls[0].Arguments) != `{"path":"file.go"}` {
 		t.Fatalf("first response = %+v", first)
 	}
-	second, err := client.Generate(context.Background(), agent.Request{Model: "model", State: first.State, Inputs: []agent.Input{{Kind: agent.InputToolResult, CallID: "call_read", Tool: "read", Text: "contents"}}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, nil, nil, nil)
+	second, err := generate(client, context.Background(), agent.Request{Model: "model", State: first.State, Inputs: []agent.Input{{Kind: agent.InputToolResult, CallID: "call_read", Tool: "read", Text: "contents"}}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestCodexStreamsPartialToolArgumentsBeforeResponseCompletes(t *testing.T) {
 		err      error
 	}, 1)
 	go func() {
-		response, generateErr := client.Generate(context.Background(), baseRequest(), nil, nil, func(snapshot agent.ToolCallSnapshot) error {
+		response, generateErr := generate(client, context.Background(), baseRequest(), nil, nil, func(snapshot agent.ToolCallSnapshot) error {
 			snapshots <- snapshot
 			return nil
 		})
@@ -237,7 +237,7 @@ func TestCodexStreamsPartialToolArgumentsBeforeResponseCompletes(t *testing.T) {
 			t.Fatal("tool argument snapshot was not delivered before response completion")
 		}
 	}
-	if partial.Complete || partial.ID != "call_write" || partial.Arguments["content"] != "package main" {
+	if partial.Complete || partial.ID != "call_write" || !strings.Contains(partial.RawArguments, "package main") {
 		close(release)
 		t.Fatalf("partial snapshot = %+v", partial)
 	}
@@ -249,7 +249,7 @@ func TestCodexStreamsPartialToolArgumentsBeforeResponseCompletes(t *testing.T) {
 	}
 	select {
 	case final := <-snapshots:
-		if !final.Complete || final.Arguments["content"] != "package main" {
+		if !final.Complete || final.RawArguments != `{"path":"demo.go","content":"package main"}` {
 			t.Fatalf("final snapshot = %+v", final)
 		}
 	default:
@@ -271,10 +271,10 @@ func TestResponsesSSECorrelatesInterleavedToolArgumentStreams(t *testing.T) {
 	}, "\n\n") + "\n\n"
 
 	var snapshots []agent.ToolCallSnapshot
-	response, err := readResponsesSSE(strings.NewReader(body), 1<<20, &streamObserver{onToolCall: func(snapshot agent.ToolCallSnapshot) error {
+	response, err := readResponsesSSE(strings.NewReader(body), 1<<20, &streamObserver{observer: agent.StreamObserver{ToolCall: func(snapshot agent.ToolCallSnapshot) error {
 		snapshots = append(snapshots, snapshot)
 		return nil
-	}})
+	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestResponsesSSECorrelatesInterleavedToolArgumentStreams(t *testing.T) {
 	if !slices.Equal(gotIDs, wantIDs) {
 		t.Fatalf("snapshot IDs = %v, want %v", gotIDs, wantIDs)
 	}
-	if !snapshots[4].Complete || !snapshots[5].Complete || snapshots[4].Arguments["path"] != "one.txt" || snapshots[5].Arguments["path"] != "two.txt" {
+	if !snapshots[4].Complete || !snapshots[5].Complete || snapshots[4].RawArguments != `{"path":"one.txt"}` || snapshots[5].RawArguments != `{"path":"two.txt"}` {
 		t.Fatalf("final snapshots = %+v", snapshots[4:])
 	}
 }
@@ -327,10 +327,10 @@ func TestCodexSourceIsResolvedPerRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Generate(context.Background(), baseRequest(), nil, nil, nil); err != nil {
+	if _, err := generate(client, context.Background(), baseRequest(), nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Generate(context.Background(), baseRequest(), nil, nil, nil)
+	_, err = generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "transport failed") {
 		t.Fatalf("second Generate() error = %v", err)
 	}
@@ -392,7 +392,7 @@ func TestCodexDefaultEndpointAndRedirects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Generate(context.Background(), baseRequest(), nil, nil, nil)
+	_, err = generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "HTTP 307") || destinationCalls != 0 {
 		t.Fatalf("redirect error=%v destination calls=%d", err, destinationCalls)
 	}
@@ -406,7 +406,7 @@ func TestCodexTokenSourceErrorsPropagateWithoutRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Generate(context.Background(), baseRequest(), nil, nil, nil)
+	_, err = generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	if err == nil || !errors.Is(err, sourceError) || !strings.Contains(err.Error(), sourceError.Error()) {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -423,7 +423,7 @@ func TestCodexTokenSourceErrorsPropagateWithoutRequest(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, generateErr := client.Generate(ctx, baseRequest(), nil, nil, nil)
+		_, generateErr := generate(client, ctx, baseRequest(), nil, nil, nil)
 		done <- generateErr
 	}()
 	<-started

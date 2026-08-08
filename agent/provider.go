@@ -31,7 +31,6 @@ type ToolCallSnapshot struct {
 	ID           string
 	Name         string
 	RawArguments string
-	Arguments    map[string]any
 	Complete     bool
 }
 
@@ -74,11 +73,18 @@ type CompactResponse struct {
 
 type TextSink func(text string) error
 
-// ToolCallSink may be called concurrently while Generate is running.
 type ToolCallSink func(ToolCallSnapshot) error
 
+// StreamObserver callbacks may be called concurrently while Generate is running.
+// Returning an error stops delivery and terminates generation.
+type StreamObserver struct {
+	Text      TextSink
+	Reasoning TextSink
+	ToolCall  ToolCallSink
+}
+
 type Provider interface {
-	Generate(ctx context.Context, request Request, onText, onReasoning TextSink, onToolCall ToolCallSink) (Response, error)
+	Generate(context.Context, Request, StreamObserver) (Response, error)
 }
 
 type UsageProvider interface {

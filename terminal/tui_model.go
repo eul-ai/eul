@@ -49,36 +49,33 @@ type activity struct {
 }
 
 type tuiModel struct {
-	width             int
-	height            int
-	model             string
-	thinkingLevel     agent.ThinkingLevel
-	thinkingLevels    []agent.ThinkingLevel
-	setThinkingLevel  func(agent.ThinkingLevel) error
-	contextWindow     int64
-	contextTokens     int64
-	providerUsage     agent.ProviderUsage
-	turnExecutedTool  bool
-	blocks            []conversationBlock
-	conversationLines []styledLine
-	wrappedWidth      int
-	conversationDirty bool
-	forceRedraw       bool
-	streamKind        blockKind
-	streamOpen        bool
-	input             []rune
-	cursor            int
-	filePicker        filePickerState
-	history           []string
-	historyIndex      int
-	historyDraft      string
-	scrollTop         int
-	following         bool
-	selection         textSelection
-	running           bool
-	interrupted       bool
-	activity          activity
-	spinner           int
+	width                      int
+	height                     int
+	model                      string
+	thinkingLevel              agent.ThinkingLevel
+	thinkingLevels             []agent.ThinkingLevel
+	thinkingSelectionAvailable bool
+	contextWindow              int64
+	contextTokens              int64
+	providerUsage              agent.ProviderUsage
+	turnExecutedTool           bool
+	blocks                     []conversationBlock
+	conversationVersion        uint64
+	streamKind                 blockKind
+	streamOpen                 bool
+	input                      []rune
+	cursor                     int
+	filePicker                 filePickerState
+	history                    []string
+	historyIndex               int
+	historyDraft               string
+	scrollTop                  int
+	following                  bool
+	selection                  textSelection
+	running                    bool
+	interrupted                bool
+	activity                   activity
+	spinner                    int
 }
 
 func newTUIModel(width, height int, options Options) *tuiModel {
@@ -92,18 +89,17 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 	}
 
 	return &tuiModel{
-		width:             width,
-		height:            height,
-		model:             singleLine(options.Model, 120),
-		thinkingLevel:     agent.ThinkingLevel(singleLine(string(thinkingLevel), 40)),
-		thinkingLevels:    thinkingLevels,
-		setThinkingLevel:  options.SetThinkingLevel,
-		contextWindow:     options.ContextWindow,
-		filePicker:        filePickerState{enabled: options.WorkingDirectory != ""},
-		historyIndex:      -1,
-		following:         true,
-		conversationDirty: true,
-		activity:          activity{kind: activityReady},
+		width:                      width,
+		height:                     height,
+		model:                      singleLine(options.Model, 120),
+		thinkingLevel:              agent.ThinkingLevel(singleLine(string(thinkingLevel), 40)),
+		thinkingLevels:             thinkingLevels,
+		thinkingSelectionAvailable: options.SetThinkingLevel != nil,
+		contextWindow:              options.ContextWindow,
+		filePicker:                 filePickerState{enabled: options.WorkingDirectory != ""},
+		historyIndex:               -1,
+		following:                  true,
+		activity:                   activity{kind: activityReady},
 	}
 }
 
@@ -115,13 +111,13 @@ func (m *tuiModel) appendStream(kind blockKind, text string) {
 
 	if m.streamOpen && m.streamKind == kind && len(m.blocks) > 0 {
 		m.blocks[len(m.blocks)-1].text += text
-		m.conversationDirty = true
+		m.conversationVersion++
 		return
 	}
 
 	m.closeStream()
 	m.blocks = append(m.blocks, conversationBlock{kind: kind, text: text})
-	m.conversationDirty = true
+	m.conversationVersion++
 	m.streamKind = kind
 	m.streamOpen = true
 }
@@ -129,7 +125,7 @@ func (m *tuiModel) appendStream(kind blockKind, text string) {
 func (m *tuiModel) appendBlock(kind blockKind, text string) {
 	m.closeStream()
 	m.blocks = append(m.blocks, conversationBlock{kind: kind, text: sanitizeAssistantText(text)})
-	m.conversationDirty = true
+	m.conversationVersion++
 }
 
 func (m *tuiModel) closeStream() {
@@ -177,7 +173,7 @@ func (m *tuiModel) startTool(call agent.ToolCall, presentation agent.ToolPresent
 		toolCallID: call.ID,
 		tool:       sanitizeToolPresentation(call, presentation),
 	})
-	m.conversationDirty = true
+	m.conversationVersion++
 	m.setActiveActivity(activity{kind: activityTool, detail: toolActivityDetail(call, m.blocks[len(m.blocks)-1].tool)})
 }
 
@@ -188,7 +184,7 @@ func (m *tuiModel) updateTool(call agent.ToolCall, presentation agent.ToolPresen
 		return
 	}
 	m.blocks[index].tool = sanitizeToolPresentation(call, presentation)
-	m.conversationDirty = true
+	m.conversationVersion++
 }
 
 func (m *tuiModel) finishTool(call agent.ToolCall, presentation agent.ToolPresentation, result agent.ToolResult) {
@@ -209,7 +205,7 @@ func (m *tuiModel) finishTool(call agent.ToolCall, presentation agent.ToolPresen
 	block.kind = kind
 	block.tool = sanitizeToolPresentation(call, presentation)
 	block.toolOutcome = sanitizeAssistantText(toolResultOutcome(result, presentation))
-	m.conversationDirty = true
+	m.conversationVersion++
 }
 
 func (m *tuiModel) toolBlockIndex(callID string) int {
@@ -290,7 +286,7 @@ func (m *tuiModel) clearInput() {
 }
 
 func (m *tuiModel) nextThinkingLevel() (agent.ThinkingLevel, error) {
-	if m.setThinkingLevel == nil || len(m.thinkingLevels) == 0 {
+	if !m.thinkingSelectionAvailable || len(m.thinkingLevels) == 0 {
 		return "", errors.New("thinking level selection is unavailable")
 	}
 
@@ -399,8 +395,7 @@ func (m *tuiModel) takePrompt() (string, bool) {
 
 func (m *tuiModel) clearConversation() {
 	m.blocks = nil
-	m.conversationLines = nil
-	m.conversationDirty = true
+	m.conversationVersion++
 	m.closeStream()
 	m.contextTokens = 0
 	m.turnExecutedTool = false
@@ -417,7 +412,7 @@ func (m *tuiModel) finishPendingTools(outcome string) {
 		}
 		m.blocks[index].kind = blockToolError
 		m.blocks[index].toolOutcome = outcome
-		m.conversationDirty = true
+		m.conversationVersion++
 	}
 }
 

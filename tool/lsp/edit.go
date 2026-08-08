@@ -1,17 +1,18 @@
-package tool
+package lsp
 
 import (
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"unicode/utf8"
 
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
+
+	"yaah/tool/textfile"
 )
 
 type resolvedLSPTextEdit struct {
@@ -27,13 +28,18 @@ type lspDocumentEdits struct {
 }
 
 type lspFileChange struct {
-	path string
-	mode os.FileMode
-	data []byte
+	snapshot textfile.Snapshot
+	data     []byte
 }
 
-func applyLSPWorkspaceEdit(ctx context.Context, workspaceEdit *protocol.WorkspaceEdit) (int, error) {
-	changes, err := planLSPWorkspaceEdit(workspaceEdit)
+type lspPathEdits struct {
+	requestedPath string
+	edits         []protocol.TextEdit
+	version       *int32
+}
+
+func applyLSPWorkspaceEdit(ctx context.Context, workspaceEdit *protocol.WorkspaceEdit, documents ...textfile.Snapshot) (int, error) {
+	changes, err := planLSPWorkspaceEdit(workspaceEdit, documents...)
 	if err != nil {
 		return 0, err
 	}
@@ -43,7 +49,7 @@ func applyLSPWorkspaceEdit(ctx context.Context, workspaceEdit *protocol.Workspac
 	return len(changes), nil
 }
 
-func planLSPWorkspaceEdit(workspaceEdit *protocol.WorkspaceEdit) ([]lspFileChange, error) {
+func planLSPWorkspaceEdit(workspaceEdit *protocol.WorkspaceEdit, documents ...textfile.Snapshot) ([]lspFileChange, error) {
 	if workspaceEdit == nil {
 		return nil, nil
 	}
@@ -64,9 +70,6 @@ func planLSPWorkspaceEdit(workspaceEdit *protocol.WorkspaceEdit) ([]lspFileChang
 		if documentEdits.version != nil && version != nil && *documentEdits.version != *version {
 			return nil, fmt.Errorf("document %q has conflicting versions %d and %d", documentURI, *documentEdits.version, *version)
 		}
-		if version != nil && *version != lspDocumentVersion {
-			return nil, fmt.Errorf("document %q has version %d; expected %d", documentURI, *version, lspDocumentVersion)
-		}
 		if documentEdits.version == nil && version != nil {
 			value := *version
 			documentEdits.version = &value
@@ -85,28 +88,66 @@ func planLSPWorkspaceEdit(workspaceEdit *protocol.WorkspaceEdit) ([]lspFileChang
 		editsByURI[documentURI] = documentEdits
 	}
 
-	changes := make([]lspFileChange, 0, len(editsByURI))
-	for documentURI, documentEdits := range editsByURI {
+	documentURIs := make([]uri.URI, 0, len(editsByURI))
+	for documentURI := range editsByURI {
+		documentURIs = append(documentURIs, documentURI)
+	}
+	sort.Slice(documentURIs, func(left, right int) bool {
+		return documentURIs[left].FsPath() < documentURIs[right].FsPath()
+	})
+
+	editsByPath := make(map[string]lspPathEdits, len(documentURIs))
+	for _, documentURI := range documentURIs {
 		if documentURI.Scheme() != "file" {
 			return nil, fmt.Errorf("unsupported document URI %q", documentURI)
 		}
-		path := documentURI.FsPath()
-		info, err := os.Stat(path)
+		requestedPath := documentURI.FsPath()
+		resolvedPath, err := filepath.EvalSymlinks(requestedPath)
 		if err != nil {
 			return nil, err
 		}
-		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("%s is not a regular file", filepath.ToSlash(path))
+		pathEdits := editsByPath[resolvedPath]
+		if pathEdits.requestedPath == "" {
+			pathEdits.requestedPath = requestedPath
 		}
-		content, err := os.ReadFile(path)
+		documentEdits := editsByURI[documentURI]
+		if pathEdits.version != nil && documentEdits.version != nil && *pathEdits.version != *documentEdits.version {
+			return nil, fmt.Errorf("document %q has conflicting versions %d and %d", documentURI, *pathEdits.version, *documentEdits.version)
+		}
+		if pathEdits.version == nil && documentEdits.version != nil {
+			value := *documentEdits.version
+			pathEdits.version = &value
+		}
+		pathEdits.edits = append(pathEdits.edits, documentEdits.edits...)
+		editsByPath[resolvedPath] = pathEdits
+	}
+
+	knownDocuments := make(map[string]textfile.Snapshot, len(documents))
+	for _, document := range documents {
+		knownDocuments[document.Path] = document
+	}
+	resolvedPaths := make([]string, 0, len(editsByPath))
+	for resolvedPath := range editsByPath {
+		resolvedPaths = append(resolvedPaths, resolvedPath)
+	}
+	sort.Strings(resolvedPaths)
+
+	changes := make([]lspFileChange, 0, len(resolvedPaths))
+	for _, resolvedPath := range resolvedPaths {
+		pathEdits := editsByPath[resolvedPath]
+		snapshot, exists := knownDocuments[resolvedPath]
+		if !exists {
+			var err error
+			snapshot, err = textfile.Load(pathEdits.requestedPath)
+			if err != nil {
+				return nil, err
+			}
+		}
+		updated, err := applyLSPTextEdits(snapshot.Data, pathEdits.edits)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("apply edits to %s: %w", filepath.ToSlash(pathEdits.requestedPath), err)
 		}
-		updated, err := applyLSPTextEdits(content, documentEdits.edits)
-		if err != nil {
-			return nil, fmt.Errorf("apply edits to %s: %w", filepath.ToSlash(path), err)
-		}
-		changes = append(changes, lspFileChange{path: path, mode: info.Mode(), data: updated})
+		changes = append(changes, lspFileChange{snapshot: snapshot, data: updated})
 	}
 	return changes, nil
 }
@@ -115,9 +156,34 @@ func commitLSPFileChanges(ctx context.Context, changes []lspFileChange) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
+	replacements := make([]*textfile.Replacement, 0, len(changes))
+	defer func() {
+		for _, replacement := range replacements {
+			replacement.Discard()
+		}
+	}()
 	for _, change := range changes {
-		if err := os.WriteFile(change.path, change.data, change.mode); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
+		}
+		replacement, err := textfile.Prepare(change.snapshot, change.data)
+		if err != nil {
+			return err
+		}
+		replacements = append(replacements, replacement)
+	}
+	for _, replacement := range replacements {
+		if err := replacement.Verify(); err != nil {
+			return err
+		}
+	}
+	for index, replacement := range replacements {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("committed %d of %d files; files may have changed: %w", index, len(replacements), err)
+		}
+		if err := replacement.Commit(); err != nil {
+			return fmt.Errorf("committed %d of %d files; files may have changed: %w", index, len(replacements), err)
 		}
 	}
 	return nil

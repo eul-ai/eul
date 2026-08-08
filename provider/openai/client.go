@@ -109,7 +109,7 @@ func (*Client) ModelMetadata(model string) agent.ModelMetadata {
 	}
 }
 
-func (c *Client) Generate(ctx context.Context, request agent.Request, onText, onReasoning agent.TextSink, onToolCall agent.ToolCallSink) (agent.Response, error) {
+func (c *Client) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.Response{}, err
 	}
@@ -117,11 +117,6 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 	reasoning, err := responseReasoningFor(request.Model, request.ThinkingLevel, c.reasoningSummary)
 	if err != nil {
 		return agent.Response{}, c.errorf("%v", err)
-	}
-
-	credential, err := c.resolveCredential(ctx)
-	if err != nil {
-		return agent.Response{}, err
 	}
 
 	wireRequest, newInputs, err := buildCreateRequest(request, c.maxStateBytes)
@@ -143,14 +138,19 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 		return agent.Response{}, c.errorf("request exceeds %d bytes", c.maxRequestBytes)
 	}
 
+	credential, err := c.resolveCredential(ctx)
+	if err != nil {
+		return agent.Response{}, err
+	}
+
 	httpResponse, err := c.post(ctx, c.endpoint, "text/event-stream", requestBody, credential, "request")
 	if err != nil {
 		return agent.Response{}, err
 	}
 	defer httpResponse.Body.Close()
 
-	observer := streamObserver{onText: onText, onReasoning: onReasoning, onToolCall: onToolCall}
-	wireResponse, err := readResponsesSSE(httpResponse.Body, c.maxResponseBytes, &observer)
+	stream := streamObserver{observer: observer}
+	wireResponse, err := readResponsesSSE(httpResponse.Body, c.maxResponseBytes, &stream)
 	if err != nil {
 		if classified := c.contextError(ctx, err, "read response"); classified != nil {
 			return agent.Response{}, classified
@@ -170,8 +170,8 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, onText, on
 		return agent.Response{}, c.errorf("%v", err)
 	}
 
-	if text != "" && onText != nil && !observer.sawDelta {
-		if err := onText(text); err != nil {
+	if text != "" && observer.Text != nil && !stream.sawDelta {
+		if err := observer.Text(text); err != nil {
 			return agent.Response{}, c.wrapf(err, "deliver text: %v", err)
 		}
 	}
@@ -194,11 +194,6 @@ func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.Comp
 		return agent.CompactResponse{}, c.errorf("%v", err)
 	}
 
-	credential, err := c.resolveCredential(ctx)
-	if err != nil {
-		return agent.CompactResponse{}, err
-	}
-
 	wireRequest, err := buildCompactRequest(request, c.maxStateBytes)
 	if err != nil {
 		return agent.CompactResponse{}, c.errorf("build compact request: %v", err)
@@ -213,6 +208,11 @@ func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.Comp
 	}
 	if oversized {
 		return agent.CompactResponse{}, c.errorf("compact request exceeds %d bytes", c.maxRequestBytes)
+	}
+
+	credential, err := c.resolveCredential(ctx)
+	if err != nil {
+		return agent.CompactResponse{}, err
 	}
 
 	httpResponse, err := c.post(ctx, c.compactEndpoint, "application/json", requestBody, credential, "compact request")

@@ -17,22 +17,22 @@ import (
 	"time"
 )
 
-func (m *Manager) loginBrowser(ctx context.Context, interaction Interaction) (Credentials, error) {
+func (m *Manager) loginBrowser(ctx context.Context, interaction Interaction) (credentials, error) {
 	loginCtx, cancelLogin := context.WithTimeout(ctx, deviceTimeout)
 	defer cancelLogin()
 
 	verifier, challenge, err := generatePKCE()
 	if err != nil {
-		return Credentials{}, err
+		return credentials{}, err
 	}
 	state, err := randomHex(16)
 	if err != nil {
-		return Credentials{}, err
+		return credentials{}, err
 	}
 
 	listener, err := net.Listen("tcp", m.callbackAddress)
 	if err != nil {
-		return Credentials{}, fmt.Errorf("oauth: start loopback callback: %w", err)
+		return credentials{}, fmt.Errorf("oauth: start loopback callback: %w", err)
 	}
 	defer listener.Close()
 	port := listener.Addr().(*net.TCPAddr).Port
@@ -54,26 +54,26 @@ func (m *Manager) loginBrowser(ctx context.Context, interaction Interaction) (Cr
 
 	authURL := m.authorizationURL(redirectURI, challenge, state)
 	if interaction.AuthURL == nil {
-		return Credentials{}, errors.New("oauth: browser login interaction is unavailable")
+		return credentials{}, errors.New("oauth: browser login interaction is unavailable")
 	}
 	if err := interaction.AuthURL(authURL); err != nil {
-		return Credentials{}, fmt.Errorf("oauth: present authorization URL: %w", err)
+		return credentials{}, fmt.Errorf("oauth: present authorization URL: %w", err)
 	}
 
 	select {
 	case <-loginCtx.Done():
 		if ctx.Err() != nil {
-			return Credentials{}, ctx.Err()
+			return credentials{}, ctx.Err()
 		}
-		return Credentials{}, errors.New("oauth: browser authorization timed out")
+		return credentials{}, errors.New("oauth: browser authorization timed out")
 	case serveErr := <-serveDone:
 		if errors.Is(serveErr, http.ErrServerClosed) {
-			return Credentials{}, errors.New("oauth: loopback callback stopped before authorization completed")
+			return credentials{}, errors.New("oauth: loopback callback stopped before authorization completed")
 		}
-		return Credentials{}, errors.New("oauth: loopback callback failed")
+		return credentials{}, errors.New("oauth: loopback callback failed")
 	case callback := <-result:
 		if callback.err != nil {
-			return Credentials{}, callback.err
+			return credentials{}, callback.err
 		}
 		return m.exchangeCode(loginCtx, callback.code, verifier, redirectURI)
 	}

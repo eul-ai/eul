@@ -18,6 +18,10 @@ import (
 	"yaah/agent"
 )
 
+func generate(client *Client, ctx context.Context, request agent.Request, onText, onReasoning agent.TextSink, onToolCall agent.ToolCallSink) (agent.Response, error) {
+	return client.Generate(ctx, request, agent.StreamObserver{Text: onText, Reasoning: onReasoning, ToolCall: onToolCall})
+}
+
 func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	const token = "secret-test-token"
 	var requestNumber atomic.Int32
@@ -126,7 +130,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	client := newTestClient(t, token, server.URL, Options{ReasoningSummary: ReasoningSummaryDetailed})
 	tools := []agent.ToolDefinition{strictTestTool("read"), strictTestTool("bash")}
 	var sinkText []string
-	first, err := client.Generate(context.Background(), agent.Request{
+	first, err := generate(client, context.Background(), agent.Request{
 		Model:         "test-model",
 		ThinkingLevel: agent.ThinkingHigh,
 		Instructions:  "system instructions",
@@ -153,7 +157,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 		t.Fatalf("first state items = %d, error = %v", len(firstState), err)
 	}
 
-	second, err := client.Generate(context.Background(), agent.Request{
+	second, err := generate(client, context.Background(), agent.Request{
 		Model:         "test-model",
 		ThinkingLevel: agent.ThinkingHigh,
 		Instructions:  "system instructions",
@@ -171,7 +175,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 		t.Fatalf("second response = %+v", second)
 	}
 
-	third, err := client.Generate(context.Background(), agent.Request{
+	third, err := generate(client, context.Background(), agent.Request{
 		Model:         "test-model",
 		ThinkingLevel: agent.ThinkingHigh,
 		Instructions:  "system instructions",
@@ -293,7 +297,7 @@ func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
 		t.Fatalf("compact state items = %d, error = %v", len(items), err)
 	}
 
-	response, err := client.Generate(context.Background(), agent.Request{
+	response, err := generate(client, context.Background(), agent.Request{
 		Model:         "gpt-5.6-sol",
 		ThinkingLevel: agent.ThinkingHigh,
 		State:         compacted.State,
@@ -423,7 +427,7 @@ func TestClientStreamsTextDeltas(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		response, err := client.Generate(context.Background(), baseRequest(), func(delta string) error {
+		response, err := generate(client, context.Background(), baseRequest(), func(delta string) error {
 			deltas = append(deltas, delta)
 			seenDelta <- delta
 			return nil
@@ -460,7 +464,7 @@ func TestClientStreamsRefusal(t *testing.T) {
 
 	client := newTestClient(t, "key", server.URL, Options{})
 	var delivered string
-	response, err := client.Generate(context.Background(), baseRequest(), func(delta string) error { delivered += delta; return nil }, nil, nil)
+	response, err := generate(client, context.Background(), baseRequest(), func(delta string) error { delivered += delta; return nil }, nil, nil)
 	if err != nil || response.Text != "Cannot comply." || delivered != response.Text {
 		t.Fatalf("response=%+v delivered=%q error=%v", response, delivered, err)
 	}
@@ -476,7 +480,7 @@ func TestClientDecodesRefusalAndPreservesMalformedToolArguments(t *testing.T) {
 	}`)
 	defer server.Close()
 	client := newTestClient(t, "key", server.URL, Options{})
-	response, err := client.Generate(context.Background(), baseRequest(), nil, nil, nil)
+	response, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -506,7 +510,7 @@ func TestClientRejectsMalformedResponses(t *testing.T) {
 			server := responseServer(t, http.StatusOK, test.body)
 			defer server.Close()
 			client := newTestClient(t, "key", server.URL, Options{})
-			_, err := client.Generate(context.Background(), baseRequest(), func(string) error {
+			_, err := generate(client, context.Background(), baseRequest(), func(string) error {
 				t.Fatal("text sink called for malformed response")
 				return nil
 			}, nil, nil)
@@ -523,7 +527,7 @@ func TestClientBoundsHTTPErrors(t *testing.T) {
 	defer server.Close()
 	client := newTestClient(t, key, server.URL, Options{})
 	client.maxErrorBytes = 160
-	_, err := client.Generate(context.Background(), baseRequest(), nil, nil, nil)
+	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	if err == nil {
 		t.Fatal("Generate() succeeded")
 	}
@@ -536,7 +540,7 @@ func TestClientParsesStructuredHTTPError(t *testing.T) {
 	server := responseServer(t, http.StatusTooManyRequests, `{"error":{"type":"rate_limit_error","code":"rate_limit","message":"slow down"}}`)
 	defer server.Close()
 	client := newTestClient(t, "key", server.URL, Options{})
-	_, err := client.Generate(context.Background(), baseRequest(), nil, nil, nil)
+	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "HTTP 429") || !strings.Contains(err.Error(), "rate_limit_error/rate_limit: slow down") {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -548,7 +552,7 @@ func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
 		defer server.Close()
 		client := newTestClient(t, "key", server.URL, Options{})
 		client.maxResponseBytes = 100
-		_, err := client.Generate(context.Background(), baseRequest(), nil, nil, nil)
+		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		if err == nil || !strings.Contains(err.Error(), "response exceeds 100 bytes") {
 			t.Fatalf("Generate() error = %v", err)
 		}
@@ -561,7 +565,7 @@ func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
 		client.maxRequestBytes = 100
 		request := baseRequest()
 		request.Inputs[0].Text = strings.Repeat("x", 200)
-		_, err := client.Generate(context.Background(), request, nil, nil, nil)
+		_, err := generate(client, context.Background(), request, nil, nil, nil)
 		if err == nil || !strings.Contains(err.Error(), "request exceeds 100 bytes") || calls.Load() != 0 {
 			t.Fatalf("Generate() error = %v, HTTP calls = %d", err, calls.Load())
 		}
@@ -574,7 +578,7 @@ func TestClientRejectsOversizedReturnedStateBeforeTextSink(t *testing.T) {
 	client := newTestClient(t, "key", server.URL, Options{})
 	client.maxStateBytes = 100
 	sinkCalled := false
-	_, err := client.Generate(context.Background(), baseRequest(), func(string) error {
+	_, err := generate(client, context.Background(), baseRequest(), func(string) error {
 		sinkCalled = true
 		return nil
 	}, nil, nil)
@@ -588,7 +592,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		client := newTestClient(t, "key", "http://127.0.0.1:1", Options{})
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		_, err := client.Generate(ctx, baseRequest(), nil, nil, nil)
+		_, err := generate(client, ctx, baseRequest(), nil, nil, nil)
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("Generate() error = %v", err)
 		}
@@ -599,7 +603,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 			<-release
 		}))
 		client := newTestClient(t, "key", server.URL, Options{HTTPClient: &http.Client{Timeout: 30 * time.Millisecond}})
-		_, err := client.Generate(context.Background(), baseRequest(), nil, nil, nil)
+		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		close(release)
 		server.Close()
 		if !errors.Is(err, context.DeadlineExceeded) {
@@ -614,7 +618,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = client.Generate(context.Background(), baseRequest(), nil, nil, nil)
+		_, err = generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("Generate() error = %v", err)
 		}
@@ -624,7 +628,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		defer server.Close()
 		client := newTestClient(t, "key", server.URL, Options{})
 		sinkError := errors.New("sink failed")
-		_, err := client.Generate(context.Background(), baseRequest(), func(string) error { return sinkError }, nil, nil)
+		_, err := generate(client, context.Background(), baseRequest(), func(string) error { return sinkError }, nil, nil)
 		if !errors.Is(err, sinkError) {
 			t.Fatalf("Generate() error = %v", err)
 		}
@@ -637,7 +641,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		defer server.Close()
 		client := newTestClient(t, "key", server.URL, Options{})
 		sinkError := errors.New("streaming sink failed")
-		_, err := client.Generate(context.Background(), baseRequest(), func(string) error { return sinkError }, nil, nil)
+		_, err := generate(client, context.Background(), baseRequest(), func(string) error { return sinkError }, nil, nil)
 		if !errors.Is(err, sinkError) {
 			t.Fatalf("Generate() error = %v", err)
 		}
@@ -655,7 +659,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		seen := make(chan struct{}, 1)
 		done := make(chan error, 1)
 		go func() {
-			_, err := client.Generate(ctx, baseRequest(), func(string) error { seen <- struct{}{}; return nil }, nil, nil)
+			_, err := generate(client, ctx, baseRequest(), func(string) error { seen <- struct{}{}; return nil }, nil, nil)
 			done <- err
 		}()
 		select {
@@ -678,11 +682,39 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		}))
 		defer origin.Close()
 		client := newTestClient(t, "key", origin.URL, Options{})
-		_, err := client.Generate(context.Background(), baseRequest(), nil, nil, nil)
+		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		if err == nil || !strings.Contains(err.Error(), "HTTP 307") || destinationCalls.Load() != 0 {
 			t.Fatalf("Generate() error = %v, destination calls = %d", err, destinationCalls.Load())
 		}
 	})
+}
+
+func TestClientValidatesRequestsBeforeResolvingCredentials(t *testing.T) {
+	var tokenCalls atomic.Int32
+	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
+		tokenCalls.Add(1)
+		return CodexCredential{AccessToken: "token", AccountID: "account"}, nil
+	}), Options{BaseURL: "http://127.0.0.1:1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	invalidState := baseRequest()
+	invalidState.State = []byte(`not-json`)
+	if _, err := client.Generate(context.Background(), invalidState, agent.StreamObserver{}); err == nil {
+		t.Fatal("Generate() accepted invalid state")
+	}
+	if _, err := client.Compact(context.Background(), invalidState); err == nil {
+		t.Fatal("Compact() accepted invalid state")
+	}
+
+	client.maxRequestBytes = 1
+	if _, err := client.Generate(context.Background(), baseRequest(), agent.StreamObserver{}); err == nil {
+		t.Fatal("Generate() accepted oversized request")
+	}
+	if tokenCalls.Load() != 0 {
+		t.Fatalf("token source calls = %d", tokenCalls.Load())
+	}
 }
 
 func TestClientRejectsUnsupportedThinkingLevelBeforeAuthentication(t *testing.T) {
@@ -696,7 +728,7 @@ func TestClientRejectsUnsupportedThinkingLevelBeforeAuthentication(t *testing.T)
 	}
 
 	request := agent.Request{Model: "unknown", ThinkingLevel: agent.ThinkingXHigh}
-	_, err = client.Generate(context.Background(), request, nil, nil, nil)
+	_, err = generate(client, context.Background(), request, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), `thinking level "xhigh" is not supported by model "unknown"`) {
 		t.Fatalf("Generate() error = %v", err)
 	}

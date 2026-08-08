@@ -12,18 +12,18 @@ import (
 	"time"
 )
 
-func (m *Manager) loginDevice(ctx context.Context, interaction Interaction) (Credentials, error) {
+func (m *Manager) loginDevice(ctx context.Context, interaction Interaction) (credentials, error) {
 	requestBody, _ := json.Marshal(map[string]string{"client_id": clientID})
 	response, err := m.doJSON(ctx, http.MethodPost, "/api/accounts/deviceauth/usercode", requestBody)
 	if err != nil {
-		return Credentials{}, err
+		return credentials{}, err
 	}
 
 	if response.status == http.StatusNotFound {
-		return Credentials{}, errors.New("oauth: OpenAI device authorization is not enabled")
+		return credentials{}, errors.New("oauth: OpenAI device authorization is not enabled")
 	}
 	if response.status < 200 || response.status >= 300 {
-		return Credentials{}, fmt.Errorf("oauth: device authorization request failed with HTTP %d", response.status)
+		return credentials{}, fmt.Errorf("oauth: device authorization request failed with HTTP %d", response.status)
 	}
 
 	var raw struct {
@@ -32,18 +32,18 @@ func (m *Manager) loginDevice(ctx context.Context, interaction Interaction) (Cre
 		Interval     json.RawMessage `json:"interval"`
 	}
 	if err := json.Unmarshal(response.body, &raw); err != nil {
-		return Credentials{}, errors.New("oauth: invalid device authorization response")
+		return credentials{}, errors.New("oauth: invalid device authorization response")
 	}
 
 	interval, err := parseInterval(raw.Interval)
 	if err != nil || raw.DeviceAuthID == "" || raw.UserCode == "" {
-		return Credentials{}, errors.New("oauth: invalid device authorization response")
+		return credentials{}, errors.New("oauth: invalid device authorization response")
 	}
 	if interaction.DeviceCode == nil {
-		return Credentials{}, errors.New("oauth: device login interaction is unavailable")
+		return credentials{}, errors.New("oauth: device login interaction is unavailable")
 	}
 	if err := interaction.DeviceCode(DeviceCode{VerificationURL: m.authBaseURL + "/codex/device", UserCode: raw.UserCode}); err != nil {
-		return Credentials{}, fmt.Errorf("oauth: present device code: %w", err)
+		return credentials{}, fmt.Errorf("oauth: present device code: %w", err)
 	}
 
 	pollCtx, cancel := context.WithTimeout(ctx, deviceTimeout)
@@ -52,15 +52,15 @@ func (m *Manager) loginDevice(ctx context.Context, interaction Interaction) (Cre
 	for {
 		if err := m.sleep(pollCtx, pollDelay); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
-				return Credentials{}, errors.New("oauth: device authorization timed out")
+				return credentials{}, errors.New("oauth: device authorization timed out")
 			}
-			return Credentials{}, err
+			return credentials{}, err
 		}
 
 		body, _ := json.Marshal(map[string]string{"device_auth_id": raw.DeviceAuthID, "user_code": raw.UserCode})
 		poll, err := m.doJSON(pollCtx, http.MethodPost, "/api/accounts/deviceauth/token", body)
 		if err != nil {
-			return Credentials{}, err
+			return credentials{}, err
 		}
 
 		if poll.status < 200 || poll.status >= 300 {
@@ -79,7 +79,7 @@ func (m *Manager) loginDevice(ctx context.Context, interaction Interaction) (Cre
 				pollDelay += 5 * time.Second
 				continue
 			}
-			return Credentials{}, fmt.Errorf("oauth: device authorization failed with HTTP %d", poll.status)
+			return credentials{}, fmt.Errorf("oauth: device authorization failed with HTTP %d", poll.status)
 		}
 
 		var completed struct {
@@ -87,7 +87,7 @@ func (m *Manager) loginDevice(ctx context.Context, interaction Interaction) (Cre
 			CodeVerifier      string `json:"code_verifier"`
 		}
 		if err := json.Unmarshal(poll.body, &completed); err != nil || completed.AuthorizationCode == "" || completed.CodeVerifier == "" {
-			return Credentials{}, errors.New("oauth: invalid device authorization completion")
+			return credentials{}, errors.New("oauth: invalid device authorization completion")
 		}
 		return m.exchangeCode(pollCtx, completed.AuthorizationCode, completed.CodeVerifier, m.authBaseURL+deviceRedirectPath)
 	}

@@ -5,10 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"yaah/agent"
+	"yaah/tool/textfile"
 )
 
 const editToolName = "edit"
@@ -41,7 +40,7 @@ func (*Edit) Definition() agent.ToolDefinition {
 	return editToolDefinition
 }
 
-func (*Edit) Presentation(snapshot agent.ToolCallSnapshot) agent.ToolPresentation {
+func (*Edit) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
 	return editPresentation(snapshotString(snapshot, "path"))
 }
 
@@ -73,25 +72,11 @@ func (e *Edit) Execute(ctx context.Context, arguments json.RawMessage, updates a
 	if err != nil {
 		return errorResult(editToolName, err), nil
 	}
-	targetPath, err := filepath.EvalSymlinks(requestedPath)
+	snapshot, err := textfile.Load(requestedPath)
 	if err != nil {
-		return errorResult(editToolName, err), nil
-	}
-	info, err := os.Stat(targetPath)
-	if err != nil {
-		return errorResult(editToolName, err), nil
-	}
-	if !info.Mode().IsRegular() {
-		return errorResult(editToolName, fmt.Errorf("%s is not a regular file", e.workspace.display(requestedPath))), nil
-	}
-
-	original, err := os.ReadFile(targetPath)
-	if err != nil {
-		return errorResult(editToolName, err), nil
-	}
-	if err := validateText(original); err != nil {
 		return errorResult(editToolName, fmt.Errorf("%s: %w", e.workspace.display(requestedPath), err)), nil
 	}
+	original := snapshot.Data
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
@@ -109,39 +94,12 @@ func (e *Edit) Execute(ctx context.Context, arguments json.RawMessage, updates a
 	}
 
 	replacement := bytes.Replace(original, oldText, []byte(*args.NewText), 1)
-	temporary, err := os.CreateTemp(filepath.Dir(targetPath), ".yaah-edit-*")
-	if err != nil {
-		return errorResult(editToolName, err), nil
-	}
-
-	temporaryPath := temporary.Name()
-	committed := false
-	defer func() {
-		if committed {
-			return
-		}
-		_ = temporary.Close()
-		_ = os.Remove(temporaryPath)
-	}()
-
-	if err := temporary.Chmod(info.Mode()); err != nil {
-		return errorResult(editToolName, err), nil
-	}
-	if _, err := temporary.Write(replacement); err != nil {
-		return errorResult(editToolName, err), nil
-	}
-	if err := temporary.Close(); err != nil {
-		return errorResult(editToolName, err), nil
-	}
-
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
-	if err := os.Rename(temporaryPath, targetPath); err != nil {
+	if err := textfile.Replace(snapshot, replacement); err != nil {
 		return errorResult(editToolName, err), nil
 	}
-
-	committed = true
 	if updates != nil {
 		presentation := editPresentation(args.Path)
 		presentation.Diff = buildEditDiff(original, replacement)

@@ -1,4 +1,4 @@
-package tool
+package lsp
 
 import (
 	"bytes"
@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 
 	"go.lsp.dev/protocol"
 
 	"yaah/agent"
+	"yaah/tool"
 )
 
 const (
@@ -103,40 +105,50 @@ type lspReferencesArguments struct {
 	IncludeDeclaration *bool  `json:"includeDeclaration"`
 }
 
-func NewLSP(cwd string) []Tool {
-	return newLSPTools(cwd, true)
+type Set struct {
+	tools     []tool.Tool
+	client    *lspClient
+	closeOnce sync.Once
 }
 
-func NewReadOnlyLSP(cwd string) []Tool {
-	return newLSPTools(cwd, false)
+func New(cwd string) *Set {
+	return newSet(cwd, true)
 }
 
-func newLSPTools(cwd string, includeRename bool) []Tool {
+func NewReadOnly(cwd string) *Set {
+	return newSet(cwd, false)
+}
+
+func newSet(cwd string, includeRename bool) *Set {
+	set := &Set{}
 	if !hasAvailableLSPServer() {
-		return nil
+		return set
 	}
 
-	client := newLSPClient(cwd)
-	diagnostics := &lspTool{client: client, definition: lspDiagnosticsToolDefinition, operation: lspDiagnostics}
-	tools := []Tool{
-		&lspToolOwner{lspTool: diagnostics},
-		&lspTool{client: client, definition: lspHoverToolDefinition, operation: lspHover},
-		&lspTool{client: client, definition: lspDefinitionToolDefinition, operation: lspDefinition},
-		&lspTool{client: client, definition: lspReferencesToolDefinition, operation: lspReferences},
-		&lspTool{client: client, definition: lspSymbolsToolDefinition, operation: lspSymbols},
+	set.client = newLSPClient(cwd)
+	set.tools = []tool.Tool{
+		&lspTool{client: set.client, definition: lspDiagnosticsToolDefinition, operation: lspDiagnostics},
+		&lspTool{client: set.client, definition: lspHoverToolDefinition, operation: lspHover},
+		&lspTool{client: set.client, definition: lspDefinitionToolDefinition, operation: lspDefinition},
+		&lspTool{client: set.client, definition: lspReferencesToolDefinition, operation: lspReferences},
+		&lspTool{client: set.client, definition: lspSymbolsToolDefinition, operation: lspSymbols},
 	}
 	if includeRename {
-		tools = append(tools, &lspTool{client: client, definition: lspRenameToolDefinition, operation: lspRename})
+		set.tools = append(set.tools, &lspTool{client: set.client, definition: lspRenameToolDefinition, operation: lspRename})
 	}
-	return tools
+	return set
 }
 
-type lspToolOwner struct {
-	*lspTool
+func (s *Set) Tools() []tool.Tool {
+	return append([]tool.Tool(nil), s.tools...)
 }
 
-func (t *lspToolOwner) Close() error {
-	t.client.stop()
+func (s *Set) Close() error {
+	s.closeOnce.Do(func() {
+		if s.client != nil {
+			s.client.stop()
+		}
+	})
 	return nil
 }
 

@@ -3,6 +3,7 @@ package terminal
 import (
 	"context"
 	"errors"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -208,16 +209,17 @@ func TestTUIModelDefaultsToMediumThinking(t *testing.T) {
 
 func TestTUIModelCyclesSupportedThinkingLevels(t *testing.T) {
 	var configured []agent.ThinkingLevel
+	setThinkingLevel := func(level agent.ThinkingLevel) error {
+		configured = append(configured, level)
+		return nil
+	}
 	model := newTUIModel(80, 24, Options{
-		ThinkingLevel:  agent.ThinkingHigh,
-		ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh},
-		SetThinkingLevel: func(level agent.ThinkingLevel) error {
-			configured = append(configured, level)
-			return nil
-		},
+		ThinkingLevel:    agent.ThinkingHigh,
+		ThinkingLevels:   []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh},
+		SetThinkingLevel: setThinkingLevel,
 	})
 	for _, want := range []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh} {
-		exit, err := handleModelKey(model, keyEvent{code: keyShiftTab})
+		exit, err := handleModelKey(model, keyEvent{code: keyShiftTab}, setThinkingLevel)
 		if err != nil || exit {
 			t.Fatalf("handleKey() exit=%v error=%v", exit, err)
 		}
@@ -232,13 +234,12 @@ func TestTUIModelCyclesSupportedThinkingLevels(t *testing.T) {
 }
 
 func TestTUIModelKeepsThinkingLevelWhenUpdateFails(t *testing.T) {
+	setThinkingLevel := func(agent.ThinkingLevel) error { return errors.New("update failed") }
 	model := newTUIModel(80, 24, Options{
-		ThinkingLevel: agent.ThinkingMedium,
-		SetThinkingLevel: func(agent.ThinkingLevel) error {
-			return errors.New("update failed")
-		},
+		ThinkingLevel:    agent.ThinkingMedium,
+		SetThinkingLevel: setThinkingLevel,
 	})
-	exit, err := handleModelKey(model, keyEvent{code: keyShiftTab})
+	exit, err := handleModelKey(model, keyEvent{code: keyShiftTab}, setThinkingLevel)
 	if err != nil || exit {
 		t.Fatalf("handleKey() exit=%v error=%v", exit, err)
 	}
@@ -250,12 +251,15 @@ func TestTUIModelKeepsThinkingLevelWhenUpdateFails(t *testing.T) {
 	}
 }
 
-func handleModelKey(model *tuiModel, key keyEvent) (bool, error) {
+func handleModelKey(model *tuiModel, key keyEvent, setThinkingLevel func(agent.ThinkingLevel) error) (bool, error) {
 	messages := make(chan engineMessage, 1)
 	stopped := make(chan struct{})
 	defer close(stopped)
-	var cancel context.CancelFunc
-	return handleKey(context.Background(), model, &fakeEngine{}, key, messages, stopped, &cancel)
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		engineMessages: messages, stopped: stopped, setThinkingLevel: setThinkingLevel,
+	}
+	return controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: key})
 }
 
 func TestTUIModelPreservesPastedNewlinesAndRejectsNUL(t *testing.T) {

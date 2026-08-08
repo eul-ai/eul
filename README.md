@@ -154,7 +154,9 @@ cmd/yaah/        CLI and dependency wiring
 agent/           provider/tool contracts, prompt, and tool-call loop
 auth/openai/     browser and device OAuth plus credential refresh
 provider/openai/ Responses API requests, SSE decoding, and continuation state
-tool/            coding tools, subagents, LSP client, registry, and output limits
+tool/            coding tools, subagents, registry, and output limits
+tool/lsp/        optional LSP tools, client lifecycle, rename, and workspace edits
+tool/textfile/   shared text snapshots and atomic replacement
 terminal/        full-screen TUI and one-shot event rendering
 ```
 
@@ -163,7 +165,7 @@ provider-neutral thinking levels carried by each request. Provider adapters own
 model support and native mappings. The OpenAI adapter owns all wire types and
 preserves opaque response output items for stateless continuation. The agent stores
 that state without interpreting it.
-The LSP client uses `go.lsp.dev/protocol` for protocol types and JSON-RPC.
+The optional `tool/lsp` package uses `go.lsp.dev/protocol` for protocol types and JSON-RPC. It owns language-server resources explicitly and is wired into the registry by `cmd/yaah`.
 
 The OpenAI adapter uses bounded SSE streams. Reasoning summaries, output text,
 and refusals are delivered incrementally. Completed output items are retained

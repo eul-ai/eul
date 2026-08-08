@@ -11,44 +11,44 @@ import (
 	"time"
 )
 
-func readCredentials(path string) (Credentials, error) {
+func readCredentials(path string) (credentials, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return Credentials{}, errors.New("oauth: not logged in; run 'yaah login'")
+		return credentials{}, errors.New("oauth: not logged in; run 'yaah login'")
 	}
 	if err != nil {
-		return Credentials{}, fmt.Errorf("oauth: inspect credential file: %w", err)
+		return credentials{}, fmt.Errorf("oauth: inspect credential file: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return Credentials{}, errors.New("oauth: credential path is not a regular file")
+		return credentials{}, errors.New("oauth: credential path is not a regular file")
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		return Credentials{}, errors.New("oauth: credential file permissions must be 0600")
+		return credentials{}, errors.New("oauth: credential file permissions must be 0600")
 	}
 
 	file, err := os.Open(path)
 	if err != nil {
-		return Credentials{}, fmt.Errorf("oauth: open credential file: %w", err)
+		return credentials{}, fmt.Errorf("oauth: open credential file: %w", err)
 	}
 	defer file.Close()
 
 	body, truncated, err := readBounded(file, maxCredentialBytes)
 	if err != nil {
-		return Credentials{}, fmt.Errorf("oauth: read credential file: %w", err)
+		return credentials{}, fmt.Errorf("oauth: read credential file: %w", err)
 	}
 	if truncated {
-		return Credentials{}, errors.New("oauth: credential file is too large")
+		return credentials{}, errors.New("oauth: credential file is too large")
 	}
 
-	var credential Credentials
+	var credential credentials
 	if err := json.Unmarshal(body, &credential); err != nil || credential.Version != credentialVersion || credential.Type != "oauth" || credential.ExpiresAt <= 0 || credential.AccessToken == "" || credential.RefreshToken == "" || credential.AccountID == "" {
-		return Credentials{}, errors.New("oauth: invalid credential file")
+		return credentials{}, errors.New("oauth: invalid credential file")
 	}
 
 	return credential, nil
 }
 
-func writeCredentials(path string, credential Credentials) error {
+func writeCredentials(path string, credential credentials) error {
 	directory := filepath.Dir(path)
 	if err := secureDirectory(directory, "credential directory"); err != nil {
 		return err

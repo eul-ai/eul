@@ -1,9 +1,6 @@
 package agent
 
-import (
-	"encoding/json"
-	"sync"
-)
+import "sync"
 
 type toolEventTracker struct {
 	mu        sync.Mutex
@@ -200,15 +197,10 @@ func (tracker *toolEventTracker) closeRemaining(cause error) error {
 }
 
 func completeToolCallSnapshot(call ToolCall) ToolCallSnapshot {
-	arguments := make(map[string]any)
-	if err := json.Unmarshal(call.Arguments, &arguments); err != nil || arguments == nil {
-		arguments = make(map[string]any)
-	}
 	return ToolCallSnapshot{
 		ID:           call.ID,
 		Name:         call.Name,
 		RawArguments: string(call.Arguments),
-		Arguments:    arguments,
 		Complete:     true,
 	}
 }

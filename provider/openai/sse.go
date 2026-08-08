@@ -12,9 +12,7 @@ import (
 )
 
 type streamObserver struct {
-	onText       func(string) error
-	onReasoning  func(string) error
-	onToolCall   agent.ToolCallSink
+	observer     agent.StreamObserver
 	sawDelta     bool
 	sawReasoning bool
 }
@@ -216,17 +214,16 @@ func (decoder *responseStreamDecoder) finishToolCall(event responseStreamEvent) 
 }
 
 func (decoder *responseStreamDecoder) deliverToolCall(streamed streamedToolCall, complete bool) error {
-	if decoder.observer == nil || decoder.observer.onToolCall == nil {
+	if decoder.observer == nil || decoder.observer.observer.ToolCall == nil {
 		return nil
 	}
 	snapshot := agent.ToolCallSnapshot{
 		ID:           streamed.id,
 		Name:         streamed.name,
 		RawArguments: streamed.arguments,
-		Arguments:    parseStreamingJSONObject(streamed.arguments),
 		Complete:     complete,
 	}
-	if err := decoder.observer.onToolCall(snapshot); err != nil {
+	if err := decoder.observer.observer.ToolCall(snapshot); err != nil {
 		return fmt.Errorf("deliver tool call: %w", err)
 	}
 	return nil
@@ -237,8 +234,8 @@ func (decoder *responseStreamDecoder) deliverText(delta string) error {
 		return nil
 	}
 
-	if decoder.observer.onText != nil {
-		if err := decoder.observer.onText(delta); err != nil {
+	if decoder.observer.observer.Text != nil {
+		if err := decoder.observer.observer.Text(delta); err != nil {
 			return fmt.Errorf("deliver text: %w", err)
 		}
 	}
@@ -252,8 +249,8 @@ func (decoder *responseStreamDecoder) deliverReasoning(delta string) error {
 		return nil
 	}
 
-	if decoder.observer.onReasoning != nil {
-		if err := decoder.observer.onReasoning(delta); err != nil {
+	if decoder.observer.observer.Reasoning != nil {
+		if err := decoder.observer.observer.Reasoning(delta); err != nil {
 			return fmt.Errorf("deliver reasoning: %w", err)
 		}
 	}

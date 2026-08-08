@@ -124,7 +124,7 @@ func escapeOutputName(name string) string {
 	return replacer.Replace(name)
 }
 
-func snapshotString(snapshot agent.ToolCallSnapshot, name string) string {
+func snapshotString(snapshot PresentationSnapshot, name string) string {
 	value, _ := snapshot.Arguments[name].(string)
 	return value
 }

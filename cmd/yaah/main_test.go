@@ -6,7 +6,6 @@ import (
 	"errors"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -17,12 +16,13 @@ import (
 	"yaah/agent"
 	oauth "yaah/auth/openai"
 	openaiadapter "yaah/provider/openai"
+	"yaah/tool"
 )
 
 type providerFunction func(context.Context, agent.Request, agent.TextSink) (agent.Response, error)
 
 type fakeOAuthManager struct {
-	credential      oauth.Credentials
+	credential      oauth.AccessCredential
 	resolveErr      error
 	loginErr        error
 	logoutErr       error
@@ -32,7 +32,7 @@ type fakeOAuthManager struct {
 	resolveCalls    int
 }
 
-func (manager *fakeOAuthManager) Login(_ context.Context, method oauth.LoginMethod, interaction oauth.Interaction) (oauth.Credentials, error) {
+func (manager *fakeOAuthManager) Login(_ context.Context, method oauth.LoginMethod, interaction oauth.Interaction) error {
 	manager.loginMethod = method
 	if method == oauth.LoginDevice && interaction.DeviceCode != nil {
 		manager.interactionCall = true
@@ -43,10 +43,10 @@ func (manager *fakeOAuthManager) Login(_ context.Context, method oauth.LoginMeth
 		_ = interaction.AuthURL("https://example.test/authorize")
 	}
 
-	return manager.credential, manager.loginErr
+	return manager.loginErr
 }
 
-func (manager *fakeOAuthManager) Resolve(context.Context) (oauth.Credentials, error) {
+func (manager *fakeOAuthManager) Resolve(context.Context) (oauth.AccessCredential, error) {
 	manager.resolveCalls++
 	return manager.credential, manager.resolveErr
 }
@@ -56,8 +56,8 @@ func (manager *fakeOAuthManager) Logout(context.Context) error {
 	return manager.logoutErr
 }
 
-func (function providerFunction) Generate(ctx context.Context, request agent.Request, sink, _ agent.TextSink, _ agent.ToolCallSink) (agent.Response, error) {
-	return function(ctx, request, sink)
+func (function providerFunction) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {
+	return function(ctx, request, observer.Text)
 }
 
 func TestBuildSubagentToolsUsesReadOnlyLSP(t *testing.T) {
@@ -67,7 +67,10 @@ func TestBuildSubagentToolsUsesReadOnlyLSP(t *testing.T) {
 	}
 	t.Setenv("PATH", directory)
 
-	registry := buildSubagentTools(t.TempDir())
+	registry, err := buildToolset(t.TempDir(), readOnlyToolAccess)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer registry.Close()
 	names := make([]string, len(registry.Definitions()))
 	for index, definition := range registry.Definitions() {
@@ -125,9 +128,6 @@ func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 		names[i] = definition.Name
 	}
 	wantNames := []string{"bash", "edit", "read", "subagent", "write"}
-	if _, err := exec.LookPath("gopls"); err == nil {
-		wantNames = []string{"bash", "edit", "lsp_definition", "lsp_diagnostics", "lsp_hover", "lsp_references", "lsp_rename", "lsp_symbols", "read", "subagent", "write"}
-	}
 	if !slices.Equal(names, wantNames) {
 		t.Fatalf("tools = %v, want %v", names, wantNames)
 	}
@@ -240,9 +240,6 @@ func TestRunOneShotFeedsConcurrentSubagentsBackToMain(t *testing.T) {
 			names[index] = definition.Name
 		}
 		wantNames := []string{"read"}
-		if _, err := exec.LookPath("gopls"); err == nil {
-			wantNames = []string{"lsp_definition", "lsp_diagnostics", "lsp_hover", "lsp_references", "lsp_symbols", "read"}
-		}
 		if !slices.Equal(names, wantNames) {
 			t.Fatalf("child tools = %v, want %v", names, wantNames)
 		}
@@ -257,10 +254,7 @@ func TestRunOneShotFeedsConcurrentSubagentsBackToMain(t *testing.T) {
 func TestRunUsesStoredOAuthAndResolvesTokenAtRequestTime(t *testing.T) {
 	cwd := t.TempDir()
 	const access = "oauth-access-secret"
-	const refresh = "oauth-refresh-secret"
-	manager := &fakeOAuthManager{credential: oauth.Credentials{
-		Version: 1, Type: "oauth", AccessToken: access, RefreshToken: refresh, ExpiresAt: time.Now().Add(time.Hour).UnixMilli(), AccountID: "account",
-	}}
+	manager := &fakeOAuthManager{credential: oauth.AccessCredential{AccessToken: access, AccountID: "account"}}
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_MODEL": "subscription-model"})
 	runtime.newOAuth = fixedOAuth(manager)
@@ -286,7 +280,7 @@ func TestRunUsesStoredOAuthAndResolvesTokenAtRequestTime(t *testing.T) {
 	if code := run([]string{"hello"}, runtime); code != exitSuccess {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
-	if stdout.String() != "oauth answer\n" || strings.Contains(stdout.String()+stderr.String(), access) || strings.Contains(stdout.String()+stderr.String(), refresh) || manager.resolveCalls != 2 {
+	if stdout.String() != "oauth answer\n" || strings.Contains(stdout.String()+stderr.String(), access) || manager.resolveCalls != 2 {
 		t.Fatalf("stdout=%q stderr=%q resolveCalls=%d", stdout.String(), stderr.String(), manager.resolveCalls)
 	}
 }
@@ -304,7 +298,7 @@ func TestRunLoginAndLogoutCommands(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			manager := &fakeOAuthManager{credential: oauth.Credentials{AccessToken: "access-secret", RefreshToken: "refresh-secret"}}
+			manager := &fakeOAuthManager{credential: oauth.AccessCredential{AccessToken: "access-secret"}}
 			runtime := testRuntime(cwd, &stdout, &stderr, nil)
 			runtime.newOAuth = fixedOAuth(manager)
 
@@ -492,7 +486,15 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[strin
 				return agent.Response{}, nil
 			}), nil
 		},
-		newOAuth: fixedOAuth(&fakeOAuthManager{credential: oauth.Credentials{AccessToken: "access", AccountID: "account"}}),
+		newToolset: func(cwd string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
+			tools := []tool.Tool{tool.NewRead(cwd)}
+			if access == fullToolAccess {
+				tools = append(tools, tool.NewWrite(cwd), tool.NewEdit(cwd), tool.NewBash(cwd))
+			}
+			tools = append(tools, additional...)
+			return tool.NewRegistry(tools)
+		},
+		newOAuth: fixedOAuth(&fakeOAuthManager{credential: oauth.AccessCredential{AccessToken: "access", AccountID: "account"}}),
 		openURL:  func(string) error { return nil },
 	}
 }
