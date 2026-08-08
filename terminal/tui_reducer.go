@@ -44,6 +44,10 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 		return tuiAction{}, nil
 	case keyEOF:
 		return tuiAction{kind: tuiActionExit}, nil
+	case keyEscape:
+		if model.running {
+			return reduceInterrupt(model)
+		}
 	case keyCtrlC:
 		if model.running {
 			return reduceInterrupt(model)

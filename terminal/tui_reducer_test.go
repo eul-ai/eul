@@ -118,6 +118,20 @@ func TestReduceKeyActions(t *testing.T) {
 			},
 		},
 		{
+			name: "cancel with escape",
+			setup: func(t *testing.T, model *tuiModel) {
+				model.running = true
+				model.activity = activity{kind: activityThinking}
+			},
+			key:      keyEvent{code: keyEscape},
+			wantKind: tuiActionCancel,
+			check: func(t *testing.T, model *tuiModel) {
+				if !model.interrupted || model.activity.kind != activityCanceling {
+					t.Fatalf("interrupted=%v activity=%+v", model.interrupted, model.activity)
+				}
+			},
+		},
+		{
 			name: "reset",
 			setup: func(t *testing.T, model *tuiModel) {
 				model.appendBlock(blockAssistant, "keep until reset effect")

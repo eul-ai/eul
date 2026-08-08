@@ -84,6 +84,7 @@ Interactive controls include:
 - Drag with the primary mouse button to select text and copy it to the clipboard on release
 - Ctrl-L to redraw
 - Ctrl-D to exit when the prompt is empty
+- Escape to cancel the active turn
 - Ctrl-C to clear a non-empty prompt, cancel the active turn, or exit with an
   empty prompt
 - `/help`, `/clear`, and `/exit`
