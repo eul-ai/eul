@@ -131,6 +131,9 @@ func reduceFilePickerKey(model *tuiModel, key keyEvent) bool {
 	if !model.filePickerVisible() {
 		return false
 	}
+	if !model.filePicker.loading && len(model.filePicker.matches) == 0 {
+		return false
+	}
 
 	switch key.code {
 	case keyUp:

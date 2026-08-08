@@ -418,6 +418,29 @@ func TestFilePickerShowsLoadingRow(t *testing.T) {
 	}
 }
 
+func TestFilePickerKeepsStableHeightWhileSearching(t *testing.T) {
+	model := newTUIModel(30, 12, Options{WorkingDirectory: t.TempDir()})
+	if err := model.insertInput("@"); err != nil {
+		t.Fatal(err)
+	}
+	request := takePickerRequest(t, model)
+	height := model.filePickerHeight()
+	model.applyFileSearchResult(fileSearchResult{id: request.id, paths: []string{"a.go", "b.go"}})
+	if model.filePickerHeight() != height {
+		t.Fatalf("result height = %d, want %d", model.filePickerHeight(), height)
+	}
+
+	if err := model.insertInput("missing"); err != nil {
+		t.Fatal(err)
+	}
+	request = takePickerRequest(t, model)
+	model.applyFileSearchResult(fileSearchResult{id: request.id})
+	lines := renderFilePicker(model, model.filePickerHeight())
+	if !model.filePickerVisible() || model.filePickerHeight() != height || len(lines) != 1 || lines[0].text != "  no matching files" {
+		t.Fatalf("empty picker: visible=%t height=%d lines=%+v", model.filePickerVisible(), model.filePickerHeight(), lines)
+	}
+}
+
 func TestInputPreservesBlankPastedLines(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
 	if err := model.insertInput("abc\n\ndef"); err != nil {

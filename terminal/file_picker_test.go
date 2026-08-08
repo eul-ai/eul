@@ -94,6 +94,58 @@ func TestSearchProjectFilesWithWalkExcludesGitPointerFile(t *testing.T) {
 	}
 }
 
+func TestFilePickerSearchesHomeDirectory(t *testing.T) {
+	cwd := t.TempDir()
+	home := t.TempDir()
+	writePickerFile(t, filepath.Join(cwd, "notes.txt"), "project notes")
+	writePickerFile(t, filepath.Join(home, "notes.txt"), "home notes")
+
+	model := newTUIModel(80, 24, Options{WorkingDirectory: cwd})
+	if err := model.insertInput("@~"); err != nil {
+		t.Fatal(err)
+	}
+	request := takePickerRequest(t, model)
+	if request.query != "" || request.root != fileSearchHome {
+		t.Fatalf("request = %+v, want home search", request)
+	}
+
+	runner := &fileSearchRunner{cwd: cwd, home: home}
+	paths, err := runner.search(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"~/notes.txt"}; !slices.Equal(paths, want) {
+		t.Fatalf("paths = %q, want %q", paths, want)
+	}
+
+	model.applyFileSearchResult(fileSearchResult{id: request.id, paths: paths})
+	if err := model.applyFilePickerSelection(); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(model.input), "@~/notes.txt "; got != want {
+		t.Fatalf("input = %q, want %q", got, want)
+	}
+}
+
+func TestFilePickerSearchesAbsolutePaths(t *testing.T) {
+	model := newTUIModel(80, 24, Options{WorkingDirectory: t.TempDir()})
+	if err := model.insertInput("@/var/log"); err != nil {
+		t.Fatal(err)
+	}
+	request := takePickerRequest(t, model)
+	if request.query != "var/log" || request.root != fileSearchAbsolute {
+		t.Fatalf("request = %+v, want absolute query %q", request, "var/log")
+	}
+
+	model.applyFileSearchResult(fileSearchResult{id: request.id, paths: []string{"/var/log/system.log"}})
+	if err := model.applyFilePickerSelection(); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(model.input), "@/var/log/system.log "; got != want {
+		t.Fatalf("input = %q, want %q", got, want)
+	}
+}
+
 func TestSearchProjectFilesWithWalkHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

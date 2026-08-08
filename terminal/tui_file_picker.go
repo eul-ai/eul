@@ -66,7 +66,17 @@ func (m *tuiModel) refreshFilePicker(reopen bool) {
 	m.filePicker.query = query
 	m.filePicker.loading = true
 	m.filePicker.requestID++
-	request := fileSearchRequest{id: m.filePicker.requestID, query: query}
+	searchQuery := query
+	root := fileSearchProject
+	switch {
+	case strings.HasPrefix(query, "~"):
+		searchQuery = strings.TrimPrefix(strings.TrimPrefix(query, "~"), "/")
+		root = fileSearchHome
+	case strings.HasPrefix(query, "/"):
+		searchQuery = strings.TrimPrefix(query, "/")
+		root = fileSearchAbsolute
+	}
+	request := fileSearchRequest{id: m.filePicker.requestID, query: searchQuery, root: root}
 	m.filePicker.pending = &request
 }
 
@@ -125,17 +135,14 @@ func (m *tuiModel) dismissFilePicker() {
 }
 
 func (m *tuiModel) filePickerVisible() bool {
-	return maximumFilePickerHeight(m.height) > 0 && m.filePicker.active && (m.filePicker.loading || len(m.filePicker.matches) > 0)
+	return maximumFilePickerHeight(m.height) > 0 && m.filePicker.active
 }
 
 func (m *tuiModel) filePickerHeight() int {
 	if !m.filePickerVisible() {
 		return 0
 	}
-	if len(m.filePicker.matches) > 0 {
-		return min(filePickerMaxVisible, len(m.filePicker.matches))
-	}
-	return 1
+	return filePickerMaxVisible
 }
 
 func (m *tuiModel) moveFilePickerSelection(direction int) {

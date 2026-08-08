@@ -17,9 +17,18 @@ const filePickerMaxResults = 100
 
 var errFileSearchComplete = errors.New("file search complete")
 
+type fileSearchRoot uint8
+
+const (
+	fileSearchProject fileSearchRoot = iota
+	fileSearchHome
+	fileSearchAbsolute
+)
+
 type fileSearchRequest struct {
 	id    uint64
 	query string
+	root  fileSearchRoot
 }
 
 type fileSearchResult struct {
@@ -34,6 +43,7 @@ type fileSearchCommand struct {
 
 type fileSearchRunner struct {
 	cwd    string
+	home   string
 	fdPath string
 	cancel context.CancelFunc
 }
@@ -50,6 +60,7 @@ func findFD() string {
 func newFileSearchRunner(cwd string) *fileSearchRunner {
 	runner := &fileSearchRunner{cwd: cwd}
 	if cwd != "" {
+		runner.home, _ = os.UserHomeDir()
 		runner.fdPath = findFD()
 	}
 	return runner
@@ -71,7 +82,7 @@ func (r *fileSearchRunner) update(ctx context.Context, command fileSearchCommand
 	r.cancel = cancel
 	request := *command.request
 	go func() {
-		paths, err := searchProjectFiles(searchContext, r.cwd, r.fdPath, request.query)
+		paths, err := r.search(searchContext, request)
 		if err != nil {
 			if searchContext.Err() != nil {
 				return
@@ -83,6 +94,28 @@ func (r *fileSearchRunner) update(ctx context.Context, command fileSearchCommand
 		case <-searchContext.Done():
 		}
 	}()
+}
+
+func (r *fileSearchRunner) search(ctx context.Context, request fileSearchRequest) ([]string, error) {
+	directory := r.cwd
+	prefix := ""
+	switch request.root {
+	case fileSearchHome:
+		directory = r.home
+		prefix = "~/"
+	case fileSearchAbsolute:
+		directory = "/"
+		prefix = "/"
+	}
+
+	paths, err := searchProjectFiles(ctx, directory, r.fdPath, request.query)
+	if err != nil || prefix == "" {
+		return paths, err
+	}
+	for index := range paths {
+		paths[index] = prefix + paths[index]
+	}
+	return paths, nil
 }
 
 func (r *fileSearchRunner) close() {

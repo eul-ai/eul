@@ -707,8 +707,12 @@ func renderFilePicker(model *tuiModel, height int) []styledLine {
 	if height <= 0 {
 		return nil
 	}
-	if model.filePicker.loading && len(model.filePicker.matches) == 0 {
-		return []styledLine{{text: "  searching files…", style: lineStyle{foreground: currentTheme.muted}}}
+	if len(model.filePicker.matches) == 0 {
+		text := "  no matching files"
+		if model.filePicker.loading {
+			text = "  searching files…"
+		}
+		return []styledLine{{text: text, style: lineStyle{foreground: currentTheme.muted}}}
 	}
 
 	selectedPath := ""
