@@ -319,6 +319,23 @@ func TestLSPToolDescriptionsAreServerAgnostic(t *testing.T) {
 	}
 }
 
+func TestLSPDiagnosticsPresentationShowsPath(t *testing.T) {
+	diagnostics := &lspTool{definition: lspDiagnosticsToolDefinition, operation: lspDiagnostics}
+	registry, err := tool.NewRegistry([]tool.Tool{diagnostics})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	presentation := registry.Presentation(agent.ToolCallSnapshot{
+		Name:         lspDiagnosticsToolName,
+		RawArguments: `{"path":"sample.go"}`,
+		Complete:     true,
+	})
+	if presentation.Title != lspDiagnosticsToolName || presentation.Arguments != "sample.go" {
+		t.Fatalf("diagnostics presentation = %+v", presentation)
+	}
+}
+
 func TestLSPRenamePresentationShowsNames(t *testing.T) {
 	rename := &lspTool{definition: lspRenameToolDefinition, operation: lspRename}
 	registry, err := tool.NewRegistry([]tool.Tool{rename})
