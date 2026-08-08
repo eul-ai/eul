@@ -134,10 +134,6 @@ func searchProjectFiles(ctx context.Context, cwd, fdPath, query string) ([]strin
 }
 
 func fileSearchPath(cwd, query string) string {
-	if !strings.Contains(filepath.ToSlash(query), "/") {
-		return ""
-	}
-
 	candidate := filepath.Clean(filepath.FromSlash(query))
 	for candidate != "." && filepath.IsLocal(candidate) {
 		info, err := os.Stat(filepath.Join(cwd, candidate))
@@ -189,7 +185,7 @@ func searchProjectFilesWithFD(ctx context.Context, cwd, fdPath, searchPath, quer
 		"--fixed-strings",
 		"--ignore-case",
 	}
-	if strings.Contains(query, "/") {
+	if searchPath != "" || strings.Contains(query, "/") {
 		arguments = append(arguments, "--full-path")
 	}
 	if searchPath != "" {
@@ -224,7 +220,7 @@ func parseFDPaths(output []byte) []string {
 func searchProjectFilesWithWalk(ctx context.Context, cwd, searchPath, query string) ([]string, error) {
 	var paths []string
 	normalizedQuery := strings.ToLower(filepath.ToSlash(query))
-	fullPath := strings.Contains(normalizedQuery, "/")
+	fullPath := searchPath != "" || strings.Contains(normalizedQuery, "/")
 	searchRoot := cwd
 	if searchPath != "" {
 		searchRoot = filepath.Join(cwd, searchPath)
