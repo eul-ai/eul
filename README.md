@@ -78,7 +78,7 @@ Interactive controls include:
 - Shift-Enter to insert a newline
 - Shift-Tab to cycle supported thinking levels
 - `@` to search project files; Up/Down select, Enter/Tab insert, and Escape dismisses
-- Left/Right and Home/End to move within the prompt
+- Left/Right and Home/End to move within the prompt; Ctrl-A/Ctrl-E move to the beginning/end
 - Up/Down to navigate prompt history
 - Page Up/Page Down or the mouse wheel to scroll the conversation
 - Drag with the primary mouse button to select text and copy it to the clipboard on release

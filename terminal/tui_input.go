@@ -200,6 +200,14 @@ func (d *keyDecoder) feed(data []byte, final bool) []keyEvent {
 			events = append(events, keyEvent{code: keyTab})
 			d.buffer = d.buffer[1:]
 			continue
+		case 0x01:
+			events = append(events, keyEvent{code: keyHome})
+			d.buffer = d.buffer[1:]
+			continue
+		case 0x05:
+			events = append(events, keyEvent{code: keyEnd})
+			d.buffer = d.buffer[1:]
+			continue
 		case 0x7f, 0x08:
 			events = append(events, keyEvent{code: keyBackspace})
 			d.buffer = d.buffer[1:]
@@ -485,10 +493,14 @@ func matchKittyKeySequence(buffer []byte) (int, bool, keyEvent, bool) {
 		return consumed, false, keyEvent{code: keyTab}, true
 	case codepoint == 27:
 		return consumed, false, keyEvent{code: keyEscape}, true
+	case (control && codepoint == 97) || codepoint == 1:
+		return consumed, false, keyEvent{code: keyHome}, true
 	case (control && codepoint == 99) || codepoint == 3:
 		return consumed, false, keyEvent{code: keyCtrlC}, true
 	case (control && codepoint == 100) || codepoint == 4:
 		return consumed, false, keyEvent{code: keyCtrlD}, true
+	case (control && codepoint == 101) || codepoint == 5:
+		return consumed, false, keyEvent{code: keyEnd}, true
 	case (control && codepoint == 108) || codepoint == 12:
 		return consumed, false, keyEvent{code: keyCtrlL}, true
 	case codepoint == 127:
