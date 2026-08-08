@@ -16,11 +16,11 @@ import (
 )
 
 type lspRenameArguments struct {
-	Path      string  `json:"path"`
-	Line      *int    `json:"line"`
-	Character *int    `json:"character"`
-	OldName   *string `json:"oldName"`
-	NewName   *string `json:"newName"`
+	Path      string `json:"path"`
+	Line      *int   `json:"line"`
+	Character *int   `json:"character"`
+	OldName   string `json:"oldName"`
+	NewName   string `json:"newName"`
 }
 
 func (t *lspTool) executeRename(ctx context.Context, arguments json.RawMessage) (agent.ToolResult, error) {
@@ -32,10 +32,10 @@ func (t *lspTool) executeRename(ctx context.Context, arguments json.RawMessage) 
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
-	if args.OldName == nil || *args.OldName == "" {
+	if args.OldName == "" {
 		return agent.ToolResult{}, errors.New("oldName is required and must be nonempty")
 	}
-	if args.NewName == nil || *args.NewName == "" {
+	if args.NewName == "" {
 		return agent.ToolResult{}, errors.New("newName is required and must be nonempty")
 	}
 	path, err := t.client.workspace.resolve(args.Path)
@@ -46,16 +46,16 @@ func (t *lspTool) executeRename(ctx context.Context, arguments json.RawMessage) 
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
-	position, err := resolveLSPRenamePosition(document.Data, hint, *args.OldName)
+	position, err := resolveLSPRenamePosition(document.Data, hint, args.OldName)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
 
 	var watcher *lspWatchManager
 	response, err := t.client.documentSnapshotRequest(ctx, document, func(ctx context.Context, session *lspSession, document protocol.TextDocumentIdentifier) (any, error) {
-		watcher = session.watcher
+		watcher = session.client.watcher
 		params := protocol.TextDocumentPositionParams{TextDocument: document, Position: position}
-		return prepareAndRename(ctx, session.server, params, *args.NewName)
+		return prepareAndRename(ctx, session.server, params, args.NewName)
 	})
 	if err != nil {
 		return agent.ToolResult{}, err
@@ -108,7 +108,8 @@ func resolveLSPRenamePosition(content []byte, hint protocol.Position, oldName st
 			}
 
 			position := protocol.Position{Line: uint32(lineNumber), Character: utf16Length(line[:start])}
-			lineDistance, characterDistance := lspPositionDistance(hint, position)
+			lineDistance := absoluteDifference(hint.Line, position.Line)
+			characterDistance := absoluteDifference(hint.Character, position.Character)
 			switch {
 			case !found || lineDistance < bestLineDistance || lineDistance == bestLineDistance && characterDistance < bestCharacterDistance:
 				best = position
@@ -159,10 +160,6 @@ func utf16Length(value string) uint32 {
 		}
 	}
 	return length
-}
-
-func lspPositionDistance(left, right protocol.Position) (uint32, uint32) {
-	return absoluteDifference(left.Line, right.Line), absoluteDifference(left.Character, right.Character)
 }
 
 func absoluteDifference(left, right uint32) uint32 {

@@ -79,9 +79,8 @@ func planLSPWorkspaceEdit(workspaceEdit *protocol.WorkspaceEdit, documents ...te
 		if documentEdits.version != nil && version != nil && *documentEdits.version != *version {
 			return nil, fmt.Errorf("document %q has conflicting versions %d and %d", documentURI, *documentEdits.version, *version)
 		}
-		if documentEdits.version == nil && version != nil {
-			value := *version
-			documentEdits.version = &value
+		if documentEdits.version == nil {
+			documentEdits.version = version
 		}
 
 		for _, edit := range documentEdit.Edits {
@@ -123,9 +122,8 @@ func planLSPWorkspaceEdit(workspaceEdit *protocol.WorkspaceEdit, documents ...te
 		if pathEdits.version != nil && documentEdits.version != nil && *pathEdits.version != *documentEdits.version {
 			return nil, fmt.Errorf("document %q has conflicting versions %d and %d", documentURI, *pathEdits.version, *documentEdits.version)
 		}
-		if pathEdits.version == nil && documentEdits.version != nil {
-			value := *documentEdits.version
-			pathEdits.version = &value
+		if pathEdits.version == nil {
+			pathEdits.version = documentEdits.version
 		}
 		pathEdits.edits = append(pathEdits.edits, documentEdits.edits...)
 		editsByPath[resolvedPath] = pathEdits

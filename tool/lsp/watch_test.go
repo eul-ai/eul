@@ -103,6 +103,24 @@ func (n *lspWatchNotifications) notify(_ context.Context, params *protocol.DidCh
 	return nil
 }
 
+func newLSPWatchTestManager(t *testing.T, root string) (*lspWatchManager, *fakeLSPNativeWatcher, *lspWatchNotifications) {
+	t.Helper()
+
+	native := newFakeLSPNativeWatcher()
+	notifications := newLSPWatchNotifications()
+	manager := newLSPWatchManagerWithNative(
+		protocol.WorkspaceFolder{URI: uri.File(root), Name: filepath.Base(root)},
+		native,
+		notifications.notify,
+	)
+	t.Cleanup(func() {
+		if err := manager.close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return manager, native, notifications
+}
+
 func TestLSPWatchManagerRegistrationAndRecursiveEvents(t *testing.T) {
 	root := t.TempDir()
 	nested := filepath.Join(root, "nested")
@@ -118,14 +136,7 @@ func TestLSPWatchManagerRegistrationAndRecursiveEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	native := newFakeLSPNativeWatcher()
-	notifications := newLSPWatchNotifications()
-	manager := newLSPWatchManagerWithNative(
-		protocol.WorkspaceFolder{URI: uri.File(root), Name: filepath.Base(root)},
-		native,
-		notifications.notify,
-	)
-	defer manager.close()
+	manager, native, notifications := newLSPWatchTestManager(t, root)
 
 	goRegistration := lspWatchTestRegistration(t, "go", protocol.DidChangeWatchedFilesRegistrationOptions{Watchers: []protocol.FileSystemWatcher{
 		{GlobPattern: protocol.Pattern("**/*.{go,mod}")},
@@ -196,14 +207,7 @@ func TestLSPWatchManagerNormalizesAndFiltersEvents(t *testing.T) {
 	if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	native := newFakeLSPNativeWatcher()
-	notifications := newLSPWatchNotifications()
-	manager := newLSPWatchManagerWithNative(
-		protocol.WorkspaceFolder{URI: uri.File(root), Name: filepath.Base(root)},
-		native,
-		notifications.notify,
-	)
-	defer manager.close()
+	manager, native, notifications := newLSPWatchTestManager(t, root)
 	registration := lspWatchTestRegistration(t, "go", protocol.DidChangeWatchedFilesRegistrationOptions{Watchers: []protocol.FileSystemWatcher{
 		{GlobPattern: protocol.Pattern("**/*.go")},
 	}})
@@ -249,14 +253,7 @@ func TestLSPWatchManagerSuppressesKnownCommittedDuplicates(t *testing.T) {
 	if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	native := newFakeLSPNativeWatcher()
-	notifications := newLSPWatchNotifications()
-	manager := newLSPWatchManagerWithNative(
-		protocol.WorkspaceFolder{URI: uri.File(root), Name: filepath.Base(root)},
-		native,
-		notifications.notify,
-	)
-	defer manager.close()
+	manager, native, notifications := newLSPWatchTestManager(t, root)
 	registration := lspWatchTestRegistration(t, "go", protocol.DidChangeWatchedFilesRegistrationOptions{Watchers: []protocol.FileSystemWatcher{
 		{GlobPattern: protocol.Pattern("**/*.go")},
 	}})
@@ -310,14 +307,7 @@ func TestLSPWatchManagerKnownCommitsHonorRegistrations(t *testing.T) {
 			if err := os.WriteFile(filePath, []byte("before"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			native := newFakeLSPNativeWatcher()
-			notifications := newLSPWatchNotifications()
-			manager := newLSPWatchManagerWithNative(
-				protocol.WorkspaceFolder{URI: uri.File(root), Name: filepath.Base(root)},
-				native,
-				notifications.notify,
-			)
-			defer manager.close()
+			manager, _, notifications := newLSPWatchTestManager(t, root)
 			if test.registration != nil {
 				if err := manager.register(context.Background(), []protocol.Registration{*test.registration}); err != nil {
 					t.Fatal(err)
@@ -340,14 +330,7 @@ func TestLSPWatchManagerKnownCommitAfterNativeEventIsNotDuplicated(t *testing.T)
 	if err := os.WriteFile(filePath, []byte("before"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	native := newFakeLSPNativeWatcher()
-	notifications := newLSPWatchNotifications()
-	manager := newLSPWatchManagerWithNative(
-		protocol.WorkspaceFolder{URI: uri.File(root), Name: filepath.Base(root)},
-		native,
-		notifications.notify,
-	)
-	defer manager.close()
+	manager, native, notifications := newLSPWatchTestManager(t, root)
 	registration := lspWatchTestRegistration(t, "go", protocol.DidChangeWatchedFilesRegistrationOptions{Watchers: []protocol.FileSystemWatcher{
 		{GlobPattern: protocol.Pattern("**/*.go")},
 	}})
@@ -372,14 +355,7 @@ func TestLSPWatchManagerKnownCommitFailureIsTransactional(t *testing.T) {
 	if err := os.WriteFile(filePath, []byte("before"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	native := newFakeLSPNativeWatcher()
-	notifications := newLSPWatchNotifications()
-	manager := newLSPWatchManagerWithNative(
-		protocol.WorkspaceFolder{URI: uri.File(root), Name: filepath.Base(root)},
-		native,
-		notifications.notify,
-	)
-	defer manager.close()
+	manager, native, notifications := newLSPWatchTestManager(t, root)
 	registration := lspWatchTestRegistration(t, "go", protocol.DidChangeWatchedFilesRegistrationOptions{Watchers: []protocol.FileSystemWatcher{
 		{GlobPattern: protocol.Pattern("**/*.go")},
 	}})
@@ -413,13 +389,7 @@ func TestLSPWatchManagerKnownCommitFailureIsTransactional(t *testing.T) {
 
 func TestLSPWatchManagerRejectsRegistrationWithoutChangingExistingWatches(t *testing.T) {
 	root := t.TempDir()
-	native := newFakeLSPNativeWatcher()
-	manager := newLSPWatchManagerWithNative(
-		protocol.WorkspaceFolder{URI: uri.File(root), Name: filepath.Base(root)},
-		native,
-		newLSPWatchNotifications().notify,
-	)
-	defer manager.close()
+	manager, native, _ := newLSPWatchTestManager(t, root)
 	valid := lspWatchTestRegistration(t, "valid", protocol.DidChangeWatchedFilesRegistrationOptions{Watchers: []protocol.FileSystemWatcher{
 		{GlobPattern: protocol.Pattern("**/*.go")},
 	}})
@@ -454,14 +424,9 @@ func TestLSPWatchManagerRejectsRegistrationWithoutChangingExistingWatches(t *tes
 
 func TestLSPWatchManagerSurfacesSetupFailureAndCloses(t *testing.T) {
 	root := t.TempDir()
-	native := newFakeLSPNativeWatcher()
+	manager, native, _ := newLSPWatchTestManager(t, root)
 	addErr := errors.New("watch unavailable")
 	native.addError = addErr
-	manager := newLSPWatchManagerWithNative(
-		protocol.WorkspaceFolder{URI: uri.File(root), Name: filepath.Base(root)},
-		native,
-		newLSPWatchNotifications().notify,
-	)
 	registration := lspWatchTestRegistration(t, "go", protocol.DidChangeWatchedFilesRegistrationOptions{Watchers: []protocol.FileSystemWatcher{
 		{GlobPattern: protocol.Pattern("**/*.go")},
 	}})

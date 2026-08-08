@@ -35,7 +35,7 @@ type lspNativeWatcher interface {
 }
 
 type fsnotifyLSPWatcher struct {
-	watcher *fsnotify.Watcher
+	*fsnotify.Watcher
 }
 
 func newFSNotifyLSPWatcher() (lspNativeWatcher, error) {
@@ -43,14 +43,11 @@ func newFSNotifyLSPWatcher() (lspNativeWatcher, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &fsnotifyLSPWatcher{watcher: watcher}, nil
+	return &fsnotifyLSPWatcher{Watcher: watcher}, nil
 }
 
-func (w *fsnotifyLSPWatcher) Add(name string) error         { return w.watcher.Add(name) }
-func (w *fsnotifyLSPWatcher) Remove(name string) error      { return w.watcher.Remove(name) }
-func (w *fsnotifyLSPWatcher) Close() error                  { return w.watcher.Close() }
-func (w *fsnotifyLSPWatcher) Events() <-chan fsnotify.Event { return w.watcher.Events }
-func (w *fsnotifyLSPWatcher) Errors() <-chan error          { return w.watcher.Errors }
+func (w *fsnotifyLSPWatcher) Events() <-chan fsnotify.Event { return w.Watcher.Events }
+func (w *fsnotifyLSPWatcher) Errors() <-chan error          { return w.Watcher.Errors }
 
 type lspWatchPattern struct {
 	glob string
@@ -74,55 +71,7 @@ type lspWatchSuppression struct {
 	until time.Time
 }
 
-type lspWatchCommand interface {
-	run(*lspWatchState)
-}
-
-type lspWatchRegisterCommand struct {
-	registrations []lspWatchRegistration
-	result        chan error
-}
-
-func (c lspWatchRegisterCommand) run(state *lspWatchState) {
-	c.result <- state.register(c.registrations)
-}
-
-type lspWatchUnregisterCommand struct {
-	ids    []string
-	result chan error
-}
-
-func (c lspWatchUnregisterCommand) run(state *lspWatchState) {
-	c.result <- state.unregister(c.ids)
-}
-
-type lspWatchReportCommand struct {
-	paths  []string
-	result chan error
-}
-
-func (c lspWatchReportCommand) run(state *lspWatchState) {
-	c.result <- state.reportCommitted(c.paths)
-}
-
-type lspWatchCheckCommand struct {
-	result chan error
-}
-
-func (c lspWatchCheckCommand) run(state *lspWatchState) {
-	if state.failure == nil {
-		state.fail(state.flushPending())
-	}
-	c.result <- state.failure
-}
-
-type lspWatchRegistrationCountCommand struct {
-	result chan int
-}
-
-func (c lspWatchRegistrationCountCommand) run(state *lspWatchState) {
-	c.result <- len(state.registrations)
-}
+type lspWatchCommand func(*lspWatchState)
 
 type lspWatchManager struct {
 	folder protocol.WorkspaceFolder
@@ -143,7 +92,7 @@ type lspWatchState struct {
 	watchedDirs   map[string]struct{}
 	known         map[string]lspWatchedPathState
 	suppressed    map[string]lspWatchSuppression
-	pending       map[string]fsnotify.Op
+	pending       map[string]struct{}
 	failure       error
 }
 
@@ -179,30 +128,19 @@ func (m *lspWatchManager) run() {
 		watchedDirs:   make(map[string]struct{}),
 		known:         make(map[string]lspWatchedPathState),
 		suppressed:    make(map[string]lspWatchSuppression),
-		pending:       make(map[string]fsnotify.Op),
+		pending:       make(map[string]struct{}),
 	}
-	var timer *time.Timer
+	timer := time.NewTimer(lspWatchBatchDelay)
+	timer.Stop()
+	defer timer.Stop()
 	var timerChannel <-chan time.Time
-	stopTimer := func() {
-		if timer == nil {
-			return
-		}
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-		timerChannel = nil
-	}
-	defer stopTimer()
 
 	for {
 		select {
 		case <-m.ctx.Done():
 			return
 		case command := <-m.commands:
-			command.run(state)
+			command(state)
 		case event, ok := <-m.native.Events():
 			if !ok {
 				return
@@ -215,13 +153,9 @@ func (m *lspWatchManager) run() {
 				state.fail(err)
 				continue
 			}
-			state.pending[filepath.Clean(name)] |= event.Op &^ fsnotify.Chmod
+			state.pending[filepath.Clean(name)] = struct{}{}
 			if timerChannel == nil {
-				if timer == nil {
-					timer = time.NewTimer(lspWatchBatchDelay)
-				} else {
-					timer.Reset(lspWatchBatchDelay)
-				}
+				timer.Reset(lspWatchBatchDelay)
 				timerChannel = timer.C
 			}
 		case watchErr, ok := <-m.native.Errors():
@@ -252,8 +186,9 @@ func (m *lspWatchManager) register(ctx context.Context, registrations []protocol
 	if len(parsed) == 0 {
 		return nil
 	}
-	result := make(chan error, 1)
-	return m.execute(ctx, lspWatchRegisterCommand{registrations: parsed, result: result}, result)
+	return m.execute(ctx, func(state *lspWatchState) error {
+		return state.register(parsed)
+	})
 }
 
 func (m *lspWatchManager) unregister(ctx context.Context, unregisterations []protocol.Unregistration) error {
@@ -266,8 +201,9 @@ func (m *lspWatchManager) unregister(ctx context.Context, unregisterations []pro
 	if len(ids) == 0 {
 		return nil
 	}
-	result := make(chan error, 1)
-	return m.execute(ctx, lspWatchUnregisterCommand{ids: ids, result: result}, result)
+	return m.execute(ctx, func(state *lspWatchState) error {
+		return state.unregister(ids)
+	})
 }
 
 func (m *lspWatchManager) reportCommitted(ctx context.Context, paths []string) error {
@@ -282,13 +218,18 @@ func (m *lspWatchManager) reportCommitted(ctx context.Context, paths []string) e
 		}
 		resolved[index] = filepath.Clean(absolute)
 	}
-	result := make(chan error, 1)
-	return m.execute(ctx, lspWatchReportCommand{paths: resolved, result: result}, result)
+	return m.execute(ctx, func(state *lspWatchState) error {
+		return state.reportCommitted(resolved)
+	})
 }
 
 func (m *lspWatchManager) check(ctx context.Context) error {
-	result := make(chan error, 1)
-	return m.execute(ctx, lspWatchCheckCommand{result: result}, result)
+	return m.execute(ctx, func(state *lspWatchState) error {
+		if state.failure == nil {
+			state.fail(state.flushPending())
+		}
+		return state.failure
+	})
 }
 
 func (m *lspWatchManager) registrationCount(ctx context.Context) (int, error) {
@@ -298,7 +239,7 @@ func (m *lspWatchManager) registrationCount(ctx context.Context) (int, error) {
 		return 0, ctx.Err()
 	case <-m.done:
 		return 0, errors.New("language server file watcher is closed")
-	case m.commands <- lspWatchRegistrationCountCommand{result: result}:
+	case m.commands <- func(state *lspWatchState) { result <- len(state.registrations) }:
 	}
 
 	select {
@@ -311,7 +252,9 @@ func (m *lspWatchManager) registrationCount(ctx context.Context) (int, error) {
 	}
 }
 
-func (m *lspWatchManager) execute(ctx context.Context, command lspWatchCommand, result <-chan error) error {
+func (m *lspWatchManager) execute(ctx context.Context, operation func(*lspWatchState) error) error {
+	result := make(chan error, 1)
+	command := func(state *lspWatchState) { result <- operation(state) }
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -529,11 +472,11 @@ func (state *lspWatchState) reportCommitted(paths []string) error {
 }
 
 func (state *lspWatchState) flushPending() error {
-	pending := maps.Clone(state.pending)
-	clear(state.pending)
-	if len(pending) == 0 {
+	if len(state.pending) == 0 {
 		return nil
 	}
+	pending := state.pending
+	state.pending = make(map[string]struct{})
 
 	oldPending := make(map[string]lspWatchedPathState, len(pending))
 	newPending := make(map[string]lspWatchedPathState, len(pending))
@@ -569,19 +512,19 @@ func (state *lspWatchState) flushPending() error {
 
 func (state *lspWatchState) flushReconciled() error {
 	oldKnown := maps.Clone(state.known)
-	pending := maps.Clone(state.pending)
-	clear(state.pending)
+	pending := state.pending
+	state.pending = make(map[string]struct{})
 	return state.flushReconciledFrom(oldKnown, pending)
 }
 
-func (state *lspWatchState) flushReconciledFrom(oldKnown map[string]lspWatchedPathState, pending map[string]fsnotify.Op) error {
+func (state *lspWatchState) flushReconciledFrom(oldKnown map[string]lspWatchedPathState, pending map[string]struct{}) error {
 	if err := state.reconcile(); err != nil {
 		return err
 	}
 	return state.notifyChanges(oldKnown, state.known, pending)
 }
 
-func (state *lspWatchState) notifyChanges(oldKnown, newKnown map[string]lspWatchedPathState, pending map[string]fsnotify.Op) error {
+func (state *lspWatchState) notifyChanges(oldKnown, newKnown map[string]lspWatchedPathState, pending map[string]struct{}) error {
 	eventsByPath := make(map[string]protocol.FileChangeType)
 	for name, oldState := range oldKnown {
 		newState, exists := newKnown[name]
@@ -745,8 +688,7 @@ func (state *lspWatchState) matches(name string, changeType protocol.FileChangeT
 			if pattern.kind&kind == 0 {
 				continue
 			}
-			matched, err := doublestar.Match(pattern.glob, slashed)
-			if err == nil && matched {
+			if doublestar.MatchUnvalidated(pattern.glob, slashed) {
 				return true
 			}
 		}

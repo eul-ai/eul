@@ -61,7 +61,6 @@ type lspSession struct {
 	connection      jsonrpc2.Conn
 	server          protocol.Server
 	client          *lspProtocolClient
-	watcher         *lspWatchManager
 	command         *exec.Cmd
 	done            <-chan error
 	pullDiagnostics bool
@@ -106,8 +105,8 @@ func (c *lspClient) documentSnapshotRequest(ctx context.Context, document textfi
 	if err != nil {
 		return nil, err
 	}
-	if session.watcher != nil {
-		if err := session.watcher.check(ctx); err != nil {
+	if session.client.watcher != nil {
+		if err := session.client.watcher.check(ctx); err != nil {
 			c.invalidateSession(config, session)
 			return nil, err
 		}
@@ -215,7 +214,7 @@ func startLSPSession(ctx context.Context, cwd string, config lspServerConfig) (*
 		client,
 		jsonrpc2.NewStream(&lspTransport{reader: stdout, writer: stdin}),
 	)
-	session := &lspSession{connection: connection, server: server, client: client, watcher: watcher, command: command, done: done}
+	session := &lspSession{connection: connection, server: server, client: client, command: command, done: done}
 
 	processID := int32(os.Getpid())
 	documentChanges := true
@@ -275,8 +274,8 @@ func (s *lspSession) stop() {
 		s.stopSession()
 		return
 	}
-	if s.watcher != nil {
-		_ = s.watcher.close()
+	if s.client.watcher != nil {
+		_ = s.client.watcher.close()
 	}
 	if s.connection.Err() == nil {
 		shutdownLSPServer(s.server, lspShutdownTimeout)
@@ -293,9 +292,6 @@ func shutdownLSPServer(server protocol.Server, timeout time.Duration) {
 }
 
 func (s *lspSession) abort() {
-	if s.watcher != nil {
-		_ = s.watcher.close()
-	}
 	_ = s.connection.Close()
 	if s.command.Process != nil {
 		_ = s.command.Process.Kill()
@@ -348,10 +344,16 @@ func (c *lspProtocolClient) waitForDiagnostics(ctx context.Context, documentURI 
 		c.mu.Lock()
 		waiters := c.waiters[documentURI]
 		for index, candidate := range waiters {
-			if candidate == waiter {
-				c.waiters[documentURI] = slices.Delete(waiters, index, index+1)
-				break
+			if candidate != waiter {
+				continue
 			}
+			waiters = slices.Delete(waiters, index, index+1)
+			if len(waiters) == 0 {
+				delete(c.waiters, documentURI)
+			} else {
+				c.waiters[documentURI] = waiters
+			}
+			break
 		}
 		c.mu.Unlock()
 		return nil, ctx.Err()

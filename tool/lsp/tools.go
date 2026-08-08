@@ -102,7 +102,7 @@ type lspReferencesArguments struct {
 	Path               string `json:"path"`
 	Line               *int   `json:"line"`
 	Character          *int   `json:"character"`
-	IncludeDeclaration *bool  `json:"includeDeclaration"`
+	IncludeDeclaration bool   `json:"includeDeclaration"`
 }
 
 type Set struct {
@@ -266,14 +266,10 @@ func (t *lspTool) executeReferences(ctx context.Context, arguments json.RawMessa
 		return agent.ToolResult{}, err
 	}
 
-	includeDeclaration := false
-	if args.IncludeDeclaration != nil {
-		includeDeclaration = *args.IncludeDeclaration
-	}
 	response, err := t.client.documentRequest(ctx, path, func(ctx context.Context, session *lspSession, document protocol.TextDocumentIdentifier) (any, error) {
 		return session.server.References(ctx, &protocol.ReferenceParams{
 			TextDocumentPositionParams: protocol.TextDocumentPositionParams{TextDocument: document, Position: position},
-			Context:                    protocol.ReferenceContext{IncludeDeclaration: includeDeclaration},
+			Context:                    protocol.ReferenceContext{IncludeDeclaration: args.IncludeDeclaration},
 		})
 	})
 	if err != nil {

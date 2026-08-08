@@ -155,7 +155,7 @@ var testThing = Thing{Value: 1}
 	if session == nil {
 		t.Fatal("gopls session was not cached")
 	}
-	waitForLSPWatchRegistration(t, ctx, session.watcher)
+	waitForLSPWatchRegistration(t, ctx, session.client.watcher)
 	const externalSource = `package sample
 
 func External(value Thing) int {
@@ -399,6 +399,23 @@ func TestLSPDocumentCleanupUsesLiveContextAndInvalidatesFailedSession(t *testing
 				t.Fatalf("cached=%v, want %v", cached, test.wantCached)
 			}
 		})
+	}
+}
+
+func TestLSPDiagnosticsCancellationRemovesWaiter(t *testing.T) {
+	client := &lspProtocolClient{
+		diagnostics: make(map[uri.URI][]protocol.Diagnostic),
+		waiters:     make(map[uri.URI][]chan []protocol.Diagnostic),
+	}
+	documentURI := uri.File(filepath.Join(t.TempDir(), "sample.go"))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := client.waitForDiagnostics(ctx, documentURI); !errors.Is(err, context.Canceled) {
+		t.Fatalf("wait error = %v", err)
+	}
+	if _, exists := client.waiters[documentURI]; exists {
+		t.Fatal("canceled diagnostics waiter was retained")
 	}
 }
 
