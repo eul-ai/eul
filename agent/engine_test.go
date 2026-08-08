@@ -154,7 +154,7 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 		},
 	}
 
-	engine := newTestEngine(t, provider, toolbox, Options{Model: "test-model", maxToolRounds: 2})
+	engine := newTestEngine(t, provider, toolbox, Options{Model: "test-model"})
 	var events []Event
 	result, err := engine.Run(context.Background(), "inspect the file", func(event Event) error {
 		events = append(events, event)
@@ -795,7 +795,7 @@ func TestEngineCompactsToolContinuation(t *testing.T) {
 	toolbox := &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
 		return ToolResult{Output: "contents"}, nil
 	}}
-	engine := newTestEngine(t, provider, toolbox, Options{maxToolRounds: 1})
+	engine := newTestEngine(t, provider, toolbox, Options{})
 
 	result, err := engine.Run(context.Background(), "inspect", discardEvents)
 	if err != nil || result.Text != "done" {
@@ -837,7 +837,7 @@ func TestEngineCompactionFailureAfterToolPreservesContinuation(t *testing.T) {
 	toolbox := &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
 		return ToolResult{Output: "changed file"}, nil
 	}}
-	engine := newTestEngine(t, provider, toolbox, Options{maxToolRounds: 1})
+	engine := newTestEngine(t, provider, toolbox, Options{})
 	engine.state = []byte("stable")
 	engine.contextUsage = Usage{TotalTokens: 50}
 
@@ -914,7 +914,7 @@ func TestEngineExecutesMultipleCallsInProviderOrder(t *testing.T) {
 		return ToolResult{Output: call.Name + " result"}, nil
 	}}
 
-	engine := newTestEngine(t, provider, toolbox, Options{maxToolRounds: 1})
+	engine := newTestEngine(t, provider, toolbox, Options{})
 	if _, err := engine.Run(context.Background(), "run both", discardEvents); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -942,7 +942,7 @@ func TestEngineReturnsUnknownToolsToProvider(t *testing.T) {
 		return ToolResult{}, fmt.Errorf("unknown tool %q", call.Name)
 	}}
 
-	engine := newTestEngine(t, provider, toolbox, Options{maxToolRounds: 1})
+	engine := newTestEngine(t, provider, toolbox, Options{})
 	result, err := engine.Run(context.Background(), "recover", discardEvents)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -952,38 +952,41 @@ func TestEngineReturnsUnknownToolsToProvider(t *testing.T) {
 	}
 }
 
-func TestEngineStopsAtToolRoundLimit(t *testing.T) {
+func TestEngineDoesNotLimitToolRounds(t *testing.T) {
+	const rounds = 21
+
+	steps := make([]providerStep, 0, rounds+1)
+	for round := 1; round <= rounds; round++ {
+		callID := fmt.Sprintf("call-%d", round)
+		state := fmt.Appendf(nil, "state-%d", round)
+		steps = append(steps, func(_ context.Context, _ Request, _ TextSink) (Response, error) {
+			return Response{
+				ToolCalls: []ToolCall{{ID: callID, Name: "tool", Arguments: json.RawMessage(`{}`)}},
+				State:     state,
+			}, nil
+		})
+	}
+	steps = append(steps, func(_ context.Context, request Request, _ TextSink) (Response, error) {
+		if string(request.State) != "state-21" || len(request.Inputs) != 1 || request.Inputs[0].CallID != "call-21" || request.Inputs[0].IsError {
+			t.Fatalf("final continuation = %+v", request)
+		}
+		return Response{Text: "done", State: []byte("done")}, nil
+	})
+
 	toolExecutions := 0
-	provider := &scriptedProvider{t: t, steps: []providerStep{
-		func(_ context.Context, _ Request, _ TextSink) (Response, error) {
-			return Response{ToolCalls: []ToolCall{{ID: "one", Name: "tool", Arguments: json.RawMessage(`{}`)}}, State: []byte("one")}, nil
-		},
-		func(_ context.Context, _ Request, _ TextSink) (Response, error) {
-			return Response{ToolCalls: []ToolCall{{ID: "two", Name: "tool", Arguments: json.RawMessage(`{}`)}}, State: []byte("two")}, nil
-		},
-		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if string(request.State) != "two" || len(request.Inputs) != 2 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].CallID != "two" || !request.Inputs[0].IsError || request.Inputs[1].Text != "continue" {
-				t.Fatalf("round-limit continuation = %+v", request)
-			}
-			return Response{Text: "continued", State: []byte("continued")}, nil
-		},
-	}}
+	provider := &scriptedProvider{t: t, steps: steps}
 	toolbox := &fakeToolbox{execute: func(_ context.Context, _ ToolCall) (ToolResult, error) {
 		toolExecutions++
 		return ToolResult{Output: "ok"}, nil
 	}}
 
-	engine := newTestEngine(t, provider, toolbox, Options{maxToolRounds: 1})
-	_, err := engine.Run(context.Background(), "loop", discardEvents)
-	if !errors.Is(err, errToolRoundLimit) {
-		t.Fatalf("Run() error = %v, want tool round limit", err)
+	engine := newTestEngine(t, provider, toolbox, Options{})
+	result, err := engine.Run(context.Background(), "loop", discardEvents)
+	if err != nil || result.Text != "done" {
+		t.Fatalf("result = %+v, error = %v", result, err)
 	}
-	if toolExecutions != 1 {
-		t.Fatalf("tool executions = %d, want 1", toolExecutions)
-	}
-	result, nextErr := engine.Run(context.Background(), "continue", discardEvents)
-	if nextErr != nil || result.Text != "continued" {
-		t.Fatalf("continued result = %+v, error = %v", result, nextErr)
+	if toolExecutions != rounds {
+		t.Fatalf("tool executions = %d, want %d", toolExecutions, rounds)
 	}
 }
 
@@ -1006,7 +1009,7 @@ func TestEngineHonorsCancellationDuringToolExecution(t *testing.T) {
 		<-ctx.Done()
 		return ToolResult{}, ctx.Err()
 	}}
-	engine := newTestEngine(t, provider, toolbox, Options{maxToolRounds: 1})
+	engine := newTestEngine(t, provider, toolbox, Options{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -1092,7 +1095,7 @@ func TestEngineTreatsToolLocalDeadlineAsRecoverable(t *testing.T) {
 	toolbox := &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
 		return ToolResult{}, context.DeadlineExceeded
 	}}
-	engine := newTestEngine(t, provider, toolbox, Options{maxToolRounds: 1})
+	engine := newTestEngine(t, provider, toolbox, Options{})
 
 	result, err := engine.Run(context.Background(), "run", discardEvents)
 	if err != nil {

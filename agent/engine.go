@@ -7,19 +7,13 @@ import (
 	"sync"
 )
 
-const defaultMaxToolRounds = 20
-
-var (
-	errEngineBusy     = errors.New("agent: engine is busy")
-	errToolRoundLimit = errors.New("agent: maximum tool rounds exceeded")
-)
+var errEngineBusy = errors.New("agent: engine is busy")
 
 type Options struct {
 	Model               string
 	ThinkingLevel       ThinkingLevel
 	WorkingDirectory    string
 	ProjectInstructions string
-	maxToolRounds       int
 }
 
 type RunResult struct {
@@ -34,7 +28,6 @@ type Engine struct {
 	tools             Toolbox
 	model             string
 	thinkingLevel     ThinkingLevel
-	maxToolRounds     int
 	instructions      string
 	state             []byte
 	contextUsage      Usage
@@ -44,10 +37,6 @@ type Engine struct {
 }
 
 func New(provider Provider, tools Toolbox, options Options) *Engine {
-	maxToolRounds := options.maxToolRounds
-	if maxToolRounds == 0 {
-		maxToolRounds = defaultMaxToolRounds
-	}
 	thinkingLevel := options.ThinkingLevel
 	if thinkingLevel == "" {
 		thinkingLevel = DefaultThinkingLevel
@@ -58,7 +47,6 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 		tools:         tools,
 		model:         options.Model,
 		thinkingLevel: thinkingLevel,
-		maxToolRounds: maxToolRounds,
 		instructions:  buildSystemPrompt(tools.Definitions(), options.WorkingDirectory, options.ProjectInstructions),
 	}
 }
@@ -83,7 +71,6 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 	}
 	current.inputs = append(current.inputs, Input{Kind: InputUser, Text: userText})
 	var result RunResult
-	toolRounds := 0
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -151,16 +138,6 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			current = responseContinuation
 			continue
 		}
-
-		if toolRounds >= e.maxToolRounds {
-			responseContinuation.inputs = unexecutedToolInputs(response.ToolCalls, errToolRoundLimit)
-			responseContinuation.checkpoint(e)
-			if err := toolEvents.closeRemaining(errToolRoundLimit); err != nil {
-				return RunResult{}, err
-			}
-			return RunResult{}, errToolRoundLimit
-		}
-		toolRounds++
 
 		inputs, err := e.executeToolRound(ctx, response.ToolCalls, toolEvents)
 		responseContinuation.inputs = inputs
