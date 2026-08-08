@@ -16,6 +16,9 @@ const (
 	tuiActionExit
 	tuiActionSubmit
 	tuiActionSteer
+	tuiActionShowGoal
+	tuiActionSetGoal
+	tuiActionClearGoal
 	tuiActionDequeue
 	tuiActionSetThinking
 	tuiActionCopy
@@ -173,6 +176,10 @@ func reduceSteeringPrompt(model *tuiModel) tuiAction {
 	if trimmed == "" {
 		return tuiAction{}
 	}
+	if trimmed == "/goal clear" {
+		model.takePrompt()
+		return tuiAction{kind: tuiActionClearGoal}
+	}
 	if strings.HasPrefix(trimmed, "/") {
 		setInputError(model, fmt.Errorf("commands cannot be queued while the agent is running"))
 		return tuiAction{}
@@ -191,12 +198,20 @@ func reducePrompt(model *tuiModel) tuiAction {
 	trimmed := strings.TrimSpace(prompt)
 	switch trimmed {
 	case "/help":
-		model.appendBlock(blockInfo, "Commands:\n  /help         show this help\n  /clear        discard conversation state\n  /exit         exit yaah\n  /skill:<name> load a skill")
+		model.appendBlock(blockInfo, "Commands:\n  /help             show this help\n  /clear            discard conversation and goal state\n  /exit             exit yaah\n  /goal [objective] show or set the active goal\n  /goal clear       clear the active goal\n  /skill:<name>     load a skill")
 	case "/clear":
 		return tuiAction{kind: tuiActionReset}
 	case "/exit":
 		return tuiAction{kind: tuiActionExit}
+	case "/goal":
+		return tuiAction{kind: tuiActionShowGoal}
+	case "/goal clear":
+		return tuiAction{kind: tuiActionClearGoal}
 	default:
+		if strings.HasPrefix(trimmed, "/goal") && len(trimmed) > len("/goal") && (trimmed[len("/goal")] == ' ' || trimmed[len("/goal")] == '\t' || trimmed[len("/goal")] == '\n') {
+			objective := strings.TrimSpace(trimmed[len("/goal"):])
+			return tuiAction{kind: tuiActionSetGoal, prompt: objective}
+		}
 		if strings.HasPrefix(trimmed, "/") && !strings.HasPrefix(trimmed, "/skill:") {
 			model.appendBlock(blockError, "Unknown command "+diagnostic(trimmed, 120))
 			model.activity = activity{kind: activityError, detail: "unknown command"}

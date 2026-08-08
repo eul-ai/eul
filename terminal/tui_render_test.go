@@ -506,6 +506,22 @@ func TestPendingSteeringRendersAndDeliversInTranscriptOrder(t *testing.T) {
 	}
 }
 
+func TestGoalContinuationHasDistinctTranscriptBlock(t *testing.T) {
+	model := newTUIModel(40, 8, Options{})
+	model.beginTurn("initial")
+	model.appendStream(blockAssistant, "first response")
+	model.queueSteering("same text")
+
+	model.applyAgentEvent(agent.Event{Kind: agent.EventGoalContinuation, Text: "same text"})
+	if len(model.steering) != 1 || len(model.blocks) != 3 || model.blocks[2].kind != blockInfo || model.blocks[2].text != "Goal continuing" {
+		t.Fatalf("steering=%q blocks=%+v", model.steering, model.blocks)
+	}
+	model.appendStream(blockAssistant, "second response")
+	if len(model.blocks) != 4 || model.blocks[3].kind != blockAssistant {
+		t.Fatalf("goal continuation did not separate assistant streams: %+v", model.blocks)
+	}
+}
+
 func TestRendererOnlyWritesChangedRows(t *testing.T) {
 	model := newTUIModel(40, 8, Options{Model: "model"})
 	model.running = true

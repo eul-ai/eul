@@ -37,6 +37,115 @@ func TestTUIControllerDoesNotClearConversationWhenResetFails(t *testing.T) {
 	}
 }
 
+func TestTUIControllerSetsShowsAndClearsGoal(t *testing.T) {
+	engine := &fakeEngine{}
+	messages := make(chan engineMessage, 1)
+	stopped := make(chan struct{})
+	defer close(stopped)
+	model := newTUIModel(80, 24, Options{})
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		engineMessages: messages, stopped: stopped,
+	}
+	ctx := context.Background()
+
+	if _, err := controller.applyAction(ctx, tuiAction{kind: tuiActionShowGoal}); err != nil {
+		t.Fatal(err)
+	}
+	if len(model.blocks) != 1 || model.blocks[0].text != "No goal is set" {
+		t.Fatalf("blocks = %+v", model.blocks)
+	}
+
+	if _, err := controller.applyAction(ctx, tuiAction{kind: tuiActionSetGoal, prompt: "finish migration"}); err != nil {
+		t.Fatal(err)
+	}
+	goal, ok := engine.Goal()
+	if !ok || goal.Objective != "finish migration" || !model.running {
+		t.Fatalf("goal=%+v exists=%v running=%v", goal, ok, model.running)
+	}
+	select {
+	case <-messages:
+	case <-time.After(2 * time.Second):
+		t.Fatal("goal turn did not complete")
+	}
+	calls, _ := engine.snapshot()
+	if !slices.Equal(calls, []string{"finish migration"}) {
+		t.Fatalf("calls = %q", calls)
+	}
+
+	if _, err := controller.applyAction(ctx, tuiAction{kind: tuiActionShowGoal}); err != nil {
+		t.Fatal(err)
+	}
+	if model.blocks[len(model.blocks)-1].text != "Goal: finish migration" {
+		t.Fatalf("goal status block = %+v", model.blocks[len(model.blocks)-1])
+	}
+
+	if _, err := controller.applyAction(ctx, tuiAction{kind: tuiActionClearGoal}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := engine.Goal(); ok || model.blocks[len(model.blocks)-1].text != "Goal cleared" {
+		t.Fatalf("goal still set or wrong block: %+v", model.blocks[len(model.blocks)-1])
+	}
+}
+
+func TestTUIControllerClearsGoalWhileRunning(t *testing.T) {
+	engine := &fakeEngine{goal: &agent.GoalState{Objective: "finish migration"}}
+	model := newTUIModel(80, 24, Options{})
+	model.running = true
+	if err := model.insertInput("/goal clear"); err != nil {
+		t.Fatal(err)
+	}
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+	}
+
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := engine.Goal(); ok {
+		t.Fatal("goal survived running clear command")
+	}
+	last := model.blocks[len(model.blocks)-1]
+	if !model.running || last.kind != blockInfo || last.text != "Goal cleared" {
+		t.Fatalf("running=%v block=%+v", model.running, last)
+	}
+}
+
+func TestTUIControllerDoesNotStartGoalWhenSetFails(t *testing.T) {
+	setErr := errors.New("invalid goal")
+	engine := &fakeEngine{setGoalErr: setErr}
+	model := newTUIModel(80, 24, Options{})
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+	}
+
+	if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionSetGoal, prompt: "goal"}); err != nil {
+		t.Fatal(err)
+	}
+	calls, _ := engine.snapshot()
+	if len(calls) != 0 || model.running || model.activity.kind != activityError || model.activity.detail != setErr.Error() {
+		t.Fatalf("calls=%q running=%v activity=%+v", calls, model.running, model.activity)
+	}
+}
+
+func TestTUIControllerResetClearsGoal(t *testing.T) {
+	engine := &fakeEngine{goal: &agent.GoalState{Objective: "goal"}}
+	model := newTUIModel(80, 24, Options{})
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+	}
+
+	if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionReset}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := engine.Goal(); ok {
+		t.Fatal("goal survived reset")
+	}
+}
+
 func TestRenderFailureDoesNotCommitUnseenFrame(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
 	renderer := &tuiRenderer{}

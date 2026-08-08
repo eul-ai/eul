@@ -23,19 +23,17 @@ type RunResult struct {
 }
 
 type Engine struct {
-	mu                sync.Mutex
-	steeringMu        sync.Mutex
-	provider          Provider
-	tools             Toolbox
-	model             string
-	thinkingLevel     ThinkingLevel
-	instructions      string
-	state             []byte
-	contextUsage      Usage
-	pendingInputs     []Input
-	steering          []string
-	acceptingSteering bool
-	skills            map[string]Skill
+	mu            sync.Mutex
+	provider      Provider
+	tools         Toolbox
+	model         string
+	thinkingLevel ThinkingLevel
+	instructions  string
+	state         []byte
+	contextUsage  Usage
+	pendingInputs []Input
+	continuations continuationArbiter
+	skills        map[string]Skill
 }
 
 func New(provider Provider, tools Toolbox, options Options) *Engine {
@@ -73,8 +71,8 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		return RunResult{}, err
 	}
 
-	e.beginSteering()
-	defer e.endSteering()
+	e.beginContinuations()
+	defer e.endContinuations()
 
 	current := continuation{
 		state:  e.state,
@@ -136,14 +134,14 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		}
 
 		if len(response.ToolCalls) == 0 {
-			steering, ok := e.takeSteering(true)
+			next, ok := e.continuations.next(continuationBeforeSettle)
 			if !ok {
 				responseContinuation.checkpoint(e)
 				result.Text = response.Text
 				return result, nil
 			}
 
-			if err := deliverSteering(&responseContinuation, steering, sink); err != nil {
+			if err := deliverContinuation(&responseContinuation, next, sink); err != nil {
 				responseContinuation.checkpoint(e)
 				return RunResult{}, err
 			}
@@ -159,8 +157,8 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			return RunResult{}, err
 		}
 
-		if steering, ok := e.takeSteering(false); ok {
-			if err := deliverSteering(&current, steering, sink); err != nil {
+		if next, ok := e.continuations.next(continuationAfterToolBatch); ok {
+			if err := deliverContinuation(&current, next, sink); err != nil {
 				current.checkpoint(e)
 				return RunResult{}, err
 			}
@@ -295,64 +293,49 @@ func (e *Engine) Reset() error {
 	e.state = nil
 	e.contextUsage = Usage{}
 	e.pendingInputs = nil
-	e.ClearSteering()
+	e.continuations.reset()
 	return nil
 }
 
 func (e *Engine) Steer(text string) bool {
-	e.steeringMu.Lock()
-	defer e.steeringMu.Unlock()
-
-	if !e.acceptingSteering {
-		return false
-	}
-	e.steering = append(e.steering, text)
-	return true
+	return e.continuations.steer(text)
 }
 
 func (e *Engine) ClearSteering() []string {
-	e.steeringMu.Lock()
-	defer e.steeringMu.Unlock()
-
-	steering := append([]string(nil), e.steering...)
-	e.steering = nil
-	return steering
+	return e.continuations.clearSteering()
 }
 
-func (e *Engine) beginSteering() {
-	e.steeringMu.Lock()
-	defer e.steeringMu.Unlock()
-
-	e.steering = nil
-	e.acceptingSteering = true
+func (e *Engine) SetGoal(objective string) error {
+	return e.continuations.setGoal(objective)
 }
 
-func (e *Engine) endSteering() {
-	e.steeringMu.Lock()
-	defer e.steeringMu.Unlock()
-
-	e.steering = nil
-	e.acceptingSteering = false
+func (e *Engine) Goal() (GoalState, bool) {
+	return e.continuations.getGoal()
 }
 
-func (e *Engine) takeSteering(closeIfEmpty bool) (string, bool) {
-	e.steeringMu.Lock()
-	defer e.steeringMu.Unlock()
+func (e *Engine) ClearGoal() {
+	e.continuations.clearGoal()
+}
 
-	if len(e.steering) == 0 {
-		if closeIfEmpty {
-			e.acceptingSteering = false
-		}
-		return "", false
+func (e *Engine) CompleteGoal() error {
+	return e.continuations.completeGoal()
+}
+
+func (e *Engine) beginContinuations() {
+	e.continuations.beginRun()
+}
+
+func (e *Engine) endContinuations() {
+	e.continuations.endRun()
+}
+
+func deliverContinuation(current *continuation, next pendingContinuation, sink EventSink) error {
+	current.inputs = append(current.inputs, Input{Kind: InputUser, Text: next.text})
+	eventKind := EventSteering
+	if next.kind == continuationGoal {
+		eventKind = EventGoalContinuation
 	}
-	steering := e.steering[0]
-	e.steering = e.steering[1:]
-	return steering, true
-}
-
-func deliverSteering(current *continuation, steering string, sink EventSink) error {
-	current.inputs = append(current.inputs, Input{Kind: InputUser, Text: steering})
-	if err := emit(sink, Event{Kind: EventSteering, Text: steering}); err != nil {
+	if err := emit(sink, Event{Kind: eventKind, Text: next.text}); err != nil {
 		current.inputs = current.inputs[:len(current.inputs)-1]
 		return err
 	}

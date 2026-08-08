@@ -127,7 +127,7 @@ func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 	for i, definition := range gotRequest.Tools {
 		names[i] = definition.Name
 	}
-	wantNames := []string{"bash", "edit", "read", "subagent", "write"}
+	wantNames := []string{"bash", "edit", "read", "subagent", "update_goal", "write"}
 	if !slices.Equal(names, wantNames) {
 		t.Fatalf("tools = %v, want %v", names, wantNames)
 	}

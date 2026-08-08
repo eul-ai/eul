@@ -88,13 +88,16 @@ Interactive controls include:
 - Escape to cancel the active turn and restore undelivered steering messages to the editor
 - Ctrl-C to clear a non-empty prompt while idle, cancel the active turn and restore undelivered steering messages, or exit while idle with an empty prompt
 - `/help`, `/clear`, and `/exit`
+- `/goal <objective>` to set or replace an autonomous goal, `/goal` to show it, and `/goal clear` to remove it
+
+An active goal keeps the same main agent working in the current in-memory conversation after it would otherwise settle. User steering remains higher priority than goal continuation. The model stops autonomous continuation by calling `update_goal` after verifying the objective is complete; `/goal clear` stops it at the next safe settlement boundary without interrupting an executing tool batch. Cancellation or an execution error ends the current run but retains the configured goal, while `/clear` removes both conversation and goal state.
 
 Bracketed multiline paste preserves newlines and blank lines in the editor.
 
 A prompt argument runs one-shot without opening the TUI. Non-terminal stdin is
 read to EOF as a single one-shot prompt, so piped input and redirected one-shot output
 are supported. One-shot assistant text is streamed to stdout; reasoning summaries,
-tool activity, compaction notices, and errors go to stderr. Intermediate tool
+tool activity, compaction and goal-continuation notices, and errors go to stderr. Intermediate tool
 presentation snapshots are omitted in one-shot mode, which prints only execution
 start and completion summaries.
 
@@ -126,6 +129,9 @@ before returning to the model.
 - `subagent(tasks)` runs one to four explicitly requested, independent tasks
   concurrently, shows each child's elapsed time and cumulative reported token
   usage while it runs, and returns their ordered results.
+- `update_goal(status)` marks the current main-agent goal complete. It accepts
+  only `status: "complete"` and should be called only after verifying every goal
+  requirement. Read-only subagents do not receive this tool.
 
 LSP line numbers and UTF-16 character offsets are zero-based. LSP tools are
 registered only when a configured language server is installed; currently `.go`
@@ -208,9 +214,12 @@ and refusals are delivered incrementally. Completed output items are retained
 for tool calls and continuation replay. Requests use `store: false` and follow
 the experimental Codex wire contract.
 
-The engine has no fixed tool-round limit. It continues until the model returns a final
-response or the turn ends with an interruption or error. In that case, it preserves
-the existing conversation plus pending user and tool-result inputs for the next prompt.
+The engine has no fixed tool-round limit. Without an active goal, it continues until
+the model returns a final response or the turn ends with an interruption or error. With
+an active goal, a final response triggers another goal continuation until the model
+marks the goal complete, the user clears it, or the run is interrupted or fails. On an
+interruption or error, the engine preserves the existing conversation plus pending user
+and tool-result inputs for the next prompt.
 Calls that could not execute receive synthetic error results so the provider continuation
 remains valid; tool side effects that already occurred remain.
 

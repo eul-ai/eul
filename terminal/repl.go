@@ -32,6 +32,9 @@ type Engine interface {
 	Run(context.Context, string, agent.EventSink) (agent.RunResult, error)
 	Steer(string) bool
 	ClearSteering() []string
+	SetGoal(string) error
+	Goal() (agent.GoalState, bool)
+	ClearGoal()
 	Reset() error
 }
 
@@ -169,6 +172,13 @@ func (r *eventRenderer) render(event agent.Event) error {
 			return err
 		}
 		if err := writeOutput(r.errorOutput, "[context] compacting conversation\n"); err != nil {
+			return err
+		}
+	case agent.EventGoalContinuation:
+		if err := r.finish(); err != nil {
+			return err
+		}
+		if err := writeOutput(r.errorOutput, "[goal] continuing\n"); err != nil {
 			return err
 		}
 	case agent.EventToolExecute:

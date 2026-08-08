@@ -70,6 +70,33 @@ func TestNewAgentSessionWiresOptionalProviderUsage(t *testing.T) {
 	}
 }
 
+func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
+	runtime := appRuntime{newProvider: func(openaiadapter.CodexTokenSource, openaiadapter.Options) (agent.Provider, error) {
+		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+			return agent.Response{}, nil
+		}), nil
+	}}
+	session, err := newAgentSession(agentConfig{model: "model", cwd: t.TempDir()}, runtime, nil, openaiadapter.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.tools.Close()
+	if err := session.engine.SetGoal("finish"); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := session.tools.Execute(context.Background(), agent.ToolCall{
+		ID: "complete", Name: "update_goal", Arguments: json.RawMessage(`{"status":"complete"}`),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goal, ok := session.engine.Goal()
+	if result.IsError || !ok || !goal.Complete {
+		t.Fatalf("result=%+v goal=%+v exists=%v", result, goal, ok)
+	}
+}
+
 func TestNewAgentSessionReportsToolsetConfigurationFailure(t *testing.T) {
 	configureErr := errors.New("toolset failed")
 	runtime := appRuntime{

@@ -192,6 +192,31 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 			c.deferredSteering = append(c.deferredSteering, action.prompt)
 		}
 		c.model.queueSteering(action.prompt)
+	case tuiActionShowGoal:
+		goal, ok := c.engine.Goal()
+		switch {
+		case !ok:
+			c.model.appendBlock(blockInfo, "No goal is set")
+		case goal.Complete:
+			c.model.appendBlock(blockInfo, "Goal complete: "+goal.Objective)
+		default:
+			c.model.appendBlock(blockInfo, "Goal: "+goal.Objective)
+		}
+	case tuiActionSetGoal:
+		if err := c.engine.SetGoal(action.prompt); err != nil {
+			setInputError(c.model, err)
+			return false, nil
+		}
+		c.model.beginTurn(action.prompt)
+		c.startTurn(ctx, action.prompt)
+	case tuiActionClearGoal:
+		_, hadGoal := c.engine.Goal()
+		c.engine.ClearGoal()
+		if hadGoal {
+			c.model.appendBlock(blockInfo, "Goal cleared")
+		} else {
+			c.model.appendBlock(blockInfo, "No goal is set")
+		}
 	case tuiActionDequeue:
 		c.restoreQueuedInput()
 	case tuiActionSetThinking:

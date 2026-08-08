@@ -20,6 +20,8 @@ type fakeEngine struct {
 	calls         []string
 	resets        int
 	resetErr      error
+	setGoalErr    error
+	goal          *agent.GoalState
 	runFunction   func(context.Context, string, agent.EventSink) (agent.RunResult, error)
 	steerFunction func(string) bool
 	clearFunction func() []string
@@ -54,10 +56,38 @@ func (e *fakeEngine) ClearSteering() []string {
 	return function()
 }
 
+func (e *fakeEngine) SetGoal(objective string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.setGoalErr != nil {
+		return e.setGoalErr
+	}
+	e.goal = &agent.GoalState{Objective: objective}
+	return nil
+}
+
+func (e *fakeEngine) Goal() (agent.GoalState, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.goal == nil {
+		return agent.GoalState{}, false
+	}
+	return *e.goal, true
+}
+
+func (e *fakeEngine) ClearGoal() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.goal = nil
+}
+
 func (e *fakeEngine) Reset() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.resets++
+	if e.resetErr == nil {
+		e.goal = nil
+	}
 	return e.resetErr
 }
 
@@ -89,6 +119,7 @@ func TestRunOneShotRendersEventsOnce(t *testing.T) {
 			{Kind: agent.EventCompactionStart},
 			{Kind: agent.EventCompactionEnd},
 			{Kind: agent.EventContextUsage, Usage: agent.Usage{TotalTokens: 42}},
+			{Kind: agent.EventGoalContinuation},
 			{Kind: agent.EventAssistantText, Text: "Done"},
 		}
 		for _, event := range events {
@@ -105,7 +136,7 @@ func TestRunOneShotRendersEventsOnce(t *testing.T) {
 	if stdout.String() != "Checking\nDone\n" {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "Assessing change\n") || !strings.Contains(stderr.String(), "[tool] write file.txt") || strings.Contains(stderr.String(), "content") || strings.Contains(stderr.String(), "preview must stay hidden") || !strings.Contains(stderr.String(), "write file.txt — error") || !strings.Contains(stderr.String(), "[context] compacting conversation") {
+	if !strings.Contains(stderr.String(), "Assessing change\n") || !strings.Contains(stderr.String(), "[tool] write file.txt") || strings.Contains(stderr.String(), "content") || strings.Contains(stderr.String(), "preview must stay hidden") || !strings.Contains(stderr.String(), "write file.txt — error") || !strings.Contains(stderr.String(), "[context] compacting conversation") || !strings.Contains(stderr.String(), "[goal] continuing") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }

@@ -47,11 +47,18 @@ func newAgentSession(
 	subagent := tool.NewSubagent(func(ctx context.Context, task string, usage func(agent.Usage)) (agent.RunResult, error) {
 		return runChildAgent(ctx, runtime.newProvider, newToolset, tokenSource, providerOptions, config, currentThinkingLevel, task, usage)
 	})
-	registry, err := newToolset(config.cwd, fullToolAccess, subagent)
+	var engine *agent.Engine
+	updateGoal := tool.NewUpdateGoal(func() error {
+		if engine == nil {
+			return errors.New("goal completion is unavailable")
+		}
+		return engine.CompleteGoal()
+	})
+	registry, err := newToolset(config.cwd, fullToolAccess, subagent, updateGoal)
 	if err != nil {
 		return nil, fmt.Errorf("configure tools: %w", err)
 	}
-	engine := agent.New(provider, registry, agent.Options{
+	engine = agent.New(provider, registry, agent.Options{
 		Model:               config.model,
 		ThinkingLevel:       currentThinkingLevel,
 		WorkingDirectory:    config.cwd,

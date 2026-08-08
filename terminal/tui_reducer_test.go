@@ -183,6 +183,37 @@ func TestReduceKeyActions(t *testing.T) {
 			},
 		},
 		{
+			name: "show goal",
+			setup: func(t *testing.T, model *tuiModel) {
+				if err := model.insertInput("/goal"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			key:      keyEvent{code: keyEnter},
+			wantKind: tuiActionShowGoal,
+		},
+		{
+			name: "set goal",
+			setup: func(t *testing.T, model *tuiModel) {
+				if err := model.insertInput("/goal  finish migration  "); err != nil {
+					t.Fatal(err)
+				}
+			},
+			key:        keyEvent{code: keyEnter},
+			wantKind:   tuiActionSetGoal,
+			wantPrompt: "finish migration",
+		},
+		{
+			name: "clear goal",
+			setup: func(t *testing.T, model *tuiModel) {
+				if err := model.insertInput("/goal clear"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			key:      keyEvent{code: keyEnter},
+			wantKind: tuiActionClearGoal,
+		},
+		{
 			name: "submit",
 			setup: func(t *testing.T, model *tuiModel) {
 				if err := model.insertInput(" hello "); err != nil {
@@ -271,6 +302,22 @@ func TestReduceKeyActions(t *testing.T) {
 			check: func(t *testing.T, model *tuiModel) {
 				if len(model.input) != 0 || len(model.history) != 1 || len(model.blocks) != 0 {
 					t.Fatalf("input=%q history=%q blocks=%+v", model.input, model.history, model.blocks)
+				}
+			},
+		},
+		{
+			name: "running clears goal",
+			setup: func(t *testing.T, model *tuiModel) {
+				model.running = true
+				if err := model.insertInput("/goal clear"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			key:      keyEvent{code: keyEnter},
+			wantKind: tuiActionClearGoal,
+			check: func(t *testing.T, model *tuiModel) {
+				if len(model.input) != 0 || len(model.history) != 1 {
+					t.Fatalf("input=%q history=%q", model.input, model.history)
 				}
 			},
 		},

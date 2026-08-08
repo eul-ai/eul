@@ -150,6 +150,9 @@ func (m *tuiModel) applyAgentEvent(event agent.Event) {
 		m.contextTokens = event.Usage.TotalTokens
 	case agent.EventSteering:
 		m.deliverSteering(event.Text)
+	case agent.EventGoalContinuation:
+		m.appendBlock(blockInfo, "Goal continuing")
+		m.setActiveActivity(activity{kind: activityThinking})
 	case agent.EventToolStart:
 		m.startTool(event.Call, event.Presentation)
 	case agent.EventToolUpdate:
