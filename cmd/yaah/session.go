@@ -54,6 +54,7 @@ func newAgentSession(
 	engine := agent.New(provider, registry, agent.Options{
 		Model:               config.model,
 		ThinkingLevel:       currentThinkingLevel,
+		WorkingDirectory:    config.cwd,
 		ProjectInstructions: config.projectInstructions,
 	})
 	setThinkingLevel := func(level agent.ThinkingLevel) error {
@@ -123,6 +124,7 @@ func runChildAgent(
 	child := agent.New(provider, registry, agent.Options{
 		Model:               config.model,
 		ThinkingLevel:       thinkingLevel,
+		WorkingDirectory:    config.cwd,
 		ProjectInstructions: config.projectInstructions,
 	})
 	var liveUsage agent.Usage

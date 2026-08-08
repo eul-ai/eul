@@ -17,6 +17,7 @@ var (
 type Options struct {
 	Model               string
 	ThinkingLevel       ThinkingLevel
+	WorkingDirectory    string
 	ProjectInstructions string
 	maxToolRounds       int
 }
@@ -55,7 +56,7 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 		model:         options.Model,
 		thinkingLevel: thinkingLevel,
 		maxToolRounds: maxToolRounds,
-		instructions:  buildSystemPrompt(tools.Definitions(), options.ProjectInstructions),
+		instructions:  buildSystemPrompt(tools.Definitions(), options.WorkingDirectory, options.ProjectInstructions),
 	}
 }
 

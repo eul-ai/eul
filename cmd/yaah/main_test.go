@@ -120,8 +120,8 @@ func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 	if factoryCalls != 1 || providerOptions.ReasoningSummary != openaiadapter.ReasoningSummaryDetailed || gotRequest.Model != "gpt-5.6-sol" || gotRequest.ThinkingLevel != agent.ThinkingXHigh || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].Text != "one shot prompt" {
 		t.Fatalf("factory calls=%d request=%+v", factoryCalls, gotRequest)
 	}
-	if !strings.HasSuffix(gotRequest.Instructions, projectInstructions) {
-		t.Fatalf("instructions omit AGENTS.md:\n%s", gotRequest.Instructions)
+	if !strings.Contains(gotRequest.Instructions, projectInstructions) || !strings.Contains(gotRequest.Instructions, filepath.ToSlash(filepath.Join(cwd, "AGENTS.md"))) || !strings.Contains(gotRequest.Instructions, "Current working directory: "+filepath.ToSlash(cwd)) {
+		t.Fatalf("instructions omit project context:\n%s", gotRequest.Instructions)
 	}
 	names := make([]string, len(gotRequest.Tools))
 	for i, definition := range gotRequest.Tools {
@@ -232,7 +232,7 @@ func TestRunOneShotFeedsConcurrentSubagentsBackToMain(t *testing.T) {
 	}
 	var tasks []string
 	for _, request := range childRequests {
-		if request.Model != "model" || request.ThinkingLevel != agent.ThinkingHigh || !strings.HasSuffix(request.Instructions, projectInstructions) {
+		if request.Model != "model" || request.ThinkingLevel != agent.ThinkingHigh || !strings.Contains(request.Instructions, projectInstructions) || !strings.Contains(request.Instructions, "Current working directory: "+filepath.ToSlash(cwd)) {
 			t.Fatalf("child request = %+v", request)
 		}
 		names := make([]string, len(request.Tools))

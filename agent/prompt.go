@@ -1,10 +1,14 @@
 package agent
 
-import "strings"
+import (
+	"html"
+	"path/filepath"
+	"strings"
+)
 
 const baseSystemPrompt = `You are a coding agent. Use the available tools to inspect and modify code. Be concise and report results clearly.`
 
-func buildSystemPrompt(definitions []ToolDefinition, projectInstructions string) string {
+func buildSystemPrompt(definitions []ToolDefinition, workingDirectory, projectInstructions string) string {
 	var prompt strings.Builder
 	prompt.WriteString(baseSystemPrompt)
 	prompt.WriteString("\n\nAvailable tools:\n")
@@ -22,10 +26,22 @@ func buildSystemPrompt(definitions []ToolDefinition, projectInstructions string)
 		prompt.WriteByte('\n')
 	}
 
-	result := strings.TrimSuffix(prompt.String(), "\n")
-	if projectInstructions == "" {
-		return result
+	if projectInstructions != "" {
+		instructionPath := "AGENTS.md"
+		if workingDirectory != "" {
+			instructionPath = filepath.Join(workingDirectory, instructionPath)
+		}
+		prompt.WriteString("\n<project_instructions path=\"")
+		prompt.WriteString(html.EscapeString(filepath.ToSlash(instructionPath)))
+		prompt.WriteString("\">\n")
+		prompt.WriteString(strings.TrimSuffix(projectInstructions, "\n"))
+		prompt.WriteString("\n</project_instructions>\n")
+	}
+	if workingDirectory != "" {
+		prompt.WriteString("\nCurrent working directory: ")
+		prompt.WriteString(filepath.ToSlash(workingDirectory))
+		prompt.WriteByte('\n')
 	}
 
-	return result + "\n\n" + strings.TrimSuffix(projectInstructions, "\n")
+	return strings.TrimSuffix(prompt.String(), "\n")
 }
