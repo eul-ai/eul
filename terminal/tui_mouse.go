@@ -54,9 +54,12 @@ func reduceMouse(model *tuiModel, event mouseEvent) tuiAction {
 			model.selection = textSelection{}
 			return tuiAction{}
 		}
-		if text := selectedText(model); text != "" {
-			return tuiAction{kind: tuiActionCopy, text: text}
+		text := selectedText(model)
+		if text == "" {
+			model.selection = textSelection{}
+			return tuiAction{}
 		}
+		return tuiAction{kind: tuiActionCopy, text: text}
 	}
 	return tuiAction{}
 }
@@ -259,6 +262,7 @@ func selectionForScreenRow(model *tuiModel, layout tuiLayout, row int, line stri
 		return cellRange{}, false
 	}
 
+	line = strings.TrimRightFunc(line, unicode.IsSpace)
 	columns := selectedColumns(line, selectionRow, bounds)
 	return columns, columns.end > columns.start
 }

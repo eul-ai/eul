@@ -78,6 +78,39 @@ func TestMouseDragSelectsAndCopiesRenderedText(t *testing.T) {
 	}
 }
 
+func TestMouseSelectionDoesNotHighlightTrailingPadding(t *testing.T) {
+	model := newTUIModel(20, 10, Options{})
+	model.appendBlock(blockAssistant, "alpha")
+	buildTerminalFrame(model)
+
+	var output bytes.Buffer
+	for _, event := range []mouseEvent{
+		{kind: mousePress, column: 1, row: 1},
+		{kind: mouseDrag, column: 15, row: 1},
+	} {
+		if exit, err := handleModelMouse(model, &output, event); err != nil || exit {
+			t.Fatalf("handle mouse %+v: exit=%t err=%v", event, exit, err)
+		}
+	}
+
+	_, layout := modelInputLayout(model)
+	frame := buildTerminalFrame(model)
+	selection, ok := selectionForScreenRow(model, layout, 1, frame.plainRows[1])
+	if !ok || selection != (cellRange{start: 1, end: 6}) {
+		t.Fatalf("highlighted cells = %+v, ok=%t", selection, ok)
+	}
+	if !strings.Contains(frame.rows[1], ansiReverse+"alpha"+ansiNotReverse) {
+		t.Fatalf("selected row highlights padding: %q", frame.rows[1])
+	}
+
+	if exit, err := handleModelMouse(model, &output, mouseEvent{kind: mouseRelease, column: 15, row: 1}); err != nil || exit {
+		t.Fatalf("release selection: exit=%t err=%v", exit, err)
+	}
+	if got, want := output.String(), "\x1b]52;c;YWxwaGE=\x07"; got != want {
+		t.Fatalf("clipboard output = %q, want %q", got, want)
+	}
+}
+
 func TestMouseClickDoesNotCopy(t *testing.T) {
 	model := newTUIModel(20, 10, Options{})
 	model.appendBlock(blockAssistant, "alpha")
