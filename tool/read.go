@@ -49,6 +49,30 @@ func (*Read) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation 
 	if path := snapshotString(snapshot, "path"); path != "" {
 		arguments = displayToolArgument(path)
 	}
+
+	offset, hasOffset := int64(0), false
+	if number, ok := snapshot.Arguments["offset"].(json.Number); ok {
+		if value, err := number.Int64(); err == nil {
+			offset, hasOffset = value, true
+		}
+	}
+	limit, hasLimit := int64(0), false
+	if number, ok := snapshot.Arguments["limit"].(json.Number); ok {
+		if value, err := number.Int64(); err == nil {
+			limit, hasLimit = value, true
+		}
+	}
+	if hasOffset || hasLimit {
+		start := int64(1)
+		if hasOffset {
+			start = offset
+		}
+		arguments += fmt.Sprintf(":%d", start)
+		if hasLimit {
+			arguments += fmt.Sprintf("-%d", start+limit-1)
+		}
+	}
+
 	return agent.ToolPresentation{Title: readToolName, Arguments: arguments}
 }
 
