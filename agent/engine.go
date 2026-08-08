@@ -28,16 +28,19 @@ type RunResult struct {
 }
 
 type Engine struct {
-	mu            sync.Mutex
-	provider      Provider
-	tools         Toolbox
-	model         string
-	thinkingLevel ThinkingLevel
-	maxToolRounds int
-	instructions  string
-	state         []byte
-	contextUsage  Usage
-	pendingInputs []Input
+	mu                sync.Mutex
+	steeringMu        sync.Mutex
+	provider          Provider
+	tools             Toolbox
+	model             string
+	thinkingLevel     ThinkingLevel
+	maxToolRounds     int
+	instructions      string
+	state             []byte
+	contextUsage      Usage
+	pendingInputs     []Input
+	steering          []string
+	acceptingSteering bool
 }
 
 func New(provider Provider, tools Toolbox, options Options) *Engine {
@@ -69,6 +72,9 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 	if err := ctx.Err(); err != nil {
 		return RunResult{}, err
 	}
+
+	e.beginSteering()
+	defer e.endSteering()
 
 	current := continuation{
 		state:  e.state,
@@ -131,9 +137,19 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		}
 
 		if len(response.ToolCalls) == 0 {
-			responseContinuation.checkpoint(e)
-			result.Text = response.Text
-			return result, nil
+			steering, ok := e.takeSteering(true)
+			if !ok {
+				responseContinuation.checkpoint(e)
+				result.Text = response.Text
+				return result, nil
+			}
+
+			if err := deliverSteering(&responseContinuation, steering, sink); err != nil {
+				responseContinuation.checkpoint(e)
+				return RunResult{}, err
+			}
+			current = responseContinuation
+			continue
 		}
 
 		if toolRounds >= e.maxToolRounds {
@@ -152,6 +168,13 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		if err != nil {
 			current.checkpoint(e)
 			return RunResult{}, err
+		}
+
+		if steering, ok := e.takeSteering(false); ok {
+			if err := deliverSteering(&current, steering, sink); err != nil {
+				current.checkpoint(e)
+				return RunResult{}, err
+			}
 		}
 	}
 }
@@ -283,6 +306,67 @@ func (e *Engine) Reset() error {
 	e.state = nil
 	e.contextUsage = Usage{}
 	e.pendingInputs = nil
+	e.ClearSteering()
+	return nil
+}
+
+func (e *Engine) Steer(text string) bool {
+	e.steeringMu.Lock()
+	defer e.steeringMu.Unlock()
+
+	if !e.acceptingSteering {
+		return false
+	}
+	e.steering = append(e.steering, text)
+	return true
+}
+
+func (e *Engine) ClearSteering() []string {
+	e.steeringMu.Lock()
+	defer e.steeringMu.Unlock()
+
+	steering := append([]string(nil), e.steering...)
+	e.steering = nil
+	return steering
+}
+
+func (e *Engine) beginSteering() {
+	e.steeringMu.Lock()
+	defer e.steeringMu.Unlock()
+
+	e.steering = nil
+	e.acceptingSteering = true
+}
+
+func (e *Engine) endSteering() {
+	e.steeringMu.Lock()
+	defer e.steeringMu.Unlock()
+
+	e.steering = nil
+	e.acceptingSteering = false
+}
+
+func (e *Engine) takeSteering(closeIfEmpty bool) (string, bool) {
+	e.steeringMu.Lock()
+	defer e.steeringMu.Unlock()
+
+	if len(e.steering) == 0 {
+		if closeIfEmpty {
+			e.acceptingSteering = false
+		}
+		return "", false
+	}
+	steering := e.steering[0]
+	e.steering = e.steering[1:]
+	return steering, true
+}
+
+func deliverSteering(current *continuation, steering string, sink EventSink) error {
+	current.inputs = append(current.inputs, Input{Kind: InputUser, Text: steering})
+	if err := emit(sink, Event{Kind: EventSteering, Text: steering}); err != nil {
+		current.inputs = current.inputs[:len(current.inputs)-1]
+		return err
+	}
 	return nil
 }
 

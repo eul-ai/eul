@@ -16,11 +16,13 @@ import (
 )
 
 type fakeEngine struct {
-	mu          sync.Mutex
-	calls       []string
-	resets      int
-	resetErr    error
-	runFunction func(context.Context, string, agent.EventSink) (agent.RunResult, error)
+	mu            sync.Mutex
+	calls         []string
+	resets        int
+	resetErr      error
+	runFunction   func(context.Context, string, agent.EventSink) (agent.RunResult, error)
+	steerFunction func(string) bool
+	clearFunction func() []string
 }
 
 func (e *fakeEngine) Run(ctx context.Context, prompt string, sink agent.EventSink) (agent.RunResult, error) {
@@ -33,6 +35,23 @@ func (e *fakeEngine) Run(ctx context.Context, prompt string, sink agent.EventSin
 		return agent.RunResult{}, nil
 	}
 	return function(ctx, prompt, sink)
+}
+
+func (e *fakeEngine) Steer(prompt string) bool {
+	e.mu.Lock()
+	function := e.steerFunction
+	e.mu.Unlock()
+	return function != nil && function(prompt)
+}
+
+func (e *fakeEngine) ClearSteering() []string {
+	e.mu.Lock()
+	function := e.clearFunction
+	e.mu.Unlock()
+	if function == nil {
+		return nil
+	}
+	return function()
 }
 
 func (e *fakeEngine) Reset() error {

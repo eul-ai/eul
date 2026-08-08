@@ -30,6 +30,8 @@ var (
 
 type Engine interface {
 	Run(context.Context, string, agent.EventSink) (agent.RunResult, error)
+	Steer(string) bool
+	ClearSteering() []string
 	Reset() error
 }
 

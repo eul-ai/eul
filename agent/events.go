@@ -8,6 +8,7 @@ const (
 	EventCompactionStart    EventKind = "compaction_start"
 	EventCompactionEnd      EventKind = "compaction_end"
 	EventContextUsage       EventKind = "context_usage"
+	EventSteering           EventKind = "steering"
 	EventToolStart          EventKind = "tool_start"
 	EventToolUpdate         EventKind = "tool_update"
 	EventToolExecute        EventKind = "tool_execute"

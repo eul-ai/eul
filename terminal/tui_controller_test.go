@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"yaah/agent"
 )
@@ -81,6 +83,157 @@ func TestMouseWheelUsesCommittedConversationBounds(t *testing.T) {
 	reduceMouse(model, mouseEvent{kind: mouseWheelUp}, renderer.frame)
 	if model.scrollTop != committedTop-mouseWheelScrollLines {
 		t.Fatalf("scroll top = %d, want %d", model.scrollTop, committedTop-mouseWheelScrollLines)
+	}
+}
+
+func TestTUIControllerQueuesAndDequeuesSteering(t *testing.T) {
+	var queued []string
+	engine := &fakeEngine{
+		steerFunction: func(prompt string) bool {
+			queued = append(queued, prompt)
+			return true
+		},
+		clearFunction: func() []string {
+			messages := append([]string(nil), queued...)
+			queued = nil
+			return messages
+		},
+	}
+	model := newTUIModel(80, 24, Options{})
+	model.running = true
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+	}
+
+	if err := model.insertInput("steer"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(queued, []string{"steer"}) || !slices.Equal(model.steering, []string{"steer"}) {
+		t.Fatalf("engine queue=%q model queue=%q", queued, model.steering)
+	}
+	if calls, _ := engine.snapshot(); len(calls) != 0 {
+		t.Fatalf("steering started runs: %q", calls)
+	}
+
+	if err := model.insertInput("draft"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyAltUp}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(queued) != 0 || len(model.steering) != 0 || string(model.input) != "steer\n\ndraft" {
+		t.Fatalf("queue=%q model queue=%q input=%q", queued, model.steering, model.input)
+	}
+}
+
+func TestTUIControllerCancelRestoresQueuedAndDeferredSteering(t *testing.T) {
+	engine := &fakeEngine{clearFunction: func() []string { return []string{"accepted"} }}
+	model := newTUIModel(80, 24, Options{})
+	model.running = true
+	model.queueSteering("accepted")
+	model.queueSteering("deferred")
+	if err := model.insertInput("draft"); err != nil {
+		t.Fatal(err)
+	}
+	canceled := false
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+		deferredSteering: []string{"deferred"},
+		turnCancel:       func() { canceled = true },
+	}
+
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEscape}}); err != nil {
+		t.Fatal(err)
+	}
+	if !canceled || len(controller.deferredSteering) != 0 || len(model.steering) != 0 {
+		t.Fatalf("canceled=%v deferred=%q pending=%q", canceled, controller.deferredSteering, model.steering)
+	}
+	if string(model.input) != "accepted\n\ndeferred\n\ndraft" {
+		t.Fatalf("restored input = %q", model.input)
+	}
+}
+
+func TestTUIControllerRunsRejectedSteeringSequentially(t *testing.T) {
+	steerCalls := 0
+	engine := &fakeEngine{
+		steerFunction: func(string) bool {
+			steerCalls++
+			return false
+		},
+	}
+	messages := make(chan engineMessage, 4)
+	stopped := make(chan struct{})
+	defer close(stopped)
+	model := newTUIModel(80, 24, Options{})
+	model.running = true
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		engineMessages: messages, stopped: stopped,
+	}
+	ctx := context.Background()
+
+	for _, prompt := range []string{"one", "two"} {
+		if err := model.insertInput(prompt); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if steerCalls != 1 || !slices.Equal(controller.deferredSteering, []string{"one", "two"}) {
+		t.Fatalf("steer calls=%d deferred=%q", steerCalls, controller.deferredSteering)
+	}
+
+	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventEngine, engine: engineMessage{done: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if !model.running || !slices.Equal(controller.deferredSteering, []string{"two"}) {
+		t.Fatalf("first replay running=%v deferred=%q", model.running, controller.deferredSteering)
+	}
+	var firstDone engineMessage
+	select {
+	case firstDone = <-messages:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first deferred turn did not complete")
+	}
+	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventEngine, engine: firstDone}); err != nil {
+		t.Fatal(err)
+	}
+	var secondDone engineMessage
+	select {
+	case secondDone = <-messages:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second deferred turn did not complete")
+	}
+	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventEngine, engine: secondDone}); err != nil {
+		t.Fatal(err)
+	}
+	calls, _ := engine.snapshot()
+	if !slices.Equal(calls, []string{"one", "two"}) || model.running || len(model.steering) != 0 {
+		t.Fatalf("calls=%q running=%v pending=%q", calls, model.running, model.steering)
+	}
+}
+
+func TestTUIControllerRestoresSteeringAfterRunError(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.running = true
+	model.queueSteering("retry this")
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+	}
+
+	failure := errors.New("failed")
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventEngine, engine: engineMessage{done: true, err: failure}}); err != nil {
+		t.Fatal(err)
+	}
+	if string(model.input) != "retry this" || len(model.steering) != 0 || model.activity.kind != activityError {
+		t.Fatalf("input=%q steering=%q activity=%+v", model.input, model.steering, model.activity)
 	}
 }
 

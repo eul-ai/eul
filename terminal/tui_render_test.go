@@ -458,6 +458,31 @@ func TestPaddedBlockBackgroundFillsWidth(t *testing.T) {
 	}
 }
 
+func TestPendingSteeringRendersAndDeliversInTranscriptOrder(t *testing.T) {
+	model := newTUIModel(40, 8, Options{})
+	model.beginTurn("initial")
+	model.appendStream(blockAssistant, "answer")
+	model.queueSteering("redirect")
+	model.appendStream(blockAssistant, " continues")
+
+	lines := modelConversationLines(model, 40)
+	var rendered []string
+	for _, line := range lines {
+		rendered = append(rendered, line.text)
+	}
+	if len(model.blocks) != 2 || model.blocks[1].text != "answer continues" || !slices.Contains(rendered, "Queued: redirect") {
+		t.Fatalf("blocks=%+v lines=%q", model.blocks, rendered)
+	}
+	if frame := buildTerminalFrame(model); !frame.cursorVisible {
+		t.Fatal("cursor hidden while agent is running")
+	}
+
+	model.applyAgentEvent(agent.Event{Kind: agent.EventSteering, Text: "redirect"})
+	if len(model.steering) != 0 || len(model.blocks) != 3 || model.blocks[2].kind != blockUser || model.blocks[2].text != "redirect" {
+		t.Fatalf("steering=%q blocks=%+v", model.steering, model.blocks)
+	}
+}
+
 func TestRendererOnlyWritesChangedRows(t *testing.T) {
 	model := newTUIModel(40, 8, Options{Model: "model"})
 	model.running = true

@@ -74,7 +74,8 @@ flicker during streaming. The current palette is based on the
 
 Interactive controls include:
 
-- Enter or keypad Enter to submit
+- Enter or keypad Enter to submit; while the agent is working, it queues a steering message for delivery after the current response and its complete tool batch
+- Alt-Up to restore all undelivered steering messages to the editor without canceling the active turn
 - Shift-Enter to insert a newline
 - Shift-Tab to cycle supported thinking levels
 - `@` to search project files; Up/Down select, Enter/Tab insert, and Escape dismisses
@@ -83,10 +84,9 @@ Interactive controls include:
 - Page Up/Page Down or the mouse wheel to scroll the conversation
 - Drag with the primary mouse button to select text and copy it to the clipboard on release
 - Ctrl-L to redraw
-- Ctrl-D to exit when the prompt is empty
-- Escape to cancel the active turn
-- Ctrl-C to clear a non-empty prompt, cancel the active turn, or exit with an
-  empty prompt
+- Ctrl-D to exit when the prompt is empty and no turn is active
+- Escape to cancel the active turn and restore undelivered steering messages to the editor
+- Ctrl-C to clear a non-empty prompt while idle, cancel the active turn and restore undelivered steering messages, or exit while idle with an empty prompt
 - `/help`, `/clear`, and `/exit`
 
 Bracketed multiline paste preserves newlines and blank lines in the editor.

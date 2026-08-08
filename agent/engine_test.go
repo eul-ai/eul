@@ -1103,6 +1103,321 @@ func TestEngineTreatsToolLocalDeadlineAsRecoverable(t *testing.T) {
 	}
 }
 
+func TestEngineQueuesSteeringDuringGenerationOneAtATime(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			assertUserInput(t, request, "start")
+			close(started)
+			<-release
+			return Response{Text: "initial", State: []byte("one")}, nil
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			assertUserInput(t, request, "steer one")
+			if string(request.State) != "one" {
+				t.Fatalf("first steering state = %q", request.State)
+			}
+			return Response{Text: "handled one", State: []byte("two")}, nil
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			assertUserInput(t, request, "steer two")
+			if string(request.State) != "two" {
+				t.Fatalf("second steering state = %q", request.State)
+			}
+			return Response{Text: "handled two", State: []byte("three")}, nil
+		},
+	}}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+	var events []Event
+	done := make(chan struct {
+		result RunResult
+		err    error
+	}, 1)
+	go func() {
+		result, err := engine.Run(context.Background(), "start", func(event Event) error {
+			events = append(events, event)
+			return nil
+		})
+		done <- struct {
+			result RunResult
+			err    error
+		}{result: result, err: err}
+	}()
+
+	<-started
+	if !engine.Steer("steer one") || !engine.Steer("steer two") {
+		t.Fatal("active engine rejected steering")
+	}
+	close(release)
+	outcome := <-done
+	if outcome.err != nil || outcome.result.Text != "handled two" {
+		t.Fatalf("result = %+v, error = %v", outcome.result, outcome.err)
+	}
+	var delivered []string
+	for _, event := range events {
+		if event.Kind == EventSteering {
+			delivered = append(delivered, event.Text)
+		}
+	}
+	if !slices.Equal(delivered, []string{"steer one", "steer two"}) {
+		t.Fatalf("delivered steering = %q", delivered)
+	}
+	if engine.Steer("too late") {
+		t.Fatal("completed engine accepted steering")
+	}
+}
+
+func TestEngineDeliversSteeringAfterCompleteToolBatch(t *testing.T) {
+	toolStarted := make(chan struct{})
+	releaseTool := make(chan struct{})
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			assertUserInput(t, request, "start")
+			return Response{
+				ToolCalls: []ToolCall{
+					{ID: "one", Name: "tool", Arguments: json.RawMessage(`{}`)},
+					{ID: "two", Name: "tool", Arguments: json.RawMessage(`{}`)},
+				},
+				State: []byte("tools"),
+			}, nil
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			want := []Input{
+				{Kind: InputToolResult, CallID: "one", Tool: "tool", Text: "result one"},
+				{Kind: InputToolResult, CallID: "two", Tool: "tool", Text: "result two"},
+				{Kind: InputUser, Text: "redirect"},
+			}
+			if string(request.State) != "tools" || !slices.Equal(request.Inputs, want) {
+				t.Fatalf("steered tool continuation = %+v", request)
+			}
+			return Response{Text: "redirected", State: []byte("done")}, nil
+		},
+	}}
+	executions := 0
+	toolbox := &fakeToolbox{execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
+		executions++
+		if executions == 1 {
+			close(toolStarted)
+			<-releaseTool
+		}
+		return ToolResult{Output: "result " + call.ID}, nil
+	}}
+	engine := newTestEngine(t, provider, toolbox, Options{})
+	var events []Event
+	done := make(chan error, 1)
+	go func() {
+		_, err := engine.Run(context.Background(), "start", func(event Event) error {
+			events = append(events, event)
+			return nil
+		})
+		done <- err
+	}()
+
+	<-toolStarted
+	if !engine.Steer("redirect") {
+		t.Fatal("engine rejected steering during tool execution")
+	}
+	close(releaseTool)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if executions != 2 {
+		t.Fatalf("tool executions = %d", executions)
+	}
+	steeringIndex := -1
+	toolEnds := 0
+	for index, event := range events {
+		switch event.Kind {
+		case EventToolEnd:
+			toolEnds++
+		case EventSteering:
+			steeringIndex = index
+			if toolEnds != 2 {
+				t.Fatalf("steering delivered after %d tool results", toolEnds)
+			}
+		}
+	}
+	if steeringIndex < 0 {
+		t.Fatal("missing steering delivery event")
+	}
+}
+
+func TestEngineDoesNotCheckpointSteeringWhenDeliveryEventFails(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	sinkErr := errors.New("sink failed")
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			assertUserInput(t, request, "start")
+			close(started)
+			<-release
+			return Response{Text: "initial", State: []byte("initial")}, nil
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			assertUserInput(t, request, "steer")
+			if string(request.State) != "initial" {
+				t.Fatalf("recovery state = %q", request.State)
+			}
+			return Response{Text: "recovered", State: []byte("recovered")}, nil
+		},
+	}}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := engine.Run(context.Background(), "start", func(event Event) error {
+			if event.Kind == EventSteering {
+				return sinkErr
+			}
+			return nil
+		})
+		done <- err
+	}()
+
+	<-started
+	if !engine.Steer("steer") {
+		t.Fatal("active engine rejected steering")
+	}
+	close(release)
+	if err := <-done; !errors.Is(err, sinkErr) {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	result, err := engine.Run(context.Background(), "steer", discardEvents)
+	if err != nil || result.Text != "recovered" {
+		t.Fatalf("recovery result = %+v, error = %v", result, err)
+	}
+}
+
+func TestEnginePreservesToolResultsWhenSteeringDeliveryEventFails(t *testing.T) {
+	sinkErr := errors.New("sink failed")
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			assertUserInput(t, request, "start")
+			return Response{
+				ToolCalls: []ToolCall{{ID: "tool", Name: "tool", Arguments: json.RawMessage(`{}`)}},
+				State:     []byte("tools"),
+			}, nil
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			want := []Input{
+				{Kind: InputToolResult, CallID: "tool", Tool: "tool", Text: "result"},
+				{Kind: InputUser, Text: "steer"},
+			}
+			if string(request.State) != "tools" || !slices.Equal(request.Inputs, want) {
+				t.Fatalf("recovery request = %+v", request)
+			}
+			return Response{Text: "recovered", State: []byte("recovered")}, nil
+		},
+	}}
+	engine := newTestEngine(t, provider, &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
+		return ToolResult{Output: "result"}, nil
+	}}, Options{})
+	queued := false
+	_, err := engine.Run(context.Background(), "start", func(event Event) error {
+		switch event.Kind {
+		case EventToolExecute:
+			queued = engine.Steer("steer")
+		case EventSteering:
+			return sinkErr
+		}
+		return nil
+	})
+	if !queued {
+		t.Fatal("active engine rejected steering")
+	}
+	if !errors.Is(err, sinkErr) {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	result, err := engine.Run(context.Background(), "steer", discardEvents)
+	if err != nil || result.Text != "recovered" {
+		t.Fatalf("recovery result = %+v, error = %v", result, err)
+	}
+}
+
+func TestEngineClearsQueuedSteeringAfterCancellationAndReset(t *testing.T) {
+	started := make(chan struct{})
+	provider := streamingProviderFunc(func(ctx context.Context, _ Request, _ TextSink, _ TextSink, _ ToolCallSink) (Response, error) {
+		close(started)
+		<-ctx.Done()
+		return Response{}, ctx.Err()
+	})
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := engine.Run(ctx, "start", discardEvents)
+		done <- err
+	}()
+
+	<-started
+	if !engine.Steer("queued") {
+		t.Fatal("active engine rejected steering")
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if queued := engine.ClearSteering(); len(queued) != 0 {
+		t.Fatalf("stale steering = %q", queued)
+	}
+	if engine.Steer("late") {
+		t.Fatal("canceled engine accepted steering")
+	}
+	if err := engine.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if queued := engine.ClearSteering(); len(queued) != 0 {
+		t.Fatalf("reset steering = %q", queued)
+	}
+}
+
+func TestEngineClearsQueuedSteeringAfterFailure(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	failure := errors.New("provider failed")
+	calls := 0
+	provider := streamingProviderFunc(func(_ context.Context, request Request, _ TextSink, _ TextSink, _ ToolCallSink) (Response, error) {
+		calls++
+		if calls == 1 {
+			close(started)
+			<-release
+			return Response{}, failure
+		}
+		want := []Input{{Kind: InputUser, Text: "start"}, {Kind: InputUser, Text: "next"}}
+		if !slices.Equal(request.Inputs, want) {
+			t.Fatalf("recovery inputs = %+v", request.Inputs)
+		}
+		return Response{Text: "recovered"}, nil
+	})
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := engine.Run(context.Background(), "start", discardEvents)
+		done <- err
+	}()
+
+	<-started
+	if !engine.Steer("queued") {
+		t.Fatal("active engine rejected steering")
+	}
+	close(release)
+	if err := <-done; !errors.Is(err, failure) {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if queued := engine.ClearSteering(); len(queued) != 0 {
+		t.Fatalf("stale steering = %q", queued)
+	}
+	if engine.Steer("late") {
+		t.Fatal("failed engine accepted steering")
+	}
+	result, err := engine.Run(context.Background(), "next", discardEvents)
+	if err != nil || result.Text != "recovered" {
+		t.Fatalf("recovery result = %+v, error = %v", result, err)
+	}
+}
+
 func TestEngineRejectsConcurrentOperations(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})

@@ -15,6 +15,8 @@ const (
 	tuiActionReset
 	tuiActionExit
 	tuiActionSubmit
+	tuiActionSteer
+	tuiActionDequeue
 	tuiActionSetThinking
 	tuiActionCopy
 	tuiActionRedraw
@@ -31,16 +33,18 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 	if key.code == keyMouse {
 		return reduceMouse(model, key.mouse, frame), nil
 	}
+	if reduceFilePickerKey(model, key) {
+		return tuiAction{}, nil
+	}
 
 	switch key.code {
 	case keyFailure:
 		if key.fatal {
 			return tuiAction{}, fmt.Errorf("terminal: read input: %w", key.err)
 		}
-		if model.running {
-			return tuiAction{}, nil
+		if !model.running {
+			setInputError(model, key.err)
 		}
-		setInputError(model, key.err)
 		return tuiAction{}, nil
 	case keyEOF:
 		return tuiAction{kind: tuiActionExit}, nil
@@ -65,13 +69,8 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 	case keyPageDown:
 		scrollConversation(model, 1, frame)
 		return tuiAction{}, nil
-	}
-
-	if model.running {
-		return tuiAction{}, nil
-	}
-	if reduceFilePickerKey(model, key) {
-		return tuiAction{}, nil
+	case keyAltUp:
+		return tuiAction{kind: tuiActionDequeue}, nil
 	}
 
 	switch key.code {
@@ -84,6 +83,9 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 			setInputError(model, err)
 		}
 	case keyShiftTab:
+		if model.running {
+			return tuiAction{}, nil
+		}
 		level, err := model.nextThinkingLevel()
 		if err != nil {
 			setInputError(model, err)
@@ -109,10 +111,13 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 	case keyDown:
 		model.historyDown()
 	case keyCtrlD:
-		if len(model.input) == 0 {
+		if !model.running && len(model.input) == 0 {
 			return tuiAction{kind: tuiActionExit}, nil
 		}
 	case keyEnter:
+		if model.running {
+			return reduceSteeringPrompt(model), nil
+		}
 		return reducePrompt(model), nil
 	}
 	return tuiAction{}, nil
@@ -157,6 +162,21 @@ func reduceInterrupt(model *tuiModel) (tuiAction, error) {
 	model.interrupted = true
 	model.activity = activity{kind: activityCanceling}
 	return tuiAction{kind: tuiActionCancel}, nil
+}
+
+func reduceSteeringPrompt(model *tuiModel) tuiAction {
+	prompt := string(model.input)
+	trimmed := strings.TrimSpace(prompt)
+	if trimmed == "" {
+		return tuiAction{}
+	}
+	if strings.HasPrefix(trimmed, "/") {
+		setInputError(model, fmt.Errorf("commands cannot be queued while the agent is running"))
+		return tuiAction{}
+	}
+
+	prompt, _ = model.takePrompt()
+	return tuiAction{kind: tuiActionSteer, prompt: prompt}
 }
 
 func reducePrompt(model *tuiModel) tuiAction {

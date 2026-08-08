@@ -65,6 +65,7 @@ type tuiModel struct {
 	streamOpen                 bool
 	input                      []rune
 	cursor                     int
+	steering                   []string
 	filePicker                 filePickerState
 	history                    []string
 	historyIndex               int
@@ -147,6 +148,8 @@ func (m *tuiModel) applyAgentEvent(event agent.Event) {
 		m.setActiveActivity(activity{kind: activityThinking})
 	case agent.EventContextUsage:
 		m.contextTokens = event.Usage.TotalTokens
+	case agent.EventSteering:
+		m.deliverSteering(event.Text)
 	case agent.EventToolStart:
 		m.startTool(event.Call, event.Presentation)
 	case agent.EventToolUpdate:
@@ -393,8 +396,51 @@ func (m *tuiModel) takePrompt() (string, bool) {
 	return prompt, true
 }
 
+func (m *tuiModel) queueSteering(prompt string) {
+	m.steering = append(m.steering, prompt)
+	m.conversationVersion++
+}
+
+func (m *tuiModel) deliverSteering(prompt string) {
+	m.removeSteering([]string{prompt})
+	m.appendBlock(blockUser, prompt)
+	m.setActiveActivity(activity{kind: activityThinking})
+}
+
+func (m *tuiModel) removeSteering(messages []string) {
+	for _, message := range messages {
+		for index, pending := range m.steering {
+			if pending != message {
+				continue
+			}
+			m.steering = append(m.steering[:index], m.steering[index+1:]...)
+			m.conversationVersion++
+			break
+		}
+	}
+}
+
+func (m *tuiModel) restoreSteering(messages []string) {
+	if len(messages) == 0 {
+		return
+	}
+	m.removeSteering(messages)
+	queued := strings.Join(messages, "\n\n")
+	current := string(m.input)
+	if strings.TrimSpace(current) != "" {
+		queued += "\n\n" + current
+	}
+	m.setInput(queued)
+}
+
+func (m *tuiModel) restoreAllSteering() {
+	messages := append([]string(nil), m.steering...)
+	m.restoreSteering(messages)
+}
+
 func (m *tuiModel) clearConversation() {
 	m.blocks = nil
+	m.steering = nil
 	m.conversationVersion++
 	m.closeStream()
 	m.contextTokens = 0

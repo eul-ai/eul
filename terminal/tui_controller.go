@@ -50,6 +50,7 @@ type tuiController struct {
 	setThinkingLevel   func(agent.ThinkingLevel) error
 	turnCancel         context.CancelFunc
 	exitAfterTurn      error
+	deferredSteering   []string
 	dirty              bool
 	forceRedraw        bool
 }
@@ -121,8 +122,17 @@ func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, e
 			}
 			return true, c.exitAfterTurn
 		}
+		interrupted := c.model.interrupted
+		if interrupted || message.err != nil {
+			c.engine.ClearSteering()
+			c.deferredSteering = nil
+			c.model.restoreAllSteering()
+		}
 		c.model.finishTurn(message.err)
 		requestProviderUsage(c.usageRequests)
+		if !interrupted && message.err == nil {
+			c.startDeferredTurn(ctx)
+		}
 	case tuiEventProviderUsage:
 		if event.providerUsage.err == nil {
 			c.model.providerUsage = agent.ProviderUsage{Windows: append([]agent.UsageWindow(nil), event.providerUsage.usage.Windows...)}
@@ -171,13 +181,19 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 			setInputError(c.model, err)
 			return false, nil
 		}
+		c.deferredSteering = nil
 		c.model.clearConversation()
 	case tuiActionExit:
 		return true, nil
 	case tuiActionSubmit:
-		turnContext, cancel := context.WithCancel(ctx)
-		c.turnCancel = cancel
-		go runEngineTurn(turnContext, c.engine, action.prompt, c.engineMessages, c.stopped)
+		c.startTurn(ctx, action.prompt)
+	case tuiActionSteer:
+		if len(c.deferredSteering) > 0 || !c.engine.Steer(action.prompt) {
+			c.deferredSteering = append(c.deferredSteering, action.prompt)
+		}
+		c.model.queueSteering(action.prompt)
+	case tuiActionDequeue:
+		c.restoreQueuedInput()
 	case tuiActionSetThinking:
 		if c.setThinkingLevel == nil {
 			setInputError(c.model, errors.New("thinking level selection is unavailable"))
@@ -199,7 +215,32 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 	return false, nil
 }
 
+func (c *tuiController) startTurn(ctx context.Context, prompt string) {
+	turnContext, cancel := context.WithCancel(ctx)
+	c.turnCancel = cancel
+	go runEngineTurn(turnContext, c.engine, prompt, c.engineMessages, c.stopped)
+}
+
+func (c *tuiController) startDeferredTurn(ctx context.Context) {
+	if len(c.deferredSteering) == 0 {
+		return
+	}
+	prompt := c.deferredSteering[0]
+	c.deferredSteering = c.deferredSteering[1:]
+	c.model.removeSteering([]string{prompt})
+	c.model.beginTurn(prompt)
+	c.startTurn(ctx, prompt)
+}
+
+func (c *tuiController) restoreQueuedInput() {
+	messages := c.engine.ClearSteering()
+	messages = append(messages, c.deferredSteering...)
+	c.deferredSteering = nil
+	c.model.restoreSteering(messages)
+}
+
 func (c *tuiController) cancelTurn() {
+	c.restoreQueuedInput()
 	if c.turnCancel != nil {
 		c.turnCancel()
 	}

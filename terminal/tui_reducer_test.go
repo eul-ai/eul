@@ -42,6 +42,26 @@ func TestFilePickerKeysTakePriorityOverEditorActions(t *testing.T) {
 	}
 }
 
+func TestFilePickerRemainsUsableWhileRunning(t *testing.T) {
+	model := newTUIModel(80, 24, Options{WorkingDirectory: t.TempDir()})
+	model.running = true
+	if _, err := reduceKey(model, keyEvent{code: keyText, text: "@"}); err != nil {
+		t.Fatal(err)
+	}
+	request := takePickerRequest(t, model)
+	model.applyFileSearchResult(fileSearchResult{id: request.id, paths: []string{"a.go", "b.go"}})
+
+	if _, err := reduceKey(model, keyEvent{code: keyDown}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(model.input); got != "@b.go " || !model.running {
+		t.Fatalf("input=%q running=%v", got, model.running)
+	}
+}
+
 func TestFilePickerKeepsResultsButCannotApplyThemDuringSearch(t *testing.T) {
 	model := newTUIModel(80, 24, Options{WorkingDirectory: t.TempDir()})
 	if _, err := reduceKey(model, keyEvent{code: keyText, text: "@"}); err != nil {
@@ -210,16 +230,72 @@ func TestReduceKeyActions(t *testing.T) {
 			},
 		},
 		{
-			name: "running ignores editing",
+			name: "running edits draft",
 			setup: func(t *testing.T, model *tuiModel) {
 				model.running = true
 			},
-			key: keyEvent{code: keyText, text: "ignored"},
+			key: keyEvent{code: keyText, text: "draft"},
 			check: func(t *testing.T, model *tuiModel) {
-				if len(model.input) != 0 {
+				if string(model.input) != "draft" {
 					t.Fatalf("input = %q", model.input)
 				}
 			},
+		},
+		{
+			name: "running queues steering",
+			setup: func(t *testing.T, model *tuiModel) {
+				model.running = true
+				if err := model.insertInput("steer"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			key:        keyEvent{code: keyEnter},
+			wantKind:   tuiActionSteer,
+			wantPrompt: "steer",
+			check: func(t *testing.T, model *tuiModel) {
+				if len(model.input) != 0 || len(model.history) != 1 || len(model.blocks) != 0 {
+					t.Fatalf("input=%q history=%q blocks=%+v", model.input, model.history, model.blocks)
+				}
+			},
+		},
+		{
+			name: "running retains command",
+			setup: func(t *testing.T, model *tuiModel) {
+				model.running = true
+				if err := model.insertInput("/clear"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			key: keyEvent{code: keyEnter},
+			check: func(t *testing.T, model *tuiModel) {
+				if string(model.input) != "/clear" || model.activity.kind != activityError {
+					t.Fatalf("input=%q activity=%+v", model.input, model.activity)
+				}
+			},
+		},
+		{
+			name: "running ignores thinking change",
+			options: Options{
+				ThinkingLevel: agent.ThinkingMedium,
+				SetThinkingLevel: func(agent.ThinkingLevel) error {
+					panic("reducer invoked external thinking setter")
+				},
+			},
+			setup: func(t *testing.T, model *tuiModel) {
+				model.running = true
+				model.activity = activity{kind: activityThinking}
+			},
+			key: keyEvent{code: keyShiftTab},
+			check: func(t *testing.T, model *tuiModel) {
+				if model.thinkingLevel != agent.ThinkingMedium || model.activity.kind != activityThinking {
+					t.Fatalf("thinking=%q activity=%+v", model.thinkingLevel, model.activity)
+				}
+			},
+		},
+		{
+			name:     "dequeue",
+			key:      keyEvent{code: keyAltUp},
+			wantKind: tuiActionDequeue,
 		},
 	}
 

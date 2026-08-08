@@ -79,6 +79,8 @@ func TestKeyDecoderHandlesModifiedKeys(t *testing.T) {
 		"\x1b[1;1:1D":     keyLeft,
 		"\x1b[1;1:1C":     keyRight,
 		"\x1b[1;1:1A":     keyUp,
+		"\x1b[1;3A":       keyAltUp,
+		"\x1b[1;3:1A":     keyAltUp,
 		"\x1b[1;1:1B":     keyDown,
 		"\x1b[1;1:1H":     keyHome,
 		"\x1b[1;1:1F":     keyEnd,

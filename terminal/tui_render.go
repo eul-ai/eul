@@ -196,11 +196,7 @@ func (r *tuiRenderer) renderPending(model *tuiModel, forceRedraw bool) (string, 
 func (r *tuiRenderer) prepare(model *tuiModel) renderPreparation {
 	input, layout := modelInputLayout(model)
 	if r.conversationWidth != model.width || r.conversationVersion != model.conversationVersion {
-		lines := conversationLines(model.blocks, model.width)
-		r.conversationLines = make([]styledLine, 0, len(lines)+conversationVerticalPadding*2)
-		r.conversationLines = append(r.conversationLines, make([]styledLine, conversationVerticalPadding)...)
-		r.conversationLines = append(r.conversationLines, lines...)
-		r.conversationLines = append(r.conversationLines, make([]styledLine, conversationVerticalPadding)...)
+		r.conversationLines = modelConversationLines(model, model.width)
 		r.conversationWidth = model.width
 		r.conversationVersion = model.conversationVersion
 	}
@@ -297,7 +293,7 @@ func projectTerminalFrame(model *tuiModel, prepared renderPreparation) terminalF
 		plainRows:         plainRows,
 		cursorRow:         layout.inputRow + input.cursorRow,
 		cursorColumn:      input.cursorColumn,
-		cursorVisible:     layout.inputRow > 0 && !model.running,
+		cursorVisible:     layout.inputRow > 0,
 		layout:            layout,
 		conversationTop:   prepared.scrollTop,
 		conversationLines: conversationPlain,
@@ -446,7 +442,11 @@ func conversationViewport(lines []styledLine, scrollTop, height int) []styledLin
 }
 
 func modelConversationLines(model *tuiModel, width int) []styledLine {
-	lines := conversationLines(model.blocks, width)
+	blocks := append([]conversationBlock(nil), model.blocks...)
+	for _, message := range model.steering {
+		blocks = append(blocks, conversationBlock{kind: blockInfo, text: "Queued: " + message})
+	}
+	lines := conversationLines(blocks, width)
 	result := make([]styledLine, 0, len(lines)+conversationVerticalPadding*2)
 	result = append(result, make([]styledLine, conversationVerticalPadding)...)
 	result = append(result, lines...)
