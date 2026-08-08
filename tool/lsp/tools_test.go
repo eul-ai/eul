@@ -319,6 +319,23 @@ func TestLSPToolDescriptionsAreServerAgnostic(t *testing.T) {
 	}
 }
 
+func TestLSPRenamePresentationShowsNames(t *testing.T) {
+	rename := &lspTool{definition: lspRenameToolDefinition, operation: lspRename}
+	registry, err := tool.NewRegistry([]tool.Tool{rename})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	presentation := registry.Presentation(agent.ToolCallSnapshot{
+		Name:         lspRenameToolName,
+		RawArguments: `{"path":"sample.go","line":1,"character":2,"oldName":"Value","newName":"Number"}`,
+		Complete:     true,
+	})
+	if presentation.Title != lspRenameToolName || presentation.Arguments != "Value → Number" {
+		t.Fatalf("rename presentation = %+v", presentation)
+	}
+}
+
 func TestLSPPositionOffsetUsesUTF16(t *testing.T) {
 	content := []byte("a😀b\r\nnext")
 	for _, test := range []struct {

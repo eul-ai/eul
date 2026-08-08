@@ -156,6 +156,20 @@ func (t *lspTool) Definition() agent.ToolDefinition {
 	return t.definition
 }
 
+func (t *lspTool) Presentation(snapshot tool.PresentationSnapshot) agent.ToolPresentation {
+	presentation := agent.ToolPresentation{Title: t.definition.Name}
+	if t.operation != lspRename {
+		return presentation
+	}
+
+	oldName, _ := snapshot.Arguments["oldName"].(string)
+	newName, _ := snapshot.Arguments["newName"].(string)
+	if oldName != "" && newName != "" {
+		presentation.Arguments = oldName + " → " + newName
+	}
+	return presentation
+}
+
 func (t *lspTool) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
