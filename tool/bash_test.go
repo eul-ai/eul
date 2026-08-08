@@ -19,6 +19,10 @@ import (
 
 func TestBashReportsCombinedOutputStatusCWDAndEnvironment(t *testing.T) {
 	cwd := t.TempDir()
+	resolvedCWD, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("YAAH_TEST", "value")
 	bashTool := NewBash(cwd)
 	command := `printf 'stdout:%s:%s\n' "$PWD" "$YAAH_TEST"; printf 'stderr\n' >&2`
@@ -27,7 +31,7 @@ func TestBashReportsCombinedOutputStatusCWDAndEnvironment(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("bash result = %+v", result)
 	}
-	for _, want := range []string{"stdout:" + cwd + ":value", "stderr", "[exit status: 0]"} {
+	for _, want := range []string{"stdout:" + resolvedCWD + ":value", "stderr", "[exit status: 0]"} {
 		if !strings.Contains(result.Output, want) {
 			t.Fatalf("bash output = %q, want %q", result.Output, want)
 		}
