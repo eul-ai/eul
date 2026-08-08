@@ -74,6 +74,7 @@ type tuiModel struct {
 	historyDraft      string
 	scrollTop         int
 	following         bool
+	selection         textSelection
 	running           bool
 	interrupted       bool
 	activity          activity
@@ -405,6 +406,7 @@ func (m *tuiModel) clearConversation() {
 	m.turnExecutedTool = false
 	m.scrollTop = 0
 	m.following = true
+	m.selection = textSelection{}
 	m.activity = activity{kind: activityReady}
 }
 

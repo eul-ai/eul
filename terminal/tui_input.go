@@ -33,6 +33,7 @@ const (
 	keyCtrlC
 	keyCtrlD
 	keyCtrlL
+	keyMouse
 	keyEOF
 	keyFailure
 )
@@ -40,8 +41,25 @@ const (
 type keyEvent struct {
 	code  keyCode
 	text  string
+	mouse mouseEvent
 	err   error
 	fatal bool
+}
+
+type mouseEventKind uint8
+
+const (
+	mousePress mouseEventKind = iota
+	mouseDrag
+	mouseRelease
+	mouseWheelUp
+	mouseWheelDown
+)
+
+type mouseEvent struct {
+	kind   mouseEventKind
+	column int
+	row    int
 }
 
 type keyDecoder struct {
@@ -120,6 +138,15 @@ func (d *keyDecoder) feed(data []byte, final bool) []keyEvent {
 		}
 
 		if d.buffer[0] == '\x1b' {
+			consumed, mousePartial, event, emit := matchMouseSequence(d.buffer)
+			if consumed > 0 {
+				d.buffer = d.buffer[consumed:]
+				if emit {
+					events = append(events, event)
+				}
+				continue
+			}
+
 			matched, partial, event := matchKeySequence(d.buffer)
 			if matched {
 				d.buffer = d.buffer[len(event.text):]
@@ -141,7 +168,7 @@ func (d *keyDecoder) feed(data []byte, final bool) []keyEvent {
 				}
 				continue
 			}
-			if (partial || kittyPartial) && !final {
+			if (mousePartial || partial || kittyPartial) && !final {
 				break
 			}
 			if consumed, complete := consumeUnknownEscape(d.buffer); complete {
@@ -258,6 +285,108 @@ func matchKeySequence(buffer []byte) (bool, bool, keyEvent) {
 		}
 	}
 	return false, partial, keyEvent{}
+}
+
+func matchMouseSequence(buffer []byte) (int, bool, keyEvent, bool) {
+	consumed, sgrPartial, event, emit := matchSGRMouseSequence(buffer)
+	if consumed > 0 {
+		return consumed, false, event, emit
+	}
+	consumed, x10Partial, event, emit := matchX10MouseSequence(buffer)
+	if consumed > 0 {
+		return consumed, false, event, emit
+	}
+	return 0, sgrPartial || x10Partial, keyEvent{}, false
+}
+
+func matchSGRMouseSequence(buffer []byte) (int, bool, keyEvent, bool) {
+	prefix := []byte("\x1b[<")
+	if bytes.HasPrefix(prefix, buffer) {
+		return 0, true, keyEvent{}, false
+	}
+	if !bytes.HasPrefix(buffer, prefix) {
+		return 0, false, keyEvent{}, false
+	}
+
+	final := -1
+	for index := len(prefix); index < len(buffer); index++ {
+		if buffer[index] < 0x40 || buffer[index] > 0x7e {
+			continue
+		}
+		if buffer[index] != 'M' && buffer[index] != 'm' {
+			return index + 1, false, keyEvent{}, false
+		}
+		final = index
+		break
+	}
+	if final < 0 {
+		return 0, true, keyEvent{}, false
+	}
+
+	consumed := final + 1
+	parameters := strings.Split(string(buffer[len(prefix):final]), ";")
+	if len(parameters) != 3 {
+		return consumed, false, keyEvent{}, false
+	}
+	button, buttonErr := strconv.Atoi(parameters[0])
+	column, columnErr := strconv.Atoi(parameters[1])
+	row, rowErr := strconv.Atoi(parameters[2])
+	if buttonErr != nil || columnErr != nil || rowErr != nil || column < 1 || row < 1 {
+		return consumed, false, keyEvent{}, false
+	}
+
+	mouse := mouseEvent{column: column - 1, row: row - 1}
+	switch {
+	case button&64 != 0 && button&3 == 0:
+		mouse.kind = mouseWheelUp
+	case button&64 != 0 && button&3 == 1:
+		mouse.kind = mouseWheelDown
+	case buffer[final] == 'm' && button&3 == 0:
+		mouse.kind = mouseRelease
+	case button&3 != 0 || buffer[final] == 'm':
+		return consumed, false, keyEvent{}, false
+	case button&32 != 0:
+		mouse.kind = mouseDrag
+	default:
+		mouse.kind = mousePress
+	}
+	return consumed, false, keyEvent{code: keyMouse, mouse: mouse}, true
+}
+
+func matchX10MouseSequence(buffer []byte) (int, bool, keyEvent, bool) {
+	prefix := []byte("\x1b[M")
+	if bytes.HasPrefix(prefix, buffer) {
+		return 0, true, keyEvent{}, false
+	}
+	if !bytes.HasPrefix(buffer, prefix) {
+		return 0, false, keyEvent{}, false
+	}
+	if len(buffer) < 6 {
+		return 0, true, keyEvent{}, false
+	}
+
+	button := int(buffer[3]) - 32
+	column := int(buffer[4]) - 33
+	row := int(buffer[5]) - 33
+	if button < 0 || column < 0 || row < 0 {
+		return 6, false, keyEvent{}, false
+	}
+	mouse := mouseEvent{column: column, row: row}
+	switch {
+	case button&64 != 0 && button&3 == 0:
+		mouse.kind = mouseWheelUp
+	case button&64 != 0 && button&3 == 1:
+		mouse.kind = mouseWheelDown
+	case button&3 == 3:
+		mouse.kind = mouseRelease
+	case button&3 != 0:
+		return 6, false, keyEvent{}, false
+	case button&32 != 0:
+		mouse.kind = mouseDrag
+	default:
+		mouse.kind = mousePress
+	}
+	return 6, false, keyEvent{code: keyMouse, mouse: mouse}, true
 }
 
 func matchKittyKeySequence(buffer []byte) (int, bool, keyEvent, bool) {

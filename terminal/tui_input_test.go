@@ -85,6 +85,33 @@ func TestKeyDecoderHandlesModifiedKeys(t *testing.T) {
 	}
 }
 
+func TestKeyDecoderHandlesSGRMouseEvents(t *testing.T) {
+	decoder := &keyDecoder{}
+	if events := decoder.feed([]byte("\x1b[<0;10"), false); len(events) != 0 {
+		t.Fatalf("partial mouse events = %+v", events)
+	}
+	events := decoder.feed([]byte(";5M\x1b[<32;12;7M\x1b[<0;12;7m\x1b[<64;3;4M\x1b[<65;3;4M"), false)
+	assertKeyEvents(t, events, []keyEvent{
+		{code: keyMouse, mouse: mouseEvent{kind: mousePress, column: 9, row: 4}},
+		{code: keyMouse, mouse: mouseEvent{kind: mouseDrag, column: 11, row: 6}},
+		{code: keyMouse, mouse: mouseEvent{kind: mouseRelease, column: 11, row: 6}},
+		{code: keyMouse, mouse: mouseEvent{kind: mouseWheelUp, column: 2, row: 3}},
+		{code: keyMouse, mouse: mouseEvent{kind: mouseWheelDown, column: 2, row: 3}},
+	})
+
+	if events := decoder.feed([]byte("\x1b[<2;1;1M\x1b[<2;1;1m"), false); len(events) != 0 {
+		t.Fatalf("secondary-button events = %+v", events)
+	}
+
+	decoder = &keyDecoder{}
+	if events := decoder.feed([]byte("\x1b[M`#"), false); len(events) != 0 {
+		t.Fatalf("partial X10 mouse events = %+v", events)
+	}
+	assertKeyEvents(t, decoder.feed([]byte("$"), false), []keyEvent{
+		{code: keyMouse, mouse: mouseEvent{kind: mouseWheelUp, column: 2, row: 3}},
+	})
+}
+
 func TestKeyDecoderHandlesSplitKittySequenceAndIgnoresRelease(t *testing.T) {
 	decoder := &keyDecoder{}
 	if events := decoder.feed([]byte("\x1b[13;2:"), false); len(events) != 0 {
@@ -250,7 +277,7 @@ func assertKeyEvents(t *testing.T, got, want []keyEvent) {
 		t.Fatalf("events = %+v, want %+v", got, want)
 	}
 	for index := range want {
-		if got[index].code != want[index].code || got[index].text != want[index].text || !errors.Is(got[index].err, want[index].err) {
+		if got[index].code != want[index].code || got[index].text != want[index].text || got[index].mouse != want[index].mouse || !errors.Is(got[index].err, want[index].err) {
 			t.Fatalf("event %d = %+v, want %+v", index, got[index], want[index])
 		}
 	}

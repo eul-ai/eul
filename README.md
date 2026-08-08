@@ -80,7 +80,8 @@ Interactive controls include:
 - `@` to search project files; Up/Down select, Enter/Tab insert, and Escape dismisses
 - Left/Right and Home/End to move within the prompt
 - Up/Down to navigate prompt history
-- Page Up/Page Down to scroll the conversation
+- Page Up/Page Down or the mouse wheel to scroll the conversation
+- Drag with the primary mouse button to select text and copy it to the clipboard on release
 - Ctrl-L to redraw
 - Ctrl-D to exit when the prompt is empty
 - Ctrl-C to clear a non-empty prompt, cancel the active turn, or exit with an

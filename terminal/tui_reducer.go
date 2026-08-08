@@ -16,15 +16,21 @@ const (
 	tuiActionExit
 	tuiActionSubmit
 	tuiActionSetThinking
+	tuiActionCopy
 )
 
 type tuiAction struct {
 	kind          tuiActionKind
 	prompt        string
+	text          string
 	thinkingLevel agent.ThinkingLevel
 }
 
 func reduceKey(model *tuiModel, key keyEvent) (tuiAction, error) {
+	if key.code == keyMouse {
+		return reduceMouse(model, key.mouse), nil
+	}
+
 	switch key.code {
 	case keyFailure:
 		if key.fatal {

@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -13,8 +14,10 @@ import (
 )
 
 const (
-	enterScreen          = "\x1b[?1049h\x1b[?2004h\x1b[>1u\x1b[2J\x1b[H"
-	leaveScreen          = ansiEndSynchronizedOutput + "\x1b[<u\x1b[?2004l\x1b[?25h\x1b[?1049l"
+	enableMouse          = "\x1b[?1000h\x1b[?1002h\x1b[?1006h"
+	disableMouse         = "\x1b[?1006l\x1b[?1002l\x1b[?1000l"
+	enterScreen          = "\x1b[?1049h\x1b[?2004h\x1b[>1u" + enableMouse + "\x1b[2J\x1b[H"
+	leaveScreen          = ansiEndSynchronizedOutput + disableMouse + "\x1b[<u\x1b[?2004l\x1b[?25h\x1b[?1049l"
 	providerUsageTimeout = 10 * time.Second
 )
 
@@ -143,10 +146,11 @@ func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width
 			}
 			model.width = newWidth
 			model.height = newHeight
+			model.selection = textSelection{}
 			dirty = true
 
 		case key := <-keys:
-			exit, err := handleKey(ctx, model, engine, key, engineMessages, stopped, &turnCancel)
+			exit, err := handleKeyWithOutput(ctx, model, engine, options.Output, key, engineMessages, stopped, &turnCancel)
 			if err != nil {
 				cancelActiveTurn(turnCancel, engineMessages)
 				if ctxErr := ctx.Err(); ctxErr != nil {
@@ -308,6 +312,19 @@ func handleKey(
 	stopped <-chan struct{},
 	turnCancel *context.CancelFunc,
 ) (bool, error) {
+	return handleKeyWithOutput(ctx, model, engine, io.Discard, key, messages, stopped, turnCancel)
+}
+
+func handleKeyWithOutput(
+	ctx context.Context,
+	model *tuiModel,
+	engine Engine,
+	output io.Writer,
+	key keyEvent,
+	messages chan<- engineMessage,
+	stopped <-chan struct{},
+	turnCancel *context.CancelFunc,
+) (bool, error) {
 	action, err := reduceKey(model, key)
 	if err != nil {
 		return false, err
@@ -333,6 +350,11 @@ func handleKey(
 			return false, nil
 		}
 		model.thinkingLevel = action.thinkingLevel
+	case tuiActionCopy:
+		encoded := base64.StdEncoding.EncodeToString([]byte(action.text))
+		if err := writeOutput(output, "\x1b]52;c;%s\x07", encoded); err != nil {
+			return false, err
+		}
 	}
 	return false, nil
 }

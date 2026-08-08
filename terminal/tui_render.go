@@ -20,6 +20,8 @@ const (
 	ansiNormalIntensity         = "\x1b[22m"
 	ansiItalic                  = "\x1b[3m"
 	ansiNotItalic               = "\x1b[23m"
+	ansiReverse                 = "\x1b[7m"
+	ansiNotReverse              = "\x1b[27m"
 	ansiBeginSynchronizedOutput = "\x1b[?2026h"
 	ansiEndSynchronizedOutput   = "\x1b[?2026l"
 	ansiClearScreen             = "\x1b[2J"
@@ -66,6 +68,7 @@ type terminalFrame struct {
 	width         int
 	height        int
 	rows          []string
+	plainRows     []string
 	cursorRow     int
 	cursorColumn  int
 	cursorVisible bool
@@ -227,19 +230,67 @@ func buildTerminalFrame(model *tuiModel) terminalFrame {
 	}
 
 	renderedRows := make([]string, height)
+	plainRows := make([]string, height)
 	for row, line := range rows {
+		plainRows[row] = renderedLineText(line, width)
 		var rendered strings.Builder
 		renderLine(&rendered, row+1, width, line)
-		renderedRows[row] = rendered.String()
+		renderedRow := rendered.String()
+		if selection, ok := selectionForScreenRow(model, layout, row, plainRows[row]); ok {
+			renderedRow = highlightCells(renderedRow, selection.start, selection.end)
+		}
+		renderedRows[row] = renderedRow
 	}
 	return terminalFrame{
 		width:         width,
 		height:        height,
 		rows:          renderedRows,
+		plainRows:     plainRows,
 		cursorRow:     layout.inputRow + input.cursorRow,
 		cursorColumn:  input.cursorColumn,
 		cursorVisible: layout.inputRow > 0 && !model.running,
 	}
+}
+
+type fittedLine struct {
+	leftPadding  int
+	rightPadding int
+	textWidth    int
+	prefix       string
+	text         string
+	right        string
+	spans        []inlineSpan
+}
+
+func fitLine(line styledLine, width int) fittedLine {
+	leftPadding := min(line.padding, width)
+	rightPadding := min(line.padding, width-leftPadding)
+	contentWidth := width - leftPadding - rightPadding
+	right := truncateCells(line.rightText, contentWidth, false)
+	textWidth := contentWidth - cellWidth(right)
+	prefix := truncateCells(line.prefixText, textWidth, false)
+	remainingTextWidth := textWidth - cellWidth(prefix)
+	text := truncateCells(line.text, remainingTextWidth, false)
+	spans := truncateInlineSpans(line.spans, remainingTextWidth)
+	if len(spans) > 0 {
+		text = inlineSpanText(spans)
+	}
+	return fittedLine{
+		leftPadding:  leftPadding,
+		rightPadding: rightPadding,
+		textWidth:    textWidth,
+		prefix:       prefix,
+		text:         text,
+		right:        right,
+		spans:        spans,
+	}
+}
+
+func renderedLineText(line styledLine, width int) string {
+	fitted := fitLine(line, width)
+	return strings.Repeat(" ", fitted.leftPadding) + fitted.prefix + fitted.text +
+		strings.Repeat(" ", fitted.textWidth-cellWidth(fitted.prefix)-cellWidth(fitted.text)) +
+		fitted.right + strings.Repeat(" ", fitted.rightPadding)
 }
 
 func renderLine(frame *strings.Builder, row, width int, line styledLine) {
@@ -255,34 +306,23 @@ func renderLine(frame *strings.Builder, row, width int, line styledLine) {
 	if style.italic {
 		frame.WriteString(ansiItalic)
 	}
-	leftPadding := min(line.padding, width)
-	rightPadding := min(line.padding, width-leftPadding)
-	contentWidth := width - leftPadding - rightPadding
-	right := truncateCells(line.rightText, contentWidth, false)
-	textWidth := contentWidth - cellWidth(right)
-	prefix := truncateCells(line.prefixText, textWidth, false)
-	remainingTextWidth := textWidth - cellWidth(prefix)
-	text := truncateCells(line.text, remainingTextWidth, false)
-	spans := truncateInlineSpans(line.spans, remainingTextWidth)
-	if len(spans) > 0 {
-		text = inlineSpanText(spans)
-	}
+	fitted := fitLine(line, width)
 
-	frame.WriteString(strings.Repeat(" ", leftPadding))
+	frame.WriteString(strings.Repeat(" ", fitted.leftPadding))
 	foreground := style.foreground
-	if prefix != "" {
+	if fitted.prefix != "" {
 		if line.prefixForeground != nil {
 			writeTextForeground(frame, *line.prefixForeground, &foreground)
 		}
-		frame.WriteString(prefix)
+		frame.WriteString(fitted.prefix)
 		writeTextForeground(frame, style.foreground, &foreground)
 	}
-	if len(spans) == 0 {
-		frame.WriteString(text)
+	if len(fitted.spans) == 0 {
+		frame.WriteString(fitted.text)
 	} else {
 		bold := style.bold
 		italic := style.italic
-		for _, span := range spans {
+		for _, span := range fitted.spans {
 			spanForeground := style.foreground
 			switch span.style.foreground {
 			case inlineForegroundAccent:
@@ -300,9 +340,9 @@ func renderLine(frame *strings.Builder, row, width int, line styledLine) {
 		writeTextForeground(frame, style.foreground, &foreground)
 		writeTextAttributes(frame, style.bold, style.italic, &bold, &italic)
 	}
-	frame.WriteString(strings.Repeat(" ", textWidth-cellWidth(prefix)-cellWidth(text)))
-	frame.WriteString(right)
-	frame.WriteString(strings.Repeat(" ", rightPadding))
+	frame.WriteString(strings.Repeat(" ", fitted.textWidth-cellWidth(fitted.prefix)-cellWidth(fitted.text)))
+	frame.WriteString(fitted.right)
+	frame.WriteString(strings.Repeat(" ", fitted.rightPadding))
 	frame.WriteString(ansiReset)
 }
 
@@ -848,13 +888,16 @@ func formatTokens(tokens int64) string {
 
 func scrollConversation(model *tuiModel, direction int) {
 	_, layout := modelInputLayout(model)
-	page := layout.conversationHeight
-	if page <= 0 {
+	scrollConversationBy(model, direction*layout.conversationHeight)
+}
+
+func scrollConversationBy(model *tuiModel, lines int) {
+	_, layout := modelInputLayout(model)
+	if layout.conversationHeight <= 0 || lines == 0 {
 		return
 	}
 
-	lines := modelConversationLines(model, model.width)
-	bottom := len(lines) - page
+	bottom := len(modelConversationLines(model, model.width)) - layout.conversationHeight
 	if bottom < 0 {
 		bottom = 0
 	}
@@ -862,7 +905,7 @@ func scrollConversation(model *tuiModel, direction int) {
 		model.scrollTop = bottom
 	}
 	model.following = false
-	model.scrollTop += direction * page
+	model.scrollTop += lines
 	if model.scrollTop <= 0 {
 		model.scrollTop = 0
 	}
