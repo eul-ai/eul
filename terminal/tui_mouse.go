@@ -55,8 +55,8 @@ func reduceMouse(model *tuiModel, event mouseEvent) tuiAction {
 			return tuiAction{}
 		}
 		text := selectedText(model)
+		model.selection = textSelection{}
 		if text == "" {
-			model.selection = textSelection{}
 			return tuiAction{}
 		}
 		return tuiAction{kind: tuiActionCopy, text: text}

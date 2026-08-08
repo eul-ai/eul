@@ -73,6 +73,9 @@ func TestMouseDragSelectsAndCopiesRenderedText(t *testing.T) {
 	if got, want := output.String(), "\x1b]52;c;YWxwaGE=\x07"; got != want {
 		t.Fatalf("clipboard output = %q, want %q", got, want)
 	}
+	if model.selection.set {
+		t.Fatalf("selection remains after copy: %+v", model.selection)
+	}
 	if got := string(model.input); got != "draft" || model.cursor != len([]rune("draft")) {
 		t.Fatalf("selection changed input: input=%q cursor=%d", got, model.cursor)
 	}
