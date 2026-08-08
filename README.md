@@ -145,8 +145,43 @@ through the normal tool output path and become part of the main conversation.
 
 Subagents are read-only: they receive `read` and, when available, the five
 non-mutating LSP tools, but not Bash, file-editing tools, rename, or further
-subagents. They use the main model, thinking level, working directory, and project
-instructions, and are not persisted or run in the background.
+subagents. They use the main model, thinking level, working directory, project
+instructions, and available skills, and are not persisted or run in the background.
+
+## Skills
+
+Yaah discovers [Agent Skills](https://agentskills.io) recursively from
+`~/.agents/skills` and `.agents/skills` under the fixed working directory. A skill
+is a directory containing `SKILL.md`; Yaah does not load arbitrary Markdown files
+from these directories or inspect harness-specific skill locations. Project skills
+win name collisions with global skills.
+
+Skills can provide instructions for any task. Each is defined by a `SKILL.md`
+with limited frontmatter; for example:
+
+```markdown
+---
+name: code-review
+description: Reviews code for correctness and maintainability.
+disable-model-invocation: false
+---
+
+# Code review
+```
+
+The parser supports top-level plain, single-quoted, and double-quoted string values
+plus literal `true` and `false` booleans. It does not implement general YAML features
+such as block scalars, arrays, mappings, anchors, or tags. `description` is required;
+`name` defaults to the skill directory name. Unknown fields are ignored. Unreadable or
+malformed skills are skipped silently, and other metadata is used without validation.
+
+Only skill names, descriptions, and absolute `SKILL.md` paths are included in the
+system prompt. The model reads the full file on demand when a task matches. Use
+`/skill:<name> [instructions]` to load a skill explicitly. Setting
+`disable-model-invocation: true` hides a skill from the model's available-skill list
+while preserving explicit invocation. Skills are trusted local instructions and may
+direct the model to run bundled scripts or make other changes with the user's
+permissions.
 
 ## Architecture
 

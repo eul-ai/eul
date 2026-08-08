@@ -48,6 +48,7 @@ type appRuntime struct {
 	stderr      io.Writer
 	getenv      func(string) string
 	getwd       func() (string, error)
+	userHomeDir func() (string, error)
 	interrupts  <-chan os.Signal
 	newProvider providerFactory
 	newToolset  toolsetFactory
@@ -60,12 +61,13 @@ func main() {
 	signal.Notify(interrupts, os.Interrupt)
 
 	code := run(os.Args[1:], appRuntime{
-		stdin:      os.Stdin,
-		stdout:     os.Stdout,
-		stderr:     os.Stderr,
-		getenv:     os.Getenv,
-		getwd:      os.Getwd,
-		interrupts: interrupts,
+		stdin:       os.Stdin,
+		stdout:      os.Stdout,
+		stderr:      os.Stderr,
+		getenv:      os.Getenv,
+		getwd:       os.Getwd,
+		userHomeDir: os.UserHomeDir,
+		interrupts:  interrupts,
 		newOAuth: func() (oauthManager, error) {
 			path, err := oauth.DefaultCredentialPath(os.Getenv("YAAH_HOME"))
 			if err != nil {

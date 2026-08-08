@@ -12,7 +12,7 @@ func TestBuildSystemPrompt(t *testing.T) {
 	prompt := buildSystemPrompt([]ToolDefinition{
 		{Name: "read", Description: "Read file contents"},
 		{Name: "write", Description: "Create or overwrite files"},
-	}, workingDirectory, projectInstructions)
+	}, workingDirectory, projectInstructions, nil)
 
 	if !strings.Contains(prompt, "- read: Read file contents") || !strings.Contains(prompt, "- write: Create or overwrite files") {
 		t.Fatalf("prompt omits tools:\n%s", prompt)
@@ -28,12 +28,15 @@ func TestBuildSystemPrompt(t *testing.T) {
 }
 
 func TestBuildSystemPromptWithNoToolsOrWorkingDirectory(t *testing.T) {
-	prompt := buildSystemPrompt(nil, "", "")
+	prompt := buildSystemPrompt(nil, "", "", []Skill{{Name: "review", Description: "Review code", FilePath: "/skills/review/SKILL.md"}})
 
 	if !strings.Contains(prompt, "Available tools:\n(none)") {
 		t.Fatalf("prompt does not identify an empty toolset:\n%s", prompt)
 	}
 	if strings.Contains(prompt, "Current working directory:") {
 		t.Fatalf("prompt unexpectedly identifies a working directory:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "<name>review</name>") {
+		t.Fatalf("prompt omits skills:\n%s", prompt)
 	}
 }

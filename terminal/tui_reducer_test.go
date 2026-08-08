@@ -216,6 +216,22 @@ func TestReduceKeyActions(t *testing.T) {
 			},
 		},
 		{
+			name: "skill command",
+			setup: func(t *testing.T, model *tuiModel) {
+				if err := model.insertInput("/skill:review check tests"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			key:        keyEvent{code: keyEnter},
+			wantKind:   tuiActionSubmit,
+			wantPrompt: "/skill:review check tests",
+			check: func(t *testing.T, model *tuiModel) {
+				if !model.running || len(model.blocks) != 1 || model.blocks[0].kind != blockUser {
+					t.Fatalf("running=%v blocks=%+v", model.running, model.blocks)
+				}
+			},
+		},
+		{
 			name: "unknown command",
 			setup: func(t *testing.T, model *tuiModel) {
 				if err := model.insertInput("/unknown"); err != nil {

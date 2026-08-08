@@ -14,6 +14,7 @@ type Options struct {
 	ThinkingLevel       ThinkingLevel
 	WorkingDirectory    string
 	ProjectInstructions string
+	Skills              []Skill
 }
 
 type RunResult struct {
@@ -34,6 +35,7 @@ type Engine struct {
 	pendingInputs     []Input
 	steering          []string
 	acceptingSteering bool
+	skills            map[string]Skill
 }
 
 func New(provider Provider, tools Toolbox, options Options) *Engine {
@@ -41,13 +43,18 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 	if thinkingLevel == "" {
 		thinkingLevel = DefaultThinkingLevel
 	}
+	skills := make(map[string]Skill, len(options.Skills))
+	for _, skill := range options.Skills {
+		skills[skill.Name] = skill
+	}
 
 	return &Engine{
 		provider:      provider,
 		tools:         tools,
 		model:         options.Model,
 		thinkingLevel: thinkingLevel,
-		instructions:  buildSystemPrompt(tools.Definitions(), options.WorkingDirectory, options.ProjectInstructions),
+		instructions:  buildSystemPrompt(tools.Definitions(), options.WorkingDirectory, options.ProjectInstructions, options.Skills),
+		skills:        skills,
 	}
 }
 
@@ -58,6 +65,11 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 	defer e.mu.Unlock()
 
 	if err := ctx.Err(); err != nil {
+		return RunResult{}, err
+	}
+
+	userText, err := expandSkillCommand(userText, e.skills)
+	if err != nil {
 		return RunResult{}, err
 	}
 

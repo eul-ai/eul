@@ -8,7 +8,7 @@ import (
 
 const baseSystemPrompt = `You are a coding agent. Use the available tools to inspect and modify code. Be concise and report results clearly.`
 
-func buildSystemPrompt(definitions []ToolDefinition, workingDirectory, projectInstructions string) string {
+func buildSystemPrompt(definitions []ToolDefinition, workingDirectory, projectInstructions string, skills []Skill) string {
 	var prompt strings.Builder
 	prompt.WriteString(baseSystemPrompt)
 	prompt.WriteString("\n\nAvailable tools:\n")
@@ -36,6 +36,11 @@ func buildSystemPrompt(definitions []ToolDefinition, workingDirectory, projectIn
 		prompt.WriteString("\">\n")
 		prompt.WriteString(strings.TrimSuffix(projectInstructions, "\n"))
 		prompt.WriteString("\n</project_instructions>\n")
+	}
+	if skillPrompt := formatSkillsForPrompt(skills); skillPrompt != "" {
+		prompt.WriteByte('\n')
+		prompt.WriteString(skillPrompt)
+		prompt.WriteByte('\n')
 	}
 	if workingDirectory != "" {
 		prompt.WriteString("\nCurrent working directory: ")

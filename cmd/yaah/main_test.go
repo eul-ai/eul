@@ -476,11 +476,12 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[strin
 	values := maps.Clone(environment)
 
 	return appRuntime{
-		stdin:  strings.NewReader("/exit\n"),
-		stdout: stdout,
-		stderr: stderr,
-		getenv: func(key string) string { return values[key] },
-		getwd:  func() (string, error) { return cwd, nil },
+		stdin:       strings.NewReader("/exit\n"),
+		stdout:      stdout,
+		stderr:      stderr,
+		getenv:      func(key string) string { return values[key] },
+		getwd:       func() (string, error) { return cwd, nil },
+		userHomeDir: func() (string, error) { return filepath.Join(cwd, ".test-home"), nil },
 		newProvider: func(openaiadapter.CodexTokenSource, openaiadapter.Options) (agent.Provider, error) {
 			return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
 				return agent.Response{}, nil

@@ -188,13 +188,13 @@ func reducePrompt(model *tuiModel) tuiAction {
 	trimmed := strings.TrimSpace(prompt)
 	switch trimmed {
 	case "/help":
-		model.appendBlock(blockInfo, "Commands:\n  /help   show this help\n  /clear  discard conversation state\n  /exit   exit yaah")
+		model.appendBlock(blockInfo, "Commands:\n  /help         show this help\n  /clear        discard conversation state\n  /exit         exit yaah\n  /skill:<name> load a skill")
 	case "/clear":
 		return tuiAction{kind: tuiActionReset}
 	case "/exit":
 		return tuiAction{kind: tuiActionExit}
 	default:
-		if strings.HasPrefix(trimmed, "/") {
+		if strings.HasPrefix(trimmed, "/") && !strings.HasPrefix(trimmed, "/skill:") {
 			model.appendBlock(blockError, "Unknown command "+diagnostic(trimmed, 120))
 			model.activity = activity{kind: activityError, detail: "unknown command"}
 			return tuiAction{}

@@ -56,6 +56,7 @@ func newAgentSession(
 		ThinkingLevel:       currentThinkingLevel,
 		WorkingDirectory:    config.cwd,
 		ProjectInstructions: config.projectInstructions,
+		Skills:              config.skills,
 	})
 	setThinkingLevel := func(level agent.ThinkingLevel) error {
 		if err := engine.SetThinkingLevel(level); err != nil {
@@ -126,6 +127,7 @@ func runChildAgent(
 		ThinkingLevel:       thinkingLevel,
 		WorkingDirectory:    config.cwd,
 		ProjectInstructions: config.projectInstructions,
+		Skills:              config.skills,
 	})
 	var liveUsage agent.Usage
 	result, runErr := child.Run(ctx, task, func(event agent.Event) error {

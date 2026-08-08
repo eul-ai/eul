@@ -39,6 +39,7 @@ type agentConfig struct {
 	thinkingLevel       agent.ThinkingLevel
 	cwd                 string
 	projectInstructions string
+	skills              []agent.Skill
 	prompt              string
 	oneShot             bool
 }
@@ -98,12 +99,17 @@ func resolveAgentConfig(arguments agentArguments, runtime appRuntime) (agentConf
 	if err != nil {
 		return agentConfig{}, err
 	}
+	skillDirectories := []string{filepath.Join(cwd, ".agents", "skills")}
+	if home := resolveUserHome(runtime.userHomeDir); home != "" {
+		skillDirectories = append(skillDirectories, filepath.Join(home, ".agents", "skills"))
+	}
 
 	return agentConfig{
 		model:               arguments.model,
 		thinkingLevel:       arguments.thinkingLevel,
 		cwd:                 cwd,
 		projectInstructions: projectInstructions,
+		skills:              agent.LoadSkills(skillDirectories...),
 		prompt:              arguments.prompt,
 		oneShot:             arguments.oneShot,
 	}, nil
@@ -148,6 +154,17 @@ func validateModel(model string) error {
 	}
 
 	return nil
+}
+
+func resolveUserHome(userHomeDir func() (string, error)) string {
+	if userHomeDir == nil {
+		userHomeDir = os.UserHomeDir
+	}
+	home, err := userHomeDir()
+	if err != nil || !filepath.IsAbs(home) {
+		return ""
+	}
+	return filepath.Clean(home)
 }
 
 func resolveCWD(value string, getwd func() (string, error)) (string, error) {
