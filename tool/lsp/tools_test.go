@@ -93,8 +93,16 @@ func Use(value Thing) int {
 	return value.Value
 }
 `
+	const testSource = `package sample
+
+var testThing = Thing{Value: 1}
+`
 	path := filepath.Join(cwd, "sample.go")
 	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testPath := filepath.Join(cwd, "sample_test.go")
+	if err := os.WriteFile(testPath, []byte(testSource), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -143,11 +151,43 @@ func Use(value Thing) int {
 		t.Fatalf("symbols = %s", symbols.Output)
 	}
 
-	valueLine, _ := sourcePosition(t, source, "return value.Value", "Value")
+	session := set.client.sessions[lspServerConfigs[0].name]
+	if session == nil {
+		t.Fatal("gopls session was not cached")
+	}
+	waitForLSPWatchRegistration(t, ctx, session.watcher)
+	const externalSource = `package sample
+
+func External(value Thing) int {
+	return value.Value
+}
+`
+	externalPath := filepath.Join(cwd, "external.go")
+	if err := os.WriteFile(externalPath, []byte(externalSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	valueLine, valueCharacter := sourcePosition(t, source, "return value.Value", "Value")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		externalReferences := executeLSPTestTool(t, ctx, registry, lspReferencesToolName, map[string]any{
+			"path": "sample.go", "line": valueLine, "character": valueCharacter, "includeDeclaration": true,
+		})
+		if strings.Contains(externalReferences.Output, "external.go") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("external file change was not observed: %s", externalReferences.Output)
+		}
+		time.Sleep(lspWatchBatchDelay)
+	}
+	if set.client.sessions[lspServerConfigs[0].name] != session {
+		t.Fatal("external file change restarted the gopls session")
+	}
+
 	rename := executeLSPTestTool(t, ctx, registry, lspRenameToolName, map[string]any{
 		"path": "sample.go", "line": valueLine + 1, "character": 81, "oldName": "Value", "newName": "Number",
 	})
-	if rename.Output != "renamed symbol in 1 files" {
+	if rename.Output != "renamed symbol in 3 files" {
 		t.Fatalf("rename = %s", rename.Output)
 	}
 	updated, err := os.ReadFile(path)
@@ -156,6 +196,88 @@ func Use(value Thing) int {
 	}
 	if strings.Count(string(updated), "Number") != 2 || strings.Contains(string(updated), "Value") {
 		t.Fatalf("renamed source:\n%s", updated)
+	}
+	assertFileContent(t, testPath, strings.ReplaceAll(testSource, "Value", "Number"))
+	assertFileContent(t, externalPath, strings.ReplaceAll(externalSource, "Value", "Number"))
+
+	rename = executeLSPTestTool(t, ctx, registry, lspRenameToolName, map[string]any{
+		"path": "sample.go", "line": valueLine + 1, "character": 81, "oldName": "Number", "newName": "Value",
+	})
+	if rename.Output != "renamed symbol in 3 files" {
+		t.Fatalf("reverse rename = %s", rename.Output)
+	}
+	assertFileContent(t, path, source)
+	assertFileContent(t, testPath, testSource)
+	assertFileContent(t, externalPath, externalSource)
+}
+
+func TestLSPImmediateConsecutiveRenamesWithGopls(t *testing.T) {
+	if _, err := exec.LookPath(lspServerConfigs[0].command); err != nil {
+		t.Skip("gopls is not installed")
+	}
+
+	cwd := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cwd, "go.mod"), []byte("module example.com/rename\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const source = `package rename
+
+var oldName = 1
+
+func use() int {
+	return oldName
+}
+`
+	const testSource = `package rename
+
+var testValue = oldName
+`
+	path := filepath.Join(cwd, "rename.go")
+	testPath := filepath.Join(cwd, "rename_test.go")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(testPath, []byte(testSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	set := New(cwd)
+	registry, err := tool.NewRegistry(set.Tools(), set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer registry.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	line, character := sourcePosition(t, source, "var oldName", "oldName")
+
+	for _, names := range [][2]string{{"oldName", "NewName"}, {"NewName", "oldName"}} {
+		rename := executeLSPTestTool(t, ctx, registry, lspRenameToolName, map[string]any{
+			"path": "rename.go", "line": line, "character": character, "oldName": names[0], "newName": names[1],
+		})
+		if rename.Output != "renamed symbol in 2 files" {
+			t.Fatalf("rename %s to %s = %s", names[0], names[1], rename.Output)
+		}
+	}
+	assertFileContent(t, path, source)
+	assertFileContent(t, testPath, testSource)
+}
+
+func waitForLSPWatchRegistration(t *testing.T, ctx context.Context, watcher *lspWatchManager) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		count, err := watcher.registrationCount(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if count > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for watched-files registration")
+		}
+		time.Sleep(lspWatchBatchDelay)
 	}
 }
 

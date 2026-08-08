@@ -38,15 +38,24 @@ type lspPathEdits struct {
 	version       *int32
 }
 
-func applyLSPWorkspaceEdit(ctx context.Context, workspaceEdit *protocol.WorkspaceEdit, documents ...textfile.Snapshot) (int, error) {
+func applyLSPWorkspaceEdit(ctx context.Context, watcher *lspWatchManager, workspaceEdit *protocol.WorkspaceEdit, documents ...textfile.Snapshot) (int, error) {
 	changes, err := planLSPWorkspaceEdit(workspaceEdit, documents...)
 	if err != nil {
 		return 0, err
 	}
-	if err := commitLSPFileChanges(ctx, changes); err != nil {
-		return 0, err
+	committed, commitErr := commitLSPFileChanges(ctx, changes)
+	notifyErr := notifyLSPFileChanges(watcher, changes[:committed])
+	return committed, errors.Join(commitErr, notifyErr)
+}
+
+func notifyLSPFileChanges(watcher *lspWatchManager, changes []lspFileChange) error {
+	paths := make([]string, len(changes))
+	for index, change := range changes {
+		paths[index] = change.snapshot.Path
 	}
-	return len(changes), nil
+	notifyCtx, cancel := context.WithTimeout(context.Background(), lspWatchNotifyTimeout)
+	defer cancel()
+	return watcher.reportCommitted(notifyCtx, paths)
 }
 
 func planLSPWorkspaceEdit(workspaceEdit *protocol.WorkspaceEdit, documents ...textfile.Snapshot) ([]lspFileChange, error) {
@@ -152,9 +161,9 @@ func planLSPWorkspaceEdit(workspaceEdit *protocol.WorkspaceEdit, documents ...te
 	return changes, nil
 }
 
-func commitLSPFileChanges(ctx context.Context, changes []lspFileChange) error {
+func commitLSPFileChanges(ctx context.Context, changes []lspFileChange) (int, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return 0, err
 	}
 
 	replacements := make([]*textfile.Replacement, 0, len(changes))
@@ -165,28 +174,28 @@ func commitLSPFileChanges(ctx context.Context, changes []lspFileChange) error {
 	}()
 	for _, change := range changes {
 		if err := ctx.Err(); err != nil {
-			return err
+			return 0, err
 		}
 		replacement, err := textfile.Prepare(change.snapshot, change.data)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		replacements = append(replacements, replacement)
 	}
 	for _, replacement := range replacements {
 		if err := replacement.Verify(); err != nil {
-			return err
+			return 0, err
 		}
 	}
 	for index, replacement := range replacements {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("committed %d of %d files; files may have changed: %w", index, len(replacements), err)
+			return index, fmt.Errorf("committed %d of %d files; files may have changed: %w", index, len(replacements), err)
 		}
 		if err := replacement.Commit(); err != nil {
-			return fmt.Errorf("committed %d of %d files; files may have changed: %w", index, len(replacements), err)
+			return index, fmt.Errorf("committed %d of %d files; files may have changed: %w", index, len(replacements), err)
 		}
 	}
-	return nil
+	return len(replacements), nil
 }
 
 func applyLSPTextEdits(content []byte, edits []protocol.TextEdit) ([]byte, error) {

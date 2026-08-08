@@ -56,7 +56,7 @@ func TestPlanAndCommitLSPWorkspaceEdit(t *testing.T) {
 	assertFileContent(t, firstPath, "alpha")
 	assertFileContent(t, secondPath, "beta")
 
-	if err := commitLSPFileChanges(context.Background(), changes); err != nil {
+	if _, err := commitLSPFileChanges(context.Background(), changes); err != nil {
 		t.Fatal(err)
 	}
 	assertFileContent(t, firstPath, "A")
@@ -98,7 +98,7 @@ func TestPlanLSPWorkspaceEditAcceptsGoplsVersionsForOpenedAndDiskFiles(t *testin
 	if len(changes) != 2 {
 		t.Fatalf("changes = %d, want 2", len(changes))
 	}
-	if err := commitLSPFileChanges(context.Background(), changes); err != nil {
+	if _, err := commitLSPFileChanges(context.Background(), changes); err != nil {
 		t.Fatal(err)
 	}
 	assertFileContent(t, openedPath, "new")
@@ -187,7 +187,7 @@ func TestPlanLSPWorkspaceEditCoalescesSymlinkAliases(t *testing.T) {
 	if len(changes) != 1 || string(changes[0].data) != "one two" {
 		t.Fatalf("changes = %+v", changes)
 	}
-	if err := commitLSPFileChanges(context.Background(), changes); err != nil {
+	if _, err := commitLSPFileChanges(context.Background(), changes); err != nil {
 		t.Fatal(err)
 	}
 	assertFileContent(t, path, "one two")
@@ -218,7 +218,7 @@ func TestPlanLSPWorkspaceEditUsesOpenedDocumentSnapshot(t *testing.T) {
 	if len(changes) != 1 || string(changes[0].data) != "after" {
 		t.Fatalf("changes = %+v", changes)
 	}
-	if err := commitLSPFileChanges(context.Background(), changes); !errors.Is(err, textfile.ErrChanged) {
+	if _, err := commitLSPFileChanges(context.Background(), changes); !errors.Is(err, textfile.ErrChanged) {
 		t.Fatalf("commit error = %v", err)
 	}
 	assertFileContent(t, path, "external")
@@ -246,7 +246,7 @@ func TestCommitLSPFileChangesRejectsChangedFileBeforeAnyCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = commitLSPFileChanges(context.Background(), []lspFileChange{
+	_, err = commitLSPFileChanges(context.Background(), []lspFileChange{
 		{snapshot: first, data: []byte("changed first")},
 		{snapshot: second, data: []byte("changed second")},
 	})
@@ -267,12 +267,12 @@ func TestCommitLSPFileChangesReportsPartialCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = commitLSPFileChanges(context.Background(), []lspFileChange{
+	committed, err := commitLSPFileChanges(context.Background(), []lspFileChange{
 		{snapshot: snapshot, data: []byte("first")},
 		{snapshot: snapshot, data: []byte("second")},
 	})
-	if !errors.Is(err, textfile.ErrChanged) || !strings.Contains(err.Error(), "committed 1 of 2 files") {
-		t.Fatalf("commit error = %v", err)
+	if committed != 1 || !errors.Is(err, textfile.ErrChanged) || !strings.Contains(err.Error(), "committed 1 of 2 files") {
+		t.Fatalf("committed = %d, commit error = %v", committed, err)
 	}
 	assertFileContent(t, path, "first")
 }
@@ -336,13 +336,13 @@ func TestCommitLSPFileChangesHonorsCancellationAndWriteErrors(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := commitLSPFileChanges(ctx, []lspFileChange{{snapshot: snapshot, data: []byte("after")}}); !errors.Is(err, context.Canceled) {
+	if _, err := commitLSPFileChanges(ctx, []lspFileChange{{snapshot: snapshot, data: []byte("after")}}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled commit error = %v", err)
 	}
 	assertFileContent(t, path, "before")
 
 	directory := t.TempDir()
-	if err := commitLSPFileChanges(context.Background(), []lspFileChange{{snapshot: textfile.Snapshot{RequestedPath: directory, Path: directory, Mode: 0o644}, data: []byte("after")}}); err == nil {
+	if _, err := commitLSPFileChanges(context.Background(), []lspFileChange{{snapshot: textfile.Snapshot{RequestedPath: directory, Path: directory, Mode: 0o644}, data: []byte("after")}}); err == nil {
 		t.Fatal("commit to directory succeeded")
 	}
 }

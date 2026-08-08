@@ -61,6 +61,7 @@ type lspSession struct {
 	connection      jsonrpc2.Conn
 	server          protocol.Server
 	client          *lspProtocolClient
+	watcher         *lspWatchManager
 	command         *exec.Cmd
 	done            <-chan error
 	pullDiagnostics bool
@@ -74,7 +75,8 @@ type lspTransport struct {
 
 type lspProtocolClient struct {
 	protocol.UnimplementedClient
-	folder protocol.WorkspaceFolder
+	folder  protocol.WorkspaceFolder
+	watcher *lspWatchManager
 
 	mu          sync.Mutex
 	diagnostics map[uri.URI][]protocol.Diagnostic
@@ -103,6 +105,12 @@ func (c *lspClient) documentSnapshotRequest(ctx context.Context, document textfi
 	session, err := c.session(ctx, config)
 	if err != nil {
 		return nil, err
+	}
+	if session.watcher != nil {
+		if err := session.watcher.check(ctx); err != nil {
+			c.invalidateSession(config, session)
+			return nil, err
+		}
 	}
 
 	return c.withOpenDocument(ctx, config, session, document.Path, document.Data, request)
@@ -161,6 +169,21 @@ func (c *lspClient) session(ctx context.Context, config lspServerConfig) (*lspSe
 }
 
 func startLSPSession(ctx context.Context, cwd string, config lspServerConfig) (*lspSession, error) {
+	folder := protocol.WorkspaceFolder{URI: uri.File(cwd), Name: filepath.Base(cwd)}
+	var server protocol.Server
+	watcher, err := newLSPWatchManager(folder, func(ctx context.Context, params *protocol.DidChangeWatchedFilesParams) error {
+		return server.DidChangeWatchedFiles(ctx, params)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("start file watcher: %w", err)
+	}
+	watcherOwned := true
+	defer func() {
+		if watcherOwned {
+			_ = watcher.close()
+		}
+	}()
+
 	command := exec.Command(config.command, config.arguments...)
 	command.Dir = cwd
 	command.Stderr = io.Discard
@@ -180,23 +203,25 @@ func startLSPSession(ctx context.Context, cwd string, config lspServerConfig) (*
 	done := make(chan error, 1)
 	go func() { done <- command.Wait() }()
 
-	folder := protocol.WorkspaceFolder{URI: uri.File(cwd), Name: filepath.Base(cwd)}
 	client := &lspProtocolClient{
 		folder:      folder,
+		watcher:     watcher,
 		diagnostics: make(map[uri.URI][]protocol.Diagnostic),
 		waiters:     make(map[uri.URI][]chan []protocol.Diagnostic),
 	}
-	_, connection, server := protocol.NewClient(
+	var connection jsonrpc2.Conn
+	_, connection, server = protocol.NewClient(
 		context.Background(),
 		client,
 		jsonrpc2.NewStream(&lspTransport{reader: stdout, writer: stdin}),
 	)
-	session := &lspSession{connection: connection, server: server, client: client, command: command, done: done}
+	session := &lspSession{connection: connection, server: server, client: client, watcher: watcher, command: command, done: done}
 
 	processID := int32(os.Getpid())
 	documentChanges := true
 	workspaceFolders := true
 	dynamicRegistration := false
+	watchedFilesSupported := true
 	prepareRename := true
 	rootURI := folder.URI
 	initializeResult, err := server.Initialize(ctx, &protocol.InitializeParams{
@@ -213,6 +238,10 @@ func startLSPSession(ctx context.Context, cwd string, config lspServerConfig) (*
 			Workspace: &protocol.WorkspaceClientCapabilities{
 				WorkspaceEdit:    &protocol.WorkspaceEditClientCapabilities{DocumentChanges: &documentChanges},
 				WorkspaceFolders: &workspaceFolders,
+				DidChangeWatchedFiles: &protocol.DidChangeWatchedFilesClientCapabilities{
+					DynamicRegistration:    &watchedFilesSupported,
+					RelativePatternSupport: &watchedFilesSupported,
+				},
 			},
 			TextDocument: &protocol.TextDocumentClientCapabilities{
 				Diagnostic: &protocol.DiagnosticClientCapabilities{DynamicRegistration: &dynamicRegistration},
@@ -230,6 +259,7 @@ func startLSPSession(ctx context.Context, cwd string, config lspServerConfig) (*
 		return nil, err
 	}
 
+	watcherOwned = false
 	return session, nil
 }
 
@@ -244,6 +274,9 @@ func (s *lspSession) stop() {
 	if s.stopSession != nil {
 		s.stopSession()
 		return
+	}
+	if s.watcher != nil {
+		_ = s.watcher.close()
 	}
 	if s.connection.Err() == nil {
 		shutdownLSPServer(s.server, lspShutdownTimeout)
@@ -260,6 +293,9 @@ func shutdownLSPServer(server protocol.Server, timeout time.Duration) {
 }
 
 func (s *lspSession) abort() {
+	if s.watcher != nil {
+		_ = s.watcher.close()
+	}
 	_ = s.connection.Close()
 	if s.command.Process != nil {
 		_ = s.command.Process.Kill()
@@ -322,12 +358,12 @@ func (c *lspProtocolClient) waitForDiagnostics(ctx context.Context, documentURI 
 	}
 }
 
-func (*lspProtocolClient) RegisterCapability(context.Context, *protocol.RegistrationParams) error {
-	return nil
+func (c *lspProtocolClient) RegisterCapability(ctx context.Context, params *protocol.RegistrationParams) error {
+	return c.watcher.register(ctx, params.Registrations)
 }
 
-func (*lspProtocolClient) UnregisterCapability(context.Context, *protocol.UnregistrationParams) error {
-	return nil
+func (c *lspProtocolClient) UnregisterCapability(ctx context.Context, params *protocol.UnregistrationParams) error {
+	return c.watcher.unregister(ctx, params.Unregisterations)
 }
 
 func (*lspProtocolClient) WorkDoneProgressCreate(context.Context, *protocol.WorkDoneProgressCreateParams) error {

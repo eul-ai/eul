@@ -51,7 +51,9 @@ func (t *lspTool) executeRename(ctx context.Context, arguments json.RawMessage) 
 		return agent.ToolResult{}, err
 	}
 
+	var watcher *lspWatchManager
 	response, err := t.client.documentSnapshotRequest(ctx, document, func(ctx context.Context, session *lspSession, document protocol.TextDocumentIdentifier) (any, error) {
+		watcher = session.watcher
 		params := protocol.TextDocumentPositionParams{TextDocument: document, Position: position}
 		return prepareAndRename(ctx, session.server, params, *args.NewName)
 	})
@@ -62,7 +64,7 @@ func (t *lspTool) executeRename(ctx context.Context, arguments json.RawMessage) 
 	if !ok {
 		return agent.ToolResult{}, fmt.Errorf("unexpected rename response %T", response)
 	}
-	changed, err := applyLSPWorkspaceEdit(ctx, workspaceEdit, document)
+	changed, err := applyLSPWorkspaceEdit(ctx, watcher, workspaceEdit, document)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}

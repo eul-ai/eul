@@ -3,6 +3,8 @@ module yaah
 go 1.26.0
 
 require (
+	github.com/bmatcuk/doublestar/v4 v4.10.0
+	github.com/fsnotify/fsnotify v1.10.1
 	go.lsp.dev/jsonrpc2 v1.0.1
 	go.lsp.dev/protocol v1.0.1
 	go.lsp.dev/uri v1.0.1
