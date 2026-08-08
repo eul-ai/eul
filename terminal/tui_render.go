@@ -608,7 +608,9 @@ func isToolBlock(kind blockKind) bool {
 
 func blockPresentation(kind blockKind) lineStyle {
 	switch kind {
-	case blockUser, blockAssistant:
+	case blockUser:
+		return lineStyle{foreground: currentTheme.yellow}
+	case blockAssistant:
 		return lineStyle{foreground: currentTheme.foreground}
 	case blockReasoning:
 		return lineStyle{foreground: currentTheme.muted, italic: true}

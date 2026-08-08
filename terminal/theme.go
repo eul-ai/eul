@@ -16,6 +16,7 @@ type theme struct {
 	foreground            terminalColor
 	accent                terminalColor
 	orange                terminalColor
+	yellow                terminalColor
 	blue                  terminalColor
 	markdownCode          terminalColor
 	muted                 terminalColor
@@ -36,6 +37,7 @@ var ayuMirageTheme = theme{
 	foreground:            terminalColor{red: 0xcc, green: 0xca, blue: 0xc2},
 	accent:                terminalColor{red: 0xff, green: 0xcc, blue: 0x66},
 	orange:                terminalColor{red: 0xff, green: 0xa7, blue: 0x59},
+	yellow:                terminalColor{red: 0xff, green: 0xe6, blue: 0xb3},
 	blue:                  terminalColor{red: 0x73, green: 0xd0, blue: 0xff},
 	markdownCode:          terminalColor{red: 0x95, green: 0xe6, blue: 0xcb},
 	muted:                 terminalColor{red: 0x84, green: 0x90, blue: 0xa5},

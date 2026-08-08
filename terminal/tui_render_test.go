@@ -121,7 +121,7 @@ func TestConversationBlocksUseCurrentTheme(t *testing.T) {
 		{kind: blockError, text: "error"},
 	}, 40)
 	want := map[string]lineStyle{
-		"user":            {foreground: currentTheme.foreground},
+		"user":            {foreground: currentTheme.yellow},
 		"assistant":       {foreground: currentTheme.foreground},
 		"summary":         {foreground: currentTheme.muted, italic: true},
 		"pending tool":    {foreground: currentTheme.foreground, background: currentTheme.toolPendingBackground, paintBackground: true},
