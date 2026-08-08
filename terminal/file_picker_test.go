@@ -94,91 +94,39 @@ func TestSearchProjectFilesWithWalkExcludesGitPointerFile(t *testing.T) {
 	}
 }
 
-func TestFilePickerSearchesHomeDirectory(t *testing.T) {
-	cwd := t.TempDir()
-	home := t.TempDir()
-	writePickerFile(t, filepath.Join(cwd, "notes.txt"), "project notes")
-	writePickerFile(t, filepath.Join(home, "notes.txt"), "home notes")
-
-	model := newTUIModel(80, 24, Options{WorkingDirectory: cwd})
-	if err := model.insertInput("@~"); err != nil {
-		t.Fatal(err)
-	}
-	request := takePickerRequest(t, model)
-	if request.query != "" || request.root != fileSearchHome {
-		t.Fatalf("request = %+v, want home search", request)
-	}
-
-	runner := &fileSearchRunner{cwd: cwd, home: home}
-	paths, err := runner.search(context.Background(), request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"~/notes.txt"}; !slices.Equal(paths, want) {
-		t.Fatalf("paths = %q, want %q", paths, want)
-	}
-
-	model.applyFileSearchResult(fileSearchResult{id: request.id, paths: paths})
-	if err := model.applyFilePickerSelection(); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(model.input), "@~/notes.txt "; got != want {
-		t.Fatalf("input = %q, want %q", got, want)
+func TestFilePickerKeepsSearchQueriesLiteral(t *testing.T) {
+	for _, query := range []string{"~", "~/Code", "/var/log"} {
+		model := newTUIModel(80, 24, Options{WorkingDirectory: t.TempDir()})
+		if err := model.insertInput("@" + query); err != nil {
+			t.Fatal(err)
+		}
+		request := takePickerRequest(t, model)
+		if request.query != query {
+			t.Fatalf("query = %q, want %q", request.query, query)
+		}
 	}
 }
 
-func TestFilePickerNarrowsHomeDirectorySearch(t *testing.T) {
+func TestSearchProjectFilesStaysWithinWorkingDirectory(t *testing.T) {
 	cwd := t.TempDir()
-	home := t.TempDir()
-	writePickerFile(t, filepath.Join(home, ".pi", "decode.js"), "unrelated")
-	writePickerFile(t, filepath.Join(home, "Code", "pi", "README.md"), "pi")
+	outside := t.TempDir()
+	writePickerFile(t, filepath.Join(outside, "outside.txt"), "outside")
+	if err := os.Symlink(outside, filepath.Join(cwd, "link")); err != nil {
+		t.Fatal(err)
+	}
 
 	fdPaths := []string{""}
 	if fdPath := findFD(); fdPath != "" {
 		fdPaths = append(fdPaths, fdPath)
 	}
-	for _, query := range []string{"Code", "Code/pi"} {
-		model := newTUIModel(80, 24, Options{WorkingDirectory: cwd})
-		if err := model.insertInput("@~/" + query); err != nil {
+	for _, fdPath := range fdPaths {
+		paths, err := searchProjectFiles(context.Background(), cwd, fdPath, "outside")
+		if err != nil {
 			t.Fatal(err)
 		}
-		request := takePickerRequest(t, model)
-		if request.query != query || request.root != fileSearchHome {
-			t.Fatalf("request = %+v, want home search for %q", request, query)
+		if len(paths) != 0 {
+			t.Fatalf("paths with fd %q = %q, want no files outside working directory", fdPath, paths)
 		}
-		if got := fileSearchPath(home, request.query); got != filepath.FromSlash(query) {
-			t.Fatalf("search path = %q, want %q", got, query)
-		}
-
-		for _, fdPath := range fdPaths {
-			runner := &fileSearchRunner{cwd: cwd, home: home, fdPath: fdPath}
-			paths, err := runner.search(context.Background(), request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if want := []string{"~/Code/pi/README.md"}; !slices.Equal(paths, want) {
-				t.Fatalf("paths for %q with fd %q = %q, want %q", query, fdPath, paths, want)
-			}
-		}
-	}
-}
-
-func TestFilePickerSearchesAbsolutePaths(t *testing.T) {
-	model := newTUIModel(80, 24, Options{WorkingDirectory: t.TempDir()})
-	if err := model.insertInput("@/var/log"); err != nil {
-		t.Fatal(err)
-	}
-	request := takePickerRequest(t, model)
-	if request.query != "var/log" || request.root != fileSearchAbsolute {
-		t.Fatalf("request = %+v, want absolute query %q", request, "var/log")
-	}
-
-	model.applyFileSearchResult(fileSearchResult{id: request.id, paths: []string{"/var/log/system.log"}})
-	if err := model.applyFilePickerSelection(); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(model.input), "@/var/log/system.log "; got != want {
-		t.Fatalf("input = %q, want %q", got, want)
 	}
 }
 

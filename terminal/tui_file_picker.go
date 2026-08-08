@@ -66,17 +66,7 @@ func (m *tuiModel) refreshFilePicker(reopen bool) {
 	m.filePicker.query = query
 	m.filePicker.loading = true
 	m.filePicker.requestID++
-	searchQuery := query
-	root := fileSearchProject
-	switch {
-	case strings.HasPrefix(query, "~"):
-		searchQuery = strings.TrimPrefix(strings.TrimPrefix(query, "~"), "/")
-		root = fileSearchHome
-	case strings.HasPrefix(query, "/"):
-		searchQuery = strings.TrimPrefix(query, "/")
-		root = fileSearchAbsolute
-	}
-	request := fileSearchRequest{id: m.filePicker.requestID, query: searchQuery, root: root}
+	request := fileSearchRequest{id: m.filePicker.requestID, query: query}
 	m.filePicker.pending = &request
 }
 
