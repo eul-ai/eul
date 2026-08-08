@@ -126,13 +126,58 @@ func (r *fileSearchRunner) close() {
 }
 
 func searchProjectFiles(ctx context.Context, cwd, fdPath, query string) ([]string, error) {
+	searchPath := fileSearchPath(cwd, query)
 	if fdPath != "" {
-		return searchProjectFilesWithFD(ctx, cwd, fdPath, query)
+		return searchProjectFilesWithFD(ctx, cwd, fdPath, searchPath, query)
 	}
-	return searchProjectFilesWithWalk(ctx, cwd, query)
+	return searchProjectFilesWithWalk(ctx, cwd, searchPath, query)
 }
 
-func searchProjectFilesWithFD(ctx context.Context, cwd, fdPath, query string) ([]string, error) {
+func fileSearchPath(cwd, query string) string {
+	if !strings.Contains(filepath.ToSlash(query), "/") {
+		return ""
+	}
+
+	candidate := filepath.Clean(filepath.FromSlash(query))
+	for candidate != "." && filepath.IsLocal(candidate) {
+		info, err := os.Stat(filepath.Join(cwd, candidate))
+		if err == nil && info.IsDir() && pathHasExactComponents(cwd, candidate) {
+			return candidate
+		}
+
+		parent := filepath.Dir(candidate)
+		if parent == candidate {
+			break
+		}
+		candidate = parent
+	}
+	return ""
+}
+
+func pathHasExactComponents(cwd, relative string) bool {
+	current := cwd
+	for component := range strings.SplitSeq(relative, string(filepath.Separator)) {
+		entries, err := os.ReadDir(current)
+		if err != nil {
+			return false
+		}
+
+		found := false
+		for _, entry := range entries {
+			if entry.Name() == component {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+		current = filepath.Join(current, component)
+	}
+	return true
+}
+
+func searchProjectFilesWithFD(ctx context.Context, cwd, fdPath, searchPath, query string) ([]string, error) {
 	arguments := []string{
 		"--base-directory", cwd,
 		"--max-results", "100",
@@ -146,6 +191,9 @@ func searchProjectFilesWithFD(ctx context.Context, cwd, fdPath, query string) ([
 	}
 	if strings.Contains(query, "/") {
 		arguments = append(arguments, "--full-path")
+	}
+	if searchPath != "" {
+		arguments = append(arguments, "--search-path", searchPath)
 	}
 	if query != "" {
 		arguments = append(arguments, "--", query)
@@ -173,16 +221,20 @@ func parseFDPaths(output []byte) []string {
 	return paths
 }
 
-func searchProjectFilesWithWalk(ctx context.Context, cwd, query string) ([]string, error) {
+func searchProjectFilesWithWalk(ctx context.Context, cwd, searchPath, query string) ([]string, error) {
 	var paths []string
 	normalizedQuery := strings.ToLower(filepath.ToSlash(query))
 	fullPath := strings.Contains(normalizedQuery, "/")
-	err := filepath.WalkDir(cwd, func(filePath string, entry os.DirEntry, walkErr error) error {
+	searchRoot := cwd
+	if searchPath != "" {
+		searchRoot = filepath.Join(cwd, searchPath)
+	}
+	err := filepath.WalkDir(searchRoot, func(filePath string, entry os.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if walkErr != nil {
-			if filePath == cwd {
+			if filePath == searchRoot {
 				return walkErr
 			}
 			if entry != nil && entry.IsDir() {

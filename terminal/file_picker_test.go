@@ -127,6 +127,40 @@ func TestFilePickerSearchesHomeDirectory(t *testing.T) {
 	}
 }
 
+func TestFilePickerNarrowsNestedHomeDirectorySearch(t *testing.T) {
+	cwd := t.TempDir()
+	home := t.TempDir()
+	writePickerFile(t, filepath.Join(home, ".pi", "decode.js"), "unrelated")
+	writePickerFile(t, filepath.Join(home, "Code", "pi", "README.md"), "pi")
+
+	model := newTUIModel(80, 24, Options{WorkingDirectory: cwd})
+	if err := model.insertInput("@~/Code/pi"); err != nil {
+		t.Fatal(err)
+	}
+	request := takePickerRequest(t, model)
+	if request.query != "Code/pi" || request.root != fileSearchHome {
+		t.Fatalf("request = %+v, want nested home search", request)
+	}
+	if got, want := fileSearchPath(home, request.query), filepath.Join("Code", "pi"); got != want {
+		t.Fatalf("search path = %q, want %q", got, want)
+	}
+
+	fdPaths := []string{""}
+	if fdPath := findFD(); fdPath != "" {
+		fdPaths = append(fdPaths, fdPath)
+	}
+	for _, fdPath := range fdPaths {
+		runner := &fileSearchRunner{cwd: cwd, home: home, fdPath: fdPath}
+		paths, err := runner.search(context.Background(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"~/Code/pi/README.md"}; !slices.Equal(paths, want) {
+			t.Fatalf("paths with fd %q = %q, want %q", fdPath, paths, want)
+		}
+	}
+}
+
 func TestFilePickerSearchesAbsolutePaths(t *testing.T) {
 	model := newTUIModel(80, 24, Options{WorkingDirectory: t.TempDir()})
 	if err := model.insertInput("@/var/log"); err != nil {
