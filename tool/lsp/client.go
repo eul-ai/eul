@@ -168,6 +168,10 @@ func (c *lspClient) session(ctx context.Context, config lspServerConfig) (*lspSe
 }
 
 func startLSPSession(ctx context.Context, cwd string, config lspServerConfig) (*lspSession, error) {
+	cwd, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace: %w", err)
+	}
 	folder := protocol.WorkspaceFolder{URI: uri.File(cwd), Name: filepath.Base(cwd)}
 	var server protocol.Server
 	watcher, err := newLSPWatchManager(folder, func(ctx context.Context, params *protocol.DidChangeWatchedFilesParams) error {
