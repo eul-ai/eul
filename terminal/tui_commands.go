@@ -10,24 +10,51 @@ import (
 const commandPickerMaxVisible = 5
 
 type slashCommandDefinition struct {
-	text        string
-	usage       string
-	description string
+	text               string
+	usage              string
+	description        string
+	action             tuiActionKind
+	argumentAction     tuiActionKind
+	complete           bool
+	dynamicSkills      bool
+	availableDuringRun bool
 }
 
-var slashCommandDefinitions = []slashCommandDefinition{
-	{text: "/help", usage: "/help", description: "show this help"},
-	{text: "/clear", usage: "/clear", description: "discard conversation and goal state"},
-	{text: "/compact", usage: "/compact", description: "compact the conversation context"},
-	{text: "/exit", usage: "/exit", description: "exit eul"},
-	{text: "/goal", usage: "/goal [objective]", description: "show or set the active goal"},
-	{text: "/goal clear", usage: "/goal clear", description: "clear the active goal"},
-	{usage: "/skill:<name>", description: "load a skill"},
+var slashCommands = []slashCommandDefinition{
+	{
+		text: "/help", usage: "/help", description: "show this help",
+		action: tuiActionHelp, complete: true,
+	},
+	{
+		text: "/clear", usage: "/clear", description: "discard conversation and goal state",
+		action: tuiActionReset, complete: true,
+	},
+	{
+		text: "/compact", usage: "/compact", description: "compact the conversation context",
+		action: tuiActionCompact, complete: true,
+	},
+	{
+		text: "/exit", usage: "/exit", description: "exit eul",
+		action: tuiActionExit, complete: true,
+	},
+	{
+		text: "/goal", usage: "/goal [objective]", description: "show or set the active goal",
+		action: tuiActionShowGoal, argumentAction: tuiActionSetGoal, complete: true,
+	},
+	{
+		text: "/goal clear", usage: "/goal clear", description: "clear the active goal",
+		action: tuiActionClearGoal, complete: true, availableDuringRun: true,
+	},
+	{
+		text: "/skill:", usage: "/skill:<name>", description: "load a skill",
+		action: tuiActionSubmit, dynamicSkills: true,
+	},
 }
 
 type commandCompletion struct {
-	text        string
-	description string
+	text               string
+	description        string
+	availableDuringRun bool
 }
 
 type commandPickerState struct {
@@ -41,21 +68,27 @@ type commandPickerState struct {
 }
 
 func commandCompletions(skills []agent.Skill) []commandCompletion {
-	completions := make([]commandCompletion, 0, len(slashCommandDefinitions)+len(skills))
-	for _, command := range slashCommandDefinitions {
-		if command.text == "" {
+	completions := make([]commandCompletion, 0, len(slashCommands)+len(skills))
+	for _, command := range slashCommands {
+		if command.complete {
+			completions = append(completions, commandCompletion{
+				text:               command.text,
+				description:        command.description,
+				availableDuringRun: command.availableDuringRun,
+			})
+		}
+		if !command.dynamicSkills {
 			continue
 		}
-		completions = append(completions, commandCompletion{text: command.text, description: command.description})
-	}
-	for _, skill := range skills {
-		if !invokableSkillName(skill.Name) {
-			continue
+		for _, skill := range skills {
+			if !invokableSkillName(skill.Name) {
+				continue
+			}
+			completions = append(completions, commandCompletion{
+				text:        command.text + skill.Name,
+				description: singleLine(skill.Description, 200),
+			})
 		}
-		completions = append(completions, commandCompletion{
-			text:        "/skill:" + skill.Name,
-			description: singleLine(skill.Description, 200),
-		})
 	}
 	return completions
 }
@@ -71,7 +104,7 @@ func commandHelpText() string {
 
 	var help strings.Builder
 	help.WriteString("Commands:")
-	for _, command := range slashCommandDefinitions {
+	for _, command := range slashCommands {
 		help.WriteString("\n  ")
 		help.WriteString(command.usage)
 		padding := usageWidth - len(command.usage)
@@ -82,6 +115,44 @@ func commandHelpText() string {
 		help.WriteString(command.description)
 	}
 	return help.String()
+}
+
+func matchSlashCommand(prompt, trimmed string) (tuiAction, slashCommandDefinition, bool) {
+	for _, command := range slashCommands {
+		if trimmed == command.text {
+			return tuiAction{kind: command.action, prompt: commandPrompt(command.action, prompt)}, command, true
+		}
+	}
+
+	for _, command := range slashCommands {
+		if command.argumentAction == tuiActionNone || !hasCommandArguments(trimmed, command.text) {
+			continue
+		}
+		argument := strings.TrimSpace(trimmed[len(command.text):])
+		return tuiAction{kind: command.argumentAction, prompt: argument}, command, true
+	}
+
+	for _, command := range slashCommands {
+		if command.dynamicSkills && strings.HasPrefix(trimmed, command.text) {
+			return tuiAction{kind: command.action, prompt: commandPrompt(command.action, prompt)}, command, true
+		}
+	}
+	return tuiAction{}, slashCommandDefinition{}, false
+}
+
+func commandPrompt(action tuiActionKind, prompt string) string {
+	if action == tuiActionSubmit {
+		return prompt
+	}
+	return ""
+}
+
+func hasCommandArguments(input, command string) bool {
+	if !strings.HasPrefix(input, command) || len(input) <= len(command) {
+		return false
+	}
+	separator := input[len(command)]
+	return separator == ' ' || separator == '\t' || separator == '\n'
 }
 
 func commandReference(input []rune, cursor int) (int, int, string, bool) {
@@ -124,7 +195,7 @@ func (m *tuiModel) refreshCommandPicker(reopen bool) {
 
 	matches := make([]commandCompletion, 0, len(m.commandCompletions))
 	for _, completion := range m.commandCompletions {
-		if m.running && completion.text != "/goal clear" {
+		if m.running && !completion.availableDuringRun {
 			continue
 		}
 		if strings.HasPrefix(completion.text, query) {

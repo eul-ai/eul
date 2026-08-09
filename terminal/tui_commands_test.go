@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -48,7 +49,7 @@ func TestCommandPickerFiltersCommandsAndSkills(t *testing.T) {
 	}
 }
 
-func TestCommandPickerCompletesPartialCommandBeforeSubmitting(t *testing.T) {
+func TestCommandPickerEnterCompletesAndSubmits(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	if err := model.insertInput("/he"); err != nil {
 		t.Fatal(err)
@@ -58,16 +59,15 @@ func TestCommandPickerCompletesPartialCommandBeforeSubmitting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if action.kind != tuiActionNone || string(model.input) != "/help" || len(model.history) != 0 || model.commandPickerVisible() {
-		t.Fatalf("completion action=%+v input=%q history=%q picker=%+v", action, model.input, model.history, model.commandPicker)
+	if action.kind != tuiActionHelp || len(model.input) != 0 || len(model.history) != 1 || len(model.blocks) != 0 {
+		t.Fatalf("submission action=%+v input=%q history=%q blocks=%+v", action, model.input, model.history, model.blocks)
 	}
-
-	action, err = reduceKey(model, keyEvent{code: keyEnter})
-	if err != nil {
+	controller := tuiController{model: model}
+	if _, err := controller.applyAction(context.Background(), action); err != nil {
 		t.Fatal(err)
 	}
-	if action.kind != tuiActionNone || len(model.input) != 0 || len(model.history) != 1 || len(model.blocks) != 1 || !strings.Contains(model.blocks[0].text, "/goal clear") {
-		t.Fatalf("submission action=%+v input=%q history=%q blocks=%+v", action, model.input, model.history, model.blocks)
+	if len(model.blocks) != 1 || !strings.Contains(model.blocks[0].text, "/goal clear") {
+		t.Fatalf("help blocks = %+v", model.blocks)
 	}
 }
 
@@ -82,6 +82,24 @@ func TestCommandPickerLetsExactCommandSubmit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if action.kind != tuiActionReset || len(model.input) != 0 || len(model.history) != 1 {
+		t.Fatalf("action=%+v input=%q history=%q", action, model.input, model.history)
+	}
+}
+
+func TestCommandPickerEnterExecutesArrowSelection(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	if err := model.insertInput("/c"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reduceKey(model, keyEvent{code: keyDown}); err != nil {
+		t.Fatal(err)
+	}
+
+	action, err := reduceKey(model, keyEvent{code: keyEnter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.kind != tuiActionCompact || len(model.input) != 0 || len(model.history) != 1 || model.history[0] != "/compact" {
 		t.Fatalf("action=%+v input=%q history=%q", action, model.input, model.history)
 	}
 }

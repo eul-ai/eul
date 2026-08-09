@@ -11,6 +11,7 @@ type tuiActionKind uint8
 
 const (
 	tuiActionNone tuiActionKind = iota
+	tuiActionHelp
 	tuiActionCancel
 	tuiActionReset
 	tuiActionCompact
@@ -151,7 +152,9 @@ func reduceCommandPickerKey(model *tuiModel, key keyEvent) bool {
 		}
 		if err := model.applyCommandPickerSelection(); err != nil {
 			setInputError(model, err)
+			return true
 		}
+		return false
 	case keyEscape:
 		model.dismissCommandPicker()
 	default:
@@ -210,11 +213,12 @@ func reduceSteeringPrompt(model *tuiModel) tuiAction {
 	if trimmed == "" {
 		return tuiAction{}
 	}
-	if trimmed == "/goal clear" {
-		model.takePrompt()
-		return tuiAction{kind: tuiActionClearGoal}
-	}
 	if strings.HasPrefix(trimmed, "/") {
+		action, command, ok := matchSlashCommand(prompt, trimmed)
+		if ok && command.availableDuringRun {
+			model.takePrompt()
+			return action
+		}
 		setInputError(model, fmt.Errorf("commands cannot be queued while the agent is running"))
 		return tuiAction{}
 	}
@@ -230,34 +234,20 @@ func reducePrompt(model *tuiModel) tuiAction {
 	}
 
 	trimmed := strings.TrimSpace(prompt)
-	switch trimmed {
-	case "/help":
-		model.appendBlock(blockInfo, commandHelpText())
-	case "/clear":
-		return tuiAction{kind: tuiActionReset}
-	case "/compact":
-		return tuiAction{kind: tuiActionCompact}
-	case "/exit":
-		return tuiAction{kind: tuiActionExit}
-	case "/goal":
-		return tuiAction{kind: tuiActionShowGoal}
-	case "/goal clear":
-		return tuiAction{kind: tuiActionClearGoal}
-	default:
-		if strings.HasPrefix(trimmed, "/goal") && len(trimmed) > len("/goal") && (trimmed[len("/goal")] == ' ' || trimmed[len("/goal")] == '\t' || trimmed[len("/goal")] == '\n') {
-			objective := strings.TrimSpace(trimmed[len("/goal"):])
-			return tuiAction{kind: tuiActionSetGoal, prompt: objective}
+	if action, _, matched := matchSlashCommand(prompt, trimmed); matched {
+		if action.kind == tuiActionSubmit {
+			model.beginTurn(prompt)
 		}
-		if strings.HasPrefix(trimmed, "/") && !strings.HasPrefix(trimmed, "/skill:") {
-			model.appendBlock(blockError, "Unknown command "+diagnostic(trimmed, 120))
-			model.activity = activity{kind: activityError, detail: "unknown command"}
-			return tuiAction{}
-		}
-
-		model.beginTurn(prompt)
-		return tuiAction{kind: tuiActionSubmit, prompt: prompt}
+		return action
 	}
-	return tuiAction{}
+	if strings.HasPrefix(trimmed, "/") {
+		model.appendBlock(blockError, "Unknown command "+diagnostic(trimmed, 120))
+		model.activity = activity{kind: activityError, detail: "unknown command"}
+		return tuiAction{}
+	}
+
+	model.beginTurn(prompt)
+	return tuiAction{kind: tuiActionSubmit, prompt: prompt}
 }
 
 func setInputError(model *tuiModel, err error) {

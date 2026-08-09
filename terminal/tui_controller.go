@@ -174,6 +174,8 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 	switch action.kind {
 	case tuiActionNone:
 		return false, nil
+	case tuiActionHelp:
+		c.model.appendBlock(blockInfo, commandHelpText())
 	case tuiActionCancel:
 		c.cancelTurn()
 	case tuiActionReset:
