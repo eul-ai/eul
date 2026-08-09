@@ -553,6 +553,60 @@ func TestRendererOnlyWritesChangedRows(t *testing.T) {
 	}
 }
 
+func TestRendererUsesScrollRegionForSingleConversationRow(t *testing.T) {
+	model := newTUIModel(20, 8, Options{})
+	model.appendBlock(blockAssistant, "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten")
+	var renderer tuiRenderer
+	_ = renderer.render(model)
+
+	height := renderer.frame.layout.conversationHeight
+	region := "\x1b[1;" + strconv.Itoa(height) + "r"
+	scrollConversationBy(model, -1, renderer.frame)
+	up := renderer.render(model)
+	if !strings.Contains(up, region+ansiScrollDown+ansiResetScrollRegion) {
+		t.Fatalf("scroll up did not shift the terminal region: %q", up)
+	}
+	if !strings.Contains(up, "\x1b[1;1H") {
+		t.Fatalf("scroll up did not paint the exposed top row: %q", up)
+	}
+	for row := 2; row <= height; row++ {
+		position := "\x1b[" + strconv.Itoa(row) + ";1H"
+		if strings.Contains(up, position) {
+			t.Fatalf("scroll up repainted retained row %d: %q", row, up)
+		}
+	}
+
+	scrollConversationBy(model, 1, renderer.frame)
+	down := renderer.render(model)
+	if !strings.Contains(down, region+ansiScrollUp+ansiResetScrollRegion) {
+		t.Fatalf("scroll down did not shift the terminal region: %q", down)
+	}
+	bottomPosition := "\x1b[" + strconv.Itoa(height) + ";1H"
+	if !strings.Contains(down, bottomPosition) {
+		t.Fatalf("scroll down did not paint the exposed bottom row: %q", down)
+	}
+	for row := 1; row < height; row++ {
+		position := "\x1b[" + strconv.Itoa(row) + ";1H"
+		if strings.Contains(down, position) {
+			t.Fatalf("scroll down repainted retained row %d: %q", row, down)
+		}
+	}
+}
+
+func TestRendererDoesNotScrollRegionWhenConversationChanges(t *testing.T) {
+	model := newTUIModel(20, 8, Options{})
+	model.appendBlock(blockAssistant, "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten")
+	var renderer tuiRenderer
+	_ = renderer.render(model)
+
+	scrollConversationBy(model, -1, renderer.frame)
+	model.appendBlock(blockInfo, "dynamic output")
+	update := renderer.render(model)
+	if strings.Contains(update, ansiScrollUp) || strings.Contains(update, ansiScrollDown) {
+		t.Fatalf("dynamic conversation update used terminal scrolling: %q", update)
+	}
+}
+
 func TestRendererForcesFullRedrawAfterResizeOrCtrlL(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
 	var renderer tuiRenderer

@@ -25,6 +25,9 @@ const (
 	ansiBeginSynchronizedOutput = "\x1b[?2026h"
 	ansiEndSynchronizedOutput   = "\x1b[?2026l"
 	ansiClearScreen             = "\x1b[2J"
+	ansiScrollUp                = "\x1b[1S"
+	ansiScrollDown              = "\x1b[1T"
+	ansiResetScrollRegion       = "\x1b[r"
 	conversationPadding         = 1
 	conversationVerticalPadding = 1
 )
@@ -65,28 +68,31 @@ type renderedInput struct {
 }
 
 type terminalFrame struct {
-	width             int
-	height            int
-	rows              []string
-	plainRows         []string
-	cursorRow         int
-	cursorColumn      int
-	cursorVisible     bool
-	layout            tuiLayout
-	conversationTop   int
-	conversationLines []string
+	width               int
+	height              int
+	rows                []string
+	plainRows           []string
+	cursorRow           int
+	cursorColumn        int
+	cursorVisible       bool
+	layout              tuiLayout
+	conversationTop     int
+	conversationLines   []string
+	conversationVersion uint64
 }
 
 type renderPreparation struct {
 	input             renderedInput
 	layout            tuiLayout
 	conversationLines []styledLine
+	conversationPlain []string
 	scrollTop         int
 }
 
 type tuiRenderer struct {
 	frame               terminalFrame
 	conversationLines   []styledLine
+	conversationPlain   []string
 	conversationWidth   int
 	conversationVersion uint64
 }
@@ -165,8 +171,15 @@ func (r *tuiRenderer) renderPending(model *tuiModel, forceRedraw bool) (string, 
 	previous := r.frame
 	resized := previous.width != 0 && (previous.width != next.width || previous.height != next.height)
 	full := previous.width == 0 || resized || forceRedraw || len(previous.rows) != len(next.rows)
+	scroll, scrolling := conversationScrollUpdate(previous, next, full)
 	changed := make([]int, 0, len(next.rows))
 	for index, row := range next.rows {
+		if scrolling && index < next.layout.conversationHeight {
+			if index == scroll.exposedRow {
+				changed = append(changed, index)
+			}
+			continue
+		}
 		if full || row != previous.rows[index] {
 			changed = append(changed, index)
 		}
@@ -182,6 +195,9 @@ func (r *tuiRenderer) renderPending(model *tuiModel, forceRedraw bool) (string, 
 	if resized || forceRedraw {
 		output.WriteString(ansiClearScreen)
 	}
+	if scrolling {
+		writeConversationScroll(&output, next.layout.conversationHeight, scroll.delta)
+	}
 	for _, index := range changed {
 		output.WriteString(next.rows[index])
 	}
@@ -193,15 +209,75 @@ func (r *tuiRenderer) renderPending(model *tuiModel, forceRedraw bool) (string, 
 	return output.String(), next
 }
 
+type conversationScroll struct {
+	delta      int
+	exposedRow int
+}
+
+func conversationScrollUpdate(previous, next terminalFrame, full bool) (conversationScroll, bool) {
+	height := next.layout.conversationHeight
+	if full || height < 2 || previous.layout != next.layout || previous.conversationVersion != next.conversationVersion {
+		return conversationScroll{}, false
+	}
+
+	delta := next.conversationTop - previous.conversationTop
+	switch delta {
+	case 1:
+		for row := 0; row < height-1; row++ {
+			if !sameRenderedRow(next.rows[row], row+1, previous.rows[row+1], row+2) {
+				return conversationScroll{}, false
+			}
+		}
+		return conversationScroll{delta: delta, exposedRow: height - 1}, true
+	case -1:
+		for row := 1; row < height; row++ {
+			if !sameRenderedRow(next.rows[row], row+1, previous.rows[row-1], row) {
+				return conversationScroll{}, false
+			}
+		}
+		return conversationScroll{delta: delta}, true
+	default:
+		return conversationScroll{}, false
+	}
+}
+
+func sameRenderedRow(left string, leftRow int, right string, rightRow int) bool {
+	left, leftOK := strings.CutPrefix(left, "\x1b["+strconv.Itoa(leftRow)+";1H")
+	right, rightOK := strings.CutPrefix(right, "\x1b["+strconv.Itoa(rightRow)+";1H")
+	return leftOK && rightOK && left == right
+}
+
+func writeConversationScroll(output *strings.Builder, height, delta int) {
+	output.WriteString("\x1b[1;")
+	output.WriteString(strconv.Itoa(height))
+	output.WriteByte('r')
+	if delta > 0 {
+		output.WriteString(ansiScrollUp)
+	} else {
+		output.WriteString(ansiScrollDown)
+	}
+	output.WriteString(ansiResetScrollRegion)
+}
+
 func (r *tuiRenderer) prepare(model *tuiModel) renderPreparation {
 	input, layout := modelInputLayout(model)
 	if r.conversationWidth != model.width || r.conversationVersion != model.conversationVersion {
 		r.conversationLines = modelConversationLines(model, model.width)
+		r.conversationPlain = make([]string, len(r.conversationLines))
+		for index, line := range r.conversationLines {
+			r.conversationPlain[index] = renderedLineText(line, model.width)
+		}
 		r.conversationWidth = model.width
 		r.conversationVersion = model.conversationVersion
 	}
 
-	return renderPreparation{input: input, layout: layout, conversationLines: r.conversationLines, scrollTop: model.scrollTop}
+	return renderPreparation{
+		input:             input,
+		layout:            layout,
+		conversationLines: r.conversationLines,
+		conversationPlain: r.conversationPlain,
+		scrollTop:         model.scrollTop,
+	}
 }
 
 func (r *tuiRenderer) normalizeViewport(model *tuiModel) {
@@ -282,21 +358,18 @@ func projectTerminalFrame(model *tuiModel, prepared renderPreparation) terminalF
 		}
 		renderedRows[row] = renderedRow
 	}
-	conversationPlain := make([]string, len(prepared.conversationLines))
-	for index, line := range prepared.conversationLines {
-		conversationPlain[index] = renderedLineText(line, width)
-	}
 	return terminalFrame{
-		width:             width,
-		height:            height,
-		rows:              renderedRows,
-		plainRows:         plainRows,
-		cursorRow:         layout.inputRow + input.cursorRow,
-		cursorColumn:      input.cursorColumn,
-		cursorVisible:     layout.inputRow > 0,
-		layout:            layout,
-		conversationTop:   prepared.scrollTop,
-		conversationLines: conversationPlain,
+		width:               width,
+		height:              height,
+		rows:                renderedRows,
+		plainRows:           plainRows,
+		cursorRow:           layout.inputRow + input.cursorRow,
+		cursorColumn:        input.cursorColumn,
+		cursorVisible:       layout.inputRow > 0,
+		layout:              layout,
+		conversationTop:     prepared.scrollTop,
+		conversationLines:   prepared.conversationPlain,
+		conversationVersion: model.conversationVersion,
 	}
 }
 
