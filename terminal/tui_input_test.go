@@ -94,6 +94,12 @@ func TestKeyDecoderHandlesModifiedKeys(t *testing.T) {
 	}
 }
 
+func TestKeyDecoderTreatsShiftSpaceAsSpace(t *testing.T) {
+	decoder := &keyDecoder{}
+	events := decoder.feed([]byte("\x1b[32;2u"), false)
+	assertKeyEvents(t, events, []keyEvent{{code: keyText, text: " "}})
+}
+
 func TestKeyDecoderHandlesSGRMouseEvents(t *testing.T) {
 	decoder := &keyDecoder{}
 	if events := decoder.feed([]byte("\x1b[<0;10"), false); len(events) != 0 {

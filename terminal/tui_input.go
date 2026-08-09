@@ -489,6 +489,8 @@ func matchKittyKeySequence(buffer []byte) (int, bool, keyEvent, bool) {
 	}
 
 	switch {
+	case codepoint == 32 && shift:
+		return consumed, false, keyEvent{code: keyText, text: " "}, true
 	case (codepoint == 13 || codepoint == kittyKeypadEnter) && shift:
 		return consumed, false, keyEvent{code: keyNewline}, true
 	case codepoint == 13 || codepoint == kittyKeypadEnter:
