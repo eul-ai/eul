@@ -27,6 +27,17 @@ type retryableOperationError struct {
 func (e *retryableOperationError) Error() string { return e.cause.Error() }
 func (e *retryableOperationError) Unwrap() error { return e.cause }
 
+// net/http exposes its internal HTTP/2 stream errors to matching structs through errors.As.
+type http2StreamErrorCode uint32
+
+type http2StreamError struct {
+	StreamID uint32
+	Code     http2StreamErrorCode
+	Cause    error
+}
+
+func (http2StreamError) Error() string { return "HTTP/2 stream error" }
+
 type httpResponseError struct {
 	message    string
 	statusCode int
@@ -145,6 +156,13 @@ func parseRetryAfter(value string, now time.Time) time.Duration {
 }
 
 func isRetryableNetworkError(err error) bool {
+	const http2InternalError http2StreamErrorCode = 2
+
+	var streamErr http2StreamError
+	if errors.As(err, &streamErr) && streamErr.Code == http2InternalError {
+		return true
+	}
+
 	for _, target := range []error{
 		io.ErrUnexpectedEOF,
 		syscall.ECONNABORTED,
