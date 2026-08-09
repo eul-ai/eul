@@ -16,8 +16,6 @@ type agentSession struct {
 	engine          *agent.Engine
 	tools           *tool.Registry
 	terminalOptions terminal.Options
-	prompt          string
-	oneShot         bool
 }
 
 func newAgentSession(
@@ -74,14 +72,11 @@ func newAgentSession(
 	}
 
 	return &agentSession{
-		engine:  engine,
-		tools:   registry,
-		prompt:  config.prompt,
-		oneShot: config.oneShot,
+		engine: engine,
+		tools:  registry,
 		terminalOptions: terminal.Options{
 			Input:            runtime.stdin,
 			Output:           runtime.stdout,
-			ErrorOutput:      runtime.stderr,
 			Model:            config.model,
 			WorkingDirectory: config.cwd,
 			ThinkingLevel:    currentThinkingLevel,
@@ -95,14 +90,7 @@ func newAgentSession(
 }
 
 func (session *agentSession) run(ctx context.Context) error {
-	var runErr error
-	if session.oneShot {
-		runErr = terminal.RunOneShot(ctx, session.engine, session.prompt, session.terminalOptions)
-	} else {
-		runErr = terminal.Run(ctx, session.engine, session.terminalOptions)
-	}
-
-	return session.finish(runErr)
+	return session.finish(terminal.Run(ctx, session.engine, session.terminalOptions))
 }
 
 func (session *agentSession) finish(runErr error) error {

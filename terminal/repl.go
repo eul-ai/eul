@@ -10,8 +10,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"golang.org/x/term"
-
 	"yaah/agent"
 )
 
@@ -22,7 +20,7 @@ const (
 
 var (
 	ErrInterrupted  = errors.New("terminal: interrupted")
-	ErrNotTerminal  = errors.New("terminal: interactive mode requires terminal input and output; provide a prompt for one-shot mode")
+	ErrNotTerminal  = errors.New("terminal: interactive mode requires terminal input and output")
 	errInputTooLong = errors.New("terminal: input is too long")
 	errInvalidInput = errors.New("terminal: input must be valid UTF-8 text without NUL")
 	errOutput       = errors.New("terminal: write output")
@@ -41,7 +39,6 @@ type Engine interface {
 type Options struct {
 	Input            io.Reader
 	Output           io.Writer
-	ErrorOutput      io.Writer
 	Model            string
 	WorkingDirectory string
 	ThinkingLevel    agent.ThinkingLevel
@@ -56,11 +53,6 @@ type fileDescriptor interface {
 	Fd() uintptr
 }
 
-func IsTerminal(value any) bool {
-	fd, ok := descriptor(value)
-	return ok && term.IsTerminal(fd)
-}
-
 func descriptor(value any) (int, bool) {
 	provider, ok := value.(fileDescriptor)
 	if !ok {
@@ -68,176 +60,6 @@ func descriptor(value any) (int, bool) {
 	}
 
 	return int(provider.Fd()), true
-}
-
-func RunOneShot(ctx context.Context, engine Engine, prompt string, options Options) error {
-	runErr, interrupted := runTurn(ctx, engine, prompt, options)
-	if contextErr := ctx.Err(); contextErr != nil {
-		return contextErr
-	}
-
-	if interrupted {
-		return ErrInterrupted
-	}
-	return runErr
-}
-
-func runTurn(parent context.Context, engine Engine, prompt string, options Options) (error, bool) {
-	turnContext, cancel := context.WithCancel(parent)
-	defer cancel()
-
-	renderer := eventRenderer{output: options.Output, errorOutput: options.ErrorOutput}
-	done := make(chan error, 1)
-	go func() {
-		_, err := engine.Run(turnContext, prompt, renderer.render)
-		done <- err
-	}()
-
-	interrupted := false
-	parentCanceled := false
-	interrupts := options.Interrupts
-	parentDone := parent.Done()
-	finish := func(runErr error) (error, bool) {
-		if err := renderer.finish(); err != nil {
-			return err, interrupted
-		}
-		if parentCanceled {
-			return parent.Err(), false
-		}
-		return runErr, interrupted
-	}
-
-	for {
-		select {
-		case runErr := <-done:
-			return finish(runErr)
-		case _, ok := <-interrupts:
-			if !ok {
-				interrupts = nil
-				continue
-			}
-			select {
-			case runErr := <-done:
-				return finish(runErr)
-			default:
-			}
-
-			if interrupted {
-				continue
-			}
-			interrupted = true
-			cancel()
-		case <-parentDone:
-			parentDone = nil
-			parentCanceled = true
-			cancel()
-		}
-	}
-}
-
-type eventRenderer struct {
-	output         io.Writer
-	errorOutput    io.Writer
-	assistantOpen  bool
-	reasoningOpen  bool
-	executingTools map[string]struct{}
-}
-
-func (r *eventRenderer) render(event agent.Event) error {
-	switch event.Kind {
-	case agent.EventAssistantText:
-		if err := r.finishReasoning(); err != nil {
-			return err
-		}
-		text := sanitizeAssistantText(event.Text)
-		if err := writeOutput(r.output, "%s", text); err != nil {
-			return err
-		}
-		if text != "" {
-			r.assistantOpen = !strings.HasSuffix(text, "\n")
-		}
-	case agent.EventAssistantReasoning:
-		if err := r.finishAssistant(); err != nil {
-			return err
-		}
-		text := sanitizeAssistantText(event.Text)
-		if err := writeOutput(r.errorOutput, "%s", text); err != nil {
-			return err
-		}
-		if text != "" {
-			r.reasoningOpen = !strings.HasSuffix(text, "\n")
-		}
-	case agent.EventCompactionStart:
-		if err := r.finish(); err != nil {
-			return err
-		}
-		if err := writeOutput(r.errorOutput, "[context] compacting conversation\n"); err != nil {
-			return err
-		}
-	case agent.EventGoalContinuation:
-		if err := r.finish(); err != nil {
-			return err
-		}
-		if err := writeOutput(r.errorOutput, "[goal] continuing\n"); err != nil {
-			return err
-		}
-	case agent.EventToolExecute:
-		if err := r.finish(); err != nil {
-			return err
-		}
-		if err := writeOutput(r.errorOutput, "[tool] %s\n", summarizeToolExecution(event.Call, event.Presentation)); err != nil {
-			return err
-		}
-		if r.executingTools == nil {
-			r.executingTools = make(map[string]struct{})
-		}
-		r.executingTools[event.Call.ID] = struct{}{}
-	case agent.EventToolEnd:
-		if _, exists := r.executingTools[event.Call.ID]; !exists {
-			return nil
-		}
-		delete(r.executingTools, event.Call.ID)
-		if err := writeOutput(r.errorOutput, "[tool] %s\n", summarizeToolEnd(event.Call, event.Presentation, event.Result)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (r *eventRenderer) finish() error {
-	if err := r.finishAssistant(); err != nil {
-		return err
-	}
-	return r.finishReasoning()
-}
-
-func (r *eventRenderer) finishAssistant() error {
-	if !r.assistantOpen {
-		return nil
-	}
-
-	r.assistantOpen = false
-	return writeOutput(r.output, "\n")
-}
-
-func (r *eventRenderer) finishReasoning() error {
-	if !r.reasoningOpen {
-		return nil
-	}
-
-	r.reasoningOpen = false
-	return writeOutput(r.errorOutput, "\n")
-}
-
-func summarizeToolExecution(call agent.ToolCall, presentation agent.ToolPresentation) string {
-	return diagnostic(toolHeading(call, presentation), 200)
-}
-
-func summarizeToolEnd(call agent.ToolCall, presentation agent.ToolPresentation, result agent.ToolResult) string {
-	if call.Name == "" {
-		call.Name = result.Tool
-	}
-	return diagnostic(toolHeading(call, presentation)+" — "+toolResultOutcome(result, presentation), 200)
 }
 
 func toolTitle(call agent.ToolCall, presentation agent.ToolPresentation) string {

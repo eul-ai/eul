@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"yaah/agent"
 	oauth "yaah/auth/openai"
@@ -82,7 +81,7 @@ func TestBuildSubagentToolsUsesReadOnlyLSP(t *testing.T) {
 	}
 }
 
-func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
+func TestAgentSessionWiresModelAndTools(t *testing.T) {
 	cwd := t.TempDir()
 	projectInstructions := "Run focused tests before finishing."
 	if err := os.WriteFile(filepath.Join(cwd, "AGENTS.md"), []byte(projectInstructions), 0o644); err != nil {
@@ -113,12 +112,32 @@ func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 		}), nil
 	}
 
-	code := run([]string{"--model", "gpt-5.6-sol", "--thinking", "xhigh", "one shot prompt"}, runtime)
-	if code != exitSuccess {
-		t.Fatalf("run() code = %d, stderr = %q", code, stderr.String())
+	arguments, err := parseAgentArguments([]string{"--model", "gpt-5.6-sol", "--thinking", "xhigh"}, runtime)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if factoryCalls != 1 || providerOptions.ReasoningSummary != openaiadapter.ReasoningSummaryDetailed || gotRequest.Model != "gpt-5.6-sol" || gotRequest.ThinkingLevel != agent.ThinkingXHigh || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].Text != "one shot prompt" {
+	config, err := resolveAgentConfig(arguments, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options, err := openAIOptionsFromEnvironment(runtime.getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := newAgentSession(config, runtime, oauthTokenSource{manager: &fakeOAuthManager{}}, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, runErr := session.engine.Run(context.Background(), "test prompt", func(agent.Event) error { return nil })
+	if err := session.finish(runErr); err != nil {
+		t.Fatal(err)
+	}
+
+	if factoryCalls != 1 || providerOptions.ReasoningSummary != openaiadapter.ReasoningSummaryDetailed || gotRequest.Model != "gpt-5.6-sol" || gotRequest.ThinkingLevel != agent.ThinkingXHigh || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].Text != "test prompt" {
 		t.Fatalf("factory calls=%d request=%+v", factoryCalls, gotRequest)
+	}
+	if result.Text != "answer" {
+		t.Fatalf("result = %+v", result)
 	}
 	if !strings.Contains(gotRequest.Instructions, projectInstructions) || !strings.Contains(gotRequest.Instructions, filepath.ToSlash(filepath.Join(cwd, "AGENTS.md"))) || !strings.Contains(gotRequest.Instructions, "Current working directory: "+filepath.ToSlash(cwd)) {
 		t.Fatalf("instructions omit project context:\n%s", gotRequest.Instructions)
@@ -131,12 +150,9 @@ func TestRunOneShotWiresModelToolsAndOutput(t *testing.T) {
 	if !slices.Equal(names, wantNames) {
 		t.Fatalf("tools = %v, want %v", names, wantNames)
 	}
-	if stdout.String() != "answer\n" {
-		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
-	}
 }
 
-func TestRunOneShotFeedsConcurrentSubagentsBackToMain(t *testing.T) {
+func TestAgentSessionFeedsConcurrentSubagentsBackToMain(t *testing.T) {
 	cwd := t.TempDir()
 	projectInstructions := "Follow project instructions."
 	if err := os.WriteFile(filepath.Join(cwd, "AGENTS.md"), []byte(projectInstructions), 0o644); err != nil {
@@ -218,11 +234,28 @@ func TestRunOneShotFeedsConcurrentSubagentsBackToMain(t *testing.T) {
 		}), nil
 	}
 
-	if code := run([]string{"use two subagents"}, runtime); code != exitSuccess {
-		t.Fatalf("run() code = %d, stderr = %q", code, stderr.String())
+	arguments, err := parseAgentArguments(nil, runtime)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if stdout.String() != "combined answer\n" || mainCalls != 2 {
-		t.Fatalf("stdout = %q, main calls = %d", stdout.String(), mainCalls)
+	config, err := resolveAgentConfig(arguments, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options, err := openAIOptionsFromEnvironment(runtime.getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := newAgentSession(config, runtime, oauthTokenSource{manager: &fakeOAuthManager{}}, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, runErr := session.engine.Run(context.Background(), "use two subagents", func(agent.Event) error { return nil })
+	if err := session.finish(runErr); err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "combined answer" || mainCalls != 2 {
+		t.Fatalf("result = %+v, main calls = %d", result, mainCalls)
 	}
 
 	mu.Lock()
@@ -251,7 +284,7 @@ func TestRunOneShotFeedsConcurrentSubagentsBackToMain(t *testing.T) {
 	}
 }
 
-func TestRunUsesStoredOAuthAndResolvesTokenAtRequestTime(t *testing.T) {
+func TestAgentSessionUsesStoredOAuthAtRequestTime(t *testing.T) {
 	cwd := t.TempDir()
 	const access = "oauth-access-secret"
 	manager := &fakeOAuthManager{credential: oauth.AccessCredential{AccessToken: access, AccountID: "account"}}
@@ -277,11 +310,32 @@ func TestRunUsesStoredOAuthAndResolvesTokenAtRequestTime(t *testing.T) {
 		}), nil
 	}
 
-	if code := run([]string{"hello"}, runtime); code != exitSuccess {
-		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	tokenSource, err := resolveTokenSource(runtime)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if stdout.String() != "oauth answer\n" || strings.Contains(stdout.String()+stderr.String(), access) || manager.resolveCalls != 2 {
-		t.Fatalf("stdout=%q stderr=%q resolveCalls=%d", stdout.String(), stderr.String(), manager.resolveCalls)
+	arguments, err := parseAgentArguments(nil, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := resolveAgentConfig(arguments, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options, err := openAIOptionsFromEnvironment(runtime.getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := newAgentSession(config, runtime, tokenSource, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, runErr := session.engine.Run(context.Background(), "hello", func(agent.Event) error { return nil })
+	if err := session.finish(runErr); err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "oauth answer" || manager.resolveCalls != 2 {
+		t.Fatalf("result=%+v resolveCalls=%d", result, manager.resolveCalls)
 	}
 }
 
@@ -328,56 +382,6 @@ func TestRunLoginAndLogoutCommands(t *testing.T) {
 	}
 }
 
-func TestRunPipedPromptUsesEnvironmentModelAndResolvedCWD(t *testing.T) {
-	cwd := t.TempDir()
-	nested := filepath.Join(cwd, "nested")
-	if err := os.Mkdir(nested, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	var stdout, stderr bytes.Buffer
-	var request agent.Request
-	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{
-		"OPENAI_MODEL":            "environment-model",
-		"OPENAI_REASONING_EFFORT": "max",
-	})
-	runtime.stdin = strings.NewReader("piped prompt\n")
-	runtime.newProvider = func(openaiadapter.CodexTokenSource, openaiadapter.Options) (agent.Provider, error) {
-		return providerFunction(func(_ context.Context, got agent.Request, sink agent.TextSink) (agent.Response, error) {
-			request = got
-			if err := sink("answer"); err != nil {
-				return agent.Response{}, err
-			}
-			return agent.Response{Text: "answer"}, nil
-		}), nil
-	}
-
-	code := run([]string{"--cwd", "nested"}, runtime)
-	if code != exitSuccess {
-		t.Fatalf("run() code = %d, stderr = %q", code, stderr.String())
-	}
-	if request.Model != "environment-model" || request.ThinkingLevel != agent.DefaultThinkingLevel || len(request.Inputs) != 1 || request.Inputs[0].Text != "piped prompt\n" {
-		t.Fatalf("request = %+v", request)
-	}
-	if stdout.String() != "answer\n" {
-		t.Fatalf("stdout = %q", stdout.String())
-	}
-}
-
-func TestReadPipedPromptValidation(t *testing.T) {
-	if prompt, err := readPipedPrompt(strings.NewReader("hello\nworld\n")); err != nil || prompt != "hello\nworld\n" {
-		t.Fatalf("readPipedPrompt() = %q, %v", prompt, err)
-	}
-	for _, input := range []string{"", " \n", "bad\x00", strings.Repeat("x", maxPipedPromptBytes+1)} {
-		if _, err := readPipedPrompt(strings.NewReader(input)); err == nil {
-			t.Fatalf("readPipedPrompt(%d bytes) succeeded", len(input))
-		}
-	}
-	if _, err := readPipedPrompt(bytes.NewReader([]byte{0xff})); err == nil {
-		t.Fatal("readPipedPrompt() accepted invalid UTF-8")
-	}
-}
-
 func TestRunConfigurationAndUsageErrors(t *testing.T) {
 	cwd := t.TempDir()
 	tests := []struct {
@@ -396,8 +400,7 @@ func TestRunConfigurationAndUsageErrors(t *testing.T) {
 		{name: "invalid thinking level", arguments: []string{"--thinking", "extreme"}, environment: map[string]string{"OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "thinking level must be one of"},
 		{name: "invalid reasoning summary", environment: map[string]string{"OPENAI_MODEL": "model", "OPENAI_REASONING_SUMMARY": "verbose"}, wantCode: exitUsage, want: "OPENAI_REASONING_SUMMARY"},
 		{name: "removed effort flag", arguments: []string{"--effort", "high"}, environment: map[string]string{"OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "flag provided but not defined"},
-		{name: "extra prompts", arguments: []string{"one", "two"}, environment: map[string]string{"OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "at most one prompt"},
-		{name: "empty prompt", arguments: []string{""}, environment: map[string]string{"OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "prompt must be nonempty"},
+		{name: "prompt argument", arguments: []string{"prompt"}, environment: map[string]string{"OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "accepts no prompt arguments"},
 		{name: "bad flag", arguments: []string{"--missing"}, wantCode: exitUsage, want: "flag provided but not defined"},
 	}
 
@@ -432,39 +435,6 @@ func TestRunRejectsInvalidWorkingDirectories(t *testing.T) {
 		if code != exitFailure || !strings.Contains(stderr.String(), "working directory") {
 			t.Fatalf("path=%q code=%d stderr=%q", path, code, stderr.String())
 		}
-	}
-}
-
-func TestRunOneShotInterruptReturns130(t *testing.T) {
-	cwd := t.TempDir()
-	started := make(chan struct{})
-	interrupts := make(chan os.Signal, 1)
-	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_MODEL": "model"})
-	runtime.interrupts = interrupts
-	runtime.newProvider = func(openaiadapter.CodexTokenSource, openaiadapter.Options) (agent.Provider, error) {
-		return providerFunction(func(ctx context.Context, _ agent.Request, _ agent.TextSink) (agent.Response, error) {
-			close(started)
-			<-ctx.Done()
-			return agent.Response{}, ctx.Err()
-		}), nil
-	}
-
-	done := make(chan int, 1)
-	go func() { done <- run([]string{"wait"}, runtime) }()
-	select {
-	case <-started:
-		interrupts <- os.Interrupt
-	case <-time.After(2 * time.Second):
-		t.Fatal("provider did not start")
-	}
-	select {
-	case code := <-done:
-		if code != exitInterrupted {
-			t.Fatalf("run() code = %d", code)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("run did not finish")
 	}
 }
 

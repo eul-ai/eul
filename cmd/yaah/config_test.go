@@ -13,39 +13,26 @@ import (
 	openaiadapter "yaah/provider/openai"
 )
 
-func TestParseAgentArgumentsSelectsPromptSource(t *testing.T) {
-	cwd := t.TempDir()
-	for _, test := range []struct {
-		name      string
-		arguments []string
-		input     string
-		want      agentArguments
-	}{
-		{
-			name:      "argument",
-			arguments: []string{"--model", "gpt-5.6-sol", "--thinking", "high", "explain"},
-			input:     "ignored",
-			want:      agentArguments{model: "gpt-5.6-sol", thinkingLevel: agent.ThinkingHigh, prompt: "explain", oneShot: true},
-		},
-		{
-			name:  "pipe",
-			input: "from pipe\n",
-			want:  agentArguments{model: "environment-model", thinkingLevel: agent.DefaultThinkingLevel, prompt: "from pipe\n", oneShot: true},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_MODEL": "environment-model"})
-			runtime.stdin = bytes.NewBufferString(test.input)
+func TestParseAgentArguments(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	runtime := testRuntime(t.TempDir(), &stdout, &stderr, map[string]string{"OPENAI_MODEL": "environment-model"})
 
-			got, err := parseAgentArguments(test.arguments, runtime)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != test.want {
-				t.Fatalf("arguments = %+v, want %+v", got, test.want)
-			}
-		})
+	got, err := parseAgentArguments([]string{"--model", "gpt-5.6-sol", "--thinking", "high", "--cwd", "project"}, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := agentArguments{model: "gpt-5.6-sol", thinkingLevel: agent.ThinkingHigh, cwd: "project"}
+	if got != want {
+		t.Fatalf("arguments = %+v, want %+v", got, want)
+	}
+}
+
+func TestParseAgentArgumentsRejectsPrompts(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	runtime := testRuntime(t.TempDir(), &stdout, &stderr, nil)
+
+	if _, err := parseAgentArguments([]string{"prompt"}, runtime); err == nil || !strings.Contains(err.Error(), "no prompt arguments") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -147,13 +134,11 @@ func TestResolveAgentConfigLoadsProjectAndResolvesWorkingDirectory(t *testing.T)
 		model:         "gpt-5.6-sol",
 		thinkingLevel: agent.ThinkingMax,
 		cwd:           "project",
-		prompt:        "inspect",
-		oneShot:       true,
 	}, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.model != "gpt-5.6-sol" || config.thinkingLevel != agent.ThinkingMax || config.cwd != cwd || config.projectInstructions != "Project rules." || config.prompt != "inspect" || !config.oneShot {
+	if config.model != "gpt-5.6-sol" || config.thinkingLevel != agent.ThinkingMax || config.cwd != cwd || config.projectInstructions != "Project rules." {
 		t.Fatalf("config = %+v", config)
 	}
 }

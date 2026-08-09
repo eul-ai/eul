@@ -4,19 +4,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"yaah/agent"
 	openaiadapter "yaah/provider/openai"
-	"yaah/terminal"
 )
-
-const maxPipedPromptBytes = 1024 * 1024
 
 type reportedFlagError struct {
 	error
@@ -30,8 +25,6 @@ type agentArguments struct {
 	model         string
 	thinkingLevel agent.ThinkingLevel
 	cwd           string
-	prompt        string
-	oneShot       bool
 }
 
 type agentConfig struct {
@@ -40,8 +33,6 @@ type agentConfig struct {
 	cwd                 string
 	projectInstructions string
 	skills              []agent.Skill
-	prompt              string
-	oneShot             bool
 }
 
 func parseAgentArguments(arguments []string, runtime appRuntime) (agentArguments, error) {
@@ -59,8 +50,8 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (agentArguments
 	if err := flags.Parse(arguments); err != nil {
 		return agentArguments{}, reportedFlagError{error: err}
 	}
-	if flags.NArg() > 1 {
-		return agentArguments{}, errors.New("usage error: expected at most one prompt argument")
+	if flags.NArg() != 0 {
+		return agentArguments{}, errors.New("usage error: yaah accepts no prompt arguments")
 	}
 
 	thinkingLevel, err := agent.ParseThinkingLevel(*thinking)
@@ -68,23 +59,7 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (agentArguments
 		return agentArguments{}, err
 	}
 
-	result := agentArguments{model: *model, thinkingLevel: thinkingLevel, cwd: *cwd}
-	switch {
-	case flags.NArg() == 1:
-		result.prompt = flags.Arg(0)
-		result.oneShot = true
-		if strings.TrimSpace(result.prompt) == "" {
-			return agentArguments{}, errors.New("one-shot prompt must be nonempty")
-		}
-	case !terminal.IsTerminal(runtime.stdin):
-		result.prompt, err = readPipedPrompt(runtime.stdin)
-		if err != nil {
-			return agentArguments{}, err
-		}
-		result.oneShot = true
-	}
-
-	return result, nil
+	return agentArguments{model: *model, thinkingLevel: thinkingLevel, cwd: *cwd}, nil
 }
 
 func resolveAgentConfig(arguments agentArguments, runtime appRuntime) (agentConfig, error) {
@@ -110,28 +85,7 @@ func resolveAgentConfig(arguments agentArguments, runtime appRuntime) (agentConf
 		cwd:                 cwd,
 		projectInstructions: projectInstructions,
 		skills:              agent.LoadSkills(skillDirectories...),
-		prompt:              arguments.prompt,
-		oneShot:             arguments.oneShot,
 	}, nil
-}
-
-func readPipedPrompt(reader io.Reader) (string, error) {
-	content, err := io.ReadAll(io.LimitReader(reader, maxPipedPromptBytes+1))
-	if err != nil {
-		return "", fmt.Errorf("read piped prompt: %w", err)
-	}
-	if len(content) > maxPipedPromptBytes {
-		return "", fmt.Errorf("piped prompt exceeds %d bytes", maxPipedPromptBytes)
-	}
-	if !utf8.Valid(content) || strings.IndexByte(string(content), 0) >= 0 {
-		return "", errors.New("piped prompt must be valid UTF-8 text without NUL")
-	}
-
-	prompt := string(content)
-	if strings.TrimSpace(prompt) == "" {
-		return "", errors.New("piped prompt must be nonempty")
-	}
-	return prompt, nil
 }
 
 func openAIOptionsFromEnvironment(getenv func(string) string) (openaiadapter.Options, error) {
