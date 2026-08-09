@@ -4,6 +4,9 @@ Eul is a focused coding agent for the terminal. It can explore a codebase, edit
 files, run commands, use language-server features, and work through multi-step
 tasks in an interactive conversation.
 
+Eul is heavily inspired by [Pi](https://github.com/badlogic/pi-mono), with *some*
+batteries included while still staying deliberately minimal.
+
 Eul is intended for trusted local use on macOS and Linux. Conversations are kept
 in memory and tools run directly on your machine with your permissions.
 
