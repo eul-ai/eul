@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" alt="Eul logo" width="256">
+  <img src="logo.png" alt="Eul logo" width="128">
 </p>
 
 Eul is a focused coding agent for the terminal. It can explore a codebase, edit
