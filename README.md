@@ -88,16 +88,18 @@ diffs, errors, context usage, and model activity visible while you work.
 
 | Control | Action |
 | --- | --- |
-| Enter | Submit a prompt or queue steering while the agent is working |
+| Enter | Submit a prompt, queue steering, or apply a selected completion |
 | Shift-Enter | Insert a newline |
 | Shift-Tab | Cycle supported thinking levels |
+| `/` | Show commands at the start of the editor |
 | `@` | Search for a file and insert its path |
-| Up / Down | Navigate prompt history or file-search results |
+| Tab | Apply the selected command or file completion |
+| Up / Down | Navigate prompt history or completion results |
 | Page Up / Page Down | Scroll the conversation |
 | Mouse wheel | Scroll the conversation |
 | Mouse drag | Select and copy conversation text |
 | Alt-Up | Restore queued steering messages to the editor |
-| Escape | Close file search or cancel the active turn |
+| Escape | Close the completion window or cancel the active turn |
 | Ctrl-C | Clear the editor, cancel the active turn, or exit from an empty prompt |
 | Ctrl-D | Exit from an empty prompt |
 | Ctrl-L | Redraw the terminal |

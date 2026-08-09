@@ -82,6 +82,7 @@ func newAgentSession(
 			ThinkingLevel:    currentThinkingLevel,
 			ThinkingLevels:   metadata.ThinkingLevels,
 			ContextWindow:    metadata.ContextWindow,
+			Skills:           config.skills,
 			Interrupts:       runtime.interrupts,
 			SetThinkingLevel: setThinkingLevel,
 			LoadUsage:        loadUsage,

@@ -125,7 +125,7 @@ func (m *tuiModel) dismissFilePicker() {
 }
 
 func (m *tuiModel) filePickerVisible() bool {
-	return maximumFilePickerHeight(m.height) > 0 && m.filePicker.active
+	return maximumPickerHeight(m.height) > 0 && m.filePicker.active
 }
 
 func (m *tuiModel) filePickerHeight() int {

@@ -108,7 +108,7 @@ func composeFrameRows(model *tuiModel, prepared renderPreparation) []styledLine 
 		rows[layout.bottomRuleRow-1] = styledLine{text: rule, style: ruleStyle}
 	}
 	if layout.pickerRow > 0 {
-		for index, line := range renderFilePicker(model, layout.pickerHeight) {
+		for index, line := range renderPicker(model, layout.pickerHeight) {
 			rows[layout.pickerRow-1+index] = line
 		}
 	}

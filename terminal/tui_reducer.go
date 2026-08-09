@@ -37,6 +37,9 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 	if key.code == keyMouse {
 		return reduceMouse(model, key.mouse, frame), nil
 	}
+	if reduceCommandPickerKey(model, key) {
+		return tuiAction{}, nil
+	}
 	if reduceFilePickerKey(model, key) {
 		return tuiAction{}, nil
 	}
@@ -102,10 +105,10 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 		model.moveRight()
 	case keyHome:
 		model.cursor = 0
-		model.refreshFilePicker(false)
+		model.refreshInputPickers(false)
 	case keyEnd:
 		model.cursor = len(model.input)
-		model.refreshFilePicker(false)
+		model.refreshInputPickers(false)
 	case keyBackspace:
 		model.backspace()
 	case keyDelete:
@@ -125,6 +128,36 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 		return reducePrompt(model), nil
 	}
 	return tuiAction{}, nil
+}
+
+func reduceCommandPickerKey(model *tuiModel, key keyEvent) bool {
+	if !model.commandPickerVisible() {
+		return false
+	}
+
+	switch key.code {
+	case keyUp:
+		model.moveCommandPickerSelection(-1)
+	case keyDown:
+		model.moveCommandPickerSelection(1)
+	case keyTab:
+		if err := model.applyCommandPickerSelection(); err != nil {
+			setInputError(model, err)
+		}
+	case keyEnter:
+		selected := model.commandPicker.matches[model.commandPicker.selected]
+		if selected.text == model.commandPicker.query {
+			return false
+		}
+		if err := model.applyCommandPickerSelection(); err != nil {
+			setInputError(model, err)
+		}
+	case keyEscape:
+		model.dismissCommandPicker()
+	default:
+		return false
+	}
+	return true
 }
 
 func reduceFilePickerKey(model *tuiModel, key keyEvent) bool {
@@ -199,7 +232,7 @@ func reducePrompt(model *tuiModel) tuiAction {
 	trimmed := strings.TrimSpace(prompt)
 	switch trimmed {
 	case "/help":
-		model.appendBlock(blockInfo, "Commands:\n  /help             show this help\n  /clear            discard conversation and goal state\n  /compact          compact the conversation context\n  /exit             exit eul\n  /goal [objective] show or set the active goal\n  /goal clear       clear the active goal\n  /skill:<name>     load a skill")
+		model.appendBlock(blockInfo, commandHelpText())
 	case "/clear":
 		return tuiAction{kind: tuiActionReset}
 	case "/compact":

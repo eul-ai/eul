@@ -66,6 +66,8 @@ type tuiModel struct {
 	input                      []rune
 	cursor                     int
 	steering                   []string
+	commandCompletions         []commandCompletion
+	commandPicker              commandPickerState
 	filePicker                 filePickerState
 	history                    []string
 	historyIndex               int
@@ -97,6 +99,7 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 		thinkingLevels:             thinkingLevels,
 		thinkingSelectionAvailable: options.SetThinkingLevel != nil,
 		contextWindow:              options.ContextWindow,
+		commandCompletions:         commandCompletions(options.Skills),
 		filePicker:                 filePickerState{enabled: options.WorkingDirectory != ""},
 		historyIndex:               -1,
 		following:                  true,
@@ -263,7 +266,7 @@ func (m *tuiModel) insertInput(text string) error {
 	}
 
 	m.insertRunes([]rune(text))
-	m.refreshFilePicker(true)
+	m.refreshInputPickers(true)
 	return nil
 }
 
@@ -272,7 +275,7 @@ func (m *tuiModel) insertNewline() error {
 		return errInputTooLong
 	}
 	m.insertRunes([]rune{'\n'})
-	m.clearFilePicker()
+	m.clearInputPickers()
 	return nil
 }
 
@@ -289,6 +292,16 @@ func (m *tuiModel) clearInput() {
 	m.cursor = 0
 	m.historyIndex = -1
 	m.historyDraft = ""
+	m.clearInputPickers()
+}
+
+func (m *tuiModel) refreshInputPickers(reopen bool) {
+	m.refreshCommandPicker(reopen)
+	m.refreshFilePicker(reopen)
+}
+
+func (m *tuiModel) clearInputPickers() {
+	m.clearCommandPicker()
 	m.clearFilePicker()
 }
 
@@ -316,7 +329,7 @@ func (m *tuiModel) backspace() {
 	copy(m.input[m.cursor-1:], m.input[m.cursor:])
 	m.input = m.input[:len(m.input)-1]
 	m.cursor--
-	m.refreshFilePicker(true)
+	m.refreshInputPickers(true)
 }
 
 func (m *tuiModel) delete() {
@@ -327,20 +340,20 @@ func (m *tuiModel) delete() {
 	m.leaveHistory()
 	copy(m.input[m.cursor:], m.input[m.cursor+1:])
 	m.input = m.input[:len(m.input)-1]
-	m.refreshFilePicker(true)
+	m.refreshInputPickers(true)
 }
 
 func (m *tuiModel) moveLeft() {
 	if m.cursor > 0 {
 		m.cursor--
-		m.refreshFilePicker(false)
+		m.refreshInputPickers(false)
 	}
 }
 
 func (m *tuiModel) moveRight() {
 	if m.cursor < len(m.input) {
 		m.cursor++
-		m.refreshFilePicker(false)
+		m.refreshInputPickers(false)
 	}
 }
 
@@ -384,7 +397,7 @@ func (m *tuiModel) leaveHistory() {
 func (m *tuiModel) setInput(value string) {
 	m.input = []rune(value)
 	m.cursor = len(m.input)
-	m.clearFilePicker()
+	m.clearInputPickers()
 }
 
 func (m *tuiModel) takePrompt() (string, bool) {
@@ -469,6 +482,7 @@ func (m *tuiModel) finishPendingTools(outcome string) {
 func (m *tuiModel) beginTurn(prompt string) {
 	m.appendBlock(blockUser, prompt)
 	m.running = true
+	m.refreshCommandPickerAvailability()
 	m.interrupted = false
 	m.turnExecutedTool = false
 	m.activity = activity{kind: activityThinking}
@@ -476,6 +490,7 @@ func (m *tuiModel) beginTurn(prompt string) {
 
 func (m *tuiModel) beginCompaction() {
 	m.running = true
+	m.refreshCommandPickerAvailability()
 	m.interrupted = false
 	m.turnExecutedTool = false
 	m.activity = activity{kind: activityCompacting}
@@ -483,6 +498,7 @@ func (m *tuiModel) beginCompaction() {
 
 func (m *tuiModel) finishTurn(runErr error) {
 	m.running = false
+	m.refreshCommandPickerAvailability()
 	m.closeStream()
 	executedTool := m.turnExecutedTool
 	m.turnExecutedTool = false

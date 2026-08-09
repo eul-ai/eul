@@ -54,7 +54,8 @@ func TestNewAgentSessionWiresOptionalProviderUsage(t *testing.T) {
 		return provider, nil
 	}}
 	cwd := t.TempDir()
-	session, err := newAgentSession(agentConfig{model: "model", thinkingLevel: agent.ThinkingMedium, cwd: cwd}, runtime, nil, openaiadapter.Options{})
+	skills := []agent.Skill{{Name: "review", Description: "Review code"}}
+	session, err := newAgentSession(agentConfig{model: "model", thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills}, runtime, nil, openaiadapter.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,6 +68,9 @@ func TestNewAgentSessionWiresOptionalProviderUsage(t *testing.T) {
 	}
 	if session.terminalOptions.ContextWindow != 123_000 || session.terminalOptions.ThinkingLevel != agent.ThinkingHigh {
 		t.Fatalf("terminal metadata = %+v", session.terminalOptions)
+	}
+	if len(session.terminalOptions.Skills) != 1 || session.terminalOptions.Skills[0].Name != "review" {
+		t.Fatalf("terminal skills = %+v", session.terminalOptions.Skills)
 	}
 }
 

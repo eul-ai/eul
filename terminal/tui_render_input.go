@@ -66,12 +66,19 @@ func maximumInputHeight(height, pickerHeight int) int {
 	}
 }
 
-func maximumFilePickerHeight(height int) int {
+func maximumPickerHeight(height int) int {
 	return max(0, height-5)
 }
 
+func (m *tuiModel) pickerHeight() int {
+	if m.commandPickerVisible() {
+		return m.commandPickerHeight()
+	}
+	return m.filePickerHeight()
+}
+
 func modelInputLayout(model *tuiModel) (renderedInput, tuiLayout) {
-	pickerHeight := min(model.filePickerHeight(), maximumFilePickerHeight(model.height))
+	pickerHeight := min(model.pickerHeight(), maximumPickerHeight(model.height))
 	input := renderInput(model, model.width, maximumInputHeight(model.height, pickerHeight))
 	return input, calculateLayout(model.height, len(input.lines), pickerHeight)
 }
@@ -148,6 +155,49 @@ func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {
 		cursorRow:    cursorRow - start,
 		cursorColumn: cursorColumn,
 	}
+}
+
+func renderPicker(model *tuiModel, height int) []styledLine {
+	if model.commandPickerVisible() {
+		return renderCommandPicker(model, height)
+	}
+	return renderFilePicker(model, height)
+}
+
+func renderCommandPicker(model *tuiModel, height int) []styledLine {
+	if height <= 0 {
+		return nil
+	}
+
+	selectedText := ""
+	if model.commandPicker.selected >= 0 && model.commandPicker.selected < len(model.commandPicker.matches) {
+		selectedText = model.commandPicker.matches[model.commandPicker.selected].text
+	}
+	matches := model.visibleCommandPickerMatches()
+	lines := make([]styledLine, 0, min(height, len(matches)))
+	for _, match := range matches[:min(height, len(matches))] {
+		description := ""
+		if model.width >= 30 {
+			description = truncateCells(match.description, model.width/2, true)
+		}
+		line := styledLine{
+			prefixText: "  ",
+			text:       match.text,
+			rightText:  description,
+			style:      lineStyle{foreground: currentTheme.muted},
+		}
+		if match.text == selectedText {
+			line.prefixText = "> "
+			line.prefixForeground = &currentTheme.accent
+			line.style = lineStyle{
+				foreground:      currentTheme.foreground,
+				background:      currentTheme.selectedBackground,
+				paintBackground: true,
+			}
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 func renderFilePicker(model *tuiModel, height int) []styledLine {

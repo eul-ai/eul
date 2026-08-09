@@ -45,6 +45,7 @@ type Options struct {
 	ThinkingLevel    agent.ThinkingLevel
 	ThinkingLevels   []agent.ThinkingLevel
 	ContextWindow    int64
+	Skills           []agent.Skill
 	Interrupts       <-chan os.Signal
 	SetThinkingLevel func(agent.ThinkingLevel) error
 	LoadUsage        func(context.Context) (agent.ProviderUsage, error)
