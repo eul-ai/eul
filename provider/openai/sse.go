@@ -11,11 +11,21 @@ import (
 	"yaah/agent"
 )
 
+var errResponsesSSEIncomplete = errors.New("responses SSE stream ended without a terminal response")
+
 type streamObserver struct {
 	observer     agent.StreamObserver
 	sawDelta     bool
 	sawReasoning bool
 }
+
+type observerDeliveryError struct {
+	operation string
+	cause     error
+}
+
+func (e *observerDeliveryError) Error() string { return e.operation + ": " + e.cause.Error() }
+func (e *observerDeliveryError) Unwrap() error { return e.cause }
 
 type responseStreamEvent struct {
 	Type        string          `json:"type"`
@@ -89,7 +99,7 @@ func readSSE(reader io.Reader, maximum int64, handle func([]byte) (createRespons
 			if done {
 				return response, nil
 			}
-			return createResponseEnvelope{}, errors.New("responses SSE stream ended without a terminal response")
+			return createResponseEnvelope{}, errResponsesSSEIncomplete
 		}
 	}
 }
@@ -224,7 +234,7 @@ func (decoder *responseStreamDecoder) deliverToolCall(streamed streamedToolCall,
 		Complete:     complete,
 	}
 	if err := decoder.observer.observer.ToolCall(snapshot); err != nil {
-		return fmt.Errorf("deliver tool call: %w", err)
+		return &observerDeliveryError{operation: "deliver tool call", cause: err}
 	}
 	return nil
 }
@@ -236,7 +246,7 @@ func (decoder *responseStreamDecoder) deliverText(delta string) error {
 
 	if decoder.observer.observer.Text != nil {
 		if err := decoder.observer.observer.Text(delta); err != nil {
-			return fmt.Errorf("deliver text: %w", err)
+			return &observerDeliveryError{operation: "deliver text", cause: err}
 		}
 	}
 
@@ -251,7 +261,7 @@ func (decoder *responseStreamDecoder) deliverReasoning(delta string) error {
 
 	if decoder.observer.observer.Reasoning != nil {
 		if err := decoder.observer.observer.Reasoning(delta); err != nil {
-			return fmt.Errorf("deliver reasoning: %w", err)
+			return &observerDeliveryError{operation: "deliver reasoning", cause: err}
 		}
 	}
 
@@ -289,18 +299,18 @@ func (decoder *responseStreamDecoder) terminal(event responseStreamEvent) (creat
 }
 
 func streamError(event responseStreamEvent) error {
-	detail := ""
-	if event.Error != nil {
-		detail = formatResponseError(*event.Error)
+	errorDetail := responseError{Code: event.Code, Message: event.Message}
+	if event.Error != nil && formatResponseError(*event.Error) != "" {
+		errorDetail = *event.Error
 	}
 
-	if detail == "" {
-		detail = formatResponseError(responseError{Code: event.Code, Message: event.Message})
-	}
-
+	detail := formatResponseError(errorDetail)
 	if detail == "" {
 		detail = "unspecified error"
 	}
 
-	return errors.New("responses SSE error: " + detail)
+	return &responseFailureError{
+		message: "responses SSE error: " + detail,
+		detail:  errorDetail,
+	}
 }

@@ -30,6 +30,13 @@ type responseError struct {
 	Type    string `json:"type"`
 }
 
+type responseFailureError struct {
+	message string
+	detail  responseError
+}
+
+func (e *responseFailureError) Error() string { return e.message }
+
 type incompleteResponseDetails struct {
 	Reason string `json:"reason"`
 }
@@ -129,7 +136,10 @@ func normalizeResponse(response createResponseEnvelope) (string, []agent.ToolCal
 
 func validateCompletedResponse(response createResponseEnvelope) error {
 	if response.Error != nil {
-		return fmt.Errorf("response failed: %s", formatResponseError(*response.Error))
+		return &responseFailureError{
+			message: "response failed: " + formatResponseError(*response.Error),
+			detail:  *response.Error,
+		}
 	}
 
 	if response.Status != "completed" {

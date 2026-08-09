@@ -20,6 +20,19 @@ func (function streamingProviderFunc) Generate(ctx context.Context, request Requ
 	return function(ctx, request, observer.Text, observer.Reasoning, observer.ToolCall)
 }
 
+type retryingProvider struct {
+	generate streamingProviderFunc
+	retry    func(error, int) (time.Duration, bool)
+}
+
+func (p *retryingProvider) Generate(ctx context.Context, request Request, observer StreamObserver) (Response, error) {
+	return p.generate.Generate(ctx, request, observer)
+}
+
+func (p *retryingProvider) RetryGeneration(err error, failedAttempts int) (time.Duration, bool) {
+	return p.retry(err, failedAttempts)
+}
+
 type scriptedProvider struct {
 	t         *testing.T
 	steps     []providerStep
@@ -416,6 +429,106 @@ func TestEngineClosesStreamedToolsInStartOrderOnProviderFailure(t *testing.T) {
 	}
 	if events[2].Call.ID != "one" || events[3].Call.ID != "two" {
 		t.Fatalf("end order = %q, %q", events[2].Call.ID, events[3].Call.ID)
+	}
+}
+
+func TestEngineRetriesGenerationWithoutExecutingPartialToolCalls(t *testing.T) {
+	transient := errors.New("temporary provider failure")
+	generateCalls := 0
+	provider := &retryingProvider{
+		generate: func(_ context.Context, request Request, _ TextSink, _ TextSink, onToolCall ToolCallSink) (Response, error) {
+			generateCalls++
+			switch generateCalls {
+			case 1:
+				assertUserInput(t, request, "write the file")
+				if err := onToolCall(ToolCallSnapshot{ID: "abandoned", Name: "write", RawArguments: `{"path":"old.txt"}`}); err != nil {
+					return Response{}, err
+				}
+				return Response{}, transient
+			case 2:
+				assertUserInput(t, request, "write the file")
+				return Response{
+					State: []byte("tool-state"),
+					ToolCalls: []ToolCall{{
+						ID: "completed", Name: "write", Arguments: json.RawMessage(`{"path":"new.txt"}`),
+					}},
+				}, nil
+			case 3:
+				if string(request.State) != "tool-state" || len(request.Inputs) != 1 || request.Inputs[0].CallID != "completed" {
+					t.Fatalf("post-tool request = %+v", request)
+				}
+				return Response{Text: "done", State: []byte("done-state")}, nil
+			default:
+				t.Fatalf("unexpected provider call %d", generateCalls)
+				return Response{}, nil
+			}
+		},
+		retry: func(err error, failedAttempts int) (time.Duration, bool) {
+			return 0, errors.Is(err, transient) && failedAttempts == 1
+		},
+	}
+
+	executions := 0
+	toolbox := &fakeToolbox{execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
+		executions++
+		if call.ID != "completed" {
+			t.Fatalf("executed abandoned call: %+v", call)
+		}
+		return ToolResult{Output: "written"}, nil
+	}}
+	var events []Event
+	engine := newTestEngine(t, provider, toolbox, Options{})
+	result, err := engine.Run(context.Background(), "write the file", func(event Event) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil || result.Text != "done" {
+		t.Fatalf("result = %+v, error = %v", result, err)
+	}
+	if generateCalls != 3 || executions != 1 {
+		t.Fatalf("generate calls = %d, executions = %d", generateCalls, executions)
+	}
+	if got := eventKinds(events); !slices.Equal(got, []EventKind{
+		EventToolStart, EventToolEnd,
+		EventContextUsage, EventToolStart, EventToolExecute, EventToolEnd,
+		EventContextUsage,
+	}) {
+		t.Fatalf("events = %v", got)
+	}
+	if !events[1].Result.IsError || !strings.Contains(events[1].Result.Output, transient.Error()) {
+		t.Fatalf("abandoned tool result = %+v", events[1].Result)
+	}
+}
+
+func TestEngineStopsGenerationRetryBackoffWhenCanceled(t *testing.T) {
+	transient := errors.New("temporary provider failure")
+	policyCalled := make(chan struct{})
+	generateCalls := 0
+	provider := &retryingProvider{
+		generate: func(context.Context, Request, TextSink, TextSink, ToolCallSink) (Response, error) {
+			generateCalls++
+			return Response{}, transient
+		},
+		retry: func(error, int) (time.Duration, bool) {
+			close(policyCalled)
+			return time.Hour, true
+		},
+	}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := engine.Run(ctx, "start", discardEvents)
+		done <- err
+	}()
+
+	<-policyCalled
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if generateCalls != 1 {
+		t.Fatalf("generate calls = %d", generateCalls)
 	}
 }
 

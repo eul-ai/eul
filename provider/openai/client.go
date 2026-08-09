@@ -152,15 +152,22 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, observer a
 	stream := streamObserver{observer: observer}
 	wireResponse, err := readResponsesSSE(httpResponse.Body, c.maxResponseBytes, &stream)
 	if err != nil {
+		var observerErr *observerDeliveryError
+		if errors.As(err, &observerErr) {
+			return agent.Response{}, c.wrapf(err, "%v", err)
+		}
 		if classified := c.contextError(ctx, err, "read response"); classified != nil {
 			return agent.Response{}, classified
+		}
+		if isRetryableNetworkError(err) {
+			return agent.Response{}, c.retryableWrapf(err, "%v", err)
 		}
 		return agent.Response{}, c.wrapf(err, "%v", err)
 	}
 
 	text, calls, usage, err := normalizeResponse(wireResponse)
 	if err != nil {
-		return agent.Response{}, c.errorf("%v", err)
+		return agent.Response{}, c.wrapf(err, "%v", err)
 	}
 
 	historyLength := len(wireRequest.Input) - len(newInputs)
@@ -172,7 +179,8 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, observer a
 
 	if text != "" && observer.Text != nil && !stream.sawDelta {
 		if err := observer.Text(text); err != nil {
-			return agent.Response{}, c.wrapf(err, "deliver text: %v", err)
+			deliveryErr := &observerDeliveryError{operation: "deliver text", cause: err}
+			return agent.Response{}, c.wrapf(deliveryErr, "%v", deliveryErr)
 		}
 	}
 
@@ -275,7 +283,10 @@ func (c *Client) do(ctx context.Context, method, endpoint, accept string, body [
 		if classified := c.contextError(ctx, err, operation+" failed"); classified != nil {
 			return nil, classified
 		}
-		return nil, c.errorf("%s failed: %v", operation, err)
+		if isRetryableNetworkError(err) {
+			return nil, c.retryableWrapf(err, "%s failed: %v", operation, err)
+		}
+		return nil, c.wrapf(err, "%s failed: %v", operation, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		defer response.Body.Close()
@@ -289,7 +300,7 @@ func (c *Client) contextError(ctx context.Context, err error, operation string) 
 		return contextErr
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return c.wrapf(context.DeadlineExceeded, "%s: %v", operation, err)
+		return c.retryableWrapf(context.DeadlineExceeded, "%s: %v", operation, err)
 	}
 	if errors.Is(err, context.Canceled) {
 		return c.wrapf(context.Canceled, "%s: %v", operation, err)
@@ -328,13 +339,14 @@ func (c *Client) newRequest(ctx context.Context, method, endpoint, accept string
 func (c *Client) decodeHTTPError(response *http.Response) error {
 	body, truncated, err := readBounded(response.Body, c.maxErrorBytes)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return c.wrapf(context.DeadlineExceeded, "HTTP %s; read error response: %v", response.Status, err)
+		cause := err
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			cause = context.DeadlineExceeded
+		case errors.Is(err, context.Canceled):
+			cause = context.Canceled
 		}
-		if errors.Is(err, context.Canceled) {
-			return c.wrapf(context.Canceled, "HTTP %s; read error response: %v", response.Status, err)
-		}
-		return c.errorf("HTTP %s; read error response: %v", response.Status, err)
+		return c.newHTTPResponseError(response, cause, "HTTP %s; read error response: %v", response.Status, err)
 	}
 
 	detail := strings.TrimSpace(string(body))
@@ -355,7 +367,16 @@ func (c *Client) decodeHTTPError(response *http.Response) error {
 		detail += " [truncated]"
 	}
 
-	return c.errorf("HTTP %s: %s", response.Status, detail)
+	return c.newHTTPResponseError(response, nil, "HTTP %s: %s", response.Status, detail)
+}
+
+func (c *Client) newHTTPResponseError(response *http.Response, cause error, format string, arguments ...any) error {
+	return &httpResponseError{
+		message:    c.errorMessage(format, arguments...),
+		statusCode: response.StatusCode,
+		retryAfter: parseRetryAfter(response.Header.Get("Retry-After"), time.Now()),
+		cause:      cause,
+	}
 }
 
 func (c *Client) errorf(format string, arguments ...any) error {

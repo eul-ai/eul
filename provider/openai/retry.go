@@ -1,0 +1,150 @@
+package openai
+
+import (
+	"errors"
+	"io"
+	"math/rand/v2"
+	"net"
+	"net/http"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"yaah/agent"
+)
+
+const (
+	maximumGenerationAttempts = 3
+	generationRetryBaseDelay  = 500 * time.Millisecond
+	generationRetryMaxDelay   = 8 * time.Second
+)
+
+type retryableOperationError struct {
+	cause error
+}
+
+func (e *retryableOperationError) Error() string { return e.cause.Error() }
+func (e *retryableOperationError) Unwrap() error { return e.cause }
+
+type httpResponseError struct {
+	message    string
+	statusCode int
+	retryAfter time.Duration
+	cause      error
+}
+
+func (e *httpResponseError) Error() string { return e.message }
+func (e *httpResponseError) Unwrap() error { return e.cause }
+
+func (c *Client) RetryGeneration(err error, failedAttempts int) (time.Duration, bool) {
+	if failedAttempts >= maximumGenerationAttempts || !retryableGenerationError(err) {
+		return 0, false
+	}
+
+	delay := generationRetryDelay(failedAttempts)
+	var responseErr *httpResponseError
+	if errors.As(err, &responseErr) && responseErr.retryAfter > delay {
+		delay = min(responseErr.retryAfter, generationRetryMaxDelay)
+	}
+	return delay, true
+}
+
+func retryableGenerationError(err error) bool {
+	var observerErr *observerDeliveryError
+	if errors.As(err, &observerErr) {
+		return false
+	}
+
+	var httpErr *httpResponseError
+	if errors.As(err, &httpErr) {
+		return retryableHTTPStatus(httpErr.statusCode)
+	}
+
+	var responseErr *responseFailureError
+	if errors.As(err, &responseErr) {
+		return retryableResponseError(responseErr.detail)
+	}
+
+	var operationErr *retryableOperationError
+	return errors.As(err, &operationErr) || errors.Is(err, errResponsesSSEIncomplete)
+}
+
+func retryableHTTPStatus(status int) bool {
+	return status == http.StatusRequestTimeout ||
+		status == http.StatusConflict ||
+		status == http.StatusTooManyRequests ||
+		status >= http.StatusInternalServerError && status <= 599
+}
+
+func retryableResponseError(detail responseError) bool {
+	for _, value := range []string{detail.Type, detail.Code} {
+		switch strings.ToLower(value) {
+		case "server_error", "rate_limit", "rate_limit_error", "rate_limit_exceeded":
+			return true
+		}
+	}
+	return false
+}
+
+func generationRetryDelay(failedAttempts int) time.Duration {
+	delay := generationRetryBaseDelay
+	for attempt := 1; attempt < failedAttempts && delay < generationRetryMaxDelay/2; attempt++ {
+		delay *= 2
+	}
+	delay = min(delay, generationRetryMaxDelay)
+
+	quarter := delay / 4
+	if quarter == 0 {
+		return delay
+	}
+	delay += time.Duration(rand.Int64N(int64(quarter)*2+1)) - quarter
+	return min(delay, generationRetryMaxDelay)
+}
+
+func parseRetryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		maximumSeconds := int64(time.Duration(1<<63-1) / time.Second)
+		if seconds > maximumSeconds {
+			return time.Duration(1<<63 - 1)
+		}
+		return time.Duration(seconds) * time.Second
+	}
+
+	when, err := http.ParseTime(value)
+	if err != nil || !when.After(now) {
+		return 0
+	}
+	return when.Sub(now)
+}
+
+func isRetryableNetworkError(err error) bool {
+	for _, target := range []error{
+		io.ErrUnexpectedEOF,
+		syscall.ECONNABORTED,
+		syscall.ECONNREFUSED,
+		syscall.ECONNRESET,
+		syscall.EPIPE,
+		syscall.ETIMEDOUT,
+	} {
+		if errors.Is(err, target) {
+			return true
+		}
+	}
+
+	var networkErr net.Error
+	return errors.As(err, &networkErr) && (networkErr.Timeout() || networkErr.Temporary())
+}
+
+func (c *Client) retryableWrapf(cause error, format string, arguments ...any) error {
+	return &retryableOperationError{cause: c.wrapf(cause, format, arguments...)}
+}
+
+var _ agent.GenerationRetryPolicy = (*Client)(nil)

@@ -87,6 +87,12 @@ type Provider interface {
 	Generate(context.Context, Request, StreamObserver) (Response, error)
 }
 
+// GenerationRetryPolicy decides whether a failed generation attempt should be retried.
+// failedAttempts includes the attempt that returned err.
+type GenerationRetryPolicy interface {
+	RetryGeneration(err error, failedAttempts int) (time.Duration, bool)
+}
+
 type UsageProvider interface {
 	Usage(context.Context) (ProviderUsage, error)
 }

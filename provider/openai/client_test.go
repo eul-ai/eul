@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -546,6 +548,107 @@ func TestClientParsesStructuredHTTPError(t *testing.T) {
 	}
 }
 
+func TestClientRetriesTransientGenerationThroughEngine(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		calls++
+		writer.Header().Set("Content-Type", "text/event-stream")
+		if calls == 1 {
+			fmt.Fprint(writer, "data: {\"type\":\"error\",\"error\":{\"type\":\"server_error\",\"code\":\"server_error\",\"message\":\"failed\"}}\n\n")
+			return
+		}
+		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"recovered\"}]}]}}\n\n")
+	}))
+	defer server.Close()
+	client := newTestClient(t, "key", server.URL, Options{})
+	engine := agent.New(client, emptyToolbox{}, agent.Options{Model: "test-model"})
+
+	result, err := engine.Run(context.Background(), "hello", func(agent.Event) error { return nil })
+	if err != nil || result.Text != "recovered" || calls != 2 {
+		t.Fatalf("result = %+v, error = %v, calls = %d", result, err, calls)
+	}
+}
+
+func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
+	t.Run("SSE server error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(writer, "data: {\"type\":\"error\",\"error\":{\"type\":\"server_error\",\"code\":\"server_error\",\"message\":\"failed\"}}\n\n")
+		}))
+		defer server.Close()
+		client := newTestClient(t, "key", server.URL, Options{})
+
+		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
+		delay, retry := client.RetryGeneration(err, 1)
+		if err == nil || !retry || delay <= 0 {
+			t.Fatalf("Generate() error = %v, delay = %s, retry = %t", err, delay, retry)
+		}
+	})
+
+	t.Run("connection reset", func(t *testing.T) {
+		transport := roundTripperFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body:       errorReadCloser{err: syscall.ECONNRESET},
+			}, nil
+		})
+		client, err := NewCodex(testTokenSource("key"), Options{
+			BaseURL:    "https://example.com",
+			HTTPClient: &http.Client{Transport: transport},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = generate(client, context.Background(), baseRequest(), nil, nil, nil)
+		if _, retry := client.RetryGeneration(err, 1); err == nil || !retry {
+			t.Fatalf("Generate() error = %v, retry = %t", err, retry)
+		}
+	})
+
+	t.Run("Retry-After is bounded", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			writer.Header().Set("Retry-After", "60")
+			writer.WriteHeader(http.StatusTooManyRequests)
+			fmt.Fprint(writer, `{"error":{"type":"rate_limit_error","message":"slow down"}}`)
+		}))
+		defer server.Close()
+		client := newTestClient(t, "key", server.URL, Options{})
+
+		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
+		delay, retry := client.RetryGeneration(err, 1)
+		if err == nil || !retry || delay != generationRetryMaxDelay {
+			t.Fatalf("Generate() error = %v, delay = %s, retry = %t", err, delay, retry)
+		}
+	})
+}
+
+func TestClientDoesNotRetryPermanentOrObserverErrors(t *testing.T) {
+	server := responseServer(t, http.StatusBadRequest, `{"error":{"type":"invalid_request_error","message":"bad request"}}`)
+	defer server.Close()
+	client := newTestClient(t, "key", server.URL, Options{})
+	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
+	if _, retry := client.RetryGeneration(err, 1); err == nil || retry {
+		t.Fatalf("HTTP error = %v, retry = %t", err, retry)
+	}
+
+	server = responseServer(t, http.StatusOK, `{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"answer"}]}]}`)
+	defer server.Close()
+	client = newTestClient(t, "key", server.URL, Options{})
+	sinkErr := &net.DNSError{IsTimeout: true, Err: "sink timeout", Name: "sink"}
+	_, err = generate(client, context.Background(), baseRequest(), func(string) error { return sinkErr }, nil, nil)
+	if _, retry := client.RetryGeneration(err, 1); !errors.Is(err, sinkErr) || retry {
+		t.Fatalf("observer error = %v, retry = %t", err, retry)
+	}
+
+	transient := &retryableOperationError{cause: errors.New("temporary")}
+	if _, retry := client.RetryGeneration(transient, maximumGenerationAttempts); retry {
+		t.Fatal("retry policy exceeded maximum attempts")
+	}
+}
+
 func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
 	t.Run("response", func(t *testing.T) {
 		server := responseServer(t, http.StatusOK, strings.Repeat("x", 101))
@@ -881,6 +984,17 @@ func assertInputItem(t *testing.T, items []json.RawMessage, index int, fields ma
 			t.Errorf("input item %d field %q = %q, want %q; item=%s", index, name, got, want, items[index])
 		}
 	}
+}
+
+type emptyToolbox struct{}
+
+func (emptyToolbox) Definitions() []agent.ToolDefinition { return nil }
+func (emptyToolbox) Presentation(agent.ToolCallSnapshot) agent.ToolPresentation {
+	return agent.ToolPresentation{}
+}
+
+func (emptyToolbox) Execute(context.Context, agent.ToolCall, agent.ToolUpdateSink) (agent.ToolResult, error) {
+	return agent.ToolResult{}, errors.New("unexpected tool call")
 }
 
 type errorReadCloser struct {

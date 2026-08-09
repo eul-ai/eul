@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 )
 
 var errEngineBusy = errors.New("agent: engine is busy")
@@ -98,26 +99,13 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			return RunResult{}, err
 		}
 
-		toolEvents := newToolEventTracker(e.tools, sink)
-		response, err := e.provider.Generate(ctx, request, StreamObserver{
-			Text: func(text string) error {
-				return toolEvents.emitProvider(Event{Kind: EventAssistantText, Text: text})
-			},
-			Reasoning: func(text string) error {
-				return toolEvents.emitProvider(Event{Kind: EventAssistantReasoning, Text: text})
-			},
-			ToolCall: toolEvents.observeSnapshot,
-		})
+		response, toolEvents, err := e.generateResponse(ctx, request, sink)
 		if err != nil {
 			current.checkpoint(e)
-			closeErr := toolEvents.closeRemaining(err)
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return RunResult{}, ctxErr
 			}
-			if closeErr != nil {
-				return RunResult{}, closeErr
-			}
-			return RunResult{}, fmt.Errorf("agent: generate response: %w", err)
+			return RunResult{}, err
 		}
 
 		responseContinuation := continuation{state: response.State, usage: response.Usage}
@@ -174,6 +162,62 @@ func (e *Engine) request(current continuation) Request {
 		Inputs:        current.inputs,
 		Tools:         e.tools.Definitions(),
 		State:         current.state,
+	}
+}
+
+func (e *Engine) generateResponse(ctx context.Context, request Request, sink EventSink) (Response, *toolEventTracker, error) {
+	retryPolicy, canRetry := e.provider.(GenerationRetryPolicy)
+	for failedAttempts := 1; ; failedAttempts++ {
+		toolEvents := newToolEventTracker(e.tools, sink)
+		response, err := e.provider.Generate(ctx, request, StreamObserver{
+			Text: func(text string) error {
+				return toolEvents.emitProvider(Event{Kind: EventAssistantText, Text: text})
+			},
+			Reasoning: func(text string) error {
+				return toolEvents.emitProvider(Event{Kind: EventAssistantReasoning, Text: text})
+			},
+			ToolCall: toolEvents.observeSnapshot,
+		})
+		if err == nil {
+			return response, toolEvents, nil
+		}
+
+		closeErr := toolEvents.closeRemaining(err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return Response{}, nil, ctxErr
+		}
+		if closeErr != nil {
+			return Response{}, nil, closeErr
+		}
+		if !canRetry {
+			return Response{}, nil, fmt.Errorf("agent: generate response: %w", err)
+		}
+
+		delay, retry := retryPolicy.RetryGeneration(err, failedAttempts)
+		if !retry {
+			return Response{}, nil, fmt.Errorf("agent: generate response: %w", err)
+		}
+		if err := waitForRetry(ctx, delay); err != nil {
+			return Response{}, nil, err
+		}
+	}
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if delay <= 0 {
+		return nil
+	}
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 
