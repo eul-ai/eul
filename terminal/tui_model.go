@@ -357,6 +357,27 @@ func (m *tuiModel) moveRight() {
 	}
 }
 
+func (m *tuiModel) moveUp() bool {
+	lineStart := m.cursor
+	for lineStart > 0 && m.input[lineStart-1] != '\n' {
+		lineStart--
+	}
+	if lineStart == 0 {
+		return false
+	}
+
+	previousLineEnd := lineStart - 1
+	previousLineStart := previousLineEnd
+	for previousLineStart > 0 && m.input[previousLineStart-1] != '\n' {
+		previousLineStart--
+	}
+
+	column := m.cursor - lineStart
+	m.cursor = min(previousLineStart+column, previousLineEnd)
+	m.refreshInputPickers(false)
+	return true
+}
+
 func (m *tuiModel) historyUp() {
 	if len(m.history) == 0 {
 		return

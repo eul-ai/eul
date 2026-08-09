@@ -115,7 +115,9 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 	case keyDelete:
 		model.delete()
 	case keyUp:
-		model.historyUp()
+		if !model.moveUp() {
+			model.historyUp()
+		}
 	case keyDown:
 		model.historyDown()
 	case keyCtrlD:

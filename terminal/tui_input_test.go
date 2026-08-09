@@ -208,6 +208,28 @@ func TestTUIModelInsertsNewlineAndPreservesItInPrompt(t *testing.T) {
 	}
 }
 
+func TestArrowUpMovesToPreviousInputLineBeforeHistory(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.history = []string{"old prompt"}
+	if err := model.insertInput("first\nsecond"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := reduceKey(model, keyEvent{code: keyUp}); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(model.input); got != "first\nsecond" || model.cursor != len([]rune("first")) || model.historyIndex != -1 {
+		t.Fatalf("first up: input=%q cursor=%d historyIndex=%d", got, model.cursor, model.historyIndex)
+	}
+
+	if _, err := reduceKey(model, keyEvent{code: keyUp}); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(model.input); got != "old prompt" || model.historyIndex != 0 {
+		t.Fatalf("second up: input=%q historyIndex=%d", got, model.historyIndex)
+	}
+}
+
 func TestTUIModelDefaultsToMediumThinking(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	if model.thinkingLevel != agent.DefaultThinkingLevel {
