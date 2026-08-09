@@ -37,6 +37,52 @@ func TestTUIControllerDoesNotClearConversationWhenResetFails(t *testing.T) {
 	}
 }
 
+func TestTUIControllerCompactsConversation(t *testing.T) {
+	engine := &fakeEngine{compactFunction: func(_ context.Context, sink agent.EventSink) error {
+		if err := sink(agent.Event{Kind: agent.EventCompactionStart}); err != nil {
+			return err
+		}
+		return sink(agent.Event{Kind: agent.EventCompactionEnd, Usage: agent.Usage{TotalTokens: 100}})
+	}}
+	messages := make(chan engineMessage, 3)
+	stopped := make(chan struct{})
+	defer close(stopped)
+	model := newTUIModel(80, 24, Options{})
+	model.appendBlock(blockAssistant, "existing conversation")
+	model.contextTokens = 90
+	if err := model.insertInput("/compact"); err != nil {
+		t.Fatal(err)
+	}
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		engineMessages: messages, stopped: stopped,
+	}
+	ctx := context.Background()
+
+	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
+		t.Fatal(err)
+	}
+	if !model.running || model.activity.kind != activityCompacting {
+		t.Fatalf("running=%v activity=%+v", model.running, model.activity)
+	}
+	for range 3 {
+		select {
+		case message := <-messages:
+			if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventEngine, engine: message}); err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("compaction did not complete")
+		}
+	}
+	if engine.compactionCount() != 1 || model.running || model.activity.kind != activityReady || model.contextTokens != 0 {
+		t.Fatalf("compactions=%d running=%v activity=%+v context=%d", engine.compactionCount(), model.running, model.activity, model.contextTokens)
+	}
+	if len(model.blocks) != 2 || model.blocks[0].text != "existing conversation" || model.blocks[1].kind != blockContext || model.blocks[1].text != "Compacting conversation" {
+		t.Fatalf("blocks = %+v", model.blocks)
+	}
+}
+
 func TestTUIControllerSetsShowsAndClearsGoal(t *testing.T) {
 	engine := &fakeEngine{}
 	messages := make(chan engineMessage, 1)

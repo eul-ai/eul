@@ -145,6 +145,7 @@ func (m *tuiModel) applyAgentEvent(event agent.Event) {
 		m.appendBlock(blockContext, "Compacting conversation")
 		m.setActiveActivity(activity{kind: activityCompacting})
 	case agent.EventCompactionEnd:
+		m.contextTokens = 0
 		m.setActiveActivity(activity{kind: activityThinking})
 	case agent.EventContextUsage:
 		m.contextTokens = event.Usage.TotalTokens
@@ -471,6 +472,13 @@ func (m *tuiModel) beginTurn(prompt string) {
 	m.interrupted = false
 	m.turnExecutedTool = false
 	m.activity = activity{kind: activityThinking}
+}
+
+func (m *tuiModel) beginCompaction() {
+	m.running = true
+	m.interrupted = false
+	m.turnExecutedTool = false
+	m.activity = activity{kind: activityCompacting}
 }
 
 func (m *tuiModel) finishTurn(runErr error) {

@@ -183,6 +183,9 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		}
 		c.deferredSteering = nil
 		c.model.clearConversation()
+	case tuiActionCompact:
+		c.model.beginCompaction()
+		c.startCompaction(ctx)
 	case tuiActionExit:
 		return true, nil
 	case tuiActionSubmit:
@@ -244,6 +247,12 @@ func (c *tuiController) startTurn(ctx context.Context, prompt string) {
 	turnContext, cancel := context.WithCancel(ctx)
 	c.turnCancel = cancel
 	go runEngineTurn(turnContext, c.engine, prompt, c.engineMessages, c.stopped)
+}
+
+func (c *tuiController) startCompaction(ctx context.Context) {
+	turnContext, cancel := context.WithCancel(ctx)
+	c.turnCancel = cancel
+	go runEngineCompaction(turnContext, c.engine, c.engineMessages, c.stopped)
 }
 
 func (c *tuiController) startDeferredTurn(ctx context.Context) {

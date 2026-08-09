@@ -230,7 +230,20 @@ func renderIfDirty(renderer *tuiRenderer, model *tuiModel, output io.Writer, dir
 }
 
 func runEngineTurn(ctx context.Context, engine Engine, prompt string, messages chan<- engineMessage, stopped <-chan struct{}) {
-	_, err := engine.Run(ctx, prompt, func(event agent.Event) error {
+	runEngineOperation(ctx, messages, stopped, func(sink agent.EventSink) error {
+		_, err := engine.Run(ctx, prompt, sink)
+		return err
+	})
+}
+
+func runEngineCompaction(ctx context.Context, engine Engine, messages chan<- engineMessage, stopped <-chan struct{}) {
+	runEngineOperation(ctx, messages, stopped, func(sink agent.EventSink) error {
+		return engine.Compact(ctx, sink)
+	})
+}
+
+func runEngineOperation(ctx context.Context, messages chan<- engineMessage, stopped <-chan struct{}, operation func(agent.EventSink) error) {
+	err := operation(func(event agent.Event) error {
 		select {
 		case messages <- engineMessage{event: &event}:
 			return nil

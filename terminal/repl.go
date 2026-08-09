@@ -28,6 +28,7 @@ var (
 
 type Engine interface {
 	Run(context.Context, string, agent.EventSink) (agent.RunResult, error)
+	Compact(context.Context, agent.EventSink) error
 	Steer(string) bool
 	ClearSteering() []string
 	SetGoal(string) error

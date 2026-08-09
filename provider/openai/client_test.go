@@ -548,6 +548,47 @@ func TestClientParsesStructuredHTTPError(t *testing.T) {
 	}
 }
 
+func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
+	t.Run("HTTP error", func(t *testing.T) {
+		server := responseServer(t, http.StatusBadRequest, `{"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too many tokens"}}`)
+		defer server.Close()
+		client := newTestClient(t, "key", server.URL, Options{})
+
+		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
+		if err == nil || !client.ShouldCompactAfterError(baseRequest(), err) {
+			t.Fatalf("Generate() error = %v, should compact = %t", err, client.ShouldCompactAfterError(baseRequest(), err))
+		}
+		if _, retry := client.RetryGeneration(err, 1); retry {
+			t.Fatal("context limit error was classified as a transient retry")
+		}
+	})
+
+	t.Run("SSE error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(writer, "data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"context_length_exceeded\",\"message\":\"too many tokens\"}}\n\n")
+		}))
+		defer server.Close()
+		client := newTestClient(t, "key", server.URL, Options{})
+
+		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
+		if err == nil || !client.ShouldCompactAfterError(baseRequest(), err) {
+			t.Fatalf("Generate() error = %v, should compact = %t", err, client.ShouldCompactAfterError(baseRequest(), err))
+		}
+	})
+
+	t.Run("terminal response error", func(t *testing.T) {
+		server := responseServer(t, http.StatusOK, `{"status":"failed","error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too many tokens"},"output":[]}`)
+		defer server.Close()
+		client := newTestClient(t, "key", server.URL, Options{})
+
+		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
+		if err == nil || !client.ShouldCompactAfterError(baseRequest(), err) {
+			t.Fatalf("Generate() error = %v, should compact = %t", err, client.ShouldCompactAfterError(baseRequest(), err))
+		}
+	})
+}
+
 func TestClientRetriesTransientGenerationThroughEngine(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -566,6 +607,85 @@ func TestClientRetriesTransientGenerationThroughEngine(t *testing.T) {
 	result, err := engine.Run(context.Background(), "hello", func(agent.Event) error { return nil })
 	if err != nil || result.Text != "recovered" || calls != 2 {
 		t.Fatalf("result = %+v, error = %v, calls = %d", result, err, calls)
+	}
+}
+
+func TestClientCompactsContextLimitErrorThroughEngine(t *testing.T) {
+	generationCalls := 0
+	compactCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/codex/responses":
+			generationCalls++
+			if generationCalls == 1 {
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(http.StatusBadRequest)
+				fmt.Fprint(writer, `{"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too many tokens"}}`)
+				return
+			}
+
+			var wire createResponseRequest
+			if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
+				t.Errorf("decode generation request: %v", err)
+				writer.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if len(wire.Input) != 1 {
+				t.Errorf("post-compaction input count = %d, want 1", len(wire.Input))
+			} else {
+				assertInputItem(t, wire.Input, 0, map[string]string{"type": "compaction", "encrypted_content": "opaque"})
+			}
+			writeJSON(t, writer, map[string]any{
+				"status": "completed",
+				"output": []any{map[string]any{
+					"type":    "message",
+					"content": []any{map[string]any{"type": "output_text", "text": "recovered"}},
+				}},
+				"usage": map[string]any{"input_tokens": 5, "output_tokens": 2, "total_tokens": 7},
+			})
+		case "/codex/responses/compact":
+			compactCalls++
+			var wire compactRequest
+			if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
+				t.Errorf("decode compact request: %v", err)
+				writer.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if len(wire.Input) != 1 {
+				t.Errorf("compact input count = %d, want 1", len(wire.Input))
+			} else {
+				assertInputItem(t, wire.Input, 0, map[string]string{"role": "user", "content": "hello"})
+			}
+			writeCompactJSON(t, writer, map[string]any{
+				"output": []any{map[string]any{"type": "compaction", "encrypted_content": "opaque"}},
+				"usage":  map[string]any{"input_tokens": 10, "output_tokens": 1, "total_tokens": 11},
+			})
+		default:
+			t.Errorf("unexpected request path %q", request.URL.Path)
+			writer.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := newTestClient(t, "key", server.URL, Options{})
+	engine := agent.New(client, emptyToolbox{}, agent.Options{Model: "test-model"})
+	var events []agent.Event
+
+	result, err := engine.Run(context.Background(), "hello", func(event agent.Event) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil || result.Text != "recovered" || result.Usage != (agent.Usage{InputTokens: 15, OutputTokens: 3, TotalTokens: 18}) {
+		t.Fatalf("result = %+v, error = %v", result, err)
+	}
+	if generationCalls != 2 || compactCalls != 1 {
+		t.Fatalf("generation calls = %d, compact calls = %d", generationCalls, compactCalls)
+	}
+	kinds := make([]agent.EventKind, len(events))
+	for i, event := range events {
+		kinds[i] = event.Kind
+	}
+	if !slices.Equal(kinds, []agent.EventKind{agent.EventCompactionStart, agent.EventCompactionEnd, agent.EventAssistantText, agent.EventContextUsage}) {
+		t.Fatalf("events = %v", kinds)
 	}
 }
 
@@ -632,6 +752,9 @@ func TestClientDoesNotRetryPermanentOrObserverErrors(t *testing.T) {
 	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	if _, retry := client.RetryGeneration(err, 1); err == nil || retry {
 		t.Fatalf("HTTP error = %v, retry = %t", err, retry)
+	}
+	if client.ShouldCompactAfterError(baseRequest(), err) {
+		t.Fatalf("permanent HTTP error was classified for compaction: %v", err)
 	}
 
 	server = responseServer(t, http.StatusOK, `{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"answer"}]}]}`)

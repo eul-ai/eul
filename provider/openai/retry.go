@@ -31,6 +31,7 @@ type httpResponseError struct {
 	message    string
 	statusCode int
 	retryAfter time.Duration
+	detail     responseError
 	cause      error
 }
 
@@ -51,6 +52,10 @@ func (c *Client) RetryGeneration(err error, failedAttempts int) (time.Duration, 
 }
 
 func retryableGenerationError(err error) bool {
+	if contextLimitError(err) {
+		return false
+	}
+
 	var observerErr *observerDeliveryError
 	if errors.As(err, &observerErr) {
 		return false
@@ -75,6 +80,20 @@ func retryableHTTPStatus(status int) bool {
 		status == http.StatusConflict ||
 		status == http.StatusTooManyRequests ||
 		status >= http.StatusInternalServerError && status <= 599
+}
+
+func contextLimitError(err error) bool {
+	var httpErr *httpResponseError
+	if errors.As(err, &httpErr) && contextLimitResponseError(httpErr.detail) {
+		return true
+	}
+
+	var responseErr *responseFailureError
+	return errors.As(err, &responseErr) && contextLimitResponseError(responseErr.detail)
+}
+
+func contextLimitResponseError(detail responseError) bool {
+	return strings.EqualFold(detail.Code, "context_length_exceeded")
 }
 
 func retryableResponseError(detail responseError) bool {

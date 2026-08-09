@@ -55,6 +55,7 @@ type Client struct {
 var (
 	_ agent.Provider              = (*Client)(nil)
 	_ agent.Compactor             = (*Client)(nil)
+	_ agent.CompactionErrorPolicy = (*Client)(nil)
 	_ agent.UsageProvider         = (*Client)(nil)
 	_ agent.ModelMetadataProvider = (*Client)(nil)
 )
@@ -346,16 +347,18 @@ func (c *Client) decodeHTTPError(response *http.Response) error {
 		case errors.Is(err, context.Canceled):
 			cause = context.Canceled
 		}
-		return c.newHTTPResponseError(response, cause, "HTTP %s; read error response: %v", response.Status, err)
+		return c.newHTTPResponseError(response, cause, responseError{}, "HTTP %s; read error response: %v", response.Status, err)
 	}
 
 	detail := strings.TrimSpace(string(body))
+	var errorDetail responseError
 	if !truncated {
 		var envelope struct {
 			Error responseError `json:"error"`
 		}
 		if json.Unmarshal(body, &envelope) == nil {
 			if formatted := formatResponseError(envelope.Error); formatted != "" {
+				errorDetail = envelope.Error
 				detail = formatted
 			}
 		}
@@ -367,14 +370,15 @@ func (c *Client) decodeHTTPError(response *http.Response) error {
 		detail += " [truncated]"
 	}
 
-	return c.newHTTPResponseError(response, nil, "HTTP %s: %s", response.Status, detail)
+	return c.newHTTPResponseError(response, nil, errorDetail, "HTTP %s: %s", response.Status, detail)
 }
 
-func (c *Client) newHTTPResponseError(response *http.Response, cause error, format string, arguments ...any) error {
+func (c *Client) newHTTPResponseError(response *http.Response, cause error, detail responseError, format string, arguments ...any) error {
 	return &httpResponseError{
 		message:    c.errorMessage(format, arguments...),
 		statusCode: response.StatusCode,
 		retryAfter: parseRetryAfter(response.Header.Get("Retry-After"), time.Now()),
+		detail:     detail,
 		cause:      cause,
 	}
 }

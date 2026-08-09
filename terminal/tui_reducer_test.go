@@ -168,6 +168,16 @@ func TestReduceKeyActions(t *testing.T) {
 			},
 		},
 		{
+			name: "compact",
+			setup: func(t *testing.T, model *tuiModel) {
+				if err := model.insertInput("/compact"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			key:      keyEvent{code: keyEnter},
+			wantKind: tuiActionCompact,
+		},
+		{
 			name: "exit",
 			setup: func(t *testing.T, model *tuiModel) {
 				if err := model.insertInput("/exit"); err != nil {

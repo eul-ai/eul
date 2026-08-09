@@ -110,6 +110,7 @@ Bracketed multiline paste preserves newlines and blank lines.
 | --- | --- |
 | `/help` | Show available commands |
 | `/clear` | Clear the conversation and active goal |
+| `/compact` | Compact the conversation context |
 | `/exit` | Exit Eul |
 | `/goal <objective>` | Set or replace an autonomous goal |
 | `/goal` | Show the active goal |

@@ -101,6 +101,14 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 
 		response, toolEvents, err := e.generateResponse(ctx, request, sink)
 		if err != nil {
+			var compacted bool
+			request, current, compactedUsage, compacted, err = e.compactAfterError(ctx, sink, request, current, err)
+			addUsage(&result.Usage, compactedUsage)
+			if err == nil && compacted {
+				response, toolEvents, err = e.generateResponse(ctx, request, sink)
+			}
+		}
+		if err != nil {
 			current.checkpoint(e)
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return RunResult{}, ctxErr
@@ -227,6 +235,21 @@ func (e *Engine) compact(ctx context.Context, sink EventSink, request Request, c
 		return request, current, Usage{}, nil
 	}
 
+	return e.compactRequest(ctx, sink, compactor, request, current)
+}
+
+func (e *Engine) compactAfterError(ctx context.Context, sink EventSink, request Request, current continuation, generationErr error) (Request, continuation, Usage, bool, error) {
+	compactor, canCompact := e.provider.(Compactor)
+	policy, hasPolicy := e.provider.(CompactionErrorPolicy)
+	if !canCompact || !hasPolicy || !policy.ShouldCompactAfterError(request, generationErr) {
+		return request, current, Usage{}, false, generationErr
+	}
+
+	request, current, usage, err := e.compactRequest(ctx, sink, compactor, request, current)
+	return request, current, usage, true, err
+}
+
+func (e *Engine) compactRequest(ctx context.Context, sink EventSink, compactor Compactor, request Request, current continuation) (Request, continuation, Usage, error) {
 	if err := emit(sink, Event{Kind: EventCompactionStart}); err != nil {
 		return request, current, Usage{}, err
 	}
@@ -313,6 +336,35 @@ func (current continuation) checkpoint(engine *Engine) {
 	engine.state = append([]byte(nil), current.state...)
 	engine.contextUsage = current.usage
 	engine.pendingInputs = append([]Input(nil), current.inputs...)
+}
+
+func (e *Engine) Compact(ctx context.Context, sink EventSink) error {
+	if !e.mu.TryLock() {
+		return errEngineBusy
+	}
+	defer e.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	compactor, canCompact := e.provider.(Compactor)
+	if !canCompact {
+		return errors.New("agent: context compaction is unavailable")
+	}
+
+	current := continuation{
+		state:  e.state,
+		usage:  e.contextUsage,
+		inputs: append([]Input(nil), e.pendingInputs...),
+	}
+	if len(current.state) == 0 && len(current.inputs) == 0 {
+		return errors.New("agent: no context to compact")
+	}
+
+	_, current, _, err := e.compactRequest(ctx, sink, compactor, e.request(current), current)
+	current.checkpoint(e)
+	return err
 }
 
 func (e *Engine) SetThinkingLevel(level ThinkingLevel) error {

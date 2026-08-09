@@ -91,6 +91,10 @@ func responseReasoningFor(model string, level agent.ThinkingLevel, summary Reaso
 	return reasoning, nil
 }
 
+func (*Client) ShouldCompactAfterError(_ agent.Request, err error) bool {
+	return contextLimitError(err)
+}
+
 func (*Client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
 	if len(request.State) == 0 || usage.TotalTokens <= 0 {
 		return false

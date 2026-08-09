@@ -60,12 +60,17 @@ func (p *scriptedProvider) Generate(ctx context.Context, request Request, observ
 
 type compactingProvider struct {
 	Provider
-	shouldCompact func(Request, Usage) bool
-	compact       func(context.Context, Request) (CompactResponse, error)
+	shouldCompact           func(Request, Usage) bool
+	shouldCompactAfterError func(Request, error) bool
+	compact                 func(context.Context, Request) (CompactResponse, error)
 }
 
 func (p *compactingProvider) ShouldCompact(request Request, usage Usage) bool {
 	return p.shouldCompact != nil && p.shouldCompact(request, usage)
+}
+
+func (p *compactingProvider) ShouldCompactAfterError(request Request, err error) bool {
+	return p.shouldCompactAfterError != nil && p.shouldCompactAfterError(request, err)
 }
 
 func (p *compactingProvider) Compact(ctx context.Context, request Request) (CompactResponse, error) {
@@ -916,6 +921,143 @@ func TestEngineCompactsToolContinuation(t *testing.T) {
 	}
 }
 
+func TestEngineCompactsToolContinuationAfterGenerationError(t *testing.T) {
+	contextLimit := errors.New("context limit exceeded")
+	generateCalls := 0
+	provider := streamingProviderFunc(func(_ context.Context, request Request, _ TextSink, _ TextSink, _ ToolCallSink) (Response, error) {
+		generateCalls++
+		switch generateCalls {
+		case 1:
+			assertUserInput(t, request, "inspect")
+			return Response{
+				ToolCalls: []ToolCall{{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{}`)}},
+				State:     []byte("tool state"),
+				Usage:     Usage{InputTokens: 70, OutputTokens: 10, TotalTokens: 80},
+			}, nil
+		case 2:
+			if string(request.State) != "tool state" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].Text != "large tool output" {
+				t.Fatalf("failed tool continuation = %+v", request)
+			}
+			return Response{}, contextLimit
+		case 3:
+			if string(request.State) != "compact state" || len(request.Inputs) != 0 {
+				t.Fatalf("request after error compaction = %+v", request)
+			}
+			return Response{
+				Text:  "done",
+				State: []byte("done state"),
+				Usage: Usage{InputTokens: 20, OutputTokens: 3, TotalTokens: 23},
+			}, nil
+		default:
+			t.Fatalf("unexpected provider call %d", generateCalls)
+			return Response{}, nil
+		}
+	})
+	compactCalls := 0
+	compacting := &compactingProvider{
+		Provider: provider,
+		shouldCompact: func(Request, Usage) bool {
+			return false
+		},
+		shouldCompactAfterError: func(request Request, err error) bool {
+			if string(request.State) != "tool state" || len(request.Inputs) != 1 {
+				t.Fatalf("error compaction policy request = %+v", request)
+			}
+			return errors.Is(err, contextLimit)
+		},
+		compact: func(_ context.Context, request Request) (CompactResponse, error) {
+			compactCalls++
+			if string(request.State) != "tool state" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].Text != "large tool output" {
+				t.Fatalf("error compaction request = %+v", request)
+			}
+			return CompactResponse{
+				State: []byte("compact state"),
+				Usage: Usage{InputTokens: 85, OutputTokens: 5, TotalTokens: 90},
+			}, nil
+		},
+	}
+	toolbox := &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
+		return ToolResult{Output: "large tool output"}, nil
+	}}
+	var events []Event
+	engine := newTestEngine(t, compacting, toolbox, Options{})
+	result, err := engine.Run(context.Background(), "inspect", func(event Event) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Text != "done" || result.Usage != (Usage{InputTokens: 175, OutputTokens: 18, TotalTokens: 193}) || generateCalls != 3 || compactCalls != 1 {
+		t.Fatalf("result = %+v, generate calls = %d, compact calls = %d", result, generateCalls, compactCalls)
+	}
+	if got := eventKinds(events); !slices.Equal(got, []EventKind{
+		EventContextUsage,
+		EventToolStart, EventToolExecute, EventToolEnd,
+		EventCompactionStart, EventCompactionEnd,
+		EventContextUsage,
+	}) {
+		t.Fatalf("events = %v", got)
+	}
+}
+
+func TestEngineAttemptsErrorCompactionOnce(t *testing.T) {
+	contextLimit := errors.New("context limit exceeded")
+	generateCalls := 0
+	provider := streamingProviderFunc(func(context.Context, Request, TextSink, TextSink, ToolCallSink) (Response, error) {
+		generateCalls++
+		return Response{}, contextLimit
+	})
+	compactCalls := 0
+	compacting := &compactingProvider{
+		Provider: provider,
+		shouldCompactAfterError: func(Request, error) bool {
+			return true
+		},
+		compact: func(context.Context, Request) (CompactResponse, error) {
+			compactCalls++
+			return CompactResponse{State: []byte("compact state")}, nil
+		},
+	}
+	engine := newTestEngine(t, compacting, &fakeToolbox{}, Options{})
+
+	_, err := engine.Run(context.Background(), "hello", discardEvents)
+	if !errors.Is(err, contextLimit) {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if generateCalls != 2 || compactCalls != 1 || string(engine.state) != "compact state" || len(engine.pendingInputs) != 0 {
+		t.Fatalf("generate calls = %d, compact calls = %d, state = %q, pending = %+v", generateCalls, compactCalls, engine.state, engine.pendingInputs)
+	}
+}
+
+func TestEngineErrorCompactionFailurePreservesContinuation(t *testing.T) {
+	contextLimit := errors.New("context limit exceeded")
+	compactFailure := errors.New("compact unavailable")
+	provider := streamingProviderFunc(func(context.Context, Request, TextSink, TextSink, ToolCallSink) (Response, error) {
+		return Response{}, contextLimit
+	})
+	compacting := &compactingProvider{
+		Provider: provider,
+		shouldCompactAfterError: func(Request, error) bool {
+			return true
+		},
+		compact: func(context.Context, Request) (CompactResponse, error) {
+			return CompactResponse{}, compactFailure
+		},
+	}
+	engine := newTestEngine(t, compacting, &fakeToolbox{}, Options{})
+	engine.state = []byte("stable")
+	engine.contextUsage = Usage{TotalTokens: 100}
+
+	_, err := engine.Run(context.Background(), "hello", discardEvents)
+	if !errors.Is(err, compactFailure) || !strings.Contains(err.Error(), "agent: compact context") {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if string(engine.state) != "stable" || engine.contextUsage.TotalTokens != 100 || len(engine.pendingInputs) != 1 || engine.pendingInputs[0].Text != "hello" {
+		t.Fatalf("checkpoint = state %q, usage %+v, pending %+v", engine.state, engine.contextUsage, engine.pendingInputs)
+	}
+}
+
 func TestEngineCompactionFailureAfterToolPreservesContinuation(t *testing.T) {
 	compactError := errors.New("compact unavailable")
 	scripted := &scriptedProvider{t: t, steps: []providerStep{
@@ -961,6 +1103,58 @@ func TestEngineCompactionFailureAfterToolPreservesContinuation(t *testing.T) {
 	result, err := engine.Run(context.Background(), "continue", discardEvents)
 	if err != nil || result.Text != "recovered" {
 		t.Fatalf("continued result = %+v, error = %v", result, err)
+	}
+}
+
+func TestEngineCompactsOnDemand(t *testing.T) {
+	compactCalls := 0
+	provider := &compactingProvider{
+		compact: func(_ context.Context, request Request) (CompactResponse, error) {
+			compactCalls++
+			if string(request.State) != "stable" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].Text != "large output" {
+				t.Fatalf("compact request = %+v", request)
+			}
+			return CompactResponse{
+				State: []byte("compact state"),
+				Usage: Usage{InputTokens: 100, OutputTokens: 5, TotalTokens: 105},
+			}, nil
+		},
+	}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+	engine.state = []byte("stable")
+	engine.contextUsage = Usage{TotalTokens: 90}
+	engine.pendingInputs = []Input{{Kind: InputToolResult, Text: "large output", CallID: "call-1", Tool: "read"}}
+	var events []Event
+
+	err := engine.Compact(context.Background(), func(event Event) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Compact() error = %v", err)
+	}
+	if compactCalls != 1 || string(engine.state) != "compact state" || engine.contextUsage != (Usage{}) || len(engine.pendingInputs) != 0 {
+		t.Fatalf("compact calls = %d, state = %q, usage = %+v, pending = %+v", compactCalls, engine.state, engine.contextUsage, engine.pendingInputs)
+	}
+	if got := eventKinds(events); !slices.Equal(got, []EventKind{EventCompactionStart, EventCompactionEnd}) {
+		t.Fatalf("events = %v", got)
+	}
+	if events[1].Usage.TotalTokens != 105 {
+		t.Fatalf("compaction usage = %+v", events[1].Usage)
+	}
+}
+
+func TestEngineRejectsOnDemandCompactionWithoutContext(t *testing.T) {
+	provider := &compactingProvider{
+		compact: func(context.Context, Request) (CompactResponse, error) {
+			t.Fatal("unexpected compaction")
+			return CompactResponse{}, nil
+		},
+	}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+
+	if err := engine.Compact(context.Background(), discardEvents); err == nil || !strings.Contains(err.Error(), "no context to compact") {
+		t.Fatalf("Compact() error = %v", err)
 	}
 }
 
@@ -1555,6 +1749,9 @@ func TestEngineRejectsConcurrentOperations(t *testing.T) {
 	}
 	if err := engine.Reset(); !errors.Is(err, errEngineBusy) {
 		t.Fatalf("concurrent Reset() error = %v", err)
+	}
+	if err := engine.Compact(context.Background(), discardEvents); !errors.Is(err, errEngineBusy) {
+		t.Fatalf("concurrent Compact() error = %v", err)
 	}
 	if err := engine.SetThinkingLevel(ThinkingHigh); !errors.Is(err, errEngineBusy) {
 		t.Fatalf("concurrent SetThinkingLevel() error = %v", err)

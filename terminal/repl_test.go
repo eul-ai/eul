@@ -12,15 +12,17 @@ import (
 )
 
 type fakeEngine struct {
-	mu            sync.Mutex
-	calls         []string
-	resets        int
-	resetErr      error
-	setGoalErr    error
-	goal          *agent.GoalState
-	runFunction   func(context.Context, string, agent.EventSink) (agent.RunResult, error)
-	steerFunction func(string) bool
-	clearFunction func() []string
+	mu              sync.Mutex
+	calls           []string
+	compactions     int
+	resets          int
+	resetErr        error
+	setGoalErr      error
+	goal            *agent.GoalState
+	runFunction     func(context.Context, string, agent.EventSink) (agent.RunResult, error)
+	compactFunction func(context.Context, agent.EventSink) error
+	steerFunction   func(string) bool
+	clearFunction   func() []string
 }
 
 func (e *fakeEngine) Run(ctx context.Context, prompt string, sink agent.EventSink) (agent.RunResult, error) {
@@ -33,6 +35,18 @@ func (e *fakeEngine) Run(ctx context.Context, prompt string, sink agent.EventSin
 		return agent.RunResult{}, nil
 	}
 	return function(ctx, prompt, sink)
+}
+
+func (e *fakeEngine) Compact(ctx context.Context, sink agent.EventSink) error {
+	e.mu.Lock()
+	e.compactions++
+	function := e.compactFunction
+	e.mu.Unlock()
+
+	if function == nil {
+		return nil
+	}
+	return function(ctx, sink)
 }
 
 func (e *fakeEngine) Steer(prompt string) bool {
@@ -91,6 +105,12 @@ func (e *fakeEngine) snapshot() ([]string, int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return append([]string(nil), e.calls...), e.resets
+}
+
+func (e *fakeEngine) compactionCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.compactions
 }
 
 func TestRunRequiresTerminal(t *testing.T) {

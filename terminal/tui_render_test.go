@@ -697,13 +697,14 @@ func TestRenderStatusPrioritizesActivityAndContext(t *testing.T) {
 
 func TestTUIModelTracksActivityAndContext(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
+	model.contextTokens = 100
 	model.applyAgentEvent(agent.Event{Kind: agent.EventCompactionStart})
 	if model.activity.kind != activityCompacting {
 		t.Fatalf("activity = %+v", model.activity)
 	}
 	model.applyAgentEvent(agent.Event{Kind: agent.EventCompactionEnd})
-	if model.activity.kind != activityThinking {
-		t.Fatalf("activity = %+v", model.activity)
+	if model.activity.kind != activityThinking || model.contextTokens != 0 {
+		t.Fatalf("activity = %+v, context = %d", model.activity, model.contextTokens)
 	}
 	model.applyAgentEvent(agent.Event{Kind: agent.EventContextUsage, Usage: agent.Usage{TotalTokens: 123}})
 	if model.contextTokens != 123 {

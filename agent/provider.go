@@ -114,3 +114,8 @@ type Compactor interface {
 	ShouldCompact(Request, Usage) bool
 	Compact(context.Context, Request) (CompactResponse, error)
 }
+
+// CompactionErrorPolicy decides whether a failed generation should be retried after compacting its request.
+type CompactionErrorPolicy interface {
+	ShouldCompactAfterError(Request, error) bool
+}
