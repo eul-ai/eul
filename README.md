@@ -132,8 +132,22 @@ Eul can use the following capabilities as needed:
 - Rename symbols across a workspace
 - Delegate independent read-only research to parallel subagents
 
-Language-server features are available when a supported server is installed. Go
-projects use `gopls` when available.
+Language-server configuration is loaded from `lsp.json` in the project root when
+a session starts. Each entry defines a server command and the source extensions
+it handles:
+
+```json
+[
+  {
+    "name": "gopls",
+    "command": "gopls",
+    "languageID": "go",
+    "extensions": [".go"]
+  }
+]
+```
+
+Language-server features are available when a configured command is installed.
 
 ## Goals
 

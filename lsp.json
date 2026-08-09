@@ -1,0 +1,8 @@
+[
+  {
+    "name": "gopls",
+    "command": "gopls",
+    "languageID": "go",
+    "extensions": [".go"]
+  }
+]

@@ -65,8 +65,10 @@ func TestBuildSubagentToolsUsesReadOnlyLSP(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", directory)
+	cwd := t.TempDir()
+	writeMainTestLSPConfig(t, cwd)
 
-	registry, err := buildToolset(t.TempDir(), readOnlyToolAccess)
+	registry, err := buildToolset(cwd, readOnlyToolAccess)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,6 +442,14 @@ func TestRunRejectsInvalidWorkingDirectories(t *testing.T) {
 
 func fixedOAuth(manager oauthManager) func() (oauthManager, error) {
 	return func() (oauthManager, error) { return manager, nil }
+}
+
+func writeMainTestLSPConfig(t *testing.T, cwd string) {
+	t.Helper()
+	content := `[{"name":"gopls","command":"gopls","languageID":"go","extensions":[".go"]}]`
+	if err := os.WriteFile(filepath.Join(cwd, "lsp.json"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[string]string) appRuntime {

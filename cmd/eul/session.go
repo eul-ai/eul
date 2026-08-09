@@ -150,6 +150,7 @@ func finishRegistry(runErr error, registry *tool.Registry, operation string) err
 func buildToolset(cwd string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
 	var tools []tool.Tool
 	var lsp *lsptool.Set
+	var err error
 	switch access {
 	case fullToolAccess:
 		tools = []tool.Tool{
@@ -158,13 +159,17 @@ func buildToolset(cwd string, access toolAccess, additional ...tool.Tool) (*tool
 			tool.NewEdit(cwd),
 			tool.NewBash(cwd),
 		}
-		lsp = lsptool.New(cwd)
+		lsp, err = lsptool.New(cwd)
 	case readOnlyToolAccess:
 		tools = []tool.Tool{tool.NewRead(cwd)}
-		lsp = lsptool.NewReadOnly(cwd)
+		lsp, err = lsptool.NewReadOnly(cwd)
 	default:
 		return nil, errors.New("unknown tool access")
 	}
+	if err != nil {
+		return nil, fmt.Errorf("configure LSP: %w", err)
+	}
+
 	tools = append(tools, lsp.Tools()...)
 	tools = append(tools, additional...)
 	registry, err := tool.NewRegistry(tools, lsp)

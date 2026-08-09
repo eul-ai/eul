@@ -54,6 +54,7 @@ func TestNewAgentSessionWiresOptionalProviderUsage(t *testing.T) {
 		return provider, nil
 	}}
 	cwd := t.TempDir()
+	writeMainTestLSPConfig(t, cwd)
 	skills := []agent.Skill{{Name: "review", Description: "Review code"}}
 	session, err := newAgentSession(agentConfig{model: "model", thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills}, runtime, nil, openaiadapter.Options{})
 	if err != nil {
@@ -80,7 +81,9 @@ func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 			return agent.Response{}, nil
 		}), nil
 	}}
-	session, err := newAgentSession(agentConfig{model: "model", cwd: t.TempDir()}, runtime, nil, openaiadapter.Options{})
+	cwd := t.TempDir()
+	writeMainTestLSPConfig(t, cwd)
+	session, err := newAgentSession(agentConfig{model: "model", cwd: cwd}, runtime, nil, openaiadapter.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

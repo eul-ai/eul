@@ -111,21 +111,26 @@ type Set struct {
 	closeOnce sync.Once
 }
 
-func New(cwd string) *Set {
+func New(cwd string) (*Set, error) {
 	return newSet(cwd, true)
 }
 
-func NewReadOnly(cwd string) *Set {
+func NewReadOnly(cwd string) (*Set, error) {
 	return newSet(cwd, false)
 }
 
-func newSet(cwd string, includeRename bool) *Set {
-	set := &Set{}
-	if !hasAvailableLSPServer() {
-		return set
+func newSet(cwd string, includeRename bool) (*Set, error) {
+	configs, err := loadLSPServerConfigs(cwd)
+	if err != nil {
+		return nil, err
 	}
 
-	set.client = newLSPClient(cwd)
+	set := &Set{}
+	if !hasAvailableLSPServer(configs) {
+		return set, nil
+	}
+
+	set.client = newLSPClient(cwd, configs)
 	set.tools = []tool.Tool{
 		&lspTool{client: set.client, definition: lspDiagnosticsToolDefinition, operation: lspDiagnostics},
 		&lspTool{client: set.client, definition: lspHoverToolDefinition, operation: lspHover},
@@ -136,7 +141,7 @@ func newSet(cwd string, includeRename bool) *Set {
 	if includeRename {
 		set.tools = append(set.tools, &lspTool{client: set.client, definition: lspRenameToolDefinition, operation: lspRename})
 	}
-	return set
+	return set, nil
 }
 
 func (s *Set) Tools() []tool.Tool {

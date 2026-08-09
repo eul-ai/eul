@@ -34,17 +34,8 @@ const (
 	lspShutdownTimeout      = 5 * time.Second
 )
 
-var lspServerConfigs = []lspServerConfig{
-	{
-		name:       "gopls",
-		command:    "gopls",
-		languageID: "go",
-		extensions: []string{".go"},
-	},
-}
-
-func hasAvailableLSPServer() bool {
-	for _, config := range lspServerConfigs {
+func hasAvailableLSPServer(configs []lspServerConfig) bool {
+	for _, config := range configs {
 		if _, err := exec.LookPath(config.command); err == nil {
 			return true
 		}
@@ -54,6 +45,7 @@ func hasAvailableLSPServer() bool {
 
 type lspClient struct {
 	workspace workspace
+	configs   []lspServerConfig
 	sessions  map[string]*lspSession
 }
 
@@ -84,8 +76,8 @@ type lspProtocolClient struct {
 
 type lspDocumentRequest func(context.Context, *lspSession, protocol.TextDocumentIdentifier) (any, error)
 
-func newLSPClient(cwd string) *lspClient {
-	return &lspClient{workspace: newWorkspace(cwd), sessions: make(map[string]*lspSession)}
+func newLSPClient(cwd string, configs []lspServerConfig) *lspClient {
+	return &lspClient{workspace: newWorkspace(cwd), configs: configs, sessions: make(map[string]*lspSession)}
 }
 
 func (c *lspClient) documentRequest(ctx context.Context, path string, request lspDocumentRequest) (any, error) {
@@ -97,7 +89,7 @@ func (c *lspClient) documentRequest(ctx context.Context, path string, request ls
 }
 
 func (c *lspClient) documentSnapshotRequest(ctx context.Context, document textfile.Snapshot, request lspDocumentRequest) (any, error) {
-	config, err := lspServerForPath(document.Path)
+	config, err := c.serverForPath(document.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -401,9 +393,9 @@ func (t *lspTransport) Close() error {
 	return errors.Join(t.reader.Close(), t.writer.Close())
 }
 
-func lspServerForPath(path string) (lspServerConfig, error) {
+func (c *lspClient) serverForPath(path string) (lspServerConfig, error) {
 	extension := strings.ToLower(filepath.Ext(path))
-	for _, config := range lspServerConfigs {
+	for _, config := range c.configs {
 		if slices.Contains(config.extensions, extension) {
 			return config, nil
 		}

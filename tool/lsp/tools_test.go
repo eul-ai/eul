@@ -20,8 +20,14 @@ import (
 
 func TestNewLSPOmitsToolsWhenServerIsUnavailable(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
+	cwd := t.TempDir()
+	writeLSPTestConfig(t, cwd)
 
-	if tools := New(t.TempDir()).Tools(); len(tools) != 0 {
+	set, err := New(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tools := set.Tools(); len(tools) != 0 {
 		t.Fatalf("New() returned %d tools", len(tools))
 	}
 }
@@ -32,6 +38,16 @@ func TestNewLSPRegistersFullAndReadOnlyToolSets(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", directory)
+	cwd := t.TempDir()
+	writeLSPTestConfig(t, cwd)
+	full, err := New(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readOnly, err := NewReadOnly(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for _, test := range []struct {
 		name      string
@@ -40,12 +56,12 @@ func TestNewLSPRegistersFullAndReadOnlyToolSets(t *testing.T) {
 	}{
 		{
 			name:      "full",
-			set:       New(t.TempDir()),
+			set:       full,
 			wantNames: []string{lspDiagnosticsToolName, lspHoverToolName, lspDefinitionToolName, lspReferencesToolName, lspSymbolsToolName, lspRenameToolName},
 		},
 		{
 			name:      "read-only",
-			set:       NewReadOnly(t.TempDir()),
+			set:       readOnly,
 			wantNames: []string{lspDiagnosticsToolName, lspHoverToolName, lspDefinitionToolName, lspReferencesToolName, lspSymbolsToolName},
 		},
 	} {
@@ -75,11 +91,12 @@ func TestNewLSPRegistersFullAndReadOnlyToolSets(t *testing.T) {
 }
 
 func TestLSPToolsWithGopls(t *testing.T) {
-	if _, err := exec.LookPath(lspServerConfigs[0].command); err != nil {
+	if _, err := exec.LookPath("gopls"); err != nil {
 		t.Skip("gopls is not installed")
 	}
 
 	cwd := t.TempDir()
+	writeLSPTestConfig(t, cwd)
 	if err := os.WriteFile(filepath.Join(cwd, "go.mod"), []byte("module example.com/sample\n\ngo 1.26\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +123,10 @@ var testThing = Thing{Value: 1}
 		t.Fatal(err)
 	}
 
-	set := New(cwd)
+	set, err := New(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
 	tools := set.Tools()
 	if len(tools) != 6 {
 		t.Fatalf("New() returned %d tools", len(tools))
@@ -151,7 +171,7 @@ var testThing = Thing{Value: 1}
 		t.Fatalf("symbols = %s", symbols.Output)
 	}
 
-	session := set.client.sessions[lspServerConfigs[0].name]
+	session := set.client.sessions["gopls"]
 	if session == nil {
 		t.Fatal("gopls session was not cached")
 	}
@@ -180,7 +200,7 @@ func External(value Thing) int {
 		}
 		time.Sleep(lspWatchBatchDelay)
 	}
-	if set.client.sessions[lspServerConfigs[0].name] != session {
+	if set.client.sessions["gopls"] != session {
 		t.Fatal("external file change restarted the gopls session")
 	}
 
@@ -212,11 +232,12 @@ func External(value Thing) int {
 }
 
 func TestLSPImmediateConsecutiveRenamesWithGopls(t *testing.T) {
-	if _, err := exec.LookPath(lspServerConfigs[0].command); err != nil {
+	if _, err := exec.LookPath("gopls"); err != nil {
 		t.Skip("gopls is not installed")
 	}
 
 	cwd := t.TempDir()
+	writeLSPTestConfig(t, cwd)
 	if err := os.WriteFile(filepath.Join(cwd, "go.mod"), []byte("module example.com/rename\n\ngo 1.26\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +262,10 @@ var testValue = oldName
 		t.Fatal(err)
 	}
 
-	set := New(cwd)
+	set, err := New(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
 	registry, err := tool.NewRegistry(set.Tools(), set)
 	if err != nil {
 		t.Fatal(err)
@@ -323,7 +347,7 @@ func TestLSPDocumentOpenFailureInvalidatesSession(t *testing.T) {
 				stopSession: func() { stopped++ },
 			}
 			config := lspServerConfig{name: "test", languageID: "go"}
-			client := newLSPClient(t.TempDir())
+			client := newLSPClient(t.TempDir(), nil)
 			client.sessions[config.name] = session
 			ctx, cancel := context.WithCancel(context.Background())
 			if test.cancel {
@@ -374,7 +398,7 @@ func TestLSPDocumentCleanupUsesLiveContextAndInvalidatesFailedSession(t *testing
 				stopSession: func() { stopped++ },
 			}
 			config := lspServerConfig{name: "test", languageID: "go"}
-			client := newLSPClient(t.TempDir())
+			client := newLSPClient(t.TempDir(), nil)
 			client.sessions[config.name] = session
 			ctx, cancel := context.WithCancel(context.Background())
 
@@ -450,7 +474,7 @@ func TestLSPToolDescriptionsAreServerAgnostic(t *testing.T) {
 		lspSymbolsToolDefinition,
 		lspRenameToolDefinition,
 	} {
-		for _, config := range lspServerConfigs {
+		for _, config := range []lspServerConfig{{name: "gopls"}} {
 			if strings.Contains(strings.ToLower(definition.Description), strings.ToLower(config.name)) {
 				t.Fatalf("%s description names server %q: %s", definition.Name, config.name, definition.Description)
 			}
