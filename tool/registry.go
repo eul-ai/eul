@@ -18,7 +18,8 @@ var errUnknownTool = errors.New("tool: unknown tool")
 
 // Tool returns ordinary argument and execution failures as ToolResult values with
 // IsError set. It returns a Go error only when the agent turn itself must stop,
-// such as cancellation or a failed presentation update.
+// such as cancellation or a failed presentation update. Execute may be called
+// concurrently for calls from the same provider response.
 type Tool interface {
 	Definition() agent.ToolDefinition
 	Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error)

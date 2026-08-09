@@ -6,6 +6,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -213,13 +214,12 @@ func TestEngineClearGoalDuringToolBatchFinishesResultsAndStopsContinuation(t *te
 			return Response{Text: "stopped"}, nil
 		},
 	}}
-	executions := 0
+	executions := make(chan struct{}, 2)
+	var startedOnce sync.Once
 	engine := newTestEngine(t, provider, &fakeToolbox{execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
-		executions++
-		if executions == 1 {
-			close(toolStarted)
-			<-releaseTool
-		}
+		executions <- struct{}{}
+		startedOnce.Do(func() { close(toolStarted) })
+		<-releaseTool
 		return ToolResult{Output: "result " + call.ID}, nil
 	}}, Options{})
 	if err := engine.SetGoal("keep going"); err != nil {
@@ -241,8 +241,8 @@ func TestEngineClearGoalDuringToolBatchFinishesResultsAndStopsContinuation(t *te
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if executions != 2 || provider.calls != 2 || slices.Contains(eventKinds(events), EventGoalContinuation) {
-		t.Fatalf("executions=%d calls=%d events=%v", executions, provider.calls, eventKinds(events))
+	if len(executions) != 2 || provider.calls != 2 || slices.Contains(eventKinds(events), EventGoalContinuation) {
+		t.Fatalf("executions=%d calls=%d events=%v", len(executions), provider.calls, eventKinds(events))
 	}
 }
 

@@ -44,6 +44,7 @@ func hasAvailableLSPServer(configs []lspServerConfig) bool {
 }
 
 type lspClient struct {
+	mu        sync.Mutex
 	workspace workspace
 	configs   []lspServerConfig
 	sessions  map[string]*lspSession
@@ -259,6 +260,9 @@ func startLSPSession(ctx context.Context, cwd string, config lspServerConfig) (*
 }
 
 func (c *lspClient) stop() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	for _, session := range c.sessions {
 		session.stop()
 	}

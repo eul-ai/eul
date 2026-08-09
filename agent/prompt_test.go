@@ -17,6 +17,9 @@ func TestBuildSystemPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "- read: Read file contents") || !strings.Contains(prompt, "- write: Create or overwrite files") {
 		t.Fatalf("prompt omits tools:\n%s", prompt)
 	}
+	if !strings.Contains(prompt, "Tool calls in the same response execute concurrently") {
+		t.Fatalf("prompt omits concurrent tool guidance:\n%s", prompt)
+	}
 	instructionPath := filepath.ToSlash(filepath.Join(workingDirectory, "AGENTS.md"))
 	wantInstructions := `<project_instructions path="` + instructionPath + `">` + "\n" + strings.TrimSuffix(projectInstructions, "\n") + "\n</project_instructions>"
 	if !strings.Contains(prompt, wantInstructions) {

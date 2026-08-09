@@ -3,12 +3,13 @@ package agent
 import "sync"
 
 type toolEventTracker struct {
-	mu        sync.Mutex
-	tools     Toolbox
-	sink      EventSink
-	streamed  map[string]streamedTool
-	order     []string
-	updateErr error
+	mu         sync.Mutex
+	tools      Toolbox
+	sink       EventSink
+	streamed   map[string]streamedTool
+	order      []string
+	sinkErr    error
+	updateErrs map[string]error
 }
 
 type streamedTool struct {
@@ -32,16 +33,28 @@ func (sink *trackedToolUpdateSink) SetFinal(presentation ToolPresentation) {
 
 func newToolEventTracker(tools Toolbox, sink EventSink) *toolEventTracker {
 	return &toolEventTracker{
-		tools:    tools,
-		sink:     sink,
-		streamed: make(map[string]streamedTool),
+		tools:      tools,
+		sink:       sink,
+		streamed:   make(map[string]streamedTool),
+		updateErrs: make(map[string]error),
 	}
 }
 
 func (tracker *toolEventTracker) emitProvider(event Event) error {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
-	return emit(tracker.sink, event)
+	return tracker.emitLocked(event)
+}
+
+func (tracker *toolEventTracker) emitLocked(event Event) error {
+	if tracker.sinkErr != nil {
+		return tracker.sinkErr
+	}
+	if err := emit(tracker.sink, event); err != nil {
+		tracker.sinkErr = err
+		return err
+	}
+	return nil
 }
 
 func (tracker *toolEventTracker) observeSnapshot(snapshot ToolCallSnapshot) error {
@@ -65,7 +78,7 @@ func (tracker *toolEventTracker) observeSnapshot(snapshot ToolCallSnapshot) erro
 		kind = EventToolStart
 		tracker.order = append(tracker.order, snapshot.ID)
 	}
-	if err := emit(tracker.sink, Event{Kind: kind, Call: call, Presentation: presentation}); err != nil {
+	if err := tracker.emitLocked(Event{Kind: kind, Call: call, Presentation: presentation}); err != nil {
 		return err
 	}
 	tracker.streamed[snapshot.ID] = streamedTool{call: call, presentation: presentation}
@@ -89,7 +102,7 @@ func (tracker *toolEventTracker) reconcileFinal(calls []ToolCall) error {
 			continue
 		}
 		result := ToolResult{CallID: callID, Tool: streamed.call.Name, Output: "tool call did not complete", IsError: true}
-		if err := emit(tracker.sink, Event{Kind: EventToolEnd, Call: streamed.call, Presentation: streamed.presentation, Result: result}); err != nil {
+		if err := tracker.emitLocked(Event{Kind: EventToolEnd, Call: streamed.call, Presentation: streamed.presentation, Result: result}); err != nil {
 			return err
 		}
 		delete(tracker.streamed, callID)
@@ -104,20 +117,20 @@ func (tracker *toolEventTracker) beginExecution(call ToolCall) error {
 	presentation := tracker.tools.Presentation(completeToolCallSnapshot(call)).Clone()
 	streamed, exists := tracker.streamed[call.ID]
 	if !exists {
-		if err := emit(tracker.sink, Event{Kind: EventToolStart, Call: call, Presentation: presentation}); err != nil {
+		if err := tracker.emitLocked(Event{Kind: EventToolStart, Call: call, Presentation: presentation}); err != nil {
 			return err
 		}
 		streamed = streamedTool{call: call, presentation: presentation}
 		tracker.order = append(tracker.order, call.ID)
 	} else if !streamed.presentation.Equal(presentation) {
-		if err := emit(tracker.sink, Event{Kind: EventToolUpdate, Call: call, Presentation: presentation}); err != nil {
+		if err := tracker.emitLocked(Event{Kind: EventToolUpdate, Call: call, Presentation: presentation}); err != nil {
 			return err
 		}
 		streamed.presentation = presentation
 	}
 	streamed.call = call
 	tracker.streamed[call.ID] = streamed
-	return emit(tracker.sink, Event{Kind: EventToolExecute, Call: call, Presentation: streamed.presentation})
+	return tracker.emitLocked(Event{Kind: EventToolExecute, Call: call, Presentation: streamed.presentation})
 }
 
 func (tracker *toolEventTracker) update(call ToolCall) ToolUpdateSink {
@@ -128,8 +141,9 @@ func (tracker *toolEventTracker) publishUpdate(call ToolCall, next ToolPresentat
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
-	if tracker.updateErr != nil {
-		return tracker.updateErr
+	if tracker.sinkErr != nil {
+		tracker.updateErrs[call.ID] = tracker.sinkErr
+		return tracker.sinkErr
 	}
 	streamed := tracker.streamed[call.ID]
 	if streamed.presentationFinalized {
@@ -139,8 +153,8 @@ func (tracker *toolEventTracker) publishUpdate(call ToolCall, next ToolPresentat
 	if streamed.presentation.Equal(next) {
 		return nil
 	}
-	if err := emit(tracker.sink, Event{Kind: EventToolUpdate, Call: call, Presentation: next}); err != nil {
-		tracker.updateErr = err
+	if err := tracker.emitLocked(Event{Kind: EventToolUpdate, Call: call, Presentation: next}); err != nil {
+		tracker.updateErrs[call.ID] = err
 		return err
 	}
 	streamed.presentation = next
@@ -158,10 +172,10 @@ func (tracker *toolEventTracker) setFinal(call ToolCall, final ToolPresentation)
 	tracker.streamed[call.ID] = streamed
 }
 
-func (tracker *toolEventTracker) updateError() error {
+func (tracker *toolEventTracker) updateError(call ToolCall) error {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
-	return tracker.updateErr
+	return tracker.updateErrs[call.ID]
 }
 
 func (tracker *toolEventTracker) end(call ToolCall, result ToolResult) error {
@@ -170,7 +184,8 @@ func (tracker *toolEventTracker) end(call ToolCall, result ToolResult) error {
 
 	streamed := tracker.streamed[call.ID]
 	delete(tracker.streamed, call.ID)
-	return emit(tracker.sink, Event{Kind: EventToolEnd, Call: call, Presentation: streamed.presentation, Result: result})
+	delete(tracker.updateErrs, call.ID)
+	return tracker.emitLocked(Event{Kind: EventToolEnd, Call: call, Presentation: streamed.presentation, Result: result})
 }
 
 func (tracker *toolEventTracker) closeRemaining(cause error) error {
@@ -188,7 +203,7 @@ func (tracker *toolEventTracker) closeRemaining(cause error) error {
 			Output:  cause.Error(),
 			IsError: true,
 		}
-		if err := emit(tracker.sink, Event{Kind: EventToolEnd, Call: streamed.call, Presentation: streamed.presentation, Result: result}); err != nil {
+		if err := tracker.emitLocked(Event{Kind: EventToolEnd, Call: streamed.call, Presentation: streamed.presentation, Result: result}); err != nil {
 			return err
 		}
 		delete(tracker.streamed, callID)

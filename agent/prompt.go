@@ -25,6 +25,9 @@ func buildSystemPrompt(definitions []ToolDefinition, workingDirectory, projectIn
 		}
 		prompt.WriteByte('\n')
 	}
+	if len(definitions) > 0 {
+		prompt.WriteString("\nTool calls in the same response execute concurrently. Put dependent operations in separate responses.\n")
+	}
 
 	if projectInstructions != "" {
 		instructionPath := "AGENTS.md"

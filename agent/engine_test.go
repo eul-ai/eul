@@ -1193,8 +1193,7 @@ func TestEngineResetClearsCompactionUsage(t *testing.T) {
 	}
 }
 
-func TestEngineExecutesMultipleCallsInProviderOrder(t *testing.T) {
-	var executionOrder []string
+func TestEngineExecutesMultipleCallsConcurrentlyAndReturnsResultsInProviderOrder(t *testing.T) {
 	provider := &scriptedProvider{t: t, steps: []providerStep{
 		func(_ context.Context, _ Request, _ TextSink) (Response, error) {
 			return Response{
@@ -1206,27 +1205,171 @@ func TestEngineExecutesMultipleCallsInProviderOrder(t *testing.T) {
 			}, nil
 		},
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if len(request.Inputs) != 2 {
-				t.Fatalf("tool result input count = %d, want 2", len(request.Inputs))
+			want := []Input{
+				{Kind: InputToolResult, CallID: "call-b", Tool: "second", Text: "second result"},
+				{Kind: InputToolResult, CallID: "call-a", Tool: "first", Text: "first result"},
 			}
-			gotIDs := []string{request.Inputs[0].CallID, request.Inputs[1].CallID}
-			if !slices.Equal(gotIDs, []string{"call-b", "call-a"}) {
-				t.Fatalf("tool result IDs = %v", gotIDs)
+			if !slices.Equal(request.Inputs, want) {
+				t.Errorf("tool results = %+v, want %+v", request.Inputs, want)
 			}
 			return Response{Text: "done", State: []byte("done")}, nil
 		},
 	}}
+	started := make(chan string, 2)
+	finished := make(chan string, 2)
+	releases := map[string]chan struct{}{
+		"call-a": make(chan struct{}),
+		"call-b": make(chan struct{}),
+	}
 	toolbox := &fakeToolbox{execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
-		executionOrder = append(executionOrder, call.Name)
+		started <- call.ID
+		<-releases[call.ID]
+		finished <- call.ID
 		return ToolResult{Output: call.Name + " result"}, nil
 	}}
 
 	engine := newTestEngine(t, provider, toolbox, Options{})
-	if _, err := engine.Run(context.Background(), "run both", discardEvents); err != nil {
+	var events []Event
+	done := make(chan error, 1)
+	go func() {
+		_, err := engine.Run(context.Background(), "run both", func(event Event) error {
+			events = append(events, event)
+			return nil
+		})
+		done <- err
+	}()
+
+	seen := make(map[string]bool, 2)
+	for len(seen) < 2 {
+		select {
+		case callID := <-started:
+			seen[callID] = true
+		case <-time.After(2 * time.Second):
+			close(releases["call-a"])
+			close(releases["call-b"])
+			<-done
+			t.Fatal("tool calls did not execute concurrently")
+		}
+	}
+
+	close(releases["call-a"])
+	if callID := <-finished; callID != "call-a" {
+		t.Fatalf("first completed call = %q", callID)
+	}
+	close(releases["call-b"])
+	if err := <-done; err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !slices.Equal(executionOrder, []string{"second", "first"}) {
-		t.Fatalf("execution order = %v", executionOrder)
+
+	executing := 0
+	for _, event := range events {
+		switch event.Kind {
+		case EventToolExecute:
+			executing++
+		case EventToolEnd:
+			if executing != 2 {
+				t.Fatalf("tool ended after %d execute events: %v", executing, eventKinds(events))
+			}
+		}
+	}
+}
+
+func TestEngineCancelsParallelCallsOnUpdateFailureAndPreservesResults(t *testing.T) {
+	updateFailure := errors.New("update failed")
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(_ context.Context, _ Request, _ TextSink) (Response, error) {
+			return Response{
+				ToolCalls: []ToolCall{
+					{ID: "update", Name: "update", Arguments: json.RawMessage(`{}`)},
+					{ID: "wait", Name: "wait", Arguments: json.RawMessage(`{}`)},
+					{ID: "done", Name: "done", Arguments: json.RawMessage(`{}`)},
+				},
+				State: []byte("calls"),
+			}, nil
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if len(request.Inputs) != 4 {
+				t.Errorf("continued inputs = %+v", request.Inputs)
+				return Response{Text: "recovered"}, nil
+			}
+			results := request.Inputs[:3]
+			if results[0].CallID != "update" || !results[0].IsError || !strings.Contains(results[0].Text, updateFailure.Error()) {
+				t.Errorf("update result = %+v", results[0])
+			}
+			if results[1].CallID != "wait" || !results[1].IsError || !strings.Contains(results[1].Text, context.Canceled.Error()) {
+				t.Errorf("wait result = %+v", results[1])
+			}
+			if results[2] != (Input{Kind: InputToolResult, CallID: "done", Tool: "done", Text: "completed"}) {
+				t.Errorf("completed result = %+v", results[2])
+			}
+			if request.Inputs[3] != (Input{Kind: InputUser, Text: "continue"}) {
+				t.Errorf("user input = %+v", request.Inputs[3])
+			}
+			return Response{Text: "recovered", State: []byte("recovered")}, nil
+		},
+	}}
+	started := make(chan string, 3)
+	failUpdate := make(chan struct{})
+	finishSuccess := make(chan struct{})
+	waitCanceled := make(chan struct{})
+	toolbox := &fakeToolbox{executeWithUpdates: func(ctx context.Context, call ToolCall, updates ToolUpdateSink) (ToolResult, error) {
+		started <- call.ID
+		switch call.ID {
+		case "update":
+			<-failUpdate
+			err := updates.Update(ToolPresentation{Title: "update", Lines: []string{"changed"}})
+			return ToolResult{Output: "changed"}, err
+		case "wait":
+			<-ctx.Done()
+			close(waitCanceled)
+			return ToolResult{}, ctx.Err()
+		case "done":
+			<-finishSuccess
+			return ToolResult{Output: "completed"}, nil
+		default:
+			return ToolResult{}, fmt.Errorf("unexpected call %q", call.ID)
+		}
+	}}
+
+	engine := newTestEngine(t, provider, toolbox, Options{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := engine.Run(context.Background(), "run", func(event Event) error {
+			if event.Kind == EventToolUpdate && event.Call.ID == "update" {
+				return updateFailure
+			}
+			return nil
+		})
+		done <- err
+	}()
+
+	seen := make(map[string]bool, 3)
+	for len(seen) < 3 {
+		select {
+		case callID := <-started:
+			seen[callID] = true
+		case <-time.After(2 * time.Second):
+			close(finishSuccess)
+			close(failUpdate)
+			<-done
+			t.Fatal("parallel tools did not start")
+		}
+	}
+	close(finishSuccess)
+	close(failUpdate)
+
+	if err := <-done; !errors.Is(err, updateFailure) {
+		t.Fatalf("Run() error = %v, want update failure", err)
+	}
+	select {
+	case <-waitCanceled:
+	default:
+		t.Fatal("update failure did not cancel sibling tool")
+	}
+
+	result, err := engine.Run(context.Background(), "continue", discardEvents)
+	if err != nil || result.Text != "recovered" {
+		t.Fatalf("continued result = %+v, error = %v", result, err)
 	}
 }
 
@@ -1504,13 +1647,12 @@ func TestEngineDeliversSteeringAfterCompleteToolBatch(t *testing.T) {
 			return Response{Text: "redirected", State: []byte("done")}, nil
 		},
 	}}
-	executions := 0
+	executions := make(chan struct{}, 2)
+	var startedOnce sync.Once
 	toolbox := &fakeToolbox{execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
-		executions++
-		if executions == 1 {
-			close(toolStarted)
-			<-releaseTool
-		}
+		executions <- struct{}{}
+		startedOnce.Do(func() { close(toolStarted) })
+		<-releaseTool
 		return ToolResult{Output: "result " + call.ID}, nil
 	}}
 	engine := newTestEngine(t, provider, toolbox, Options{})
@@ -1532,8 +1674,8 @@ func TestEngineDeliversSteeringAfterCompleteToolBatch(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if executions != 2 {
-		t.Fatalf("tool executions = %d", executions)
+	if len(executions) != 2 {
+		t.Fatalf("tool executions = %d", len(executions))
 	}
 	steeringIndex := -1
 	toolEnds := 0

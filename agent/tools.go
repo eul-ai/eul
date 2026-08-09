@@ -83,5 +83,6 @@ type ToolResult struct {
 type Toolbox interface {
 	Definitions() []ToolDefinition
 	Presentation(ToolCallSnapshot) ToolPresentation
+	// Execute may be called concurrently for calls from the same provider response.
 	Execute(ctx context.Context, call ToolCall, updates ToolUpdateSink) (ToolResult, error)
 }

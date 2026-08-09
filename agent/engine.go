@@ -274,56 +274,77 @@ func (e *Engine) compactRequest(ctx context.Context, sink EventSink, compactor C
 	return request, current, compacted.Usage, nil
 }
 
+type toolCompletion struct {
+	index  int
+	call   ToolCall
+	result ToolResult
+	err    error
+}
+
 func (e *Engine) executeToolRound(ctx context.Context, calls []ToolCall, toolEvents *toolEventTracker) ([]Input, error) {
-	inputs := make([]Input, 0, len(calls))
-	for callIndex, call := range calls {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			inputs = append(inputs, unexecutedToolInputs(calls[callIndex:], ctxErr)...)
-			_ = toolEvents.closeRemaining(ctxErr)
-			return inputs, ctxErr
-		}
-
-		if err := toolEvents.beginExecution(call); err != nil {
-			inputs = append(inputs, unexecutedToolInputs(calls[callIndex:], err)...)
-			return inputs, err
-		}
-
-		toolResult, err := e.executeTool(ctx, call, toolEvents.update(call))
-		if updateErr := toolEvents.updateError(); updateErr != nil {
-			toolResult = failedToolResult(call, toolResult, updateErr)
-			inputs = append(inputs, toolResultInput(toolResult))
-			inputs = append(inputs, unexecutedToolInputs(calls[callIndex+1:], updateErr)...)
-			return inputs, updateErr
-		}
-		if err != nil {
-			if toolResult.Output == "" {
-				toolResult.Output = err.Error()
-			}
-			toolResult.IsError = true
-			endErr := toolEvents.end(call, toolResult)
-			closeErr := toolEvents.closeRemaining(err)
-			inputs = append(inputs, toolResultInput(toolResult))
-			inputs = append(inputs, unexecutedToolInputs(calls[callIndex+1:], err)...)
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return inputs, ctxErr
-			}
-			if endErr != nil {
-				return inputs, endErr
-			}
-			if closeErr != nil {
-				return inputs, closeErr
-			}
-			return inputs, err
-		}
-
-		if err := toolEvents.end(call, toolResult); err != nil {
-			inputs = append(inputs, toolResultInput(toolResult))
-			inputs = append(inputs, unexecutedToolInputs(calls[callIndex+1:], err)...)
-			return inputs, err
-		}
-		inputs = append(inputs, toolResultInput(toolResult))
+	if err := ctx.Err(); err != nil {
+		_ = toolEvents.closeRemaining(err)
+		return unexecutedToolInputs(calls, err), err
 	}
-	return inputs, nil
+
+	for _, call := range calls {
+		if err := ctx.Err(); err != nil {
+			_ = toolEvents.closeRemaining(err)
+			return unexecutedToolInputs(calls, err), err
+		}
+		if err := toolEvents.beginExecution(call); err != nil {
+			_ = toolEvents.closeRemaining(err)
+			return unexecutedToolInputs(calls, err), err
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		_ = toolEvents.closeRemaining(err)
+		return unexecutedToolInputs(calls, err), err
+	}
+
+	roundCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	completions := make(chan toolCompletion, len(calls))
+	for index, call := range calls {
+		go func() {
+			result, err := e.executeTool(roundCtx, call, toolEvents.update(call))
+			if updateErr := toolEvents.updateError(call); updateErr != nil {
+				result = failedToolResult(call, result, updateErr)
+				err = updateErr
+			}
+			if err != nil {
+				result = failedToolResult(call, result, err)
+			}
+			completions <- toolCompletion{index: index, call: call, result: result, err: err}
+		}()
+	}
+
+	results := make([]ToolResult, len(calls))
+	var roundErr error
+	for range calls {
+		completion := <-completions
+		results[completion.index] = completion.result
+
+		if completion.err != nil && roundErr == nil {
+			roundErr = completion.err
+			cancel()
+		}
+		if err := toolEvents.end(completion.call, completion.result); err != nil && roundErr == nil {
+			roundErr = err
+			cancel()
+		}
+	}
+
+	inputs := make([]Input, len(results))
+	for index, result := range results {
+		inputs[index] = toolResultInput(result)
+	}
+	if err := ctx.Err(); err != nil {
+		return inputs, err
+	}
+	return inputs, roundErr
 }
 
 type continuation struct {

@@ -181,6 +181,12 @@ func (t *lspTool) Execute(ctx context.Context, arguments json.RawMessage, _ agen
 		return agent.ToolResult{}, err
 	}
 
+	t.client.mu.Lock()
+	defer t.client.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return agent.ToolResult{}, err
+	}
+
 	var result agent.ToolResult
 	var err error
 	switch t.operation {
