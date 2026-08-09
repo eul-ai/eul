@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="logo.png" alt="Eul logo" width="128">
-</p>
+# Eul
 
 Eul is a focused coding agent for the terminal. It can explore a codebase, edit
 files, run commands, use language-server features, and work through multi-step
