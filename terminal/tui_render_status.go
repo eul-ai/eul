@@ -8,7 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 func renderStatus(model *tuiModel, width int) (string, string) {

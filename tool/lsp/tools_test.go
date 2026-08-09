@@ -14,8 +14,8 @@ import (
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 
-	"yaah/agent"
-	"yaah/tool"
+	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/tool"
 )
 
 func TestNewLSPOmitsToolsWhenServerIsUnavailable(t *testing.T) {

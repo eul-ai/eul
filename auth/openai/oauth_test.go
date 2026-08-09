@@ -67,7 +67,7 @@ func TestBrowserLoginPKCEStorageAndRefreshRotation(t *testing.T) {
 			return err
 		}
 		values := parsed.Query()
-		if values.Get("client_id") != clientID || values.Get("code_challenge_method") != "S256" || values.Get("state") == "" || values.Get("originator") != "yaah" {
+		if values.Get("client_id") != clientID || values.Get("code_challenge_method") != "S256" || values.Get("state") == "" || values.Get("originator") != "eul" {
 			t.Errorf("authorization query = %v", values)
 		}
 		mu.Lock()
@@ -206,7 +206,7 @@ func TestDeviceLoginAndLogout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	path := filepath.Join(t.TempDir(), "yaah", "auth.json")
+	path := filepath.Join(t.TempDir(), "eul", "auth.json")
 	manager := NewManager(path, Options{AuthBaseURL: server.URL, Sleep: func(context.Context, time.Duration) error { return nil }})
 	shown := DeviceCode{}
 	if err := manager.Login(context.Background(), LoginDevice, Interaction{DeviceCode: func(code DeviceCode) error { shown = code; return nil }}); err != nil {
@@ -458,7 +458,7 @@ func TestDefaultCredentialPathAndInvalidStorage(t *testing.T) {
 		t.Fatalf("path=%q error=%v", path, err)
 	}
 	if _, err := DefaultCredentialPath("relative"); err == nil {
-		t.Fatal("relative YAAH_HOME accepted")
+		t.Fatal("relative EUL_HOME accepted")
 	}
 
 	credentialPath := filepath.Join(t.TempDir(), "auth.json")

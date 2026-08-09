@@ -14,7 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 func TestBashReportsCombinedOutputStatusCWDAndEnvironment(t *testing.T) {
@@ -23,9 +23,9 @@ func TestBashReportsCombinedOutputStatusCWDAndEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("YAAH_TEST", "value")
+	t.Setenv("EUL_TEST", "value")
 	bashTool := NewBash(cwd)
-	command := `printf 'stdout:%s:%s\n' "$PWD" "$YAAH_TEST"; printf 'stderr\n' >&2`
+	command := `printf 'stdout:%s:%s\n' "$PWD" "$EUL_TEST"; printf 'stderr\n' >&2`
 
 	result := executeJSON(t, bashTool, map[string]any{"command": command})
 	if result.IsError {
@@ -185,7 +185,7 @@ func TestBashTimeoutIsRecoverableAndRetainsOutput(t *testing.T) {
 func TestBashParentCancellationIsFatalAndReported(t *testing.T) {
 	cwd := t.TempDir()
 	readyPath := filepath.Join(cwd, "ready")
-	t.Setenv("YAAH_READY", readyPath)
+	t.Setenv("EUL_READY", readyPath)
 	bashTool := NewBash(cwd)
 	bashTool.defaultTimeout = 5 * time.Second
 	bashTool.maxTimeout = 5 * time.Second
@@ -197,7 +197,7 @@ func TestBashParentCancellationIsFatalAndReported(t *testing.T) {
 	done := make(chan outcome, 1)
 	updates := &recordingBashUpdates{}
 	go func() {
-		result, runErr := bashTool.Execute(ctx, json.RawMessage(`{"command":": > \"$YAAH_READY\"; printf ready; while :; do :; done"}`), updates)
+		result, runErr := bashTool.Execute(ctx, json.RawMessage(`{"command":": > \"$EUL_READY\"; printf ready; while :; do :; done"}`), updates)
 		done <- outcome{result: result, err: runErr}
 	}()
 	waitForPath(t, readyPath)

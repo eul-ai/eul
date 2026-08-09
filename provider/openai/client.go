@@ -12,7 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 const (
@@ -327,8 +327,8 @@ func (c *Client) newRequest(ctx context.Context, method, endpoint, accept string
 	request.Header.Set("Authorization", "Bearer "+credential.AccessToken)
 	request.Header.Set("Accept", accept)
 	request.Header.Set("chatgpt-account-id", credential.AccountID)
-	request.Header.Set("originator", "yaah")
-	request.Header.Set("User-Agent", "yaah")
+	request.Header.Set("originator", "eul")
+	request.Header.Set("User-Agent", "eul")
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("OpenAI-Beta", "responses=experimental")

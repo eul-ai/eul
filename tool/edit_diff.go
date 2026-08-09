@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"strings"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 const (

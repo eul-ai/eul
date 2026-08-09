@@ -11,7 +11,7 @@ import (
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 
-	"yaah/tool/textfile"
+	"github.com/eul-ai/eul/tool/textfile"
 )
 
 func TestPlanAndCommitLSPWorkspaceEdit(t *testing.T) {

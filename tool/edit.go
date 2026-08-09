@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"yaah/agent"
-	"yaah/tool/textfile"
+	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/tool/textfile"
 )
 
 const editToolName = "edit"

@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/term"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 const (

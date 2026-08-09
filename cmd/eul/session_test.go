@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"yaah/agent"
-	openaiadapter "yaah/provider/openai"
-	"yaah/tool"
+	"github.com/eul-ai/eul/agent"
+	openaiadapter "github.com/eul-ai/eul/provider/openai"
+	"github.com/eul-ai/eul/tool"
 )
 
 type closeRecordingTool struct {

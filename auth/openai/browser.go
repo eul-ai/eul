@@ -137,7 +137,7 @@ func (m *Manager) authorizationURL(redirectURI, challenge, state string) string 
 		"state":                      {state},
 		"id_token_add_organizations": {"true"},
 		"codex_cli_simplified_flow":  {"true"},
-		"originator":                 {"yaah"},
+		"originator":                 {"eul"},
 	}
 	return m.authBaseURL + "/oauth/authorize?" + values.Encode()
 }

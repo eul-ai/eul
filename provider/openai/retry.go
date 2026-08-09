@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 const (

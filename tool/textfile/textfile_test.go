@@ -57,7 +57,7 @@ func TestReplaceRejectsChangedFileAndRemovesTemporary(t *testing.T) {
 	if string(content) != "external" {
 		t.Fatalf("content = %q", content)
 	}
-	matches, err := filepath.Glob(filepath.Join(filepath.Dir(path), ".yaah-replace-*"))
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(path), ".eul-replace-*"))
 	if err != nil || len(matches) != 0 {
 		t.Fatalf("temporary files=%v error=%v", matches, err)
 	}

@@ -3,7 +3,7 @@ package terminal
 import (
 	"testing"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 func TestFilePickerKeysTakePriorityOverEditorActions(t *testing.T) {

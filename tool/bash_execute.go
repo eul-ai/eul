@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {

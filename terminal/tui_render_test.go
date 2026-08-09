@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 func renderFrame(model *tuiModel) string {
@@ -227,7 +227,7 @@ func TestBashToolShowsOutputTailAndDuration(t *testing.T) {
 		tool: agent.ToolPresentation{
 			Title:     "bash",
 			Arguments: "go test ./...",
-			Lines:     []string{"one", "two", "three", "ok yaah/cmd", "ok yaah/provider", "ok yaah/terminal", "ok yaah/tool", "ok yaah/terminal race"},
+			Lines:     []string{"one", "two", "three", "ok github.com/eul-ai/eul/cmd", "ok github.com/eul-ai/eul/provider", "ok github.com/eul-ai/eul/terminal", "ok github.com/eul-ai/eul/tool", "ok github.com/eul-ai/eul/terminal race"},
 			TailLines: 5,
 			Elapsed:   2*time.Second + 900*time.Millisecond,
 		},
@@ -238,7 +238,7 @@ func TestBashToolShowsOutputTailAndDuration(t *testing.T) {
 	for _, line := range lines {
 		texts = append(texts, line.text)
 	}
-	for _, want := range []string{"bash go test ./... — exit status: 0", "... (3 earlier lines)", "ok yaah/cmd", "ok yaah/terminal race", "Took 2.9s"} {
+	for _, want := range []string{"bash go test ./... — exit status: 0", "... (3 earlier lines)", "ok github.com/eul-ai/eul/cmd", "ok github.com/eul-ai/eul/terminal race", "Took 2.9s"} {
 		if !slices.Contains(texts, want) {
 			t.Fatalf("lines = %+v, missing %q", lines, want)
 		}

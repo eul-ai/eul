@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 type CodexTokenSourceFunc func(context.Context) (CodexCredential, error)
@@ -32,8 +32,8 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 		for header, want := range map[string]string{
 			"Authorization":      "Bearer " + token,
 			"chatgpt-account-id": accountID,
-			"originator":         "yaah",
-			"User-Agent":         "yaah",
+			"originator":         "eul",
+			"User-Agent":         "eul",
 			"OpenAI-Beta":        "responses=experimental",
 			"Accept":             "text/event-stream",
 			"Content-Type":       "application/json",

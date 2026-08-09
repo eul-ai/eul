@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 func TestKeyDecoderHandlesTextAndSplitSequences(t *testing.T) {

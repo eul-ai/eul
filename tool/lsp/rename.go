@@ -11,8 +11,8 @@ import (
 
 	"go.lsp.dev/protocol"
 
-	"yaah/agent"
-	"yaah/tool/textfile"
+	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/tool/textfile"
 )
 
 type lspRenameArguments struct {

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 type tuiActionKind uint8
@@ -198,7 +198,7 @@ func reducePrompt(model *tuiModel) tuiAction {
 	trimmed := strings.TrimSpace(prompt)
 	switch trimmed {
 	case "/help":
-		model.appendBlock(blockInfo, "Commands:\n  /help             show this help\n  /clear            discard conversation and goal state\n  /exit             exit yaah\n  /goal [objective] show or set the active goal\n  /goal clear       clear the active goal\n  /skill:<name>     load a skill")
+		model.appendBlock(blockInfo, "Commands:\n  /help             show this help\n  /clear            discard conversation and goal state\n  /exit             exit eul\n  /goal [objective] show or set the active goal\n  /goal clear       clear the active goal\n  /skill:<name>     load a skill")
 	case "/clear":
 		return tuiAction{kind: tuiActionReset}
 	case "/exit":

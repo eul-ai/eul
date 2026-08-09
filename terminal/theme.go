@@ -3,7 +3,7 @@ package terminal
 import (
 	"fmt"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 type terminalColor struct {

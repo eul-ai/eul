@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 const updateGoalToolName = "update_goal"

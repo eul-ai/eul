@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"yaah/agent"
-	openaiadapter "yaah/provider/openai"
+	"github.com/eul-ai/eul/agent"
+	openaiadapter "github.com/eul-ai/eul/provider/openai"
 )
 
 func TestParseAgentArguments(t *testing.T) {

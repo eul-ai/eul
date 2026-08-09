@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 type createResponseEnvelope struct {

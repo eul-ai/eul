@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 type fakeEngine struct {

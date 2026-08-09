@@ -14,7 +14,7 @@ import (
 func readCredentials(path string) (credentials, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return credentials{}, errors.New("oauth: not logged in; run 'yaah login'")
+		return credentials{}, errors.New("oauth: not logged in; run 'eul login'")
 	}
 	if err != nil {
 		return credentials{}, fmt.Errorf("oauth: inspect credential file: %w", err)

@@ -3,7 +3,7 @@ package openai
 import (
 	"fmt"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 type modelMetadata struct {

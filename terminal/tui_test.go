@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 func TestScreenModesRestoreEnhancedKeyboardReporting(t *testing.T) {

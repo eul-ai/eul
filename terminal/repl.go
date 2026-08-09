@@ -10,7 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 const (

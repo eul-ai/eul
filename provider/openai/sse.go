@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 var errResponsesSSEIncomplete = errors.New("responses SSE stream ended without a terminal response")

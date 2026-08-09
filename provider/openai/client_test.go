@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 func generate(client *Client, ctx context.Context, request agent.Request, onText, onReasoning agent.TextSink, onToolCall agent.ToolCallSink) (agent.Response, error) {
@@ -206,8 +206,8 @@ func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
 			for header, want := range map[string]string{
 				"Authorization":      "Bearer " + token,
 				"chatgpt-account-id": "account",
-				"originator":         "yaah",
-				"User-Agent":         "yaah",
+				"originator":         "eul",
+				"User-Agent":         "eul",
 				"OpenAI-Beta":        "responses=experimental",
 				"Content-Type":       "application/json",
 			} {

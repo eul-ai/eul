@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 func TestClientReasoningSummaryAndModelMetadata(t *testing.T) {

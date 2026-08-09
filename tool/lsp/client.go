@@ -17,7 +17,7 @@ import (
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 
-	"yaah/tool/textfile"
+	"github.com/eul-ai/eul/tool/textfile"
 )
 
 type lspServerConfig struct {
@@ -232,7 +232,7 @@ func startLSPSession(ctx context.Context, cwd string, config lspServerConfig) (*
 			WorkspaceFolders: protocol.NewNullable([]protocol.WorkspaceFolder{folder}),
 		},
 		ProcessID:  &processID,
-		ClientInfo: protocol.ClientInfo{Name: "yaah"},
+		ClientInfo: protocol.ClientInfo{Name: "eul"},
 		RootURI:    &rootURI,
 		Capabilities: protocol.ClientCapabilities{
 			General: &protocol.GeneralClientCapabilities{

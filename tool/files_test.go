@@ -14,7 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 type toolUpdateSinkFunc func(agent.ToolPresentation) error
@@ -377,7 +377,7 @@ func TestEditReplacesUniqueTextAndPreservesMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".yaah-edit-") {
+		if strings.HasPrefix(entry.Name(), ".eul-edit-") {
 			t.Fatalf("temporary edit file was not cleaned up: %s", entry.Name())
 		}
 	}

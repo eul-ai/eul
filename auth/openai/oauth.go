@@ -72,19 +72,19 @@ type Manager struct {
 	sleep           func(context.Context, time.Duration) error
 }
 
-func DefaultCredentialPath(yaahHome string) (string, error) {
-	if yaahHome != "" && !filepath.IsAbs(yaahHome) {
-		return "", errors.New("oauth: YAAH_HOME must be an absolute path")
+func DefaultCredentialPath(eulHome string) (string, error) {
+	if eulHome != "" && !filepath.IsAbs(eulHome) {
+		return "", errors.New("oauth: EUL_HOME must be an absolute path")
 	}
-	if yaahHome != "" {
-		return filepath.Join(filepath.Clean(yaahHome), "auth.json"), nil
+	if eulHome != "" {
+		return filepath.Join(filepath.Clean(eulHome), "auth.json"), nil
 	}
 
 	config, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("oauth: resolve user config directory: %w", err)
 	}
-	return filepath.Join(config, "yaah", "auth.json"), nil
+	return filepath.Join(config, "eul", "auth.json"), nil
 }
 
 func NewManager(path string, options Options) *Manager {

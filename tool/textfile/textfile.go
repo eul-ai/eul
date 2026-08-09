@@ -67,7 +67,7 @@ func Validate(data []byte) error {
 }
 
 func Prepare(snapshot Snapshot, data []byte) (*Replacement, error) {
-	temporary, err := os.CreateTemp(filepath.Dir(snapshot.Path), ".yaah-replace-*")
+	temporary, err := os.CreateTemp(filepath.Dir(snapshot.Path), ".eul-replace-*")
 	if err != nil {
 		return nil, err
 	}

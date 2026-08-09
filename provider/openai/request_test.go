@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 func TestBuildCreateRequest(t *testing.T) {

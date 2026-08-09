@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 type usageResponse struct {

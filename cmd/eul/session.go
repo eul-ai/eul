@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 
-	"yaah/agent"
-	openaiadapter "yaah/provider/openai"
-	"yaah/terminal"
-	"yaah/tool"
-	lsptool "yaah/tool/lsp"
+	"github.com/eul-ai/eul/agent"
+	openaiadapter "github.com/eul-ai/eul/provider/openai"
+	"github.com/eul-ai/eul/terminal"
+	"github.com/eul-ai/eul/tool"
+	lsptool "github.com/eul-ai/eul/tool/lsp"
 )
 
 type agentSession struct {

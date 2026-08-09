@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 const continuationStateVersion = 1

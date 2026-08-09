@@ -1,10 +1,10 @@
-# Yaah
+# Eul
 
-Yaah is a focused coding agent for the terminal. It can explore a codebase, edit
+Eul is a focused coding agent for the terminal. It can explore a codebase, edit
 files, run commands, use language-server features, and work through multi-step
 tasks in an interactive conversation.
 
-Yaah is intended for trusted local use on macOS and Linux. Conversations are kept
+Eul is intended for trusted local use on macOS and Linux. Conversations are kept
 in memory and tools run directly on your machine with your permissions.
 
 ## Features
@@ -26,23 +26,23 @@ in memory and tools run directly on your machine with your permissions.
 
 ## Getting started
 
-Build Yaah from source:
+Build Eul from source:
 
 ```sh
-go build -o yaah ./cmd/yaah
+go build -o eul ./cmd/eul
 ```
 
 Sign in and start an interactive session:
 
 ```sh
-./yaah login
-./yaah --model <model> --cwd /path/to/project
+./eul login
+./eul --model <model> --cwd /path/to/project
 ```
 
 For a headless environment, use device authorization:
 
 ```sh
-./yaah login --device-auth
+./eul login --device-auth
 ```
 
 ChatGPT sign-in uses an experimental integration with the subscription-backed
@@ -51,9 +51,9 @@ Codex service. Its third-party API behavior may change.
 ## Usage
 
 ```text
-yaah --model <model> [--thinking <level>] [--cwd <directory>]
-yaah login [--device-auth]
-yaah logout
+eul --model <model> [--thinking <level>] [--cwd <directory>]
+eul login [--device-auth]
+eul logout
 ```
 
 `--cwd` chooses the working directory for the session. Relative tool paths are
@@ -71,8 +71,8 @@ These environment variables provide common defaults:
 
 | Variable | Purpose |
 | --- | --- |
-| `YAAH_HOME` | Credential storage directory |
-| `YAAH_THINKING_LEVEL` | Default thinking level |
+| `EUL_HOME` | Credential storage directory |
+| `EUL_THINKING_LEVEL` | Default thinking level |
 | `OPENAI_MODEL` | Default model |
 | `OPENAI_REASONING_SUMMARY` | Reasoning summary mode: `auto`, `concise`, `detailed`, or `none` |
 
@@ -107,7 +107,7 @@ Bracketed multiline paste preserves newlines and blank lines.
 | --- | --- |
 | `/help` | Show available commands |
 | `/clear` | Clear the conversation and active goal |
-| `/exit` | Exit Yaah |
+| `/exit` | Exit Eul |
 | `/goal <objective>` | Set or replace an autonomous goal |
 | `/goal` | Show the active goal |
 | `/goal clear` | Clear the active goal |
@@ -115,7 +115,7 @@ Bracketed multiline paste preserves newlines and blank lines.
 
 ## Built-in tools
 
-Yaah can use the following capabilities as needed:
+Eul can use the following capabilities as needed:
 
 - Read UTF-8 text files
 - Create and overwrite files
@@ -131,7 +131,7 @@ projects use `gopls` when available.
 
 ## Goals
 
-An active goal lets Yaah continue working after an individual response would
+An active goal lets Eul continue working after an individual response would
 normally finish. This is useful for larger objectives that require several rounds
 of inspection, changes, and verification.
 
@@ -140,7 +140,7 @@ continuation. A goal remains active until it is completed or cleared.
 
 ## Skills
 
-Yaah discovers Agent Skills from:
+Eul discovers Agent Skills from:
 
 - `~/.agents/skills`
 - `.agents/skills` in the working directory
@@ -160,4 +160,4 @@ run bundled scripts with your permissions.
 - Canceling a turn does not undo tool side effects that already occurred.
 - Subagents are read-only and are used only when explicitly requested.
 - Markdown rendering is limited to inline bold, italic, and code formatting.
-- Yaah currently uses ChatGPT authentication for OpenAI Codex models.
+- Eul currently uses ChatGPT authentication for OpenAI Codex models.

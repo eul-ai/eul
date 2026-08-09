@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 var errUnknownTool = errors.New("tool: unknown tool")

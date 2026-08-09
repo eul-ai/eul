@@ -12,10 +12,10 @@ import (
 	"sync"
 	"testing"
 
-	"yaah/agent"
-	oauth "yaah/auth/openai"
-	openaiadapter "yaah/provider/openai"
-	"yaah/tool"
+	"github.com/eul-ai/eul/agent"
+	oauth "github.com/eul-ai/eul/auth/openai"
+	openaiadapter "github.com/eul-ai/eul/provider/openai"
+	"github.com/eul-ai/eul/tool"
 )
 
 type providerFunction func(context.Context, agent.Request, agent.TextSink) (agent.Response, error)
@@ -94,7 +94,7 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{
 		"OPENAI_MODEL":             "environment-model",
 		"OPENAI_REASONING_SUMMARY": "detailed",
-		"YAAH_THINKING_LEVEL":      "high",
+		"EUL_THINKING_LEVEL":       "high",
 	})
 	var providerOptions openaiadapter.Options
 	runtime.newProvider = func(source openaiadapter.CodexTokenSource, options openaiadapter.Options) (agent.Provider, error) {
@@ -163,7 +163,7 @@ func TestAgentSessionFeedsConcurrentSubagentsBackToMain(t *testing.T) {
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{
 		"OPENAI_MODEL":             "model",
 		"OPENAI_REASONING_SUMMARY": "detailed",
-		"YAAH_THINKING_LEVEL":      "high",
+		"EUL_THINKING_LEVEL":       "high",
 	})
 	var mu sync.Mutex
 	factoryCalls := 0
@@ -376,7 +376,7 @@ func TestRunLoginAndLogoutCommands(t *testing.T) {
 	for _, arguments := range [][]string{{"login", "--help"}, {"logout", "--help"}} {
 		stdout.Reset()
 		stderr.Reset()
-		if code := run(arguments, runtime); code != exitSuccess || !strings.Contains(stderr.String(), "Usage of yaah ") {
+		if code := run(arguments, runtime); code != exitSuccess || !strings.Contains(stderr.String(), "Usage of eul ") {
 			t.Fatalf("arguments=%v code=%d stdout=%q stderr=%q", arguments, code, stdout.String(), stderr.String())
 		}
 	}
@@ -392,8 +392,8 @@ func TestRunConfigurationAndUsageErrors(t *testing.T) {
 		wantCode    int
 		want        string
 	}{
-		{name: "help", arguments: []string{"--help"}, wantCode: exitSuccess, want: "Usage of yaah:"},
-		{name: "missing authentication", environment: map[string]string{"OPENAI_MODEL": "model"}, missingAuth: true, wantCode: exitFailure, want: "run 'yaah login'"},
+		{name: "help", arguments: []string{"--help"}, wantCode: exitSuccess, want: "Usage of eul:"},
+		{name: "missing authentication", environment: map[string]string{"OPENAI_MODEL": "model"}, missingAuth: true, wantCode: exitFailure, want: "run 'eul login'"},
 		{name: "missing model", wantCode: exitFailure, want: "model is required"},
 		{name: "explicit empty model", arguments: []string{"--model="}, environment: map[string]string{"OPENAI_MODEL": "fallback"}, wantCode: exitFailure, want: "model is required"},
 		{name: "model whitespace", arguments: []string{"--model", "bad model"}, wantCode: exitFailure, want: "must not contain whitespace"},
@@ -409,7 +409,7 @@ func TestRunConfigurationAndUsageErrors(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			runtime := testRuntime(cwd, &stdout, &stderr, test.environment)
 			if test.missingAuth {
-				runtime.newOAuth = fixedOAuth(&fakeOAuthManager{resolveErr: errors.New("oauth: not logged in; run 'yaah login'")})
+				runtime.newOAuth = fixedOAuth(&fakeOAuthManager{resolveErr: errors.New("oauth: not logged in; run 'eul login'")})
 			}
 
 			code := run(test.arguments, runtime)

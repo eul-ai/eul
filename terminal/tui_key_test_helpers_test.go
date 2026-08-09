@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 func reduceKey(model *tuiModel, key keyEvent) (tuiAction, error) {

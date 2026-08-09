@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"yaah/agent"
+	"github.com/eul-ai/eul/agent"
 )
 
 func setFinalBashPresentation(updates agent.ToolUpdateSink, command, output, outcome string, elapsed time.Duration) {

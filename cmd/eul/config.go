@@ -9,8 +9,8 @@ import (
 	"strings"
 	"unicode"
 
-	"yaah/agent"
-	openaiadapter "yaah/provider/openai"
+	"github.com/eul-ai/eul/agent"
+	openaiadapter "github.com/eul-ai/eul/provider/openai"
 )
 
 type reportedFlagError struct {
@@ -36,22 +36,22 @@ type agentConfig struct {
 }
 
 func parseAgentArguments(arguments []string, runtime appRuntime) (agentArguments, error) {
-	thinkingDefault := runtime.getenv("YAAH_THINKING_LEVEL")
+	thinkingDefault := runtime.getenv("EUL_THINKING_LEVEL")
 	if thinkingDefault == "" {
 		thinkingDefault = string(agent.DefaultThinkingLevel)
 	}
 
-	flags := flag.NewFlagSet("yaah", flag.ContinueOnError)
+	flags := flag.NewFlagSet("eul", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
 	model := flags.String("model", runtime.getenv("OPENAI_MODEL"), "OpenAI model (or OPENAI_MODEL)")
-	thinking := flags.String("thinking", thinkingDefault, "thinking level (or YAAH_THINKING_LEVEL)")
+	thinking := flags.String("thinking", thinkingDefault, "thinking level (or EUL_THINKING_LEVEL)")
 	cwd := flags.String("cwd", "", "fixed working directory")
 
 	if err := flags.Parse(arguments); err != nil {
 		return agentArguments{}, reportedFlagError{error: err}
 	}
 	if flags.NArg() != 0 {
-		return agentArguments{}, errors.New("usage error: yaah accepts no prompt arguments")
+		return agentArguments{}, errors.New("usage error: eul accepts no prompt arguments")
 	}
 
 	thinkingLevel, err := agent.ParseThinkingLevel(*thinking)

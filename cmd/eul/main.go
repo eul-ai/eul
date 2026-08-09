@@ -11,11 +11,11 @@ import (
 	"os/signal"
 	"runtime"
 
-	"yaah/agent"
-	oauth "yaah/auth/openai"
-	openaiadapter "yaah/provider/openai"
-	"yaah/terminal"
-	"yaah/tool"
+	"github.com/eul-ai/eul/agent"
+	oauth "github.com/eul-ai/eul/auth/openai"
+	openaiadapter "github.com/eul-ai/eul/provider/openai"
+	"github.com/eul-ai/eul/terminal"
+	"github.com/eul-ai/eul/tool"
 )
 
 const (
@@ -69,7 +69,7 @@ func main() {
 		userHomeDir: os.UserHomeDir,
 		interrupts:  interrupts,
 		newOAuth: func() (oauthManager, error) {
-			path, err := oauth.DefaultCredentialPath(os.Getenv("YAAH_HOME"))
+			path, err := oauth.DefaultCredentialPath(os.Getenv("EUL_HOME"))
 			if err != nil {
 				return nil, err
 			}
@@ -199,7 +199,7 @@ func (source oauthTokenSource) Token(ctx context.Context) (openaiadapter.CodexCr
 }
 
 func runLogin(arguments []string, runtime appRuntime) int {
-	flags := flag.NewFlagSet("yaah login", flag.ContinueOnError)
+	flags := flag.NewFlagSet("eul login", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
 	device := flags.Bool("device-auth", false, "use device authorization for headless environments")
 
@@ -210,7 +210,7 @@ func runLogin(arguments []string, runtime appRuntime) int {
 		return exitUsage
 	}
 	if flags.NArg() != 0 {
-		writeCLIError(runtime.stderr, "usage error: yaah login accepts no arguments")
+		writeCLIError(runtime.stderr, "usage error: eul login accepts no arguments")
 		return exitUsage
 	}
 
@@ -254,7 +254,7 @@ func runLogin(arguments []string, runtime appRuntime) int {
 }
 
 func runLogout(arguments []string, runtime appRuntime) int {
-	flags := flag.NewFlagSet("yaah logout", flag.ContinueOnError)
+	flags := flag.NewFlagSet("eul logout", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
 
 	if err := flags.Parse(arguments); err != nil {
@@ -264,7 +264,7 @@ func runLogout(arguments []string, runtime appRuntime) int {
 		return exitUsage
 	}
 	if flags.NArg() != 0 {
-		writeCLIError(runtime.stderr, "usage error: yaah logout accepts no arguments")
+		writeCLIError(runtime.stderr, "usage error: eul logout accepts no arguments")
 		return exitUsage
 	}
 
