@@ -6,7 +6,7 @@ import (
 	"unicode/utf8"
 )
 
-const mouseWheelScrollLines = 3
+const mouseWheelScrollLines = 1
 
 type selectionPoint struct {
 	row          int

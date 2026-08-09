@@ -93,7 +93,7 @@ func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width
 	resizes, stopResizes := watchResize()
 	defer stopResizes()
 
-	renderTicker := time.NewTicker(time.Second / 30)
+	renderTicker := time.NewTicker(time.Second / 60)
 	defer renderTicker.Stop()
 	spinnerTicker := time.NewTicker(80 * time.Millisecond)
 	defer spinnerTicker.Stop()
