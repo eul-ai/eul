@@ -119,7 +119,9 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 			model.historyUp()
 		}
 	case keyDown:
-		model.historyDown()
+		if !model.moveDown() {
+			model.historyDown()
+		}
 	case keyCtrlD:
 		if !model.running && len(model.input) == 0 {
 			return tuiAction{kind: tuiActionExit}, nil

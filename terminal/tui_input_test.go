@@ -236,6 +236,29 @@ func TestArrowUpMovesToPreviousInputLineBeforeHistory(t *testing.T) {
 	}
 }
 
+func TestArrowDownMovesToNextInputLineBeforeHistory(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.history = []string{"first\nsecond"}
+	model.historyDraft = "draft"
+	model.historyIndex = 0
+	model.setInput(model.history[0])
+	model.cursor = len([]rune("first"))
+
+	if _, err := reduceKey(model, keyEvent{code: keyDown}); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(model.input); got != "first\nsecond" || model.cursor != len([]rune("first\nsecon")) || model.historyIndex != 0 {
+		t.Fatalf("first down: input=%q cursor=%d historyIndex=%d", got, model.cursor, model.historyIndex)
+	}
+
+	if _, err := reduceKey(model, keyEvent{code: keyDown}); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(model.input); got != "draft" || model.historyIndex != -1 {
+		t.Fatalf("second down: input=%q historyIndex=%d", got, model.historyIndex)
+	}
+}
+
 func TestTUIModelDefaultsToMediumThinking(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	if model.thinkingLevel != agent.DefaultThinkingLevel {
