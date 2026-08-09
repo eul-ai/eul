@@ -52,15 +52,16 @@ func conversationLines(blocks []conversationBlock, width int) []styledLine {
 		if contentWidth < 1 {
 			contentWidth = 1
 		}
-		if isToolBlock(block.kind) {
+		switch {
+		case isToolBlock(block.kind):
 			lines = append(lines, styledLine{style: style, padding: padding})
 			lines = append(lines, toolConversationLines(block, contentWidth, style, padding)...)
 			lines = append(lines, styledLine{style: style, padding: padding})
-		} else if block.kind == blockAssistant || block.kind == blockReasoning {
+		case isInlineMarkdownBlock(block.kind):
 			for _, line := range wrapInlineMarkdown(text, contentWidth) {
 				lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding})
 			}
-		} else {
+		default:
 			for _, line := range wrapText(text, contentWidth) {
 				lines = append(lines, styledLine{text: line, style: style, padding: padding})
 			}
@@ -188,6 +189,15 @@ func toolDiffConversationLines(diff []agent.ToolDiffLine, width int, style lineS
 
 func isToolBlock(kind blockKind) bool {
 	return kind == blockToolPending || kind == blockTool || kind == blockToolError
+}
+
+func isInlineMarkdownBlock(kind blockKind) bool {
+	switch kind {
+	case blockUser, blockAssistant, blockReasoning:
+		return true
+	default:
+		return false
+	}
 }
 
 func blockPresentation(kind blockKind) lineStyle {

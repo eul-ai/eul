@@ -12,9 +12,9 @@ coding tools, and an OpenAI Responses API adapter.
 - Provider adapters are selected at compile time.
 - Sessions live only in memory and `/clear` discards them.
 
-Yaah supports inline bold, italic, and code Markdown in assistant output, reasoning,
-and tool-detail lines, but deliberately excludes broader Markdown rendering, dynamic
-plugins, provider negotiation, model
+Yaah supports inline bold, italic, and code Markdown in user messages, assistant
+output, reasoning, and tool-detail lines, but deliberately excludes broader Markdown
+rendering, dynamic plugins, provider negotiation, model
 catalogs, telemetry, MCP, project indexing, multimodal input, and session persistence.
 
 ## Usage

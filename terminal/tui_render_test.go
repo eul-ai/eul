@@ -145,6 +145,29 @@ func TestConversationBlocksUseCurrentTheme(t *testing.T) {
 	}
 }
 
+func TestUserMessagesRenderInlineMarkdown(t *testing.T) {
+	lines := conversationLines([]conversationBlock{{
+		kind: blockUser,
+		text: "Use **bold**, *italic*, and `code`",
+	}}, 80)
+	if len(lines) != 1 || lines[0].text != "Use bold, italic, and code" {
+		t.Fatalf("lines = %+v", lines)
+	}
+
+	var rendered strings.Builder
+	renderLine(&rendered, 1, 80, lines[0])
+	output := rendered.String()
+	for _, want := range []string{
+		ansiBold + "bold" + ansiNormalIntensity,
+		ansiItalic + "italic" + ansiNotItalic,
+		ansiForeground(currentTheme.markdownCode) + "code" + ansiForeground(currentTheme.yellow),
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("rendered line %q omits %q", output, want)
+		}
+	}
+}
+
 func TestAssistantReasoningAndToolDetailsRenderInlineMarkdown(t *testing.T) {
 	lines := conversationLines([]conversationBlock{
 		{kind: blockReasoning, text: "**Planning**"},
