@@ -232,8 +232,10 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		}
 		c.startCompaction(ctx)
 	case tuiActionExit:
-		if err := c.saveCurrentCheckpoint(false); err != nil {
-			return false, err
+		if !c.model.running {
+			if err := c.saveCurrentCheckpoint(false); err != nil {
+				return false, err
+			}
 		}
 		return true, nil
 	case tuiActionSubmit:

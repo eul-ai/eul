@@ -89,7 +89,7 @@ func (store *sessionStore) Create(
 		return nil, err
 	}
 	path := filepath.Join(workspaceDirectory, id+".json")
-	lock, err := acquireSessionLock(filepath.Join(workspaceDirectory, id+".lock"))
+	lock, err := acquireSessionLock(sessionLockPath(path))
 	if err != nil {
 		return nil, err
 	}
@@ -115,11 +115,12 @@ func (store *sessionStore) Create(
 		},
 	}
 	if handle.record.Description != "" {
-		handle.record.Revision = 1
-		if err := handle.write(handle.record); err != nil {
-			_ = handle.Close()
-			return nil, err
+		record := handle.record
+		record.Revision = 1
+		if err := handle.write(record); err != nil {
+			return nil, errors.Join(err, handle.Close())
 		}
+		handle.record = record
 	}
 	return handle, nil
 }
@@ -140,8 +141,7 @@ func (store *sessionStore) Open(ctx context.Context, cwd, id string) (*sessionHa
 		return nil, err
 	}
 
-	lockPath := strings.TrimSuffix(path, ".json") + ".lock"
-	lock, err := acquireSessionLock(lockPath)
+	lock, err := acquireSessionLock(sessionLockPath(path))
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +175,7 @@ func (store *sessionStore) List(cwd string) ([]terminal.SessionSummary, error) {
 		}
 		record, err := readSessionRecord(filepath.Join(directory, entry.Name()))
 		if err != nil {
-			return nil, err
+			continue
 		}
 		if record.WorkingDirectory != cwd {
 			continue
@@ -316,7 +316,20 @@ func (handle *sessionHandle) Close() error {
 		return nil
 	}
 	handle.closed = true
-	return releaseSessionLock(handle.lock)
+	if err := releaseSessionLock(handle.lock); err != nil {
+		return err
+	}
+	if handle.record.Revision != 0 {
+		return nil
+	}
+	if err := os.Remove(sessionLockPath(handle.path)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove empty session lock: %w", err)
+	}
+	return nil
+}
+
+func sessionLockPath(path string) string {
+	return strings.TrimSuffix(path, ".json") + ".lock"
 }
 
 func readSessionRecord(path string) (sessionRecord, error) {

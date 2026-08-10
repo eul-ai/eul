@@ -12,6 +12,30 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
+func TestTUIControllerEOFWhileRunningDefersCheckpoint(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.running = true
+	canceled := false
+	saveCalls := 0
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+		turnCancel: func() { canceled = true },
+		saveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error {
+			saveCalls++
+			return nil
+		},
+	}
+
+	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEOF}})
+	if err != nil || exit {
+		t.Fatalf("transition exit=%v error=%v", exit, err)
+	}
+	if !canceled || !errors.Is(controller.exitAfterTurn, io.EOF) || saveCalls != 0 {
+		t.Fatalf("canceled=%v exitAfterTurn=%v saveCalls=%d", canceled, controller.exitAfterTurn, saveCalls)
+	}
+}
+
 func TestTUIControllerNewSessionKeepsCurrentConversation(t *testing.T) {
 	engine := &fakeEngine{}
 	model := newTUIModel(80, 24, Options{})

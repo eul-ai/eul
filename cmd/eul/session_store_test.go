@@ -113,6 +113,10 @@ func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	lockPath := sessionLockPath(handle.path)
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(handle.path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("empty session file error = %v", err)
 	}
@@ -131,6 +135,9 @@ func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 	}
 	if err := handle.Close(); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(lockPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty session lock error = %v", err)
 	}
 }
 
@@ -162,6 +169,22 @@ func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
 	}
 	if _, err := store.Open(context.Background(), cwd, id); err == nil {
 		t.Fatal("corrupt session was accepted")
+	}
+
+	valid, err := store.Create(cwd, "model", agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "valid prompt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	validID := valid.record.ID
+	if err := valid.Close(); err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := store.List(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 || summaries[0].ID != validID {
+		t.Fatalf("summaries with corrupt record = %+v", summaries)
 	}
 }
 
