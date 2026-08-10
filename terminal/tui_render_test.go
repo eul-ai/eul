@@ -710,6 +710,16 @@ func TestRenderStatusPrioritizesActivityAndContext(t *testing.T) {
 	}
 }
 
+func TestTUIModelShowsGenerationRetries(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.applyAgentEvent(agent.Event{Kind: agent.EventGenerationRetry, Attempt: 2})
+
+	left, _ := renderStatus(model, 80)
+	if model.activity.kind != activityRetrying || left != "⠋ retrying response (attempt 2)" {
+		t.Fatalf("activity = %+v, status = %q", model.activity, left)
+	}
+}
+
 func TestTUIModelTracksActivityAndContext(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.contextTokens = 100

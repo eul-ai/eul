@@ -110,7 +110,7 @@ func contextLimitResponseError(detail responseError) bool {
 func retryableResponseError(detail responseError) bool {
 	for _, value := range []string{detail.Type, detail.Code} {
 		switch strings.ToLower(value) {
-		case "server_error", "rate_limit", "rate_limit_error", "rate_limit_exceeded":
+		case "server_error", "service_unavailable_error", "server_is_overloaded", "rate_limit", "rate_limit_error", "rate_limit_exceeded":
 			return true
 		}
 	}

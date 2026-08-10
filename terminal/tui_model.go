@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -37,6 +38,7 @@ const (
 	activityReady activityKind = iota
 	activityThinking
 	activityResponding
+	activityRetrying
 	activityCompacting
 	activityTool
 	activityCanceling
@@ -152,6 +154,8 @@ func (m *tuiModel) applyAgentEvent(event agent.Event) {
 		m.setActiveActivity(activity{kind: activityThinking})
 	case agent.EventContextUsage:
 		m.contextTokens = event.Usage.TotalTokens
+	case agent.EventGenerationRetry:
+		m.setActiveActivity(activity{kind: activityRetrying, detail: "attempt " + strconv.Itoa(event.Attempt)})
 	case agent.EventSteering:
 		m.deliverSteering(event.Text)
 	case agent.EventGoalContinuation:

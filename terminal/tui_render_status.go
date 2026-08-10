@@ -152,6 +152,11 @@ func activityText(model *tuiModel) string {
 		label = "thinking"
 	case activityResponding:
 		label = "responding"
+	case activityRetrying:
+		label = "retrying response"
+		if model.activity.detail != "" {
+			label += " (" + model.activity.detail + ")"
+		}
 	case activityCompacting:
 		label = "compacting context"
 	case activityTool:

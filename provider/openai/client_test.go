@@ -596,7 +596,7 @@ func TestClientRetriesTransientGenerationThroughEngine(t *testing.T) {
 		calls++
 		writer.Header().Set("Content-Type", "text/event-stream")
 		if calls == 1 {
-			fmt.Fprint(writer, "data: {\"type\":\"error\",\"error\":{\"type\":\"server_error\",\"code\":\"server_error\",\"message\":\"failed\"}}\n\n")
+			fmt.Fprint(writer, "data: {\"type\":\"error\",\"error\":{\"type\":\"service_unavailable_error\",\"code\":\"server_is_overloaded\",\"message\":\"overloaded\"}}\n\n")
 			return
 		}
 		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"recovered\"}]}]}}\n\n")
@@ -605,9 +605,18 @@ func TestClientRetriesTransientGenerationThroughEngine(t *testing.T) {
 	client := newTestClient(t, "key", server.URL, Options{})
 	engine := agent.New(client, emptyToolbox{}, agent.Options{Model: "test-model"})
 
-	result, err := engine.Run(context.Background(), "hello", func(agent.Event) error { return nil })
+	var retries []agent.Event
+	result, err := engine.Run(context.Background(), "hello", func(event agent.Event) error {
+		if event.Kind == agent.EventGenerationRetry {
+			retries = append(retries, event)
+		}
+		return nil
+	})
 	if err != nil || result.Text != "recovered" || calls != 2 {
 		t.Fatalf("result = %+v, error = %v, calls = %d", result, err, calls)
+	}
+	if len(retries) != 1 || retries[0].Attempt != 2 {
+		t.Fatalf("retry events = %+v", retries)
 	}
 }
 
@@ -732,6 +741,20 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 		delay, retry := client.RetryGeneration(err, 1)
 		if err == nil || !retry || delay <= 0 {
 			t.Fatalf("Generate() error = %v, delay = %s, retry = %t", err, delay, retry)
+		}
+	})
+
+	t.Run("SSE overloaded code", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(writer, "data: {\"type\":\"error\",\"error\":{\"code\":\"server_is_overloaded\",\"message\":\"overloaded\"}}\n\n")
+		}))
+		defer server.Close()
+		client := newTestClient(t, "key", server.URL, Options{})
+
+		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
+		if _, retry := client.RetryGeneration(err, 1); err == nil || !retry {
+			t.Fatalf("Generate() error = %v, retry = %t", err, retry)
 		}
 	})
 

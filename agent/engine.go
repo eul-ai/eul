@@ -205,6 +205,9 @@ func (e *Engine) generateResponse(ctx context.Context, request Request, sink Eve
 		if !retry {
 			return Response{}, nil, fmt.Errorf("agent: generate response: %w", err)
 		}
+		if err := emit(sink, Event{Kind: EventGenerationRetry, Attempt: failedAttempts + 1}); err != nil {
+			return Response{}, nil, err
+		}
 		if err := waitForRetry(ctx, delay); err != nil {
 			return Response{}, nil, err
 		}

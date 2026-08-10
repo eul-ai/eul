@@ -494,11 +494,14 @@ func TestEngineRetriesGenerationWithoutExecutingPartialToolCalls(t *testing.T) {
 		t.Fatalf("generate calls = %d, executions = %d", generateCalls, executions)
 	}
 	if got := eventKinds(events); !slices.Equal(got, []EventKind{
-		EventToolStart, EventToolEnd,
+		EventToolStart, EventToolEnd, EventGenerationRetry,
 		EventContextUsage, EventToolStart, EventToolExecute, EventToolEnd,
 		EventContextUsage,
 	}) {
 		t.Fatalf("events = %v", got)
+	}
+	if events[2].Attempt != 2 {
+		t.Fatalf("retry event = %+v", events[2])
 	}
 	if !events[1].Result.IsError || !strings.Contains(events[1].Result.Output, transient.Error()) {
 		t.Fatalf("abandoned tool result = %+v", events[1].Result)

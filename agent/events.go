@@ -8,6 +8,7 @@ const (
 	EventCompactionStart    EventKind = "compaction_start"
 	EventCompactionEnd      EventKind = "compaction_end"
 	EventContextUsage       EventKind = "context_usage"
+	EventGenerationRetry    EventKind = "generation_retry"
 	EventSteering           EventKind = "steering"
 	EventGoalContinuation   EventKind = "goal_continuation"
 	EventToolStart          EventKind = "tool_start"
@@ -23,6 +24,7 @@ type Event struct {
 	Presentation ToolPresentation
 	Result       ToolResult
 	Usage        Usage
+	Attempt      int
 }
 
 type EventSink func(Event) error
