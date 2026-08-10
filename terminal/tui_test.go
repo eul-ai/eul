@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,16 @@ import (
 func TestScreenModesRestoreEnhancedKeyboardReporting(t *testing.T) {
 	if !strings.Contains(enterScreen, "\x1b[>1u") || !strings.Contains(leaveScreen, "\x1b[<u") {
 		t.Fatalf("enter=%q leave=%q", enterScreen, leaveScreen)
+	}
+}
+
+func TestSetTerminalTitleUsesWorkingDirectoryName(t *testing.T) {
+	var output bytes.Buffer
+	if err := setTerminalTitle(&output, filepath.Join("home", "daniel", "Code", "eul")); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := output.String(), "\x1b]2;ℇ - eul\x07"; got != want {
+		t.Fatalf("terminal title = %q, want %q", got, want)
 	}
 }
 

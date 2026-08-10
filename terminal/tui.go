@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"golang.org/x/term"
 
@@ -82,9 +85,23 @@ func (runner *Runner) Run(ctx context.Context, engine Engine, options Options) e
 	if err != nil {
 		return fmt.Errorf("terminal: get size: %w", err)
 	}
+	if err := setTerminalTitle(runner.output, options.WorkingDirectory); err != nil {
+		return err
+	}
 	options.Input = runner.input
 	options.Output = runner.output
 	return runTUIWithKeys(ctx, engine, options, runner.outputFD, width, height, runner.keys, runner.stopped)
+}
+
+func setTerminalTitle(output io.Writer, workingDirectory string) error {
+	directory := strings.Map(func(character rune) rune {
+		if unicode.IsControl(character) {
+			return ' '
+		}
+		return character
+	}, filepath.Base(workingDirectory))
+
+	return writeOutput(output, "\x1b]2;ℇ - %s\x07", directory)
 }
 
 func (runner *Runner) Close() error {
