@@ -1,14 +1,12 @@
 package tool
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/eul-ai/eul/agent"
 )
@@ -110,13 +108,6 @@ func boundTail(text, notice string) string {
 
 	body := truncateTail(text, defaultMaxLines-1, defaultMaxBytes-len(marker)).text
 	return marker + body
-}
-
-func validateText(data []byte) error {
-	if !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
-		return errors.New("binary file is not supported")
-	}
-	return nil
 }
 
 func escapeOutputName(name string) string {

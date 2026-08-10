@@ -299,7 +299,9 @@ func (s *Subagent) runJob(job *subagentJob) {
 		s.mu.Unlock()
 		s.signalChange()
 	})
-	if cause := context.Cause(job.ctx); cause != nil {
+	cause := context.Cause(job.ctx)
+	job.cancel(nil)
+	if cause != nil {
 		runErr = cause
 	}
 

@@ -63,6 +63,7 @@ type agentConfig struct {
 	cwd                 string
 	projectInstructions string
 	skills              []agent.Skill
+	warnings            []string
 }
 
 func parseAgentArguments(arguments []string, runtime appRuntime) (agentArguments, error) {
@@ -126,13 +127,15 @@ func resolveAgentConfig(arguments agentArguments, runtime appRuntime) (agentConf
 	if home := resolveUserHome(runtime.userHomeDir); home != "" {
 		skillDirectories = append(skillDirectories, filepath.Join(home, ".agents", "skills"))
 	}
+	skills, warnings := agent.LoadSkills(skillDirectories...)
 
 	return agentConfig{
 		model:               arguments.model,
 		thinkingLevel:       arguments.thinkingLevel,
 		cwd:                 cwd,
 		projectInstructions: projectInstructions,
-		skills:              agent.LoadSkills(skillDirectories...),
+		skills:              skills,
+		warnings:            warnings,
 	}, nil
 }
 

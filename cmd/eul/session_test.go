@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -57,7 +59,8 @@ func TestNewAgentSessionWiresOptionalProviderUsage(t *testing.T) {
 	cwd := t.TempDir()
 	writeMainTestLSPConfig(t, cwd)
 	skills := []agent.Skill{{Name: "review", Description: "Review code"}}
-	session, err := newAgentSession(agentConfig{model: "model", thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills}, runtime, nil, openaiadapter.Options{})
+	warnings := []string{"Skipped skill invalid: malformed"}
+	session, err := newAgentSession(agentConfig{model: "model", thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills, warnings: warnings}, runtime, nil, openaiadapter.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +79,9 @@ func TestNewAgentSessionWiresOptionalProviderUsage(t *testing.T) {
 	}
 	if len(session.terminalOptions.Skills) != 1 || session.terminalOptions.Skills[0].Name != "review" {
 		t.Fatalf("terminal skills = %+v", session.terminalOptions.Skills)
+	}
+	if !slices.Equal(session.terminalOptions.Warnings, warnings) {
+		t.Fatalf("terminal warnings = %v", session.terminalOptions.Warnings)
 	}
 }
 
@@ -161,9 +167,12 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	if second.terminalOptions.InitialCheckpoint == nil || second.terminalOptions.InitialCheckpoint.Description() != "first prompt" {
 		t.Fatalf("terminal checkpoint = %+v", second.terminalOptions.InitialCheckpoint)
 	}
-	summaries, err := second.terminalOptions.ListSessions(context.Background())
+	summaries, warnings, err := second.terminalOptions.ListSessions(context.Background())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
 	}
 	if len(summaries) != 0 {
 		t.Fatalf("current session was listed: %+v", summaries)
@@ -177,6 +186,39 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 
 	if len(requests) != 2 || string(requests[1].State) != "saved-state" || len(requests[1].Inputs) != 1 || requests[1].Inputs[0].Text != "next prompt" {
 		t.Fatalf("requests = %+v", requests)
+	}
+}
+
+func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
+	cwd := t.TempDir()
+	store := newSessionStore(t.TempDir())
+	corrupt, err := store.Create(cwd, "model", agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "corrupt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	corruptPath := corrupt.path
+	if err := corrupt.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(corruptPath, []byte(`{"version":99}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	valid, err := store.Create(cwd, "model", agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "valid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := valid.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := appRuntime{userHomeDir: func() (string, error) { return "", errors.New("home unavailable") }}
+	config, handle, err := resolveStoredSession(context.Background(), store, runtime, cwd, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	if len(config.warnings) != 1 || !strings.Contains(config.warnings[0], "Skipped session") || !strings.Contains(config.warnings[0], "unsupported session version") {
+		t.Fatalf("warnings = %v", config.warnings)
 	}
 }
 

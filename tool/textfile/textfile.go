@@ -7,10 +7,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"unicode/utf8"
 )
 
-var ErrChanged = errors.New("text file changed since it was read")
+const maxTextFileBytes = int64(16 * 1024 * 1024)
+
+var (
+	ErrChanged = errors.New("text file changed since it was read")
+	commitMu   sync.Mutex
+)
 
 type Snapshot struct {
 	RequestedPath string
@@ -43,7 +49,10 @@ func Load(path string) (Snapshot, error) {
 	if !info.Mode().IsRegular() {
 		return Snapshot{}, fmt.Errorf("%s is not a regular file", filepath.ToSlash(path))
 	}
-	data, err := io.ReadAll(file)
+	if info.Size() > maxTextFileBytes {
+		return Snapshot{}, textFileTooLargeError()
+	}
+	data, err := readBounded(file)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -66,7 +75,26 @@ func Validate(data []byte) error {
 	return nil
 }
 
+func readBounded(source io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(source, maxTextFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxTextFileBytes {
+		return nil, textFileTooLargeError()
+	}
+	return data, nil
+}
+
+func textFileTooLargeError() error {
+	return fmt.Errorf("text file exceeds %d bytes", maxTextFileBytes)
+}
+
 func Prepare(snapshot Snapshot, data []byte) (*Replacement, error) {
+	if int64(len(data)) > maxTextFileBytes {
+		return nil, textFileTooLargeError()
+	}
+
 	temporary, err := os.CreateTemp(filepath.Dir(snapshot.Path), ".eul-replace-*")
 	if err != nil {
 		return nil, err
@@ -100,7 +128,19 @@ func (r *Replacement) Verify() error {
 	if r.snapshot.info == nil || !info.Mode().IsRegular() || !os.SameFile(r.snapshot.info, info) || info.Mode() != r.snapshot.Mode || info.Size() != r.snapshot.info.Size() || !info.ModTime().Equal(r.snapshot.info.ModTime()) {
 		return r.changedError()
 	}
-	current, err := os.ReadFile(r.snapshot.Path)
+	file, err := os.Open(r.snapshot.Path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
+		return r.changedError()
+	}
+	current, err := readBounded(file)
 	if err != nil {
 		return err
 	}
@@ -115,6 +155,9 @@ func (r *Replacement) changedError() error {
 }
 
 func (r *Replacement) Commit() error {
+	commitMu.Lock()
+	defer commitMu.Unlock()
+
 	if err := r.Verify(); err != nil {
 		return err
 	}

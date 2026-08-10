@@ -68,9 +68,12 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 		t.Fatalf("session permissions = %o", fileInfo.Mode().Perm())
 	}
 
-	summaries, err := store.List(cwd)
+	summaries, warnings, err := store.List(cwd)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
 	}
 	if len(summaries) != 2 || summaries[0].ID != secondID || summaries[0].Description != "second prompt" {
 		t.Fatalf("summaries = %+v", summaries)
@@ -126,9 +129,12 @@ func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 	if _, err := os.Stat(handle.path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("saved empty session file error = %v", err)
 	}
-	summaries, err := store.List(cwd)
+	summaries, warnings, err := store.List(cwd)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
 	}
 	if len(summaries) != 0 {
 		t.Fatalf("empty session summaries = %+v", summaries)
@@ -170,6 +176,9 @@ func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
 	if _, err := store.Open(context.Background(), cwd, id); err == nil {
 		t.Fatal("corrupt session was accepted")
 	}
+	if _, err := store.Open(context.Background(), cwd, ""); err == nil || !strings.Contains(err.Error(), "Skipped session") || !strings.Contains(err.Error(), "unsupported session version") {
+		t.Fatalf("most recent corrupt-only error = %v", err)
+	}
 
 	valid, err := store.Create(cwd, "model", agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "valid prompt"))
 	if err != nil {
@@ -179,12 +188,26 @@ func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
 	if err := valid.Close(); err != nil {
 		t.Fatal(err)
 	}
-	summaries, err := store.List(cwd)
+	summaries, warnings, err := store.List(cwd)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(summaries) != 1 || summaries[0].ID != validID {
 		t.Fatalf("summaries with corrupt record = %+v", summaries)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], filepath.ToSlash(path)) || !strings.Contains(warnings[0], "unsupported session version") {
+		t.Fatalf("warnings = %v", warnings)
+	}
+
+	mostRecent, err := store.Open(context.Background(), cwd, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mostRecent.warnings) != 1 || mostRecent.warnings[0] != warnings[0] {
+		t.Fatalf("most recent warnings = %v", mostRecent.warnings)
+	}
+	if err := mostRecent.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -24,12 +24,15 @@ type skillFrontmatter struct {
 	disableModelInvocation bool
 }
 
-func LoadSkills(directories ...string) []Skill {
+func LoadSkills(directories ...string) ([]Skill, []string) {
 	var loaded []Skill
+	var warnings []string
 	visitedDirectories := make(map[string]struct{})
 
 	for _, directory := range directories {
-		loaded = append(loaded, loadSkillsFromDirectory(directory, visitedDirectories)...)
+		directorySkills, directoryWarnings := loadSkillsFromDirectory(directory, visitedDirectories)
+		loaded = append(loaded, directorySkills...)
+		warnings = append(warnings, directoryWarnings...)
 	}
 
 	skills := make([]Skill, 0, len(loaded))
@@ -49,31 +52,38 @@ func LoadSkills(directories ...string) []Skill {
 		skills = append(skills, skill)
 	}
 
-	return skills
+	return skills, warnings
 }
 
-func loadSkillsFromDirectory(directory string, visited map[string]struct{}) []Skill {
+func loadSkillsFromDirectory(directory string, visited map[string]struct{}) ([]Skill, []string) {
 	absolutePath, err := filepath.Abs(directory)
 	if err != nil {
-		return nil
+		return nil, []string{skillWarning(directory, err)}
 	}
 
 	info, err := os.Stat(absolutePath)
-	if err != nil || !info.IsDir() {
-		return nil
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, []string{skillWarning(absolutePath, err)}
+	}
+	if !info.IsDir() {
+		return nil, []string{skillWarning(absolutePath, errors.New("skill path is not a directory"))}
 	}
 
 	canonicalDirectory := canonicalSkillPath(absolutePath)
 	if _, exists := visited[canonicalDirectory]; exists {
-		return nil
+		return nil, nil
 	}
 	visited[canonicalDirectory] = struct{}{}
 
 	entries, err := os.ReadDir(absolutePath)
 	if err != nil {
-		return nil
+		return nil, []string{skillWarning(absolutePath, err)}
 	}
 
+	var warnings []string
 	for _, entry := range entries {
 		if entry.Name() != "SKILL.md" {
 			continue
@@ -82,17 +92,18 @@ func loadSkillsFromDirectory(directory string, visited map[string]struct{}) []Sk
 		skillPath := filepath.Join(absolutePath, entry.Name())
 		skillInfo, err := os.Stat(skillPath)
 		if err != nil {
-			return nil
+			return nil, []string{skillWarning(skillPath, err)}
 		}
 		if !skillInfo.Mode().IsRegular() {
+			warnings = append(warnings, skillWarning(skillPath, errors.New("skill file is not a regular file")))
 			break
 		}
 
-		skill := loadSkillFile(skillPath)
-		if skill == nil {
-			return nil
+		skill, err := loadSkillFile(skillPath)
+		if err != nil {
+			return nil, []string{skillWarning(skillPath, err)}
 		}
-		return []Skill{*skill}
+		return []Skill{skill}, nil
 	}
 
 	var skills []Skill
@@ -104,25 +115,34 @@ func loadSkillsFromDirectory(directory string, visited map[string]struct{}) []Sk
 
 		path := filepath.Join(absolutePath, name)
 		entryInfo, err := os.Stat(path)
-		if err != nil || !entryInfo.IsDir() {
+		if err != nil {
+			warnings = append(warnings, skillWarning(path, err))
+			continue
+		}
+		if !entryInfo.IsDir() {
 			continue
 		}
 
-		skills = append(skills, loadSkillsFromDirectory(path, visited)...)
+		directorySkills, directoryWarnings := loadSkillsFromDirectory(path, visited)
+		skills = append(skills, directorySkills...)
+		warnings = append(warnings, directoryWarnings...)
 	}
 
-	return skills
+	return skills, warnings
 }
 
-func loadSkillFile(path string) *Skill {
+func loadSkillFile(path string) (Skill, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return nil
+		return Skill{}, err
 	}
 
 	frontmatter, _, err := parseSkillFrontmatter(string(content))
-	if err != nil || strings.TrimSpace(frontmatter.description) == "" {
-		return nil
+	if err != nil {
+		return Skill{}, err
+	}
+	if strings.TrimSpace(frontmatter.description) == "" {
+		return Skill{}, errors.New("description is empty")
 	}
 
 	name := frontmatter.name
@@ -130,12 +150,16 @@ func loadSkillFile(path string) *Skill {
 		name = filepath.Base(filepath.Dir(path))
 	}
 
-	return &Skill{
+	return Skill{
 		Name:                   name,
 		Description:            frontmatter.description,
 		FilePath:               path,
 		DisableModelInvocation: frontmatter.disableModelInvocation,
-	}
+	}, nil
+}
+
+func skillWarning(path string, err error) string {
+	return fmt.Sprintf("Skipped skill %s: %v", filepath.ToSlash(path), err)
 }
 
 func parseSkillFrontmatter(content string) (skillFrontmatter, string, error) {

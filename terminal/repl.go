@@ -67,6 +67,7 @@ type Options struct {
 	ThinkingLevels     []agent.ThinkingLevel
 	ContextWindow      int64
 	Skills             []agent.Skill
+	Warnings           []string
 	Interrupts         <-chan os.Signal
 	SetThinkingLevel   func(agent.ThinkingLevel) error
 	LoadUsage          func(context.Context) (agent.ProviderUsage, error)
@@ -75,7 +76,7 @@ type Options struct {
 	SessionID          string
 	PreviousTurnActive bool
 	SaveCheckpoint     func(agent.Checkpoint, Checkpoint, bool) error
-	ListSessions       func(context.Context) ([]SessionSummary, error)
+	ListSessions       func(context.Context) ([]SessionSummary, []string, error)
 }
 
 type fileDescriptor interface {

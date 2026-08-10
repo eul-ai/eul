@@ -202,6 +202,34 @@ func TestSubagentWaitReturnsRequestedOrderAndConsumesResults(t *testing.T) {
 	}
 }
 
+func TestSubagentCompletionReleasesContextAndRetainsResult(t *testing.T) {
+	contexts := make(chan context.Context, 1)
+	subagents := NewSubagent(func(ctx context.Context, _ string, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
+		contexts <- ctx
+		return agent.RunResult{Text: "done"}, nil
+	})
+	defer subagents.Close()
+
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"]}`), nil); err != nil || result.IsError {
+		t.Fatalf("launch = %+v, error = %v", result, err)
+	}
+	jobContext := <-contexts
+	assertSubagentStatus(t, subagents.StatusUpdates(), agent.SubagentStatus{Completed: 1})
+	select {
+	case <-jobContext.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("completed job context was not released")
+	}
+	if !errors.Is(context.Cause(jobContext), context.Canceled) {
+		t.Fatalf("context cause = %v", context.Cause(jobContext))
+	}
+
+	result, err := NewSubagentWait(subagents).Execute(context.Background(), json.RawMessage(`{"ids":["subagent-1"]}`), nil)
+	if err != nil || result.IsError || !strings.Contains(result.Output, "done") {
+		t.Fatalf("wait = %+v, error = %v", result, err)
+	}
+}
+
 func TestSubagentWaitAfterCompletionReturnsImmediately(t *testing.T) {
 	subagents := NewSubagent(func(_ context.Context, task string, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
 		return agent.RunResult{Text: "done " + task}, nil

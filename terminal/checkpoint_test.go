@@ -61,6 +61,14 @@ func TestPreviousActiveSessionShowsWarning(t *testing.T) {
 	}
 }
 
+func TestStartupWarningsAreShownAfterRestoredConversation(t *testing.T) {
+	checkpoint := EmptyCheckpoint()
+	model := newTUIModel(80, 24, Options{InitialCheckpoint: &checkpoint, Warnings: []string{"Skipped skill broken: invalid"}})
+	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo || !strings.Contains(model.blocks[0].text, "Skipped skill") {
+		t.Fatalf("blocks = %+v", model.blocks)
+	}
+}
+
 func TestResumePickerUsesNewestSessionAndReturnsSelection(t *testing.T) {
 	const (
 		oldID = "0123456789abcdef0123456789abcdef"
@@ -126,8 +134,8 @@ func TestResumeCommandListsSessionsWithoutStoreDependency(t *testing.T) {
 		output:         io.Discard,
 		engineMessages: make(chan engineMessage, 1),
 		stopped:        make(chan struct{}),
-		listSessions: func(context.Context) ([]SessionSummary, error) {
-			return []SessionSummary{{ID: "session", Description: "prompt"}}, nil
+		listSessions: func(context.Context) ([]SessionSummary, []string, error) {
+			return []SessionSummary{{ID: "session", Description: "prompt"}}, []string{"Skipped session broken.json: invalid"}, nil
 		},
 	}
 
@@ -136,6 +144,9 @@ func TestResumeCommandListsSessionsWithoutStoreDependency(t *testing.T) {
 	}
 	if !model.resumePicker.active {
 		t.Fatal("resume picker did not open")
+	}
+	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo || !strings.Contains(model.blocks[0].text, "Skipped session") {
+		t.Fatalf("warning blocks = %+v", model.blocks)
 	}
 	_, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}})
 	var request *ResumeRequest

@@ -59,6 +59,7 @@ func resolveStoredSession(
 		_ = handle.Close()
 		return agentConfig{}, nil, err
 	}
+	config.warnings = append(config.warnings, handle.warnings...)
 	return config, handle, nil
 }
 
@@ -143,6 +144,7 @@ func newAgentSessionWithCheckpointing(
 		ThinkingLevels:   metadata.ThinkingLevels,
 		ContextWindow:    metadata.ContextWindow,
 		Skills:           config.skills,
+		Warnings:         config.warnings,
 		Interrupts:       runtime.interrupts,
 		SetThinkingLevel: setThinkingLevel,
 		LoadUsage:        loadUsage,
@@ -199,10 +201,10 @@ func (session *agentSession) attachPersistence(handle *sessionHandle, restore bo
 	session.terminalOptions.SaveCheckpoint = func(agentCheckpoint agent.Checkpoint, terminalCheckpoint terminal.Checkpoint, active bool) error {
 		return handle.Save(agentCheckpoint, terminalCheckpoint, active, session.thinkingLevel)
 	}
-	session.terminalOptions.ListSessions = func(context.Context) ([]terminal.SessionSummary, error) {
-		summaries, err := handle.store.List(handle.record.WorkingDirectory)
+	session.terminalOptions.ListSessions = func(context.Context) ([]terminal.SessionSummary, []string, error) {
+		summaries, warnings, err := handle.store.List(handle.record.WorkingDirectory)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		visible := summaries[:0]
 		for _, summary := range summaries {
@@ -210,7 +212,7 @@ func (session *agentSession) attachPersistence(handle *sessionHandle, restore bo
 				visible = append(visible, summary)
 			}
 		}
-		return visible, nil
+		return visible, warnings, nil
 	}
 	return nil
 }

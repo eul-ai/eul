@@ -23,7 +23,10 @@ func TestLoadSkillsDiscoversSkillFilesAndUsesDirectoryOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	skills := LoadSkills(project, global)
+	skills, warnings := LoadSkills(project, global)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
 	if len(skills) != 2 {
 		t.Fatalf("skills = %+v", skills)
 	}
@@ -40,7 +43,10 @@ func TestLoadSkillsStopsAtSkillRoot(t *testing.T) {
 	writeTestSkill(t, filepath.Join(root, "bundle", "SKILL.md"), "bundle", "Bundle", false, "Bundle instructions")
 	writeTestSkill(t, filepath.Join(root, "bundle", "nested", "SKILL.md"), "nested", "Nested", false, "Nested instructions")
 
-	skills := LoadSkills(root)
+	skills, warnings := LoadSkills(root)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
 	if len(skills) != 1 || skills[0].Name != "bundle" {
 		t.Fatalf("skills = %+v", skills)
 	}
@@ -81,14 +87,25 @@ func TestParseSkillFrontmatterRejectsUnsupportedOrAmbiguousValues(t *testing.T) 
 	}
 }
 
-func TestLoadSkillsSilentlySkipsMissingDescriptionAndLoadsInvalidName(t *testing.T) {
+func TestLoadSkillsReportsMissingDescriptionAndLoadsValidSiblings(t *testing.T) {
 	root := t.TempDir()
-	writeTestSkill(t, filepath.Join(root, "missing", "SKILL.md"), "missing", "", false, "Missing")
+	missingPath := filepath.Join(root, "missing", "SKILL.md")
+	writeTestSkill(t, missingPath, "missing", "", false, "Missing")
 	writeTestSkill(t, filepath.Join(root, "invalid", "SKILL.md"), "Invalid Name", "Present", false, "Present")
 
-	skills := LoadSkills(root)
+	skills, warnings := LoadSkills(root)
 	if len(skills) != 1 || skills[0].Name != "Invalid Name" {
 		t.Fatalf("skills = %+v", skills)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], filepath.ToSlash(missingPath)) || !strings.Contains(warnings[0], "description is empty") {
+		t.Fatalf("warnings = %v", warnings)
+	}
+}
+
+func TestLoadSkillsIgnoresMissingDirectoriesWithoutWarning(t *testing.T) {
+	skills, warnings := LoadSkills(filepath.Join(t.TempDir(), "missing"))
+	if len(skills) != 0 || len(warnings) != 0 {
+		t.Fatalf("skills = %+v, warnings = %v", skills, warnings)
 	}
 }
 
@@ -112,9 +129,9 @@ func TestFormatSkillsForPromptUsesMetadataOnly(t *testing.T) {
 func TestExpandSkillCommandLoadsCurrentBodyAndArguments(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "review&tools", "SKILL.md")
 	writeTestSkill(t, path, "review", "Review code", false, "Original body")
-	skills := LoadSkills(filepath.Dir(filepath.Dir(path)))
-	if len(skills) != 1 {
-		t.Fatalf("skills = %+v", skills)
+	skills, warnings := LoadSkills(filepath.Dir(filepath.Dir(path)))
+	if len(skills) != 1 || len(warnings) != 0 {
+		t.Fatalf("skills = %+v, warnings = %v", skills, warnings)
 	}
 	writeTestSkill(t, path, "review", "Review code", false, "Updated body")
 
@@ -167,9 +184,9 @@ func writeTestSkill(t *testing.T, path, name, description string, disabled bool,
 func TestEngineExpandsSkillCommandsBeforeProviderRequest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "review", "SKILL.md")
 	writeTestSkill(t, path, "review", "Review code", false, "Follow the review process.")
-	skills := LoadSkills(filepath.Dir(filepath.Dir(path)))
-	if len(skills) != 1 {
-		t.Fatalf("skills = %+v", skills)
+	skills, warnings := LoadSkills(filepath.Dir(filepath.Dir(path)))
+	if len(skills) != 1 || len(warnings) != 0 {
+		t.Fatalf("skills = %+v, warnings = %v", skills, warnings)
 	}
 
 	provider := &scriptedProvider{t: t, steps: []providerStep{

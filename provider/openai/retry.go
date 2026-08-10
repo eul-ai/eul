@@ -177,7 +177,7 @@ func isRetryableNetworkError(err error) bool {
 	}
 
 	var networkErr net.Error
-	return errors.As(err, &networkErr) && (networkErr.Timeout() || networkErr.Temporary())
+	return errors.As(err, &networkErr) && networkErr.Timeout()
 }
 
 func (c *Client) retryableWrapf(cause error, format string, arguments ...any) error {

@@ -1,9 +1,11 @@
 package textfile
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -116,6 +118,83 @@ func TestReplaceRejectsChangedMetadataAndIdentity(t *testing.T) {
 			t.Fatalf("content = %q", content)
 		}
 	})
+}
+
+func TestConcurrentCommitsRejectLostUpdates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sample.txt")
+	original := bytes.Repeat([]byte("x"), 2*1024*1024)
+	if err := os.WriteFile(path, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type outcome struct {
+		content []byte
+		err     error
+	}
+	const replacements = 4
+	outcomes := make(chan outcome, replacements)
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for index := range replacements {
+		content := append(append([]byte(nil), original...), byte('a'+index))
+		replacement, err := Prepare(snapshot, content)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer replacement.Discard()
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			outcomes <- outcome{content: content, err: replacement.Commit()}
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(outcomes)
+
+	var committed []byte
+	for current := range outcomes {
+		switch {
+		case current.err == nil:
+			if committed != nil {
+				t.Fatalf("multiple replacements committed successfully")
+			}
+			committed = current.content
+		case !errors.Is(current.err, ErrChanged):
+			t.Fatalf("commit error = %v", current.err)
+		}
+	}
+	if committed == nil {
+		t.Fatal("no replacement committed")
+	}
+	final, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(final, committed) {
+		t.Fatalf("final content does not match successful commit")
+	}
+}
+
+func TestLoadAndPrepareRejectOversizedTextFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oversized.txt")
+	oversized := bytes.Repeat([]byte("x"), int(maxTextFileBytes)+1)
+	if err := os.WriteFile(path, oversized, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !bytes.Contains([]byte(err.Error()), []byte("exceeds")) {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	snapshot := Snapshot{Path: path}
+	if _, err := Prepare(snapshot, oversized); err == nil || !bytes.Contains([]byte(err.Error()), []byte("exceeds")) {
+		t.Fatalf("Prepare() error = %v", err)
+	}
 }
 
 func TestLoadRejectsNonTextAndNonRegularFiles(t *testing.T) {

@@ -51,7 +51,7 @@ type tuiController struct {
 	usageRequests      chan<- struct{}
 	setThinkingLevel   func(agent.ThinkingLevel) error
 	saveCheckpoint     func(agent.Checkpoint, Checkpoint, bool) error
-	listSessions       func(context.Context) ([]SessionSummary, error)
+	listSessions       func(context.Context) ([]SessionSummary, []string, error)
 	turnCancel         context.CancelFunc
 	exitAfterTurn      error
 	deferredSteering   []string
@@ -215,10 +215,13 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 			setInputError(c.model, errors.New("session resumption is unavailable"))
 			return false, nil
 		}
-		summaries, err := c.listSessions(ctx)
+		summaries, warnings, err := c.listSessions(ctx)
 		if err != nil {
 			setInputError(c.model, err)
 			return false, nil
+		}
+		for _, warning := range warnings {
+			c.model.appendBlock(blockInfo, warning)
 		}
 		c.model.openResumePicker(summaries)
 	case tuiActionResume:

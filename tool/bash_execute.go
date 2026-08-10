@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
@@ -41,6 +42,14 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates a
 	defer cancel()
 
 	command := exec.CommandContext(runCtx, b.shell, "-c", args.Command)
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Cancel = func() error {
+		err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return err
+	}
 	command.Dir = b.workspace.cwd
 	command.Stdin = nil
 	command.Env = os.Environ()

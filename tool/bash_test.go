@@ -155,12 +155,19 @@ func TestBashReportsNonzeroExitAndNilStdin(t *testing.T) {
 
 func TestBashTimeoutIsRecoverableAndRetainsOutput(t *testing.T) {
 	cwd := t.TempDir()
+	readyPath := filepath.Join(cwd, "child-ready")
+	releasePath := filepath.Join(cwd, "child-release")
+	survivedPath := filepath.Join(cwd, "child-survived")
+	t.Setenv("EUL_CHILD_READY", readyPath)
+	t.Setenv("EUL_CHILD_RELEASE", releasePath)
+	t.Setenv("EUL_CHILD_SURVIVED", survivedPath)
 	bashTool := NewBash(cwd)
-	bashTool.defaultTimeout = 30 * time.Millisecond
+	bashTool.defaultTimeout = 500 * time.Millisecond
 	bashTool.maxTimeout = time.Second
 	bashTool.waitDelay = 20 * time.Millisecond
 
-	arguments, err := json.Marshal(map[string]any{"command": `printf 'before-timeout\n'; while :; do :; done`})
+	command := `printf 'before-timeout\n'; (: > "$EUL_CHILD_READY"; while [ ! -e "$EUL_CHILD_RELEASE" ]; do sleep 0.01; done; : > "$EUL_CHILD_SURVIVED") & wait`
+	arguments, err := json.Marshal(map[string]any{"command": command})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,19 +180,27 @@ func TestBashTimeoutIsRecoverableAndRetainsOutput(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > 2*time.Second {
 		t.Fatalf("timeout took %s", elapsed)
 	}
-	if !result.IsError || !strings.Contains(result.Output, "before-timeout") || !strings.Contains(result.Output, "timed out after 30ms") || !strings.Contains(result.Output, "exit status:") {
+	if !result.IsError || !strings.Contains(result.Output, "before-timeout") || !strings.Contains(result.Output, "timed out after 500ms") || !strings.Contains(result.Output, "exit status:") {
 		t.Fatalf("timeout result = %+v", result)
 	}
 	presentation, finalCalls := updates.finalPresentation()
-	if finalCalls != 1 || !slices.Equal(presentation.Lines, []string{"before-timeout"}) || !strings.Contains(presentation.Outcome, "timed out after 30ms") || presentation.Elapsed <= 0 {
+	if finalCalls != 1 || !slices.Equal(presentation.Lines, []string{"before-timeout"}) || !strings.Contains(presentation.Outcome, "timed out after 500ms") || presentation.Elapsed <= 0 {
 		t.Fatalf("timeout presentation = %+v, final calls = %d", presentation, finalCalls)
 	}
+	if _, err := os.Stat(readyPath); err != nil {
+		t.Fatalf("child did not start: %v", err)
+	}
+	assertBashChildStopped(t, releasePath, survivedPath)
 }
 
 func TestBashParentCancellationIsFatalAndReported(t *testing.T) {
 	cwd := t.TempDir()
-	readyPath := filepath.Join(cwd, "ready")
-	t.Setenv("EUL_READY", readyPath)
+	readyPath := filepath.Join(cwd, "child-ready")
+	releasePath := filepath.Join(cwd, "child-release")
+	survivedPath := filepath.Join(cwd, "child-survived")
+	t.Setenv("EUL_CHILD_READY", readyPath)
+	t.Setenv("EUL_CHILD_RELEASE", releasePath)
+	t.Setenv("EUL_CHILD_SURVIVED", survivedPath)
 	bashTool := NewBash(cwd)
 	bashTool.defaultTimeout = 5 * time.Second
 	bashTool.maxTimeout = 5 * time.Second
@@ -197,7 +212,8 @@ func TestBashParentCancellationIsFatalAndReported(t *testing.T) {
 	done := make(chan outcome, 1)
 	updates := &recordingBashUpdates{}
 	go func() {
-		result, runErr := bashTool.Execute(ctx, json.RawMessage(`{"command":": > \"$EUL_READY\"; printf ready; while :; do :; done"}`), updates)
+		arguments := json.RawMessage(`{"command":"printf ready; (: > \"$EUL_CHILD_READY\"; while [ ! -e \"$EUL_CHILD_RELEASE\" ]; do sleep 0.01; done; : > \"$EUL_CHILD_SURVIVED\") & wait"}`)
+		result, runErr := bashTool.Execute(ctx, arguments, updates)
 		done <- outcome{result: result, err: runErr}
 	}()
 	waitForPath(t, readyPath)
@@ -215,6 +231,7 @@ func TestBashParentCancellationIsFatalAndReported(t *testing.T) {
 		if finalCalls != 1 || !slices.Equal(presentation.Lines, []string{"ready"}) || presentation.Outcome != "exit status: -1; canceled" || presentation.Elapsed <= 0 {
 			t.Fatalf("cancellation presentation = %+v, final calls = %d", presentation, finalCalls)
 		}
+		assertBashChildStopped(t, releasePath, survivedPath)
 	case <-time.After(2 * time.Second):
 		t.Fatal("bash did not stop after parent cancellation")
 	}
@@ -306,6 +323,23 @@ func (updates *recordingBashUpdates) finalPresentation() (agent.ToolPresentation
 	updates.mu.Lock()
 	defer updates.mu.Unlock()
 	return updates.final, updates.finalCalls
+}
+
+func assertBashChildStopped(t *testing.T, releasePath, survivedPath string) {
+	t.Helper()
+
+	if err := os.WriteFile(releasePath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(survivedPath); err == nil {
+			t.Fatal("descendant process survived cancellation")
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func waitForPath(t *testing.T, path string) {

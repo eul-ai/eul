@@ -58,11 +58,12 @@ type sessionStore struct {
 }
 
 type sessionHandle struct {
-	store  *sessionStore
-	path   string
-	lock   *os.File
-	record sessionRecord
-	closed bool
+	store    *sessionStore
+	path     string
+	lock     *os.File
+	record   sessionRecord
+	warnings []string
+	closed   bool
 }
 
 func newSessionStore(home string) *sessionStore {
@@ -131,9 +132,10 @@ func (store *sessionStore) Open(ctx context.Context, cwd, id string) (*sessionHa
 	}
 
 	var path string
+	var warnings []string
 	var err error
 	if id == "" {
-		path, err = store.mostRecentPath(cwd)
+		path, warnings, err = store.mostRecentPath(cwd)
 	} else {
 		path, err = store.findSessionPath(cwd, id)
 	}
@@ -155,29 +157,33 @@ func (store *sessionStore) Open(ctx context.Context, cwd, id string) (*sessionHa
 		return nil, errors.New("session is stored under the wrong workspace")
 	}
 
-	return &sessionHandle{store: store, path: path, lock: lock, record: record}, nil
+	return &sessionHandle{store: store, path: path, lock: lock, record: record, warnings: warnings}, nil
 }
 
-func (store *sessionStore) List(cwd string) ([]terminal.SessionSummary, error) {
+func (store *sessionStore) List(cwd string) ([]terminal.SessionSummary, []string, error) {
 	directory := store.workspaceDirectory(cwd)
 	entries, err := os.ReadDir(directory)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("list sessions: %w", err)
+		return nil, nil, fmt.Errorf("list sessions: %w", err)
 	}
 
 	var summaries []terminal.SessionSummary
+	var warnings []string
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		record, err := readSessionRecord(filepath.Join(directory, entry.Name()))
+		path := filepath.Join(directory, entry.Name())
+		record, err := readSessionRecord(path)
 		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("Skipped session %s: %v", filepath.ToSlash(path), err))
 			continue
 		}
 		if record.WorkingDirectory != cwd {
+			warnings = append(warnings, fmt.Sprintf("Skipped session %s: stored working directory does not match", filepath.ToSlash(path)))
 			continue
 		}
 		description := record.Description
@@ -200,7 +206,7 @@ func (store *sessionStore) List(cwd string) ([]terminal.SessionSummary, error) {
 		}
 		return strings.Compare(left.ID, right.ID)
 	})
-	return summaries, nil
+	return summaries, warnings, nil
 }
 
 func (store *sessionStore) workspaceDirectory(cwd string) string {
@@ -208,15 +214,19 @@ func (store *sessionStore) workspaceDirectory(cwd string) string {
 	return filepath.Join(store.root, hex.EncodeToString(digest[:]))
 }
 
-func (store *sessionStore) mostRecentPath(cwd string) (string, error) {
-	summaries, err := store.List(cwd)
+func (store *sessionStore) mostRecentPath(cwd string) (string, []string, error) {
+	summaries, warnings, err := store.List(cwd)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if len(summaries) == 0 {
-		return "", fmt.Errorf("no saved sessions for %s", cwd)
+		message := fmt.Sprintf("no saved sessions for %s", cwd)
+		if len(warnings) > 0 {
+			message += ": " + strings.Join(warnings, "; ")
+		}
+		return "", nil, errors.New(message)
 	}
-	return filepath.Join(store.workspaceDirectory(cwd), summaries[0].ID+".json"), nil
+	return filepath.Join(store.workspaceDirectory(cwd), summaries[0].ID+".json"), warnings, nil
 }
 
 func (store *sessionStore) findSessionPath(cwd, id string) (string, error) {

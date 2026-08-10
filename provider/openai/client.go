@@ -65,6 +65,9 @@ func NewCodex(source CodexTokenSource, options Options) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	if source == nil {
+		return nil, errors.New("openai: token source is required")
+	}
 
 	baseURL := options.BaseURL
 	if baseURL == "" {

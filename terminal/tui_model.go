@@ -117,6 +117,9 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 	if options.PreviousTurnActive {
 		model.appendBlock(blockInfo, "Previous session ended during an active turn; tool side effects may remain")
 	}
+	for _, warning := range options.Warnings {
+		model.appendBlock(blockInfo, warning)
+	}
 	return model
 }
 

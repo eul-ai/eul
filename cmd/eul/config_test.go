@@ -70,6 +70,13 @@ func TestResolveAgentConfigLoadsOnlyGenericSkillLocations(t *testing.T) {
 	}
 	writeConfigTestSkill(t, filepath.Join(home, ".agents", "skills", "review", "SKILL.md"), "review", "global")
 	writeConfigTestSkill(t, filepath.Join(cwd, ".agents", "skills", "review", "SKILL.md"), "review", "project")
+	brokenSkill := filepath.Join(cwd, ".agents", "skills", "broken", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(brokenSkill), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(brokenSkill, []byte("invalid"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	writeConfigTestSkill(t, filepath.Join(root, ".agents", "skills", "parent", "SKILL.md"), "parent", "parent")
 	writeConfigTestSkill(t, filepath.Join(cwd, ".pi", "skills", "pi", "SKILL.md"), "pi", "pi")
 
@@ -82,6 +89,9 @@ func TestResolveAgentConfigLoadsOnlyGenericSkillLocations(t *testing.T) {
 	}
 	if len(config.skills) != 1 || config.skills[0].Name != "review" || config.skills[0].Description != "project" {
 		t.Fatalf("skills = %+v", config.skills)
+	}
+	if len(config.warnings) != 1 || !strings.Contains(config.warnings[0], filepath.ToSlash(brokenSkill)) || !strings.Contains(config.warnings[0], "opening frontmatter") {
+		t.Fatalf("warnings = %v", config.warnings)
 	}
 }
 
