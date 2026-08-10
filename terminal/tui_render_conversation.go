@@ -116,6 +116,12 @@ func toolConversationLines(block conversationBlock, width int, style lineStyle, 
 				bodyLines = append(bodyLines, styledLine{text: line, style: style, padding: padding})
 			}
 		}
+		if block.tool.LinesTruncated {
+			markerLines := len(wrapText(block.tool.Lines[len(block.tool.Lines)-1], width))
+			for index := max(0, len(bodyLines)-markerLines); index < len(bodyLines); index++ {
+				bodyLines[index].style.foreground = currentTheme.muted
+			}
+		}
 		if limit := block.tool.TailLines; limit > 0 && len(bodyLines) > limit {
 			omitted := len(bodyLines) - limit
 			omittedStyle := style

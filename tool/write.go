@@ -61,18 +61,19 @@ func (*Write) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation
 		return agent.ToolPresentation{Title: writeToolName, Arguments: arguments}
 	}
 
-	return agent.ToolPresentation{Title: writeToolName, Arguments: arguments, Lines: writePreview(text)}
+	lines, truncated := writePreview(text)
+	return agent.ToolPresentation{Title: writeToolName, Arguments: arguments, Lines: lines, LinesTruncated: truncated}
 }
 
-func writePreview(content string) []string {
+func writePreview(content string) ([]string, bool) {
 	if content == "" {
-		return nil
+		return nil, false
 	}
 
 	allLines := strings.Split(content, "\n")
 	totalLines := len(allLines)
 	if totalLines <= writePresentationMaxLines && len(content) <= writePresentationMaxBytes {
-		return allLines
+		return allLines, false
 	}
 
 	lineMarker := writePreviewLineMarker(totalLines, totalLines)
@@ -109,7 +110,7 @@ func writePreview(content string) []string {
 		marker = byteMarker
 	}
 	lines = append(lines, marker)
-	return lines
+	return lines, true
 }
 
 func writePreviewLineMarker(remaining, total int) string {

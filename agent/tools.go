@@ -39,14 +39,15 @@ type ToolDiffLine struct {
 }
 
 type ToolPresentation struct {
-	Title     string
-	Arguments string
-	Lines     []string
-	Diff      []ToolDiffLine
-	Markdown  bool
-	Outcome   string
-	TailLines int
-	Elapsed   time.Duration
+	Title          string
+	Arguments      string
+	Lines          []string
+	LinesTruncated bool
+	Diff           []ToolDiffLine
+	Markdown       bool
+	Outcome        string
+	TailLines      int
+	Elapsed        time.Duration
 }
 
 func (presentation ToolPresentation) Clone() ToolPresentation {
@@ -58,6 +59,7 @@ func (presentation ToolPresentation) Clone() ToolPresentation {
 func (presentation ToolPresentation) Equal(other ToolPresentation) bool {
 	return presentation.Title == other.Title &&
 		presentation.Arguments == other.Arguments &&
+		presentation.LinesTruncated == other.LinesTruncated &&
 		presentation.Markdown == other.Markdown &&
 		presentation.Outcome == other.Outcome &&
 		presentation.TailLines == other.TailLines &&

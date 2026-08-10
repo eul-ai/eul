@@ -234,6 +234,11 @@ func TestToolPresentationCloneAndEqual(t *testing.T) {
 	if presentation.Equal(changed) {
 		t.Fatal("presentations with different elapsed times compare equal")
 	}
+	changed = cloned
+	changed.LinesTruncated = !changed.LinesTruncated
+	if presentation.Equal(changed) {
+		t.Fatal("presentations with different truncation states compare equal")
+	}
 
 	cloned.Diff[0].Text = "changed"
 	if presentation.Diff[0].Text != "new" {

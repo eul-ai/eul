@@ -233,6 +233,28 @@ func TestAssistantReasoningAndToolDetailsRenderInlineMarkdown(t *testing.T) {
 	}
 }
 
+func TestToolTruncationMarkerIsMuted(t *testing.T) {
+	lines := conversationLines([]conversationBlock{{
+		kind: blockTool,
+		tool: agent.ToolPresentation{
+			Title:          "write",
+			Arguments:      "tool/subagent.go",
+			Lines:          []string{"package tool", "… (235 more lines, 245 total)"},
+			LinesTruncated: true,
+		},
+	}}, 80)
+
+	for _, line := range lines {
+		if line.text == "… (235 more lines, 245 total)" {
+			if line.style.foreground != currentTheme.muted {
+				t.Fatalf("truncation style = %+v", line.style)
+			}
+			return
+		}
+	}
+	t.Fatalf("tool lines = %+v", lines)
+}
+
 func TestBashToolShowsOutputTailAndDuration(t *testing.T) {
 	lines := conversationLines([]conversationBlock{{
 		kind: blockTool,
