@@ -54,6 +54,18 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 	}
 }
 
+func TestStatusTruncatesSessionID(t *testing.T) {
+	model := newTUIModel(120, 12, Options{
+		Model: "model", SessionID: "0123456789abcdef0123456789abcdef",
+	})
+
+	_, status := renderStatus(model, model.width)
+	want := "model (medium) · session 01234567 · context 0"
+	if status != want {
+		t.Fatalf("status = %q, want %q", status, want)
+	}
+}
+
 func TestStatusShowsProviderUsageWindows(t *testing.T) {
 	now := time.Date(2027, time.January, 2, 10, 0, 0, 0, time.UTC)
 	model := newTUIModel(180, 12, Options{Model: "model"})
