@@ -93,11 +93,11 @@ func TestClientUsageHandlesOptionalAndInvalidWindows(t *testing.T) {
 }
 
 func TestClientUsageEndpointFollowsBaseURLStyle(t *testing.T) {
-	chatGPT, err := NewCodex(testTokenSource("token"), Options{BaseURL: "https://chatgpt.com/backend-api/"})
+	chatGPT, err := New(testTokenSource("token"), Options{BaseURL: "https://chatgpt.com/backend-api/"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	codexAPI, err := NewCodex(testTokenSource("token"), Options{BaseURL: "https://example.com/"})
+	codexAPI, err := New(testTokenSource("token"), Options{BaseURL: "https://example.com/"})
 	if err != nil {
 		t.Fatal(err)
 	}

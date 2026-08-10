@@ -16,9 +16,9 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-type CodexTokenSourceFunc func(context.Context) (CodexCredential, error)
+type TokenSourceFunc func(context.Context) (Credential, error)
 
-func (function CodexTokenSourceFunc) Token(ctx context.Context) (CodexCredential, error) {
+func (function TokenSourceFunc) Token(ctx context.Context) (Credential, error) {
 	return function(ctx)
 }
 
@@ -72,9 +72,9 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 	defer server.Close()
 
 	sourceCalls := 0
-	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
+	client, err := New(TokenSourceFunc(func(context.Context) (Credential, error) {
 		sourceCalls++
-		return CodexCredential{AccessToken: token, AccountID: accountID}, nil
+		return Credential{AccessToken: token, AccountID: accountID}, nil
 	}), Options{BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
@@ -107,8 +107,8 @@ func TestCodexSSEStopsAtTerminalEventWithoutWaitingForEOF(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
-		return CodexCredential{AccessToken: "token", AccountID: "account"}, nil
+	client, err := New(TokenSourceFunc(func(context.Context) (Credential, error) {
+		return Credential{AccessToken: "token", AccountID: "account"}, nil
 	}), Options{BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
@@ -164,8 +164,8 @@ func TestCodexSSEToolCallAndReasoningReplay(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
-		return CodexCredential{AccessToken: "token", AccountID: "account"}, nil
+	client, err := New(TokenSourceFunc(func(context.Context) (Credential, error) {
+		return Credential{AccessToken: "token", AccountID: "account"}, nil
 	}), Options{BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
@@ -205,8 +205,8 @@ func TestCodexStreamsPartialToolArgumentsBeforeResponseCompletes(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
-		return CodexCredential{AccessToken: "token", AccountID: "account"}, nil
+	client, err := New(TokenSourceFunc(func(context.Context) (Credential, error) {
+		return Credential{AccessToken: "token", AccountID: "account"}, nil
 	}), Options{BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
@@ -316,13 +316,13 @@ func TestCodexSourceIsResolvedPerRequest(t *testing.T) {
 	})
 
 	sourceCalls := 0
-	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
+	client, err := New(TokenSourceFunc(func(context.Context) (Credential, error) {
 		sourceCalls++
 		token := first
 		if sourceCalls == 2 {
 			token = second
 		}
-		return CodexCredential{AccessToken: token, AccountID: "account"}, nil
+		return Credential{AccessToken: token, AccountID: "account"}, nil
 	}), Options{BaseURL: "https://example.com", HTTPClient: &http.Client{Transport: transport}})
 	if err != nil {
 		t.Fatal(err)
@@ -372,8 +372,8 @@ func TestResponsesSSEValidation(t *testing.T) {
 }
 
 func TestCodexDefaultEndpointAndRedirects(t *testing.T) {
-	defaultClient, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
-		return CodexCredential{AccessToken: "token", AccountID: "account"}, nil
+	defaultClient, err := New(TokenSourceFunc(func(context.Context) (Credential, error) {
+		return Credential{AccessToken: "token", AccountID: "account"}, nil
 	}), Options{})
 	if err != nil || defaultClient.endpoint != "https://chatgpt.com/backend-api/codex/responses" || defaultClient.compactEndpoint != "https://chatgpt.com/backend-api/codex/responses/compact" {
 		t.Fatalf("default endpoints=%q %q error=%v", defaultClient.endpoint, defaultClient.compactEndpoint, err)
@@ -386,8 +386,8 @@ func TestCodexDefaultEndpointAndRedirects(t *testing.T) {
 		http.Redirect(writer, request, destination.URL, http.StatusTemporaryRedirect)
 	}))
 	defer origin.Close()
-	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
-		return CodexCredential{AccessToken: "token", AccountID: "account"}, nil
+	client, err := New(TokenSourceFunc(func(context.Context) (Credential, error) {
+		return Credential{AccessToken: "token", AccountID: "account"}, nil
 	}), Options{BaseURL: origin.URL})
 	if err != nil {
 		t.Fatal(err)
@@ -398,10 +398,10 @@ func TestCodexDefaultEndpointAndRedirects(t *testing.T) {
 	}
 }
 
-func TestCodexTokenSourceErrorsPropagateWithoutRequest(t *testing.T) {
+func TestTokenSourceErrorsPropagateWithoutRequest(t *testing.T) {
 	sourceError := errors.New("refresh unavailable")
-	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
-		return CodexCredential{}, sourceError
+	client, err := New(TokenSourceFunc(func(context.Context) (Credential, error) {
+		return Credential{}, sourceError
 	}), Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -412,10 +412,10 @@ func TestCodexTokenSourceErrorsPropagateWithoutRequest(t *testing.T) {
 	}
 
 	started := make(chan struct{})
-	client, err = NewCodex(CodexTokenSourceFunc(func(ctx context.Context) (CodexCredential, error) {
+	client, err = New(TokenSourceFunc(func(ctx context.Context) (Credential, error) {
 		close(started)
 		<-ctx.Done()
-		return CodexCredential{}, ctx.Err()
+		return Credential{}, ctx.Err()
 	}), Options{})
 	if err != nil {
 		t.Fatal(err)

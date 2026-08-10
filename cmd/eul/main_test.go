@@ -20,7 +20,7 @@ import (
 
 type providerFunction func(context.Context, agent.Request, agent.TextSink) (agent.Response, error)
 
-type fakeBackendInstance struct {
+type fakeBackendRuntime struct {
 	checkCredentialsErr   error
 	checkCredentialsCalls int
 	closeErr              error
@@ -28,25 +28,25 @@ type fakeBackendInstance struct {
 	newProvider           func() (agent.Provider, error)
 }
 
-func (instance *fakeBackendInstance) CheckCredentials(context.Context) error {
-	instance.checkCredentialsCalls++
-	return instance.checkCredentialsErr
+func (runtime *fakeBackendRuntime) CheckCredentials(context.Context) error {
+	runtime.checkCredentialsCalls++
+	return runtime.checkCredentialsErr
 }
 
-func (instance *fakeBackendInstance) NewProvider() (agent.Provider, error) {
-	return instance.newProvider()
+func (runtime *fakeBackendRuntime) NewProvider() (agent.Provider, error) {
+	return runtime.newProvider()
 }
 
-func (instance *fakeBackendInstance) Close() error {
-	instance.closeCalls++
-	return instance.closeErr
+func (runtime *fakeBackendRuntime) Close() error {
+	runtime.closeCalls++
+	return runtime.closeErr
 }
 
 type fakeBackendDriver struct {
 	descriptor      backend.Descriptor
 	defaults        backend.ModelDefaults
-	instance        *fakeBackendInstance
-	configureErr    error
+	runtime         *fakeBackendRuntime
+	openErr         error
 	loginErr        error
 	logoutErr       error
 	loginDevice     bool
@@ -62,8 +62,8 @@ func (driver *fakeBackendDriver) ModelDefaults() backend.ModelDefaults {
 	return driver.defaults
 }
 
-func (driver *fakeBackendDriver) Configure(backend.Options) (backend.Instance, error) {
-	return driver.instance, driver.configureErr
+func (driver *fakeBackendDriver) Open(backend.Options) (backend.Runtime, error) {
+	return driver.runtime, driver.openErr
 }
 
 func (driver *fakeBackendDriver) Login(_ context.Context, options backend.AuthOptions, interaction backend.Interaction) error {
@@ -84,23 +84,23 @@ func (driver *fakeBackendDriver) Logout(context.Context, backend.AuthOptions) er
 	return driver.logoutErr
 }
 
-type providerOnlyInstance struct {
+type providerOnlyRuntime struct {
 	closeCalls int
 }
 
-func (*providerOnlyInstance) NewProvider() (agent.Provider, error) {
+func (*providerOnlyRuntime) NewProvider() (agent.Provider, error) {
 	return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
 		return agent.Response{}, nil
 	}), nil
 }
 
-func (instance *providerOnlyInstance) Close() error {
-	instance.closeCalls++
+func (runtime *providerOnlyRuntime) Close() error {
+	runtime.closeCalls++
 	return nil
 }
 
 type providerOnlyDriver struct {
-	instance *providerOnlyInstance
+	runtime *providerOnlyRuntime
 }
 
 func (*providerOnlyDriver) Descriptor() backend.Descriptor {
@@ -111,8 +111,8 @@ func (*providerOnlyDriver) ModelDefaults() backend.ModelDefaults {
 	return backend.ModelDefaults{Main: "model"}
 }
 
-func (driver *providerOnlyDriver) Configure(backend.Options) (backend.Instance, error) {
-	return driver.instance, nil
+func (driver *providerOnlyDriver) Open(backend.Options) (backend.Runtime, error) {
+	return driver.runtime, nil
 }
 
 func (function providerFunction) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {
@@ -178,7 +178,7 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 	factoryCalls := 0
 	runtime := testRuntime(cwd, &stdout, &stderr, nil)
 	driver := testBackendDriver(t, runtime)
-	driver.instance.newProvider = func() (agent.Provider, error) {
+	driver.runtime.newProvider = func() (agent.Provider, error) {
 		factoryCalls++
 		return providerFunction(func(_ context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
 			gotRequest = request
@@ -197,7 +197,7 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := newAgentSession(config, runtime, driver.instance)
+	session, err := newAgentSession(config, runtime, driver.runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,8 +206,8 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if driver.instance.closeCalls != 1 {
-		t.Fatalf("backend close calls = %d, want 1", driver.instance.closeCalls)
+	if driver.runtime.closeCalls != 1 {
+		t.Fatalf("backend close calls = %d, want 1", driver.runtime.closeCalls)
 	}
 	if factoryCalls != 1 || gotRequest.Model != "gpt-5.6-sol" || gotRequest.ThinkingLevel != agent.ThinkingXHigh || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].Text != "test prompt" {
 		t.Fatalf("factory calls=%d request=%+v", factoryCalls, gotRequest)
@@ -242,7 +242,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	var childRequests []agent.Request
 	mainCalls := 0
 	driver := testBackendDriver(t, runtime)
-	driver.instance.newProvider = func() (agent.Provider, error) {
+	driver.runtime.newProvider = func() (agent.Provider, error) {
 		mu.Lock()
 		factoryCalls++
 		call := factoryCalls
@@ -336,7 +336,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := newAgentSession(config, runtime, driver.instance)
+	session, err := newAgentSession(config, runtime, driver.runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,8 +344,8 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	if err := session.finish(runErr); err != nil {
 		t.Fatal(err)
 	}
-	if driver.instance.closeCalls != 1 {
-		t.Fatalf("backend close calls = %d, want 1", driver.instance.closeCalls)
+	if driver.runtime.closeCalls != 1 {
+		t.Fatalf("backend close calls = %d, want 1", driver.runtime.closeCalls)
 	}
 	if result.Text != "combined answer" || mainCalls != 4 {
 		t.Fatalf("result = %+v, main calls = %d", result, mainCalls)
@@ -397,16 +397,16 @@ func TestOnlySessionRequestsRejectCleanupFailures(t *testing.T) {
 }
 
 func TestBackendAuthenticationCapabilitiesAreOptional(t *testing.T) {
-	driver := &providerOnlyDriver{instance: &providerOnlyInstance{}}
-	instance, err := configureBackendInstance(driver, t.TempDir(), nil)
+	driver := &providerOnlyDriver{runtime: &providerOnlyRuntime{}}
+	backendRuntime, err := openBackendRuntime(driver, t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := instance.Close(); err != nil {
+	if err := backendRuntime.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if driver.instance.closeCalls != 1 {
-		t.Fatalf("close calls = %d, want 1", driver.instance.closeCalls)
+	if driver.runtime.closeCalls != 1 {
+		t.Fatalf("close calls = %d, want 1", driver.runtime.closeCalls)
 	}
 
 	registry, err := backend.NewRegistry("provider-only", driver)
@@ -488,7 +488,7 @@ func TestRunConfigurationAndUsageErrors(t *testing.T) {
 			runtime := testRuntime(cwd, &stdout, &stderr, nil)
 			driver := testBackendDriver(t, runtime)
 			if test.missingAuth {
-				driver.instance.checkCredentialsErr = errors.New("not logged in; run 'eul login'")
+				driver.runtime.checkCredentialsErr = errors.New("not logged in; run 'eul login'")
 			}
 
 			code := run(test.arguments, runtime)
@@ -496,8 +496,8 @@ func TestRunConfigurationAndUsageErrors(t *testing.T) {
 			if code != test.wantCode || !strings.Contains(combined, test.want) {
 				t.Fatalf("run() code=%d stdout=%q stderr=%q, want code=%d containing %q", code, stdout.String(), stderr.String(), test.wantCode, test.want)
 			}
-			if test.missingAuth && driver.instance.closeCalls != 1 {
-				t.Fatalf("backend close calls = %d, want 1", driver.instance.closeCalls)
+			if test.missingAuth && driver.runtime.closeCalls != 1 {
+				t.Fatalf("backend close calls = %d, want 1", driver.runtime.closeCalls)
 			}
 		})
 	}
@@ -530,7 +530,7 @@ func writeMainTestLSPConfig(t *testing.T, cwd string) {
 
 func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[string]string) appRuntime {
 	values := maps.Clone(environment)
-	backendInstance := &fakeBackendInstance{newProvider: func() (agent.Provider, error) {
+	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
 			return agent.Response{}, nil
 		}), nil
@@ -542,7 +542,7 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[strin
 			Fast:     "gpt-5.6-luna",
 			Balanced: "gpt-5.6-terra",
 		},
-		instance: backendInstance,
+		runtime: backendRuntime,
 	}
 	backends, err := backend.NewRegistry("test", driver)
 	if err != nil {

@@ -20,18 +20,16 @@ type oauthManager interface {
 	Logout(context.Context) error
 }
 
-type providerFactory func(codex.CodexTokenSource, codex.Options) (agent.Provider, error)
-
 type Driver struct {
 	newManager  func(string) (oauthManager, error)
-	newProvider providerFactory
+	newProvider func(codex.TokenSource) (agent.Provider, error)
 }
 
 var (
 	_ backend.Driver            = (*Driver)(nil)
 	_ backend.Authenticator     = (*Driver)(nil)
-	_ backend.Instance          = (*instance)(nil)
-	_ backend.CredentialChecker = (*instance)(nil)
+	_ backend.Runtime           = (*runtime)(nil)
+	_ backend.CredentialChecker = (*runtime)(nil)
 )
 
 func New() *Driver {
@@ -43,8 +41,8 @@ func New() *Driver {
 			}
 			return oauth.NewManager(path, oauth.Options{}), nil
 		},
-		newProvider: func(source codex.CodexTokenSource, options codex.Options) (agent.Provider, error) {
-			return codex.NewCodex(source, options)
+		newProvider: func(source codex.TokenSource) (agent.Provider, error) {
+			return codex.New(source, codex.Options{})
 		},
 	}
 }
@@ -61,12 +59,12 @@ func (*Driver) ModelDefaults() backend.ModelDefaults {
 	}
 }
 
-func (driver *Driver) Configure(options backend.Options) (backend.Instance, error) {
+func (driver *Driver) Open(options backend.Options) (backend.Runtime, error) {
 	manager, err := driver.newManager(options.Home)
 	if err != nil {
 		return nil, err
 	}
-	return &instance{
+	return &runtime{
 		manager:     manager,
 		newProvider: driver.newProvider,
 	}, nil
@@ -98,22 +96,21 @@ func (driver *Driver) Logout(ctx context.Context, options backend.AuthOptions) e
 	return manager.Logout(ctx)
 }
 
-type instance struct {
+type runtime struct {
 	manager     oauthManager
-	options     codex.Options
-	newProvider providerFactory
+	newProvider func(codex.TokenSource) (agent.Provider, error)
 }
 
-func (backend *instance) CheckCredentials(ctx context.Context) error {
-	_, err := backend.manager.Resolve(ctx)
+func (configured *runtime) CheckCredentials(ctx context.Context) error {
+	_, err := configured.manager.Resolve(ctx)
 	return err
 }
 
-func (backend *instance) NewProvider() (agent.Provider, error) {
-	return backend.newProvider(oauthTokenSource{manager: backend.manager}, backend.options)
+func (configured *runtime) NewProvider() (agent.Provider, error) {
+	return configured.newProvider(oauthTokenSource{manager: configured.manager})
 }
 
-func (*instance) Close() error {
+func (*runtime) Close() error {
 	return nil
 }
 
@@ -121,10 +118,10 @@ type oauthTokenSource struct {
 	manager oauthManager
 }
 
-func (source oauthTokenSource) Token(ctx context.Context) (codex.CodexCredential, error) {
+func (source oauthTokenSource) Token(ctx context.Context) (codex.Credential, error) {
 	credential, err := source.manager.Resolve(ctx)
 	if err != nil {
-		return codex.CodexCredential{}, err
+		return codex.Credential{}, err
 	}
-	return codex.CodexCredential{AccessToken: credential.AccessToken, AccountID: credential.AccountID}, nil
+	return codex.Credential{AccessToken: credential.AccessToken, AccountID: credential.AccountID}, nil
 }

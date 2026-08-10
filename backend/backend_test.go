@@ -15,14 +15,14 @@ func (driver testDriver) Descriptor() Descriptor { return driver.descriptor }
 func (testDriver) ModelDefaults() ModelDefaults {
 	return ModelDefaults{}
 }
-func (testDriver) Configure(Options) (Instance, error) { return testInstance{}, nil }
+func (testDriver) Open(Options) (Runtime, error) { return testRuntime{}, nil }
 
-type testInstance struct{}
+type testRuntime struct{}
 
-func (testInstance) NewProvider() (agent.Provider, error) {
+func (testRuntime) NewProvider() (agent.Provider, error) {
 	return nil, errors.New("unused")
 }
-func (testInstance) Close() error { return nil }
+func (testRuntime) Close() error { return nil }
 
 func TestRegistrySelectsDefaultAndExplicitProviders(t *testing.T) {
 	first := testDriver{descriptor: Descriptor{ID: "first", Name: "First"}}

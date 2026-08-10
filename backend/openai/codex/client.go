@@ -30,13 +30,13 @@ type Options struct {
 	ReasoningSummary ReasoningSummary
 }
 
-type CodexCredential struct {
+type Credential struct {
 	AccessToken string
 	AccountID   string
 }
 
-type CodexTokenSource interface {
-	Token(context.Context) (CodexCredential, error)
+type TokenSource interface {
+	Token(context.Context) (Credential, error)
 }
 
 type Client struct {
@@ -44,7 +44,7 @@ type Client struct {
 	endpoint         string
 	compactEndpoint  string
 	usageEndpoint    string
-	tokenSource      CodexTokenSource
+	tokenSource      TokenSource
 	maxRequestBytes  int64
 	maxResponseBytes int64
 	maxErrorBytes    int64
@@ -60,7 +60,7 @@ var (
 	_ agent.ModelMetadataProvider = (*Client)(nil)
 )
 
-func NewCodex(source CodexTokenSource, options Options) (*Client, error) {
+func New(source TokenSource, options Options) (*Client, error) {
 	reasoningSummary, err := ParseReasoningSummary(string(options.ReasoningSummary))
 	if err != nil {
 		return nil, err
@@ -268,15 +268,15 @@ func marshalBoundedJSON(value any, maximum int64) ([]byte, bool, error) {
 	return body, int64(len(body)) > maximum, nil
 }
 
-func (c *Client) post(ctx context.Context, endpoint, accept string, body []byte, credential CodexCredential, operation string) (*http.Response, error) {
+func (c *Client) post(ctx context.Context, endpoint, accept string, body []byte, credential Credential, operation string) (*http.Response, error) {
 	return c.do(ctx, http.MethodPost, endpoint, accept, body, credential, operation)
 }
 
-func (c *Client) get(ctx context.Context, endpoint string, credential CodexCredential, operation string) (*http.Response, error) {
+func (c *Client) get(ctx context.Context, endpoint string, credential Credential, operation string) (*http.Response, error) {
 	return c.do(ctx, http.MethodGet, endpoint, "application/json", nil, credential, operation)
 }
 
-func (c *Client) do(ctx context.Context, method, endpoint, accept string, body []byte, credential CodexCredential, operation string) (*http.Response, error) {
+func (c *Client) do(ctx context.Context, method, endpoint, accept string, body []byte, credential Credential, operation string) (*http.Response, error) {
 	request, err := c.newRequest(ctx, method, endpoint, accept, body, credential)
 	if err != nil {
 		return nil, c.errorf("create %s: %v", operation, err)
@@ -312,18 +312,18 @@ func (c *Client) contextError(ctx context.Context, err error, operation string) 
 	return nil
 }
 
-func (c *Client) resolveCredential(ctx context.Context) (CodexCredential, error) {
+func (c *Client) resolveCredential(ctx context.Context) (Credential, error) {
 	credential, err := c.tokenSource.Token(ctx)
 	if err == nil {
 		return credential, nil
 	}
 	if contextErr := ctx.Err(); contextErr != nil {
-		return CodexCredential{}, contextErr
+		return Credential{}, contextErr
 	}
-	return CodexCredential{}, c.wrapf(err, "resolve authentication: %v", err)
+	return Credential{}, c.wrapf(err, "resolve authentication: %v", err)
 }
 
-func (c *Client) newRequest(ctx context.Context, method, endpoint, accept string, body []byte, credential CodexCredential) (*http.Request, error) {
+func (c *Client) newRequest(ctx context.Context, method, endpoint, accept string, body []byte, credential Credential) (*http.Request, error) {
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err

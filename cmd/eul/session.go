@@ -15,7 +15,7 @@ import (
 type agentSession struct {
 	engine          *agent.Engine
 	tools           *tool.Registry
-	backend         backend.Instance
+	backendRuntime  backend.Runtime
 	terminalOptions terminal.Options
 	thinkingLevel   agent.ThinkingLevel
 	persistence     *sessionHandle
@@ -90,19 +90,19 @@ func providerModelMetadata(provider agent.Provider, model string) agent.ModelMet
 	return metadata
 }
 
-func newAgentSession(config agentConfig, runtime appRuntime, backendInstance backend.Instance) (*agentSession, error) {
-	return newAgentSessionWithCheckpointing(config, runtime, backendInstance, false)
+func newAgentSession(config agentConfig, runtime appRuntime, backendRuntime backend.Runtime) (*agentSession, error) {
+	return newAgentSessionWithCheckpointing(config, runtime, backendRuntime, false)
 }
 
 func newAgentSessionWithCheckpointing(
 	config agentConfig,
 	runtime appRuntime,
-	backendInstance backend.Instance,
+	backendRuntime backend.Runtime,
 	checkpointing bool,
 ) (*agentSession, error) {
-	provider, err := backendInstance.NewProvider()
+	provider, err := backendRuntime.NewProvider()
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("configure provider: %w", err), closeBackendInstance(backendInstance))
+		return nil, errors.Join(fmt.Errorf("configure provider: %w", err), closeBackendRuntime(backendRuntime))
 	}
 	var loadUsage func(context.Context) (agent.ProviderUsage, error)
 	if usageProvider, ok := provider.(agent.UsageProvider); ok {
@@ -130,7 +130,7 @@ func newAgentSessionWithCheckpointing(
 		newToolset = buildToolset
 	}
 	subagent := tool.NewSubagentWithThinkingLevels(func(ctx context.Context, task string, modelProfile tool.SubagentModelProfile, thinkingLevel agent.ThinkingLevel, update func(tool.SubagentProgress)) (agent.RunResult, error) {
-		return runChildAgent(ctx, backendInstance, newToolset, config, modelProfile, thinkingLevel, task, update)
+		return runChildAgent(ctx, backendRuntime, newToolset, config, modelProfile, thinkingLevel, task, update)
 	}, func(profile tool.SubagentModelProfile) []agent.ThinkingLevel {
 		return subagentMetadata[profile].ThinkingLevels
 	})
@@ -148,7 +148,7 @@ func newAgentSessionWithCheckpointing(
 		return nil, errors.Join(
 			fmt.Errorf("configure tools: %w", err),
 			subagent.Close(),
-			closeBackendInstance(backendInstance),
+			closeBackendRuntime(backendRuntime),
 		)
 	}
 	engine = agent.New(provider, registry, agent.Options{
@@ -160,10 +160,10 @@ func newAgentSessionWithCheckpointing(
 		Checkpointing:       checkpointing,
 	})
 	session := &agentSession{
-		engine:        engine,
-		tools:         registry,
-		backend:       backendInstance,
-		thinkingLevel: currentThinkingLevel,
+		engine:         engine,
+		tools:          registry,
+		backendRuntime: backendRuntime,
+		thinkingLevel:  currentThinkingLevel,
 	}
 	setThinkingLevel := func(level agent.ThinkingLevel) error {
 		if err := engine.SetThinkingLevel(level); err != nil {
@@ -194,11 +194,11 @@ func newAgentSessionWithCheckpointing(
 func newStoredAgentSession(
 	config agentConfig,
 	runtime appRuntime,
-	backendInstance backend.Instance,
+	backendRuntime backend.Runtime,
 	store *sessionStore,
 	handle *sessionHandle,
 ) (*agentSession, error) {
-	session, err := newAgentSessionWithCheckpointing(config, runtime, backendInstance, true)
+	session, err := newAgentSessionWithCheckpointing(config, runtime, backendRuntime, true)
 	if err != nil {
 		if handle != nil {
 			_ = handle.Close()
@@ -276,16 +276,16 @@ func (session *agentSession) finish(runErr error) error {
 			persistenceErr = fmt.Errorf("close session: %w", persistenceErr)
 		}
 	}
-	backendErr := closeBackendInstance(session.backend)
-	session.backend = nil
+	backendErr := closeBackendRuntime(session.backendRuntime)
+	session.backendRuntime = nil
 	return errors.Join(runErr, toolErr, persistenceErr, backendErr)
 }
 
-func closeBackendInstance(instance backend.Instance) error {
-	if instance == nil {
+func closeBackendRuntime(backendRuntime backend.Runtime) error {
+	if backendRuntime == nil {
 		return nil
 	}
-	if err := instance.Close(); err != nil {
+	if err := backendRuntime.Close(); err != nil {
 		return fmt.Errorf("close backend: %w", err)
 	}
 	return nil
@@ -307,7 +307,7 @@ func (config agentConfig) subagentModel(profile tool.SubagentModelProfile) strin
 
 func runChildAgent(
 	ctx context.Context,
-	backendInstance backend.Instance,
+	backendRuntime backend.Runtime,
 	newToolset toolsetFactory,
 	config agentConfig,
 	modelProfile tool.SubagentModelProfile,
@@ -315,7 +315,7 @@ func runChildAgent(
 	task string,
 	update func(tool.SubagentProgress),
 ) (agent.RunResult, error) {
-	provider, err := backendInstance.NewProvider()
+	provider, err := backendRuntime.NewProvider()
 	if err != nil {
 		return agent.RunResult{}, fmt.Errorf("configure subagent provider: %w", err)
 	}

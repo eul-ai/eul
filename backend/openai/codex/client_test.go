@@ -766,7 +766,7 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 				Body:       errorReadCloser{err: syscall.ECONNRESET},
 			}, nil
 		})
-		client, err := NewCodex(testTokenSource("key"), Options{
+		client, err := New(testTokenSource("key"), Options{
 			BaseURL:    "https://example.com",
 			HTTPClient: &http.Client{Transport: transport},
 		})
@@ -893,7 +893,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		transport := roundTripperFunc(func(*http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: errorReadCloser{err: context.DeadlineExceeded}}, nil
 		})
-		client, err := NewCodex(testTokenSource("token"), Options{BaseURL: "https://example.com", HTTPClient: &http.Client{Transport: transport}})
+		client, err := New(testTokenSource("token"), Options{BaseURL: "https://example.com", HTTPClient: &http.Client{Transport: transport}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -970,9 +970,9 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 
 func TestClientValidatesRequestsBeforeResolvingCredentials(t *testing.T) {
 	var tokenCalls atomic.Int32
-	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
+	client, err := New(TokenSourceFunc(func(context.Context) (Credential, error) {
 		tokenCalls.Add(1)
-		return CodexCredential{AccessToken: "token", AccountID: "account"}, nil
+		return Credential{AccessToken: "token", AccountID: "account"}, nil
 	}), Options{BaseURL: "http://127.0.0.1:1"})
 	if err != nil {
 		t.Fatal(err)
@@ -998,9 +998,9 @@ func TestClientValidatesRequestsBeforeResolvingCredentials(t *testing.T) {
 
 func TestClientRejectsUnsupportedThinkingLevelBeforeAuthentication(t *testing.T) {
 	calls := 0
-	client, err := NewCodex(CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
+	client, err := New(TokenSourceFunc(func(context.Context) (Credential, error) {
 		calls++
-		return CodexCredential{AccessToken: "token", AccountID: "account"}, nil
+		return Credential{AccessToken: "token", AccountID: "account"}, nil
 	}), Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -1025,7 +1025,7 @@ func TestNewCopiesInjectedClientBeforeApplyingPolicy(t *testing.T) {
 	transport := http.DefaultTransport
 	injected := &http.Client{Transport: transport, CheckRedirect: redirect}
 
-	client, err := NewCodex(testTokenSource("token"), Options{BaseURL: "https://example.com", HTTPClient: injected})
+	client, err := New(testTokenSource("token"), Options{BaseURL: "https://example.com", HTTPClient: injected})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1047,7 +1047,7 @@ func TestNewCopiesInjectedClientBeforeApplyingPolicy(t *testing.T) {
 func newTestClient(t *testing.T, token, baseURL string, overrides Options) *Client {
 	t.Helper()
 	overrides.BaseURL = baseURL
-	client, err := NewCodex(testTokenSource(token), overrides)
+	client, err := New(testTokenSource(token), overrides)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1055,9 +1055,9 @@ func newTestClient(t *testing.T, token, baseURL string, overrides Options) *Clie
 	return client
 }
 
-func testTokenSource(token string) CodexTokenSource {
-	return CodexTokenSourceFunc(func(context.Context) (CodexCredential, error) {
-		return CodexCredential{AccessToken: token, AccountID: "account"}, nil
+func testTokenSource(token string) TokenSource {
+	return TokenSourceFunc(func(context.Context) (Credential, error) {
+		return Credential{AccessToken: token, AccountID: "account"}, nil
 	})
 }
 

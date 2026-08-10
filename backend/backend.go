@@ -34,15 +34,15 @@ type Interaction struct {
 	DeviceCode func(verificationURL, userCode string) error
 }
 
-// Instance is a configured backend. NewProvider may be called concurrently and
+// Runtime is a configured backend. NewProvider may be called concurrently and
 // each returned provider remains valid until Close is called. Close is called
-// after all providers created by the instance are no longer in use.
-type Instance interface {
+// after all providers created by the runtime are no longer in use.
+type Runtime interface {
 	NewProvider() (agent.Provider, error)
 	Close() error
 }
 
-// CredentialChecker is implemented by backend instances that can verify their
+// CredentialChecker is implemented by backend runtimes that can verify their
 // credentials before the first provider request.
 type CredentialChecker interface {
 	CheckCredentials(context.Context) error
@@ -58,7 +58,7 @@ type Authenticator interface {
 type Driver interface {
 	Descriptor() Descriptor
 	ModelDefaults() ModelDefaults
-	Configure(Options) (Instance, error)
+	Open(Options) (Runtime, error)
 }
 
 type Registry struct {

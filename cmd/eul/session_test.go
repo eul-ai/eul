@@ -98,14 +98,14 @@ func TestNewAgentSessionWiresOptionalProviderUsage(t *testing.T) {
 		return agent.Response{}, nil
 	}}
 	runtime := appRuntime{}
-	backendInstance := &fakeBackendInstance{newProvider: func() (agent.Provider, error) {
+	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return provider, nil
 	}}
 	cwd := t.TempDir()
 	writeMainTestLSPConfig(t, cwd)
 	skills := []agent.Skill{{Name: "review", Description: "Review code"}}
 	warnings := []string{"Skipped skill invalid: malformed"}
-	session, err := newAgentSession(agentConfig{model: "model", thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills, warnings: warnings}, runtime, backendInstance)
+	session, err := newAgentSession(agentConfig{model: "model", thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills, warnings: warnings}, runtime, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 			"balanced": {ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingHigh}},
 		},
 	}
-	instance := &fakeBackendInstance{newProvider: func() (agent.Provider, error) {
+	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return provider, nil
 	}}
 	runtime := appRuntime{newToolset: func(_ string, _ toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
@@ -153,7 +153,7 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 		subagentBalancedModel: "balanced",
 		thinkingLevel:         agent.ThinkingHigh,
 		cwd:                   t.TempDir(),
-	}, runtime, instance)
+	}, runtime, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,21 +176,21 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 	if err := session.finish(nil); err != nil {
 		t.Fatal(err)
 	}
-	if instance.closeCalls != 1 {
-		t.Fatalf("backend close calls = %d, want 1", instance.closeCalls)
+	if backendRuntime.closeCalls != 1 {
+		t.Fatalf("backend close calls = %d, want 1", backendRuntime.closeCalls)
 	}
 }
 
 func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 	runtime := appRuntime{}
-	backendInstance := &fakeBackendInstance{newProvider: func() (agent.Provider, error) {
+	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
 			return agent.Response{}, nil
 		}), nil
 	}}
 	cwd := t.TempDir()
 	writeMainTestLSPConfig(t, cwd)
-	session, err := newAgentSession(agentConfig{model: "model", cwd: cwd}, runtime, backendInstance)
+	session, err := newAgentSession(agentConfig{model: "model", cwd: cwd}, runtime, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,8 +221,8 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 			return tool.NewRegistry(nil)
 		},
 	}
-	newBackendInstance := func() *fakeBackendInstance {
-		return &fakeBackendInstance{newProvider: func() (agent.Provider, error) {
+	newBackendRuntime := func() *fakeBackendRuntime {
+		return &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 			return providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
 				requests = append(requests, request)
 				if len(requests) == 1 {
@@ -235,7 +235,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	config := agentConfig{provider: "test", model: "model", thinkingLevel: agent.ThinkingHigh, cwd: cwd}
 	store := newSessionStore(t.TempDir())
 
-	first, err := newStoredAgentSession(config, runtime, newBackendInstance(), store, nil)
+	first, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := newStoredAgentSession(config, runtime, newBackendInstance(), store, handle)
+	second, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, handle)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(cwd, &stdout, &stderr, nil)
 	defaultDriver := testBackendDriver(t, runtime)
-	alternateInstance := &fakeBackendInstance{newProvider: func() (agent.Provider, error) {
+	alternateRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
 			return agent.Response{}, nil
 		}), nil
@@ -301,7 +301,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	alternateDriver := &fakeBackendDriver{
 		descriptor: backend.Descriptor{ID: "alternate", Name: "Alternate"},
 		defaults:   backend.ModelDefaults{Main: "alternate-model"},
-		instance:   alternateInstance,
+		runtime:    alternateRuntime,
 	}
 	registry, err := backend.NewRegistry("test", defaultDriver, alternateDriver)
 	if err != nil {
@@ -326,11 +326,11 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	if handle != nil || config.provider != "alternate" || selected.Descriptor().ID != "alternate" {
 		t.Fatalf("config=%+v handle=%v provider=%q", config, handle, selected.Descriptor().ID)
 	}
-	configured, err := selected.Configure(backend.Options{})
+	backendRuntime, err := selected.Open(backend.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := newStoredAgentSession(config, runtime, configured, store, nil)
+	session, err := newStoredAgentSession(config, runtime, backendRuntime, store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,17 +405,17 @@ func TestNewAgentSessionReportsToolsetConfigurationFailure(t *testing.T) {
 		},
 	}
 
-	backendInstance := &fakeBackendInstance{newProvider: func() (agent.Provider, error) {
+	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
 			return agent.Response{}, nil
 		}), nil
 	}}
-	_, err := newAgentSession(agentConfig{model: "model", cwd: t.TempDir()}, runtime, backendInstance)
+	_, err := newAgentSession(agentConfig{model: "model", cwd: t.TempDir()}, runtime, backendRuntime)
 	if !errors.Is(err, configureErr) || !strings.Contains(err.Error(), "configure tools") {
 		t.Fatalf("newAgentSession error = %v", err)
 	}
-	if backendInstance.closeCalls != 1 {
-		t.Fatalf("backend close calls = %d, want 1", backendInstance.closeCalls)
+	if backendRuntime.closeCalls != 1 {
+		t.Fatalf("backend close calls = %d, want 1", backendRuntime.closeCalls)
 	}
 }
 

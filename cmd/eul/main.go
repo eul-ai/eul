@@ -110,7 +110,7 @@ func run(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "%v", err)
 		return exitFailure
 	}
-	backendInstance, err := configureBackendInstance(driver, home, runtime.interrupts)
+	backendRuntime, err := openBackendRuntime(driver, home, runtime.interrupts)
 	if err != nil {
 		_ = closeSessionHandle(handle)
 		if errors.Is(err, context.Canceled) {
@@ -119,7 +119,7 @@ func run(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "%v", err)
 		return exitFailure
 	}
-	session, err := newStoredAgentSession(config, runtime, backendInstance, store, handle)
+	session, err := newStoredAgentSession(config, runtime, backendRuntime, store, handle)
 	if err != nil {
 		writeCLIError(runtime.stderr, "%v", err)
 		return exitFailure
@@ -146,11 +146,11 @@ func run(arguments []string, runtime appRuntime) int {
 				if err != nil {
 					return err
 				}
-				backendInstance, err = configureBackendInstance(driver, home, runtime.interrupts)
+				backendRuntime, err = openBackendRuntime(driver, home, runtime.interrupts)
 				if err != nil {
 					return err
 				}
-				session, err = newStoredAgentSession(config, runtime, backendInstance, store, nil)
+				session, err = newStoredAgentSession(config, runtime, backendRuntime, store, nil)
 				if err != nil {
 					return err
 				}
@@ -166,12 +166,12 @@ func run(arguments []string, runtime appRuntime) int {
 			if err != nil {
 				return err
 			}
-			backendInstance, err = configureBackendInstance(driver, home, runtime.interrupts)
+			backendRuntime, err = openBackendRuntime(driver, home, runtime.interrupts)
 			if err != nil {
 				_ = handle.Close()
 				return err
 			}
-			session, err = newStoredAgentSession(config, runtime, backendInstance, store, handle)
+			session, err = newStoredAgentSession(config, runtime, backendRuntime, store, handle)
 			if err != nil {
 				return err
 			}
@@ -252,22 +252,22 @@ func isOnlyInterruption(err error) bool {
 	return true
 }
 
-func configureBackendInstance(driver backend.Driver, home string, interrupts <-chan os.Signal) (backend.Instance, error) {
-	instance, err := driver.Configure(backend.Options{Home: home})
+func openBackendRuntime(driver backend.Driver, home string, interrupts <-chan os.Signal) (backend.Runtime, error) {
+	backendRuntime, err := driver.Open(backend.Options{Home: home})
 	if err != nil {
 		return nil, err
 	}
-	checker, ok := instance.(backend.CredentialChecker)
+	checker, ok := backendRuntime.(backend.CredentialChecker)
 	if !ok {
-		return instance, nil
+		return backendRuntime, nil
 	}
 
 	ctx, cancel := contextWithInterrupt(interrupts)
 	defer cancel()
 	if err := checker.CheckCredentials(ctx); err != nil {
-		return nil, errors.Join(fmt.Errorf("authentication required: %w", err), closeBackendInstance(instance))
+		return nil, errors.Join(fmt.Errorf("authentication required: %w", err), closeBackendRuntime(backendRuntime))
 	}
-	return instance, nil
+	return backendRuntime, nil
 }
 
 func closeSessionHandle(handle *sessionHandle) error {

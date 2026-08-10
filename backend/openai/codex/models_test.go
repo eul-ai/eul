@@ -10,14 +10,14 @@ import (
 )
 
 func TestClientReasoningSummaryAndModelMetadata(t *testing.T) {
-	client, err := NewCodex(testTokenSource("token"), Options{ReasoningSummary: ReasoningSummaryDetailed})
+	client, err := New(testTokenSource("token"), Options{ReasoningSummary: ReasoningSummaryDetailed})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if client.reasoningSummary != ReasoningSummaryDetailed {
 		t.Fatalf("reasoning summary = %q", client.reasoningSummary)
 	}
-	defaultClient, err := NewCodex(testTokenSource("token"), Options{})
+	defaultClient, err := New(testTokenSource("token"), Options{})
 	if err != nil || defaultClient.reasoningSummary != ReasoningSummaryAuto {
 		t.Fatalf("default reasoning summary = %q, err = %v", defaultClient.reasoningSummary, err)
 	}
@@ -26,13 +26,13 @@ func TestClientReasoningSummaryAndModelMetadata(t *testing.T) {
 		t.Fatalf("metadata = %+v", metadata)
 	}
 
-	if _, err := NewCodex(testTokenSource("token"), Options{ReasoningSummary: ReasoningSummary("verbose")}); err == nil {
+	if _, err := New(testTokenSource("token"), Options{ReasoningSummary: ReasoningSummary("verbose")}); err == nil {
 		t.Fatal("invalid reasoning summary option was accepted")
 	}
 }
 
-func TestNewCodexRejectsNilTokenSource(t *testing.T) {
-	client, err := NewCodex(nil, Options{})
+func TestNewRejectsNilTokenSource(t *testing.T) {
+	client, err := New(nil, Options{})
 	if client != nil || err == nil || !strings.Contains(err.Error(), "token source is required") {
 		t.Fatalf("client = %v, error = %v", client, err)
 	}
