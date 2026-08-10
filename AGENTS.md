@@ -12,6 +12,7 @@
 
 ## Go
 
+- Avoid using `internal` packages.
 - Prefer early returns and keep the happy path left-aligned.
 - Prefer `switch` statements over chained `if`/`else` branches.
 - Use blank lines to separate distinct logical stages within a function, especially parsing and validation from setup and execution.
