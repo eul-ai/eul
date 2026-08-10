@@ -26,7 +26,7 @@ var (
 
 var subagentToolDefinition = agent.ToolDefinition{
 	Name:        subagentToolName,
-	Description: "Start one to four independent read-only research tasks in the background. At most four may be outstanding. Use selectively for substantial parallel investigation that benefits from separate context; do not use for trivial work, tightly coupled steps, or tasks the main context can handle directly. Choose the lowest thinking level sufficient for the tasks.",
+	Description: "Start one to four independent read-only research tasks in the background. At most four may be outstanding. Use selectively for substantial parallel investigation that benefits from separate context; do not use for trivial work, tightly coupled steps, or tasks the main context can handle directly. Choose the lowest thinking level sufficient for the tasks. Do not delegate follow-up work for findings already available in context.",
 	Parameters: strictObject(map[string]agent.JSONSchema{
 		"tasks": {
 			Type:        "array",

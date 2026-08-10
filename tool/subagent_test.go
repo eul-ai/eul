@@ -18,7 +18,7 @@ func TestSubagentDefinitionsAllowSelectiveBackgroundUse(t *testing.T) {
 	defer subagents.Close()
 
 	launch := subagents.Definition()
-	if launch.Name != "subagent" || !strings.Contains(launch.Description, "Use selectively") || strings.Contains(launch.Description, "explicitly asks") {
+	if launch.Name != "subagent" || !strings.Contains(launch.Description, "Use selectively") || !strings.Contains(launch.Description, "follow-up work") || strings.Contains(launch.Description, "explicitly asks") {
 		t.Fatalf("launch definition = %+v", launch)
 	}
 	if launch.Parameters.Properties["tasks"].Items == nil || launch.Parameters.Properties["tasks"].Items.Type != "string" {
@@ -31,7 +31,7 @@ func TestSubagentDefinitionsAllowSelectiveBackgroundUse(t *testing.T) {
 	}
 
 	wait := NewSubagentWait(subagents).Definition()
-	if wait.Name != "subagent_wait" || !strings.Contains(wait.Description, "continue useful independent work") {
+	if wait.Name != "subagent_wait" || !strings.Contains(wait.Description, "synthesize the findings") {
 		t.Fatalf("wait definition = %+v", wait)
 	}
 	if wait.Parameters.Properties["ids"].Items == nil || wait.Parameters.Properties["ids"].Items.Type != "string" {
@@ -185,6 +185,9 @@ func TestSubagentWaitReturnsRequestedOrderAndConsumesResults(t *testing.T) {
 	completed := <-done
 	if completed.err != nil || completed.result.IsError {
 		t.Fatalf("wait result = %+v, error = %v", completed.result, completed.err)
+	}
+	if !strings.HasPrefix(completed.result.Output, subagentResultGuidance) {
+		t.Fatalf("wait guidance missing from %q", completed.result.Output)
 	}
 	second := strings.Index(completed.result.Output, "Subagent subagent-2 (thinking: low):\nsecond result")
 	first := strings.Index(completed.result.Output, "Subagent subagent-1 (thinking: low):\nfirst result")

@@ -10,11 +10,14 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-const subagentWaitToolName = "subagent_wait"
+const (
+	subagentWaitToolName   = "subagent_wait"
+	subagentResultGuidance = "Use these results in the eventual user response and continue in the main context; do not launch follow-up subagents for the same objective unless the user asks."
+)
 
 var subagentWaitToolDefinition = agent.ToolDefinition{
 	Name:        subagentWaitToolName,
-	Description: "Wait for selected background subagents and return their results, which are collected once returned. When possible, continue useful independent work before waiting. Wait before relying on delegated findings or finishing work that depends on them.",
+	Description: "Wait for selected background subagents and return their results, which are collected once returned. When possible, continue useful independent work before waiting. After waiting, synthesize the findings and continue directly instead of launching follow-up subagents.",
 	Parameters: strictObject(map[string]agent.JSONSchema{
 		"ids": {
 			Type:        "array",
@@ -134,11 +137,10 @@ func (wait *SubagentWait) collect(ctx context.Context, jobs []*subagentJob, upda
 
 func formatSubagentResults(snapshots []subagentJobSnapshot) agent.ToolResult {
 	var output strings.Builder
+	output.WriteString(subagentResultGuidance)
 	failed := false
-	for index, snapshot := range snapshots {
-		if index > 0 {
-			output.WriteString("\n\n")
-		}
+	for _, snapshot := range snapshots {
+		output.WriteString("\n\n")
 		fmt.Fprintf(&output, "Subagent %s (thinking: %s):\n", snapshot.id, snapshot.thinkingLevel)
 		if snapshot.result.text != "" {
 			output.WriteString(snapshot.result.text)
