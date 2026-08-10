@@ -51,8 +51,8 @@ func TestParseAgentArgumentsDefaultsModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.model != "" || got.modelSet {
-		t.Fatalf("parsed model = %q, explicitly set = %v", got.model, got.modelSet)
+	if got.provider != "" || got.model != "" || got.modelSet || got.thinkingLevel != agent.ThinkingMedium {
+		t.Fatalf("parsed defaults = %+v", got)
 	}
 	config, err := resolveTestAgentConfig(got, runtime)
 	if err != nil {
@@ -99,7 +99,7 @@ func TestResolveAgentConfigRejectsExplicitEmptyProfileModels(t *testing.T) {
 
 func TestParseAgentArgumentsParsesResumeSelection(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(t.TempDir(), &stdout, &stderr, map[string]string{"EUL_THINKING_LEVEL": "invalid-for-new-sessions"})
+	runtime := testRuntime(t.TempDir(), &stdout, &stderr, nil)
 
 	mostRecent, err := parseAgentArguments([]string{"--resume"}, runtime)
 	if err != nil {

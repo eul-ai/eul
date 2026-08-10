@@ -280,7 +280,7 @@ func closeSessionHandle(handle *sessionHandle) error {
 func runLogin(arguments []string, runtime appRuntime) int {
 	flags := flag.NewFlagSet("eul login", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
-	providerID := flags.String("provider", runtime.getenv("EUL_PROVIDER"), "provider backend (or EUL_PROVIDER)")
+	providerID := flags.String("provider", "", "provider backend")
 	device := flags.Bool("device-auth", false, "use device authorization for headless environments")
 
 	if err := flags.Parse(arguments); err != nil {
@@ -344,7 +344,7 @@ func runLogin(arguments []string, runtime appRuntime) int {
 func runLogout(arguments []string, runtime appRuntime) int {
 	flags := flag.NewFlagSet("eul logout", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
-	providerID := flags.String("provider", runtime.getenv("EUL_PROVIDER"), "provider backend (or EUL_PROVIDER)")
+	providerID := flags.String("provider", "", "provider backend")
 
 	if err := flags.Parse(arguments); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

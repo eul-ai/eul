@@ -176,9 +176,7 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	var gotRequest agent.Request
 	factoryCalls := 0
-	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{
-		"EUL_THINKING_LEVEL": "high",
-	})
+	runtime := testRuntime(cwd, &stdout, &stderr, nil)
 	driver := testBackendDriver(t, runtime)
 	driver.instance.newProvider = func() (agent.Provider, error) {
 		factoryCalls++
@@ -238,9 +236,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{
-		"EUL_THINKING_LEVEL": "high",
-	})
+	runtime := testRuntime(cwd, &stdout, &stderr, nil)
 	var mu sync.Mutex
 	factoryCalls := 0
 	var childRequests []agent.Request
@@ -331,6 +327,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 		"--model", "model",
 		"--fast-model", "fast-model",
 		"--balanced-model", "balanced-model",
+		"--thinking", "high",
 	}, runtime)
 	if err != nil {
 		t.Fatal(err)

@@ -78,13 +78,7 @@ subagents default to `gpt-5.6-terra`, and fast subagents default to
 `gpt-5.6-luna`. Use `--model`, `--balanced-model`, and `--fast-model` to
 override them for a new session.
 
-These environment variables provide common defaults:
-
-| Variable | Purpose |
-| --- | --- |
-| `EUL_HOME` | Credential, session, and global LSP configuration directory |
-| `EUL_PROVIDER` | Default provider backend; defaults to `openai-codex` |
-| `EUL_THINKING_LEVEL` | Default thinking level |
+`EUL_HOME` overrides the credential, session, and global LSP configuration directory.
 
 ## Interactive mode
 

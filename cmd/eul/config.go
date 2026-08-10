@@ -76,18 +76,13 @@ type agentConfig struct {
 }
 
 func parseAgentArguments(arguments []string, runtime appRuntime) (agentArguments, error) {
-	thinkingDefault := runtime.getenv("EUL_THINKING_LEVEL")
-	if thinkingDefault == "" {
-		thinkingDefault = string(agent.DefaultThinkingLevel)
-	}
-
 	flags := flag.NewFlagSet("eul", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
-	provider := flags.String("provider", runtime.getenv("EUL_PROVIDER"), "provider backend (or EUL_PROVIDER)")
+	provider := flags.String("provider", "", "provider backend")
 	model := flags.String("model", "", "main and powerful-subagent model (defaults to the provider configuration)")
 	fastModel := flags.String("fast-model", "", "fast subagent model (defaults to the provider configuration)")
 	balancedModel := flags.String("balanced-model", "", "balanced subagent model (defaults to the provider configuration)")
-	thinking := flags.String("thinking", thinkingDefault, "thinking level (or EUL_THINKING_LEVEL)")
+	thinking := flags.String("thinking", string(agent.DefaultThinkingLevel), "thinking level")
 	cwd := flags.String("cwd", "", "fixed working directory")
 	resume := &resumeValue{}
 	flags.Var(resume, "resume", "resume the most recent session or a session selected with --resume=<id>")
