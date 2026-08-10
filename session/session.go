@@ -9,7 +9,6 @@ import (
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/terminal"
 	"github.com/eul-ai/eul/tool"
-	lsptool "github.com/eul-ai/eul/tool/lsp"
 )
 
 type agentSession struct {
@@ -19,63 +18,6 @@ type agentSession struct {
 	terminalOptions terminal.Options
 	thinkingLevel   agent.ThinkingLevel
 	persistence     *sessionHandle
-}
-
-func resolveInitialSession(
-	ctx context.Context,
-	arguments Options,
-	runtime runtime,
-	store *sessionStore,
-) (config, *sessionHandle, backend.Driver, error) {
-	if !arguments.Resume {
-		driver, err := runtime.backends.Lookup(arguments.Provider)
-		if err != nil {
-			return config{}, nil, nil, err
-		}
-		config, err := resolveConfig(arguments, runtime, driver.Descriptor(), driver.ModelDefaults())
-		return config, nil, driver, err
-	}
-
-	cwd, err := resolveCWD("", runtime.getwd)
-	if err != nil {
-		return config{}, nil, nil, err
-	}
-	return resolveStoredSession(ctx, store, runtime, cwd, arguments.SessionID)
-}
-
-func resolveStoredSession(
-	ctx context.Context,
-	store *sessionStore,
-	runtime runtime,
-	lookupCWD string,
-	sessionID string,
-) (config, *sessionHandle, backend.Driver, error) {
-	handle, err := store.Open(ctx, lookupCWD, sessionID)
-	if err != nil {
-		return config{}, nil, nil, err
-	}
-	record := handle.Record()
-	driver, err := runtime.backends.Lookup(record.Provider)
-	if err != nil {
-		_ = handle.Close()
-		return config{}, nil, nil, err
-	}
-	resolved, err := resolveConfig(Options{
-		Model:            record.Model,
-		ModelSet:         true,
-		FastModel:        record.FastModel,
-		FastModelSet:     record.FastModel != "",
-		BalancedModel:    record.BalancedModel,
-		BalancedModelSet: record.BalancedModel != "",
-		ThinkingLevel:    record.ThinkingLevel,
-		WorkingDirectory: record.WorkingDirectory,
-	}, runtime, driver.Descriptor(), driver.ModelDefaults())
-	if err != nil {
-		_ = handle.Close()
-		return config{}, nil, nil, err
-	}
-	resolved.warnings = append(resolved.warnings, handle.warnings...)
-	return resolved, handle, driver, nil
 }
 
 func providerModelMetadata(provider agent.Provider, model string) agent.ModelMetadata {
@@ -289,117 +231,4 @@ func closeBackendRuntime(backendRuntime backend.Runtime) error {
 		return fmt.Errorf("close backend: %w", err)
 	}
 	return nil
-}
-
-func (config config) subagentModel(profile tool.SubagentModelProfile) string {
-	var model string
-	switch profile {
-	case tool.SubagentModelFast:
-		model = config.subagentFastModel
-	case tool.SubagentModelBalanced:
-		model = config.subagentBalancedModel
-	}
-	if model == "" {
-		return config.model
-	}
-	return model
-}
-
-func runChildAgent(
-	ctx context.Context,
-	backendRuntime backend.Runtime,
-	newToolset toolsetFactory,
-	config config,
-	modelProfile tool.SubagentModelProfile,
-	thinkingLevel agent.ThinkingLevel,
-	task string,
-	update func(tool.SubagentProgress),
-) (agent.RunResult, error) {
-	provider, err := backendRuntime.NewProvider()
-	if err != nil {
-		return agent.RunResult{}, fmt.Errorf("configure subagent provider: %w", err)
-	}
-
-	registry, err := newToolset(config.cwd, readOnlyToolAccess)
-	if err != nil {
-		return agent.RunResult{}, fmt.Errorf("configure subagent tools: %w", err)
-	}
-	child := agent.New(provider, registry, agent.Options{
-		Model:               config.subagentModel(modelProfile),
-		ThinkingLevel:       thinkingLevel,
-		WorkingDirectory:    config.cwd,
-		ProjectInstructions: config.projectInstructions,
-		Skills:              config.skills,
-	})
-	var liveUsage agent.Usage
-	normalGenerations := 0
-	finalizing := false
-	policy := tool.NewSubagentFinalizationPolicy(func(reason agent.FinalizationReason) {
-		finalizing = true
-		update(tool.SubagentProgress{
-			Usage:              liveUsage,
-			Generations:        normalGenerations,
-			Finalizing:         true,
-			FinalizationReason: reason,
-		})
-	})
-	result, runErr := child.RunWithFinalization(ctx, task, func(event agent.Event) error {
-		switch event.Kind {
-		case agent.EventCompactionEnd, agent.EventContextUsage:
-			liveUsage.InputTokens += event.Usage.InputTokens
-			liveUsage.OutputTokens += event.Usage.OutputTokens
-			liveUsage.TotalTokens += event.Usage.TotalTokens
-			if event.Kind == agent.EventContextUsage && !finalizing {
-				normalGenerations++
-			}
-			update(tool.SubagentProgress{Usage: liveUsage, Generations: normalGenerations})
-		}
-		return nil
-	}, policy)
-	return result, finishRegistry(runErr, registry, "close subagent tools")
-}
-
-func finishRegistry(runErr error, registry *tool.Registry, operation string) error {
-	closeErr := registry.Close()
-	if closeErr != nil {
-		closeErr = fmt.Errorf("%s: %w", operation, closeErr)
-	}
-	return errors.Join(runErr, closeErr)
-}
-
-func buildToolset(cwd string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
-	return buildToolsetWithHome(cwd, "", access, additional...)
-}
-
-func buildToolsetWithHome(cwd, home string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
-	var tools []tool.Tool
-	var lsp *lsptool.Set
-	var err error
-	switch access {
-	case fullToolAccess:
-		tools = []tool.Tool{
-			tool.NewRead(cwd),
-			tool.NewWrite(cwd),
-			tool.NewEdit(cwd),
-			tool.NewBash(cwd),
-		}
-		lsp, err = lsptool.New(cwd, home)
-	case readOnlyToolAccess:
-		tools = []tool.Tool{tool.NewRead(cwd)}
-		lsp, err = lsptool.NewReadOnly(cwd, home)
-	default:
-		return nil, errors.New("unknown tool access")
-	}
-	if err != nil {
-		return nil, fmt.Errorf("configure LSP: %w", err)
-	}
-
-	tools = append(tools, lsp.Tools()...)
-	tools = append(tools, additional...)
-	registry, err := tool.NewRegistry(tools, lsp)
-	if err != nil {
-		_ = lsp.Close()
-		return nil, err
-	}
-	return registry, nil
 }

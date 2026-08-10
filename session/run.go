@@ -47,6 +47,63 @@ func Run(ctx context.Context, options Options, dependencies Dependencies) error 
 	return errors.Join(runSessions(ctx, runner, session, config, driver, runtime, store, home), runner.Close())
 }
 
+func resolveInitialSession(
+	ctx context.Context,
+	arguments Options,
+	runtime runtime,
+	store *sessionStore,
+) (config, *sessionHandle, backend.Driver, error) {
+	if !arguments.Resume {
+		driver, err := runtime.backends.Lookup(arguments.Provider)
+		if err != nil {
+			return config{}, nil, nil, err
+		}
+		config, err := resolveConfig(arguments, runtime, driver.Descriptor(), driver.ModelDefaults())
+		return config, nil, driver, err
+	}
+
+	cwd, err := resolveCWD("", runtime.getwd)
+	if err != nil {
+		return config{}, nil, nil, err
+	}
+	return resolveStoredSession(ctx, store, runtime, cwd, arguments.SessionID)
+}
+
+func resolveStoredSession(
+	ctx context.Context,
+	store *sessionStore,
+	runtime runtime,
+	lookupCWD string,
+	sessionID string,
+) (config, *sessionHandle, backend.Driver, error) {
+	handle, err := store.Open(ctx, lookupCWD, sessionID)
+	if err != nil {
+		return config{}, nil, nil, err
+	}
+	record := handle.Record()
+	driver, err := runtime.backends.Lookup(record.Provider)
+	if err != nil {
+		_ = handle.Close()
+		return config{}, nil, nil, err
+	}
+	resolved, err := resolveConfig(Options{
+		Model:            record.Model,
+		ModelSet:         true,
+		FastModel:        record.FastModel,
+		FastModelSet:     record.FastModel != "",
+		BalancedModel:    record.BalancedModel,
+		BalancedModelSet: record.BalancedModel != "",
+		ThinkingLevel:    record.ThinkingLevel,
+		WorkingDirectory: record.WorkingDirectory,
+	}, runtime, driver.Descriptor(), driver.ModelDefaults())
+	if err != nil {
+		_ = handle.Close()
+		return config{}, nil, nil, err
+	}
+	resolved.warnings = append(resolved.warnings, handle.warnings...)
+	return resolved, handle, driver, nil
+}
+
 func runSessions(
 	ctx context.Context,
 	runner *terminal.Runner,

@@ -11,7 +11,6 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/tool"
 )
 
 type Options struct {
@@ -37,15 +36,6 @@ type Dependencies struct {
 	Interrupts  <-chan os.Signal
 	Backends    *backend.Registry
 }
-
-type toolAccess uint8
-
-const (
-	fullToolAccess toolAccess = iota
-	readOnlyToolAccess
-)
-
-type toolsetFactory func(string, toolAccess, ...tool.Tool) (*tool.Registry, error)
 
 type runtime struct {
 	stdin       io.Reader
