@@ -31,6 +31,14 @@ func TestSearchProjectFilesWithFDIsFreshAndRespectsIgnores(t *testing.T) {
 		t.Fatalf("paths = %q, want %q", paths, want)
 	}
 
+	paths, err = searchProjectFiles(context.Background(), cwd, fdPath, "terminal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"terminal/"}; !slices.Equal(paths, want) {
+		t.Fatalf("directory paths = %q, want %q", paths, want)
+	}
+
 	paths, err = searchProjectFiles(context.Background(), cwd, fdPath, "TERMINAL/TUI")
 	if err != nil {
 		t.Fatal(err)
@@ -69,6 +77,14 @@ func TestSearchProjectFilesWithWalkFiltersAndExcludesGit(t *testing.T) {
 	}
 	if want := []string{"terminal/tui.go"}; !slices.Equal(paths, want) {
 		t.Fatalf("paths = %q, want %q", paths, want)
+	}
+
+	paths, err = searchProjectFiles(context.Background(), cwd, "", "terminal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"terminal/"}; !slices.Equal(paths, want) {
+		t.Fatalf("directory paths = %q, want %q", paths, want)
 	}
 
 	paths, err = searchProjectFiles(context.Background(), cwd, "", "terminal/model")

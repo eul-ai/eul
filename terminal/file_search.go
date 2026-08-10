@@ -108,6 +108,7 @@ func searchProjectFilesWithFD(ctx context.Context, cwd, fdPath, query string) ([
 		"--base-directory", cwd,
 		"--max-results", "100",
 		"--type", "f",
+		"--type", "d",
 		"--hidden",
 		"--exclude", ".git",
 		"--print0",
@@ -166,12 +167,11 @@ func searchProjectFilesWithWalk(ctx context.Context, cwd, query string) ([]strin
 			}
 			return nil
 		}
-		if entry.IsDir() {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil || !info.Mode().IsRegular() {
-			return nil
+		if !entry.IsDir() {
+			info, err := entry.Info()
+			if err != nil || !info.Mode().IsRegular() {
+				return nil
+			}
 		}
 
 		relative, err := filepath.Rel(cwd, filePath)
@@ -181,6 +181,9 @@ func searchProjectFilesWithWalk(ctx context.Context, cwd, query string) ([]strin
 		display, ok := normalizeDiscoveredPath(relative)
 		if !ok {
 			return nil
+		}
+		if entry.IsDir() {
+			display += "/"
 		}
 		candidate := path.Base(display)
 		if fullPath {
