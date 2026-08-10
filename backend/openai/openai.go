@@ -9,7 +9,10 @@ import (
 	"github.com/eul-ai/eul/backend/openai/oauth"
 )
 
-const ID = "openai-codex"
+const (
+	ID   = "openai-codex"
+	Name = "OpenAI Codex"
+)
 
 type oauthManager interface {
 	Login(context.Context, oauth.LoginMethod, oauth.Interaction) error
@@ -47,7 +50,7 @@ func New() *Driver {
 }
 
 func (*Driver) Descriptor() backend.Descriptor {
-	return backend.Descriptor{ID: ID, Name: "ChatGPT"}
+	return backend.Descriptor{ID: ID, Name: Name}
 }
 
 func (*Driver) ModelDefaults() backend.ModelDefaults {
