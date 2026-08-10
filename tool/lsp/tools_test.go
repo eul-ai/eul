@@ -23,7 +23,7 @@ func TestNewLSPOmitsToolsWhenServerIsUnavailable(t *testing.T) {
 	cwd := t.TempDir()
 	writeLSPTestConfig(t, cwd)
 
-	set, err := New(cwd)
+	set, err := New(cwd, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,11 +40,11 @@ func TestNewLSPRegistersFullAndReadOnlyToolSets(t *testing.T) {
 	t.Setenv("PATH", directory)
 	cwd := t.TempDir()
 	writeLSPTestConfig(t, cwd)
-	full, err := New(cwd)
+	full, err := New(cwd, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	readOnly, err := NewReadOnly(cwd)
+	readOnly, err := NewReadOnly(cwd, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ var testThing = Thing{Value: 1}
 		t.Fatal(err)
 	}
 
-	set, err := New(cwd)
+	set, err := New(cwd, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ var testValue = oldName
 		t.Fatal(err)
 	}
 
-	set, err := New(cwd)
+	set, err := New(cwd, "")
 	if err != nil {
 		t.Fatal(err)
 	}

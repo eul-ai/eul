@@ -2,9 +2,12 @@ package lsp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"unicode"
 )
 
 const lspConfigFileName = "lsp.json"
@@ -17,27 +20,79 @@ type lspServerConfigFile struct {
 	Extensions []string `json:"extensions"`
 }
 
-func loadLSPServerConfigs(cwd string) ([]lspServerConfig, error) {
-	path := filepath.Join(cwd, lspConfigFileName)
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", lspConfigFileName, err)
+func loadLSPServerConfigs(paths ...string) ([]lspServerConfig, error) {
+	for _, configPath := range paths {
+		content, err := os.ReadFile(configPath)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read %s (%s): %w", lspConfigFileName, filepath.ToSlash(configPath), err)
+		}
+
+		var fileConfigs []lspServerConfigFile
+		if err := json.Unmarshal(content, &fileConfigs); err != nil {
+			return nil, fmt.Errorf("decode %s (%s): %w", lspConfigFileName, filepath.ToSlash(configPath), err)
+		}
+		configs, err := validateLSPServerConfigs(fileConfigs)
+		if err != nil {
+			return nil, fmt.Errorf("validate %s (%s): %w", lspConfigFileName, filepath.ToSlash(configPath), err)
+		}
+		return configs, nil
 	}
 
-	var fileConfigs []lspServerConfigFile
-	if err := json.Unmarshal(content, &fileConfigs); err != nil {
-		return nil, fmt.Errorf("decode %s: %w", lspConfigFileName, err)
-	}
+	return nil, nil
+}
 
+func validateLSPServerConfigs(fileConfigs []lspServerConfigFile) ([]lspServerConfig, error) {
 	configs := make([]lspServerConfig, len(fileConfigs))
+	names := make(map[string]struct{}, len(fileConfigs))
+	extensions := make(map[string]string)
 	for index, config := range fileConfigs {
+		switch {
+		case !validLSPConfigValue(config.Name):
+			return nil, fmt.Errorf("server %d has an invalid name", index+1)
+		case !validLSPConfigValue(config.Command):
+			return nil, fmt.Errorf("server %q has an invalid command", config.Name)
+		case !validLSPConfigValue(config.LanguageID):
+			return nil, fmt.Errorf("server %q has an invalid languageID", config.Name)
+		case len(config.Extensions) == 0:
+			return nil, fmt.Errorf("server %q has no extensions", config.Name)
+		}
+		if _, exists := names[config.Name]; exists {
+			return nil, fmt.Errorf("server name %q is duplicated", config.Name)
+		}
+		names[config.Name] = struct{}{}
+
+		normalizedExtensions := make([]string, len(config.Extensions))
+		for extensionIndex, extension := range config.Extensions {
+			extension = strings.ToLower(extension)
+			if !validLSPExtension(extension) {
+				return nil, fmt.Errorf("server %q has invalid extension %q", config.Name, config.Extensions[extensionIndex])
+			}
+			if owner, exists := extensions[extension]; exists {
+				return nil, fmt.Errorf("extension %q is configured for both %q and %q", extension, owner, config.Name)
+			}
+			extensions[extension] = config.Name
+			normalizedExtensions[extensionIndex] = extension
+		}
+
 		configs[index] = lspServerConfig{
 			name:       config.Name,
 			command:    config.Command,
-			arguments:  config.Arguments,
+			arguments:  append([]string(nil), config.Arguments...),
 			languageID: config.LanguageID,
-			extensions: config.Extensions,
+			extensions: normalizedExtensions,
 		}
 	}
 	return configs, nil
+}
+
+func validLSPConfigValue(value string) bool {
+	return value != "" && strings.TrimSpace(value) == value && strings.IndexFunc(value, unicode.IsControl) < 0
+}
+
+func validLSPExtension(extension string) bool {
+	return len(extension) > 1 && extension[0] == '.' && strings.TrimSpace(extension) == extension &&
+		!strings.ContainsAny(extension, `/\`) && strings.IndexFunc(extension, unicode.IsControl) < 0
 }

@@ -76,7 +76,7 @@ These environment variables provide common defaults:
 
 | Variable | Purpose |
 | --- | --- |
-| `EUL_HOME` | Credential and session storage directory |
+| `EUL_HOME` | Credential, session, and global LSP configuration directory |
 | `EUL_THINKING_LEVEL` | Default thinking level |
 | `OPENAI_MODEL` | Default model |
 | `OPENAI_REASONING_SUMMARY` | Reasoning summary mode: `auto`, `concise`, `detailed`, or `none` |
@@ -135,9 +135,12 @@ Eul can use the following capabilities as needed:
 - Rename symbols across a workspace
 - Delegate independent read-only research to parallel subagents
 
-Language-server configuration is loaded from `lsp.json` in the project root when
-a session starts. Each entry defines a server command and the source extensions
-it handles:
+Language-server configuration is loaded from `lsp.json` under `EUL_HOME`, or
+the platform user configuration directory when `EUL_HOME` is unset. For
+development, Eul falls back to `lsp.json` in the project root when the global
+file does not exist. If neither file exists, the session starts without
+language-server tools. Each entry defines a server command and the source
+extensions it handles:
 
 ```json
 [

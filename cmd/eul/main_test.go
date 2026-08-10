@@ -60,6 +60,25 @@ func (function providerFunction) Generate(ctx context.Context, request agent.Req
 	return function(ctx, request, observer.Text)
 }
 
+func TestBuildToolsWithoutLSPConfig(t *testing.T) {
+	cwd := t.TempDir()
+
+	registry, err := buildToolsetWithHome(cwd, t.TempDir(), fullToolAccess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer registry.Close()
+
+	names := make([]string, len(registry.Definitions()))
+	for index, definition := range registry.Definitions() {
+		names[index] = definition.Name
+	}
+	want := []string{"bash", "edit", "read", "write"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("tools = %v, want %v", names, want)
+	}
+}
+
 func TestBuildSubagentToolsUsesReadOnlyLSP(t *testing.T) {
 	directory := t.TempDir()
 	if err := os.WriteFile(filepath.Join(directory, "gopls"), nil, 0o755); err != nil {

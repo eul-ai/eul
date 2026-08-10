@@ -77,8 +77,7 @@ func main() {
 			}
 			return oauth.NewManager(path, oauth.Options{}), nil
 		},
-		openURL:    openBrowser,
-		newToolset: buildToolset,
+		openURL: openBrowser,
 		newProvider: func(source openaiadapter.CodexTokenSource, options openaiadapter.Options) (agent.Provider, error) {
 			return openaiadapter.NewCodex(source, options)
 		},
@@ -123,6 +122,11 @@ func run(arguments []string, runtime appRuntime) int {
 		return exitFailure
 	}
 	store := newSessionStore(home)
+	if runtime.newToolset == nil {
+		runtime.newToolset = func(cwd string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
+			return buildToolsetWithHome(cwd, home, access, additional...)
+		}
+	}
 	tokenSource, err := resolveTokenSource(runtime)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {

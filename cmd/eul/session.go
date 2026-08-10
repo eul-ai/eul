@@ -278,6 +278,10 @@ func finishRegistry(runErr error, registry *tool.Registry, operation string) err
 }
 
 func buildToolset(cwd string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
+	return buildToolsetWithHome(cwd, "", access, additional...)
+}
+
+func buildToolsetWithHome(cwd, home string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
 	var tools []tool.Tool
 	var lsp *lsptool.Set
 	var err error
@@ -289,10 +293,10 @@ func buildToolset(cwd string, access toolAccess, additional ...tool.Tool) (*tool
 			tool.NewEdit(cwd),
 			tool.NewBash(cwd),
 		}
-		lsp, err = lsptool.New(cwd)
+		lsp, err = lsptool.New(cwd, home)
 	case readOnlyToolAccess:
 		tools = []tool.Tool{tool.NewRead(cwd)}
-		lsp, err = lsptool.NewReadOnly(cwd)
+		lsp, err = lsptool.NewReadOnly(cwd, home)
 	default:
 		return nil, errors.New("unknown tool access")
 	}

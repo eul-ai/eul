@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 
 	"go.lsp.dev/protocol"
@@ -111,16 +112,21 @@ type Set struct {
 	closeOnce sync.Once
 }
 
-func New(cwd string) (*Set, error) {
-	return newSet(cwd, true)
+func New(cwd, home string) (*Set, error) {
+	return newSet(cwd, home, true)
 }
 
-func NewReadOnly(cwd string) (*Set, error) {
-	return newSet(cwd, false)
+func NewReadOnly(cwd, home string) (*Set, error) {
+	return newSet(cwd, home, false)
 }
 
-func newSet(cwd string, includeRename bool) (*Set, error) {
-	configs, err := loadLSPServerConfigs(cwd)
+func newSet(cwd, home string, includeRename bool) (*Set, error) {
+	configPaths := make([]string, 0, 2)
+	if home != "" {
+		configPaths = append(configPaths, filepath.Join(home, lspConfigFileName))
+	}
+	configPaths = append(configPaths, filepath.Join(cwd, lspConfigFileName))
+	configs, err := loadLSPServerConfigs(configPaths...)
 	if err != nil {
 		return nil, err
 	}
