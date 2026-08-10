@@ -7,6 +7,7 @@
 - Prefer the standard library and existing project patterns over custom infrastructure.
 - Keep functions small and focused, but refactor only when it clearly improves readability or removes duplication.
 - Preserve existing behavior unless the request requires changing it.
+- Treat questions as requests for information, not requests to modify code. Do not make changes unless the user explicitly asks for them.
 - If a materially larger design choice is unclear, ask before implementing it.
 
 ## Go
