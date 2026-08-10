@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/signal"
-	"runtime"
 
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/backend/builtin"
@@ -61,15 +59,22 @@ func main() {
 }
 
 func run(arguments []string, runtime appRuntime) int {
+	command := ""
 	if len(arguments) > 0 {
-		switch arguments[0] {
-		case "login":
-			return runLogin(arguments[1:], runtime)
-		case "logout":
-			return runLogout(arguments[1:], runtime)
-		}
+		command = arguments[0]
 	}
 
+	switch command {
+	case "login":
+		return runLogin(arguments[1:], runtime)
+	case "logout":
+		return runLogout(arguments[1:], runtime)
+	default:
+		return runSession(arguments, runtime)
+	}
+}
+
+func runSession(arguments []string, runtime appRuntime) int {
 	parsed, err := parseAgentArguments(arguments, runtime)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -130,150 +135,6 @@ func isOnlyInterruption(err error) bool {
 	return true
 }
 
-func runLogin(arguments []string, runtime appRuntime) int {
-	flags := flag.NewFlagSet("eul login", flag.ContinueOnError)
-	flags.SetOutput(runtime.stderr)
-	providerID := flags.String("provider", "", "provider backend")
-	device := flags.Bool("device-auth", false, "use device authorization for headless environments")
-
-	if err := flags.Parse(arguments); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return exitSuccess
-		}
-		return exitUsage
-	}
-	if flags.NArg() != 0 {
-		writeCLIError(runtime.stderr, "usage error: eul login accepts no arguments")
-		return exitUsage
-	}
-
-	driver, err := runtime.backends.Lookup(*providerID)
-	if err != nil {
-		writeCLIError(runtime.stderr, "login failed: %v", err)
-		return exitFailure
-	}
-	authenticator, ok := driver.(backend.Authenticator)
-	if !ok {
-		writeCLIError(runtime.stderr, "login failed: provider %q does not support login", driver.Descriptor().ID)
-		return exitFailure
-	}
-	home, err := resolveEULHome(runtime)
-	if err != nil {
-		writeCLIError(runtime.stderr, "login failed: %v", err)
-		return exitFailure
-	}
-
-	ctx, cancel := contextWithInterrupt(runtime.interrupts)
-	defer cancel()
-	descriptor := driver.Descriptor()
-	err = authenticator.Login(ctx, backend.AuthOptions{Home: home, Device: *device}, backend.Interaction{
-		OpenURL: func(url string) error {
-			fmt.Fprintf(runtime.stderr, "Open this URL to sign in with %s:\n%s\n", descriptor.Name, url)
-			if runtime.openURL != nil {
-				if err := runtime.openURL(url); err == nil {
-					return nil
-				}
-			}
-			fmt.Fprintln(runtime.stderr, "Browser could not be opened automatically; open the URL manually.")
-			return nil
-		},
-		DeviceCode: func(verificationURL, userCode string) error {
-			fmt.Fprintf(runtime.stderr, "Open %s and enter code: %s\n", verificationURL, userCode)
-			return nil
-		},
-	})
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return exitInterrupted
-		}
-		writeCLIError(runtime.stderr, "login failed: %v", err)
-		return exitFailure
-	}
-
-	fmt.Fprintf(runtime.stdout, "Logged in with %s.\n", descriptor.Name)
-	return exitSuccess
-}
-
-func runLogout(arguments []string, runtime appRuntime) int {
-	flags := flag.NewFlagSet("eul logout", flag.ContinueOnError)
-	flags.SetOutput(runtime.stderr)
-	providerID := flags.String("provider", "", "provider backend")
-
-	if err := flags.Parse(arguments); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return exitSuccess
-		}
-		return exitUsage
-	}
-	if flags.NArg() != 0 {
-		writeCLIError(runtime.stderr, "usage error: eul logout accepts no arguments")
-		return exitUsage
-	}
-
-	driver, err := runtime.backends.Lookup(*providerID)
-	if err != nil {
-		writeCLIError(runtime.stderr, "logout failed: %v", err)
-		return exitFailure
-	}
-	authenticator, ok := driver.(backend.Authenticator)
-	if !ok {
-		writeCLIError(runtime.stderr, "logout failed: provider %q does not support logout", driver.Descriptor().ID)
-		return exitFailure
-	}
-	home, err := resolveEULHome(runtime)
-	if err != nil {
-		writeCLIError(runtime.stderr, "logout failed: %v", err)
-		return exitFailure
-	}
-
-	ctx, cancel := contextWithInterrupt(runtime.interrupts)
-	defer cancel()
-	if err := authenticator.Logout(ctx, backend.AuthOptions{Home: home}); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return exitInterrupted
-		}
-		writeCLIError(runtime.stderr, "logout failed: %v", err)
-		return exitFailure
-	}
-
-	fmt.Fprintln(runtime.stdout, "Logged out.")
-	return exitSuccess
-}
-
-func contextWithInterrupt(interrupts <-chan os.Signal) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	go func() {
-		select {
-		case <-ctx.Done():
-		case _, ok := <-interrupts:
-			if !ok {
-				return
-			}
-			cancel()
-		}
-	}()
-
-	return ctx, cancel
-}
-
 func writeCLIError(output io.Writer, format string, arguments ...any) {
 	fmt.Fprintf(output, "error: "+format+"\n", arguments...)
-}
-
-func openBrowser(url string) error {
-	var command *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		command = exec.Command("open", url)
-	case "windows":
-		command = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
-	default:
-		command = exec.Command("xdg-open", url)
-	}
-
-	if err := command.Start(); err != nil {
-		return err
-	}
-	return command.Process.Release()
 }
