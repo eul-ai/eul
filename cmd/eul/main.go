@@ -11,9 +11,8 @@ import (
 	"os/signal"
 	"runtime"
 
-	"github.com/eul-ai/eul/agent"
-	oauth "github.com/eul-ai/eul/auth/openai"
-	openaiadapter "github.com/eul-ai/eul/provider/openai"
+	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/backend/builtin"
 	"github.com/eul-ai/eul/terminal"
 	"github.com/eul-ai/eul/tool"
 )
@@ -25,8 +24,6 @@ const (
 	exitInterrupted = 130
 )
 
-type providerFactory func(openaiadapter.CodexTokenSource, openaiadapter.Options) (agent.Provider, error)
-
 type toolAccess uint8
 
 const (
@@ -35,12 +32,6 @@ const (
 )
 
 type toolsetFactory func(string, toolAccess, ...tool.Tool) (*tool.Registry, error)
-
-type oauthManager interface {
-	Login(context.Context, oauth.LoginMethod, oauth.Interaction) error
-	Resolve(context.Context) (oauth.AccessCredential, error)
-	Logout(context.Context) error
-}
 
 type appRuntime struct {
 	stdin         io.Reader
@@ -51,9 +42,8 @@ type appRuntime struct {
 	userHomeDir   func() (string, error)
 	userConfigDir func() (string, error)
 	interrupts    <-chan os.Signal
-	newProvider   providerFactory
+	backends      *backend.Registry
 	newToolset    toolsetFactory
-	newOAuth      func() (oauthManager, error)
 	openURL       func(string) error
 }
 
@@ -70,17 +60,8 @@ func main() {
 		userHomeDir:   os.UserHomeDir,
 		userConfigDir: os.UserConfigDir,
 		interrupts:    interrupts,
-		newOAuth: func() (oauthManager, error) {
-			path, err := oauth.DefaultCredentialPath(os.Getenv("EUL_HOME"))
-			if err != nil {
-				return nil, err
-			}
-			return oauth.NewManager(path, oauth.Options{}), nil
-		},
-		openURL: openBrowser,
-		newProvider: func(source openaiadapter.CodexTokenSource, options openaiadapter.Options) (agent.Provider, error) {
-			return openaiadapter.NewCodex(source, options)
-		},
+		backends:      builtin.New(),
+		openURL:       openBrowser,
 	})
 
 	signal.Stop(interrupts)
@@ -111,11 +92,6 @@ func run(arguments []string, runtime appRuntime) int {
 		return exitUsage
 	}
 
-	providerOptions, err := openAIOptionsFromEnvironment(runtime.getenv)
-	if err != nil {
-		writeCLIError(runtime.stderr, "%v", err)
-		return exitUsage
-	}
 	home, err := resolveEULHome(runtime)
 	if err != nil {
 		writeCLIError(runtime.stderr, "%v", err)
@@ -127,22 +103,23 @@ func run(arguments []string, runtime appRuntime) int {
 			return buildToolsetWithHome(cwd, home, access, additional...)
 		}
 	}
-	tokenSource, err := resolveTokenSource(runtime)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return exitInterrupted
-		}
-		writeCLIError(runtime.stderr, "authentication required: %v", err)
-		return exitFailure
-	}
 
 	ctx := context.Background()
-	config, handle, err := resolveInitialSession(ctx, parsed, runtime, store)
+	config, handle, driver, err := resolveInitialSession(ctx, parsed, runtime, store)
 	if err != nil {
 		writeCLIError(runtime.stderr, "%v", err)
 		return exitFailure
 	}
-	session, err := newStoredAgentSession(config, runtime, tokenSource, providerOptions, store, handle)
+	backendInstance, err := configureBackendInstance(driver, home, runtime.interrupts)
+	if err != nil {
+		_ = closeSessionHandle(handle)
+		if errors.Is(err, context.Canceled) {
+			return exitInterrupted
+		}
+		writeCLIError(runtime.stderr, "%v", err)
+		return exitFailure
+	}
+	session, err := newStoredAgentSession(config, runtime, backendInstance, store, handle)
 	if err != nil {
 		writeCLIError(runtime.stderr, "%v", err)
 		return exitFailure
@@ -157,14 +134,23 @@ func run(arguments []string, runtime appRuntime) int {
 			runErr := session.run(ctx, runner)
 			if onlyNewSessionRequest(runErr) {
 				config, err = resolveAgentConfig(agentArguments{
-					model:         config.model,
-					thinkingLevel: session.thinkingLevel,
-					cwd:           config.cwd,
-				}, runtime)
+					model:            config.model,
+					modelSet:         true,
+					fastModel:        config.subagentFastModel,
+					fastModelSet:     true,
+					balancedModel:    config.subagentBalancedModel,
+					balancedModelSet: true,
+					thinkingLevel:    session.thinkingLevel,
+					cwd:              config.cwd,
+				}, runtime, driver.Descriptor(), driver.ModelDefaults())
 				if err != nil {
 					return err
 				}
-				session, err = newStoredAgentSession(config, runtime, tokenSource, providerOptions, store, nil)
+				backendInstance, err = configureBackendInstance(driver, home, runtime.interrupts)
+				if err != nil {
+					return err
+				}
+				session, err = newStoredAgentSession(config, runtime, backendInstance, store, nil)
 				if err != nil {
 					return err
 				}
@@ -176,11 +162,16 @@ func run(arguments []string, runtime appRuntime) int {
 				return runErr
 			}
 
-			config, handle, err = resolveStoredSession(ctx, store, runtime, config.cwd, request.SessionID)
+			config, handle, driver, err = resolveStoredSession(ctx, store, runtime, config.cwd, request.SessionID)
 			if err != nil {
 				return err
 			}
-			session, err = newStoredAgentSession(config, runtime, tokenSource, providerOptions, store, handle)
+			backendInstance, err = configureBackendInstance(driver, home, runtime.interrupts)
+			if err != nil {
+				_ = handle.Close()
+				return err
+			}
+			session, err = newStoredAgentSession(config, runtime, backendInstance, store, handle)
 			if err != nil {
 				return err
 			}
@@ -261,38 +252,35 @@ func isOnlyInterruption(err error) bool {
 	return true
 }
 
-func resolveTokenSource(runtime appRuntime) (openaiadapter.CodexTokenSource, error) {
-	manager, err := runtime.newOAuth()
+func configureBackendInstance(driver backend.Driver, home string, interrupts <-chan os.Signal) (backend.Instance, error) {
+	instance, err := driver.Configure(backend.Options{Home: home})
 	if err != nil {
 		return nil, err
 	}
+	checker, ok := instance.(backend.CredentialChecker)
+	if !ok {
+		return instance, nil
+	}
 
-	ctx, cancel := contextWithInterrupt(runtime.interrupts)
+	ctx, cancel := contextWithInterrupt(interrupts)
 	defer cancel()
-
-	if _, err := manager.Resolve(ctx); err != nil {
-		return nil, err
+	if err := checker.CheckCredentials(ctx); err != nil {
+		return nil, errors.Join(fmt.Errorf("authentication required: %w", err), closeBackendInstance(instance))
 	}
-
-	return oauthTokenSource{manager: manager}, nil
+	return instance, nil
 }
 
-type oauthTokenSource struct {
-	manager oauthManager
-}
-
-func (source oauthTokenSource) Token(ctx context.Context) (openaiadapter.CodexCredential, error) {
-	credential, err := source.manager.Resolve(ctx)
-	if err != nil {
-		return openaiadapter.CodexCredential{}, err
+func closeSessionHandle(handle *sessionHandle) error {
+	if handle == nil {
+		return nil
 	}
-
-	return openaiadapter.CodexCredential{AccessToken: credential.AccessToken, AccountID: credential.AccountID}, nil
+	return handle.Close()
 }
 
 func runLogin(arguments []string, runtime appRuntime) int {
 	flags := flag.NewFlagSet("eul login", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
+	providerID := flags.String("provider", runtime.getenv("EUL_PROVIDER"), "provider backend (or EUL_PROVIDER)")
 	device := flags.Bool("device-auth", false, "use device authorization for headless environments")
 
 	if err := flags.Parse(arguments); err != nil {
@@ -306,12 +294,17 @@ func runLogin(arguments []string, runtime appRuntime) int {
 		return exitUsage
 	}
 
-	method := oauth.LoginBrowser
-	if *device {
-		method = oauth.LoginDevice
+	driver, err := runtime.backends.Lookup(*providerID)
+	if err != nil {
+		writeCLIError(runtime.stderr, "login failed: %v", err)
+		return exitFailure
 	}
-
-	manager, err := runtime.newOAuth()
+	authenticator, ok := driver.(backend.Authenticator)
+	if !ok {
+		writeCLIError(runtime.stderr, "login failed: provider %q does not support login", driver.Descriptor().ID)
+		return exitFailure
+	}
+	home, err := resolveEULHome(runtime)
 	if err != nil {
 		writeCLIError(runtime.stderr, "login failed: %v", err)
 		return exitFailure
@@ -319,17 +312,20 @@ func runLogin(arguments []string, runtime appRuntime) int {
 
 	ctx, cancel := contextWithInterrupt(runtime.interrupts)
 	defer cancel()
-
-	err = manager.Login(ctx, method, oauth.Interaction{
-		AuthURL: func(url string) error {
-			fmt.Fprintf(runtime.stderr, "Open this URL to sign in with ChatGPT:\n%s\n", url)
-			if err := runtime.openURL(url); err != nil {
-				fmt.Fprintln(runtime.stderr, "Browser could not be opened automatically; open the URL manually.")
+	descriptor := driver.Descriptor()
+	err = authenticator.Login(ctx, backend.AuthOptions{Home: home, Device: *device}, backend.Interaction{
+		OpenURL: func(url string) error {
+			fmt.Fprintf(runtime.stderr, "Open this URL to sign in with %s:\n%s\n", descriptor.Name, url)
+			if runtime.openURL != nil {
+				if err := runtime.openURL(url); err == nil {
+					return nil
+				}
 			}
+			fmt.Fprintln(runtime.stderr, "Browser could not be opened automatically; open the URL manually.")
 			return nil
 		},
-		DeviceCode: func(code oauth.DeviceCode) error {
-			fmt.Fprintf(runtime.stderr, "Open %s and enter code: %s\n", code.VerificationURL, code.UserCode)
+		DeviceCode: func(verificationURL, userCode string) error {
+			fmt.Fprintf(runtime.stderr, "Open %s and enter code: %s\n", verificationURL, userCode)
 			return nil
 		},
 	})
@@ -341,13 +337,14 @@ func runLogin(arguments []string, runtime appRuntime) int {
 		return exitFailure
 	}
 
-	fmt.Fprintln(runtime.stdout, "Logged in with ChatGPT.")
+	fmt.Fprintf(runtime.stdout, "Logged in with %s.\n", descriptor.Name)
 	return exitSuccess
 }
 
 func runLogout(arguments []string, runtime appRuntime) int {
 	flags := flag.NewFlagSet("eul logout", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
+	providerID := flags.String("provider", runtime.getenv("EUL_PROVIDER"), "provider backend (or EUL_PROVIDER)")
 
 	if err := flags.Parse(arguments); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -360,7 +357,17 @@ func runLogout(arguments []string, runtime appRuntime) int {
 		return exitUsage
 	}
 
-	manager, err := runtime.newOAuth()
+	driver, err := runtime.backends.Lookup(*providerID)
+	if err != nil {
+		writeCLIError(runtime.stderr, "logout failed: %v", err)
+		return exitFailure
+	}
+	authenticator, ok := driver.(backend.Authenticator)
+	if !ok {
+		writeCLIError(runtime.stderr, "logout failed: provider %q does not support logout", driver.Descriptor().ID)
+		return exitFailure
+	}
+	home, err := resolveEULHome(runtime)
 	if err != nil {
 		writeCLIError(runtime.stderr, "logout failed: %v", err)
 		return exitFailure
@@ -368,8 +375,7 @@ func runLogout(arguments []string, runtime appRuntime) int {
 
 	ctx, cancel := contextWithInterrupt(runtime.interrupts)
 	defer cancel()
-
-	if err := manager.Logout(ctx); err != nil {
+	if err := authenticator.Logout(ctx, backend.AuthOptions{Home: home}); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return exitInterrupted
 		}

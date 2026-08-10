@@ -10,10 +10,8 @@ import (
 	"unicode"
 
 	"github.com/eul-ai/eul/agent"
-	openaiadapter "github.com/eul-ai/eul/provider/openai"
+	"github.com/eul-ai/eul/backend"
 )
-
-const defaultModel = "gpt-5.6-sol"
 
 type reportedFlagError struct {
 	error
@@ -24,11 +22,17 @@ func (err reportedFlagError) Unwrap() error {
 }
 
 type agentArguments struct {
-	model         string
-	thinkingLevel agent.ThinkingLevel
-	cwd           string
-	resume        bool
-	sessionID     string
+	provider         string
+	model            string
+	modelSet         bool
+	fastModel        string
+	fastModelSet     bool
+	balancedModel    string
+	balancedModelSet bool
+	thinkingLevel    agent.ThinkingLevel
+	cwd              string
+	resume           bool
+	sessionID        string
 }
 
 type resumeValue struct {
@@ -60,6 +64,7 @@ func (*resumeValue) IsBoolFlag() bool {
 }
 
 type agentConfig struct {
+	provider              string
 	model                 string
 	subagentFastModel     string
 	subagentBalancedModel string
@@ -76,14 +81,12 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (agentArguments
 		thinkingDefault = string(agent.DefaultThinkingLevel)
 	}
 
-	modelDefault := runtime.getenv("OPENAI_MODEL")
-	if modelDefault == "" {
-		modelDefault = defaultModel
-	}
-
 	flags := flag.NewFlagSet("eul", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
-	model := flags.String("model", modelDefault, "OpenAI model (or OPENAI_MODEL)")
+	provider := flags.String("provider", runtime.getenv("EUL_PROVIDER"), "provider backend (or EUL_PROVIDER)")
+	model := flags.String("model", "", "main and powerful-subagent model (defaults to the provider configuration)")
+	fastModel := flags.String("fast-model", "", "fast subagent model (defaults to the provider configuration)")
+	balancedModel := flags.String("balanced-model", "", "balanced subagent model (defaults to the provider configuration)")
 	thinking := flags.String("thinking", thinkingDefault, "thinking level (or EUL_THINKING_LEVEL)")
 	cwd := flags.String("cwd", "", "fixed working directory")
 	resume := &resumeValue{}
@@ -98,8 +101,8 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (agentArguments
 
 	explicit := make(map[string]bool)
 	flags.Visit(func(current *flag.Flag) { explicit[current.Name] = true })
-	if resume.enabled && (explicit["model"] || explicit["thinking"] || explicit["cwd"]) {
-		return agentArguments{}, errors.New("usage error: --resume cannot be combined with --model, --thinking, or --cwd")
+	if resume.enabled && (explicit["provider"] || explicit["model"] || explicit["fast-model"] || explicit["balanced-model"] || explicit["thinking"] || explicit["cwd"]) {
+		return agentArguments{}, errors.New("usage error: --resume cannot be combined with --provider, --model, --fast-model, --balanced-model, --thinking, or --cwd")
 	}
 
 	thinkingLevel := agent.DefaultThinkingLevel
@@ -112,23 +115,30 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (agentArguments
 	}
 
 	return agentArguments{
-		model:         *model,
-		thinkingLevel: thinkingLevel,
-		cwd:           *cwd,
-		resume:        resume.enabled,
-		sessionID:     resume.sessionID,
+		provider:         *provider,
+		model:            *model,
+		modelSet:         explicit["model"],
+		fastModel:        *fastModel,
+		fastModelSet:     explicit["fast-model"],
+		balancedModel:    *balancedModel,
+		balancedModelSet: explicit["balanced-model"],
+		thinkingLevel:    thinkingLevel,
+		cwd:              *cwd,
+		resume:           resume.enabled,
+		sessionID:        resume.sessionID,
 	}, nil
 }
 
-func resolveAgentConfig(arguments agentArguments, runtime appRuntime) (agentConfig, error) {
-	if err := validateModel(arguments.model); err != nil {
-		return agentConfig{}, err
-	}
-	subagentFastModel, err := modelFromEnvironment(runtime.getenv, "OPENAI_MODEL_FAST", arguments.model)
+func resolveAgentConfig(arguments agentArguments, runtime appRuntime, descriptor backend.Descriptor, defaults backend.ModelDefaults) (agentConfig, error) {
+	model, err := resolveConfiguredModel(arguments.model, arguments.modelSet, defaults.Main, "", "")
 	if err != nil {
 		return agentConfig{}, err
 	}
-	subagentBalancedModel, err := modelFromEnvironment(runtime.getenv, "OPENAI_MODEL_BALANCED", arguments.model)
+	subagentFastModel, err := resolveConfiguredModel(arguments.fastModel, arguments.fastModelSet, defaults.Fast, model, "fast model")
+	if err != nil {
+		return agentConfig{}, err
+	}
+	subagentBalancedModel, err := resolveConfiguredModel(arguments.balancedModel, arguments.balancedModelSet, defaults.Balanced, model, "balanced model")
 	if err != nil {
 		return agentConfig{}, err
 	}
@@ -148,7 +158,8 @@ func resolveAgentConfig(arguments agentArguments, runtime appRuntime) (agentConf
 	skills, warnings := agent.LoadSkills(skillDirectories...)
 
 	return agentConfig{
-		model:                 arguments.model,
+		provider:              descriptor.ID,
+		model:                 model,
 		subagentFastModel:     subagentFastModel,
 		subagentBalancedModel: subagentBalancedModel,
 		thinkingLevel:         arguments.thinkingLevel,
@@ -159,31 +170,25 @@ func resolveAgentConfig(arguments agentArguments, runtime appRuntime) (agentConf
 	}, nil
 }
 
-func modelFromEnvironment(getenv func(string) string, name, fallback string) (string, error) {
-	if getenv == nil {
-		return fallback, nil
+func resolveConfiguredModel(value string, set bool, providerDefault, fallback, name string) (string, error) {
+	if !set && value == "" {
+		value = providerDefault
+		if value == "" {
+			value = fallback
+		}
 	}
-	model := getenv(name)
-	if model == "" {
-		return fallback, nil
-	}
-	if err := validateModel(model); err != nil {
+	if err := validateModel(value); err != nil {
+		if name == "" {
+			return "", err
+		}
 		return "", fmt.Errorf("%s: %w", name, err)
 	}
-	return model, nil
-}
-
-func openAIOptionsFromEnvironment(getenv func(string) string) (openaiadapter.Options, error) {
-	summary, err := openaiadapter.ParseReasoningSummary(getenv("OPENAI_REASONING_SUMMARY"))
-	if err != nil {
-		return openaiadapter.Options{}, fmt.Errorf("OPENAI_REASONING_SUMMARY: %w", err)
-	}
-	return openaiadapter.Options{ReasoningSummary: summary}, nil
+	return value, nil
 }
 
 func validateModel(model string) error {
 	if strings.TrimSpace(model) == "" {
-		return errors.New("model is required; use --model or OPENAI_MODEL")
+		return errors.New("model is required; use --model or configure the selected provider")
 	}
 
 	if model != strings.TrimSpace(model) || strings.IndexFunc(model, func(character rune) bool {

@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/terminal"
 )
 
@@ -46,6 +47,8 @@ type sessionRecord struct {
 	Provider         string              `json:"provider"`
 	WorkingDirectory string              `json:"working_directory"`
 	Model            string              `json:"model"`
+	FastModel        string              `json:"fast_model,omitempty"`
+	BalancedModel    string              `json:"balanced_model,omitempty"`
 	ThinkingLevel    agent.ThinkingLevel `json:"thinking_level"`
 	Description      string              `json:"description,omitempty"`
 	Agent            agent.Checkpoint    `json:"agent"`
@@ -71,8 +74,11 @@ func newSessionStore(home string) *sessionStore {
 }
 
 func (store *sessionStore) Create(
+	provider string,
 	cwd string,
 	model string,
+	fastModel string,
+	balancedModel string,
 	thinkingLevel agent.ThinkingLevel,
 	agentCheckpoint agent.Checkpoint,
 	terminalCheckpoint terminal.Checkpoint,
@@ -106,9 +112,11 @@ func (store *sessionStore) Create(
 			CreatedAt:        now,
 			UpdatedAt:        now,
 			Status:           sessionIdle,
-			Provider:         "openai-codex",
+			Provider:         provider,
 			WorkingDirectory: cwd,
 			Model:            model,
+			FastModel:        fastModel,
+			BalancedModel:    balancedModel,
 			ThinkingLevel:    thinkingLevel,
 			Description:      terminalCheckpoint.Description(),
 			Agent:            agentCheckpoint,
@@ -400,12 +408,16 @@ func validateSessionRecord(record sessionRecord) error {
 		return errors.New("session timestamps are inconsistent")
 	case record.Status != sessionIdle && record.Status != sessionActive:
 		return fmt.Errorf("session has invalid status %q", record.Status)
-	case record.Provider != "openai-codex":
-		return fmt.Errorf("unsupported session provider %q", record.Provider)
+	case !backend.ValidID(record.Provider):
+		return fmt.Errorf("session provider %q is invalid", record.Provider)
 	case !filepath.IsAbs(record.WorkingDirectory) || filepath.Clean(record.WorkingDirectory) != record.WorkingDirectory:
 		return errors.New("session working directory is not canonical")
 	case strings.TrimSpace(record.Model) == "":
 		return errors.New("session model is empty")
+	case record.FastModel != "" && strings.TrimSpace(record.FastModel) == "":
+		return errors.New("session fast model is invalid")
+	case record.BalancedModel != "" && strings.TrimSpace(record.BalancedModel) == "":
+		return errors.New("session balanced model is invalid")
 	case !record.ThinkingLevel.Valid():
 		return errors.New("session thinking level is invalid")
 	case !record.Agent.Initialized() || !record.Terminal.Initialized():

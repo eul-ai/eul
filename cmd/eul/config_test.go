@@ -10,18 +10,34 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
-	openaiadapter "github.com/eul-ai/eul/provider/openai"
 )
 
 func TestParseAgentArguments(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(t.TempDir(), &stdout, &stderr, map[string]string{"OPENAI_MODEL": "environment-model"})
+	runtime := testRuntime(t.TempDir(), &stdout, &stderr, nil)
 
-	got, err := parseAgentArguments([]string{"--model", "gpt-5.6-sol", "--thinking", "high", "--cwd", "project"}, runtime)
+	got, err := parseAgentArguments([]string{
+		"--provider", "test",
+		"--model", "gpt-5.6-sol",
+		"--fast-model", "gpt-5.6-luna",
+		"--balanced-model", "gpt-5.6-terra",
+		"--thinking", "high",
+		"--cwd", "project",
+	}, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := agentArguments{model: "gpt-5.6-sol", thinkingLevel: agent.ThinkingHigh, cwd: "project"}
+	want := agentArguments{
+		provider:         "test",
+		model:            "gpt-5.6-sol",
+		modelSet:         true,
+		fastModel:        "gpt-5.6-luna",
+		fastModelSet:     true,
+		balancedModel:    "gpt-5.6-terra",
+		balancedModelSet: true,
+		thinkingLevel:    agent.ThinkingHigh,
+		cwd:              "project",
+	}
 	if got != want {
 		t.Fatalf("arguments = %+v, want %+v", got, want)
 	}
@@ -35,24 +51,49 @@ func TestParseAgentArgumentsDefaultsModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.model != "gpt-5.6-sol" {
-		t.Fatalf("model = %q, want %q", got.model, "gpt-5.6-sol")
+	if got.model != "" || got.modelSet {
+		t.Fatalf("parsed model = %q, explicitly set = %v", got.model, got.modelSet)
+	}
+	config, err := resolveTestAgentConfig(got, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.model != "gpt-5.6-sol" || config.subagentFastModel != "gpt-5.6-luna" || config.subagentBalancedModel != "gpt-5.6-terra" {
+		t.Fatalf("resolved models = main %q, fast %q, balanced %q", config.model, config.subagentFastModel, config.subagentBalancedModel)
 	}
 }
 
 func TestResolveAgentConfigLoadsSubagentModels(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(t.TempDir(), &stdout, &stderr, map[string]string{
-		"OPENAI_MODEL_FAST":     "fast-model",
-		"OPENAI_MODEL_BALANCED": "balanced-model",
-	})
+	runtime := testRuntime(t.TempDir(), &stdout, &stderr, nil)
 
-	config, err := resolveAgentConfig(agentArguments{model: "primary-model"}, runtime)
+	config, err := resolveTestAgentConfig(agentArguments{
+		model:            "primary-model",
+		modelSet:         true,
+		fastModel:        "fast-model",
+		fastModelSet:     true,
+		balancedModel:    "balanced-model",
+		balancedModelSet: true,
+	}, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if config.subagentFastModel != "fast-model" || config.subagentBalancedModel != "balanced-model" {
 		t.Fatalf("config = %+v", config)
+	}
+}
+
+func TestResolveAgentConfigRejectsExplicitEmptyProfileModels(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	runtime := testRuntime(t.TempDir(), &stdout, &stderr, nil)
+	for _, flagName := range []string{"--fast-model=", "--balanced-model="} {
+		arguments, err := parseAgentArguments([]string{flagName}, runtime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := resolveTestAgentConfig(arguments, runtime); err == nil || !strings.Contains(err.Error(), "model is required") {
+			t.Fatalf("flag %q error = %v", flagName, err)
+		}
 	}
 }
 
@@ -112,7 +153,7 @@ func TestResolveAgentConfigLoadsOnlyGenericSkillLocations(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(root, &stdout, &stderr, nil)
 	runtime.userHomeDir = func() (string, error) { return home, nil }
-	config, err := resolveAgentConfig(agentArguments{model: "model", cwd: "project"}, runtime)
+	config, err := resolveTestAgentConfig(agentArguments{model: "model", cwd: "project"}, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,34 +173,12 @@ func TestResolveAgentConfigSkipsGlobalSkillsWhenHomeIsUnavailable(t *testing.T) 
 	runtime := testRuntime(cwd, &stdout, &stderr, nil)
 	runtime.userHomeDir = func() (string, error) { return "", errors.New("home unavailable") }
 
-	config, err := resolveAgentConfig(agentArguments{model: "model"}, runtime)
+	config, err := resolveTestAgentConfig(agentArguments{model: "model"}, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(config.skills) != 1 || config.skills[0].Name != "review" {
 		t.Fatalf("skills = %+v", config.skills)
-	}
-}
-
-func TestOpenAIOptionsFromEnvironment(t *testing.T) {
-	values := map[string]string{}
-	options, err := openAIOptionsFromEnvironment(func(key string) string { return values[key] })
-	if err != nil || options.ReasoningSummary != openaiadapter.ReasoningSummaryAuto {
-		t.Fatalf("default options = %+v, err = %v", options, err)
-	}
-
-	values["OPENAI_REASONING_SUMMARY"] = "detailed"
-	options, err = openAIOptionsFromEnvironment(func(key string) string { return values[key] })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if options.ReasoningSummary != openaiadapter.ReasoningSummaryDetailed {
-		t.Fatalf("reasoning summary = %q", options.ReasoningSummary)
-	}
-
-	values["OPENAI_REASONING_SUMMARY"] = "verbose"
-	if _, err := openAIOptionsFromEnvironment(func(key string) string { return values[key] }); err == nil || !strings.Contains(err.Error(), "OPENAI_REASONING_SUMMARY") {
-		t.Fatalf("invalid summary error = %v", err)
 	}
 }
 
@@ -194,7 +213,7 @@ func TestResolveAgentConfigLoadsProjectAndResolvesWorkingDirectory(t *testing.T)
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(root, &stdout, &stderr, nil)
 
-	config, err := resolveAgentConfig(agentArguments{
+	config, err := resolveTestAgentConfig(agentArguments{
 		model:         "gpt-5.6-sol",
 		thinkingLevel: agent.ThinkingMax,
 		cwd:           "project",

@@ -55,14 +55,15 @@ Codex service. Its third-party API behavior may change.
 ## Usage
 
 ```text
-eul [--model <model>] [--thinking <level>] [--cwd <directory>]
+eul [--provider <provider>] [--model <model>] [--fast-model <model>] [--balanced-model <model>] [--thinking <level>] [--cwd <directory>]
 eul --resume[=<session-id>]
-eul login [--device-auth]
-eul logout
+eul login [--provider <provider>] [--device-auth]
+eul logout [--provider <provider>]
 ```
 
-`--cwd` chooses the working directory for the session. Relative tool paths are
-resolved from that directory.
+`--provider` selects a provider backend. The default and currently built-in
+backend is `openai-codex`. `--cwd` chooses the working directory for the session.
+Relative tool paths are resolved from that directory.
 
 Thinking levels are:
 
@@ -72,18 +73,18 @@ off, minimal, low, medium, high, xhigh, max
 
 The default is `medium`. Availability depends on the selected model.
 
-The model defaults to `gpt-5.6-sol`.
+The main and powerful-subagent model defaults to `gpt-5.6-sol`. Balanced
+subagents default to `gpt-5.6-terra`, and fast subagents default to
+`gpt-5.6-luna`. Use `--model`, `--balanced-model`, and `--fast-model` to
+override them for a new session.
 
 These environment variables provide common defaults:
 
 | Variable | Purpose |
 | --- | --- |
 | `EUL_HOME` | Credential, session, and global LSP configuration directory |
+| `EUL_PROVIDER` | Default provider backend; defaults to `openai-codex` |
 | `EUL_THINKING_LEVEL` | Default thinking level |
-| `OPENAI_MODEL` | Override the default model and powerful subagent model |
-| `OPENAI_MODEL_BALANCED` | Balanced subagent model; defaults to `OPENAI_MODEL` |
-| `OPENAI_MODEL_FAST` | Fast subagent model; defaults to `OPENAI_MODEL` |
-| `OPENAI_REASONING_SUMMARY` | Reasoning summary mode: `auto`, `concise`, `detailed`, or `none` |
 
 ## Interactive mode
 
@@ -169,11 +170,11 @@ Canceling a turn while `subagent_wait` is active also stops the selected agents;
 canceling unrelated main-context work does not.
 
 A launch may select one model profile for its batch from `fast`, `balanced`, or
-`powerful`; the default is `balanced`. The fast and balanced profiles use
-`OPENAI_MODEL_FAST` and `OPENAI_MODEL_BALANCED`, while powerful uses the main
-session model. A launch may also select a thinking level from `off`, `minimal`,
-`low`, `medium`, or `high`; the default is `low`. Subagents begin a tool-free final
-response after five minutes or 20 normal provider generations. The final response
+`powerful`; the default is `balanced`. The profile models are selected when the
+session starts, while powerful uses the main session model. A launch may also
+select a thinking level from `off`, `minimal`, `low`, `medium`, or `high`; the
+default is `low`. Subagents begin a tool-free final response after five minutes or
+20 normal provider generations. The final response
 is separate from the generation budget. While waiting, Eul shows cumulative input
 and output usage, normal-generation progress, and the reason finalization began.
 

@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/eul-ai/eul/agent"
-	openaiadapter "github.com/eul-ai/eul/provider/openai"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/terminal"
 	"github.com/eul-ai/eul/tool"
 	lsptool "github.com/eul-ai/eul/tool/lsp"
@@ -15,6 +15,7 @@ import (
 type agentSession struct {
 	engine          *agent.Engine
 	tools           *tool.Registry
+	backend         backend.Instance
 	terminalOptions terminal.Options
 	thinkingLevel   agent.ThinkingLevel
 	persistence     *sessionHandle
@@ -25,15 +26,19 @@ func resolveInitialSession(
 	arguments agentArguments,
 	runtime appRuntime,
 	store *sessionStore,
-) (agentConfig, *sessionHandle, error) {
+) (agentConfig, *sessionHandle, backend.Driver, error) {
 	if !arguments.resume {
-		config, err := resolveAgentConfig(arguments, runtime)
-		return config, nil, err
+		driver, err := runtime.backends.Lookup(arguments.provider)
+		if err != nil {
+			return agentConfig{}, nil, nil, err
+		}
+		config, err := resolveAgentConfig(arguments, runtime, driver.Descriptor(), driver.ModelDefaults())
+		return config, nil, driver, err
 	}
 
 	cwd, err := resolveCWD("", runtime.getwd)
 	if err != nil {
-		return agentConfig{}, nil, err
+		return agentConfig{}, nil, nil, err
 	}
 	return resolveStoredSession(ctx, store, runtime, cwd, arguments.sessionID)
 }
@@ -44,62 +49,91 @@ func resolveStoredSession(
 	runtime appRuntime,
 	lookupCWD string,
 	sessionID string,
-) (agentConfig, *sessionHandle, error) {
+) (agentConfig, *sessionHandle, backend.Driver, error) {
 	handle, err := store.Open(ctx, lookupCWD, sessionID)
 	if err != nil {
-		return agentConfig{}, nil, err
+		return agentConfig{}, nil, nil, err
 	}
 	record := handle.Record()
-	config, err := resolveAgentConfig(agentArguments{
-		model:         record.Model,
-		thinkingLevel: record.ThinkingLevel,
-		cwd:           record.WorkingDirectory,
-	}, runtime)
+	driver, err := runtime.backends.Lookup(record.Provider)
 	if err != nil {
 		_ = handle.Close()
-		return agentConfig{}, nil, err
+		return agentConfig{}, nil, nil, err
+	}
+	config, err := resolveAgentConfig(agentArguments{
+		model:            record.Model,
+		modelSet:         true,
+		fastModel:        record.FastModel,
+		fastModelSet:     record.FastModel != "",
+		balancedModel:    record.BalancedModel,
+		balancedModelSet: record.BalancedModel != "",
+		thinkingLevel:    record.ThinkingLevel,
+		cwd:              record.WorkingDirectory,
+	}, runtime, driver.Descriptor(), driver.ModelDefaults())
+	if err != nil {
+		_ = handle.Close()
+		return agentConfig{}, nil, nil, err
 	}
 	config.warnings = append(config.warnings, handle.warnings...)
-	return config, handle, nil
+	return config, handle, driver, nil
 }
 
-func newAgentSession(
-	config agentConfig,
-	runtime appRuntime,
-	tokenSource openaiadapter.CodexTokenSource,
-	providerOptions openaiadapter.Options,
-) (*agentSession, error) {
-	return newAgentSessionWithCheckpointing(config, runtime, tokenSource, providerOptions, false)
+func providerModelMetadata(provider agent.Provider, model string) agent.ModelMetadata {
+	metadataProvider, ok := provider.(agent.ModelMetadataProvider)
+	if !ok {
+		return agent.ModelMetadata{ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff}}
+	}
+	metadata := metadataProvider.ModelMetadata(model)
+	if len(metadata.ThinkingLevels) == 0 {
+		metadata.ThinkingLevels = []agent.ThinkingLevel{agent.ThinkingOff}
+	}
+	return metadata
+}
+
+func newAgentSession(config agentConfig, runtime appRuntime, backendInstance backend.Instance) (*agentSession, error) {
+	return newAgentSessionWithCheckpointing(config, runtime, backendInstance, false)
 }
 
 func newAgentSessionWithCheckpointing(
 	config agentConfig,
 	runtime appRuntime,
-	tokenSource openaiadapter.CodexTokenSource,
-	providerOptions openaiadapter.Options,
+	backendInstance backend.Instance,
 	checkpointing bool,
 ) (*agentSession, error) {
-	provider, err := runtime.newProvider(tokenSource, providerOptions)
+	provider, err := backendInstance.NewProvider()
 	if err != nil {
-		return nil, fmt.Errorf("configure provider: %w", err)
+		return nil, errors.Join(fmt.Errorf("configure provider: %w", err), closeBackendInstance(backendInstance))
 	}
 	var loadUsage func(context.Context) (agent.ProviderUsage, error)
 	if usageProvider, ok := provider.(agent.UsageProvider); ok {
 		loadUsage = usageProvider.Usage
 	}
 
-	metadata := agent.ModelMetadata{ThinkingLevels: agent.ThinkingLevels()}
-	if metadataProvider, ok := provider.(agent.ModelMetadataProvider); ok {
-		metadata = metadataProvider.ModelMetadata(config.model)
+	metadataByModel := make(map[string]agent.ModelMetadata)
+	resolveMetadata := func(model string) agent.ModelMetadata {
+		metadata, ok := metadataByModel[model]
+		if !ok {
+			metadata = providerModelMetadata(provider, model)
+			metadataByModel[model] = metadata
+		}
+		return metadata
 	}
+	metadata := resolveMetadata(config.model)
 	currentThinkingLevel := metadata.ClampThinkingLevel(config.thinkingLevel)
+	subagentMetadata := map[tool.SubagentModelProfile]agent.ModelMetadata{
+		tool.SubagentModelFast:     resolveMetadata(config.subagentModel(tool.SubagentModelFast)),
+		tool.SubagentModelBalanced: resolveMetadata(config.subagentModel(tool.SubagentModelBalanced)),
+		tool.SubagentModelPowerful: resolveMetadata(config.subagentModel(tool.SubagentModelPowerful)),
+	}
 	newToolset := runtime.newToolset
 	if newToolset == nil {
 		newToolset = buildToolset
 	}
-	subagent := tool.NewSubagent(func(ctx context.Context, task string, modelProfile tool.SubagentModelProfile, thinkingLevel agent.ThinkingLevel, update func(tool.SubagentProgress)) (agent.RunResult, error) {
-		return runChildAgent(ctx, runtime.newProvider, newToolset, tokenSource, providerOptions, config, modelProfile, thinkingLevel, task, update)
-	}, metadata.ThinkingLevels...)
+	subagent := tool.NewSubagentWithThinkingLevels(func(ctx context.Context, task string, modelProfile tool.SubagentModelProfile, thinkingLevel agent.ThinkingLevel, update func(tool.SubagentProgress)) (agent.RunResult, error) {
+		return runChildAgent(ctx, backendInstance, newToolset, config, modelProfile, thinkingLevel, task, update)
+	}, func(profile tool.SubagentModelProfile) []agent.ThinkingLevel {
+		return subagentMetadata[profile].ThinkingLevels
+	})
 	subagentWait := tool.NewSubagentWait(subagent)
 	subagentCancel := tool.NewSubagentCancel(subagent)
 	var engine *agent.Engine
@@ -111,8 +145,11 @@ func newAgentSessionWithCheckpointing(
 	})
 	registry, err := newToolset(config.cwd, fullToolAccess, subagent, subagentWait, subagentCancel, updateGoal)
 	if err != nil {
-		_ = subagent.Close()
-		return nil, fmt.Errorf("configure tools: %w", err)
+		return nil, errors.Join(
+			fmt.Errorf("configure tools: %w", err),
+			subagent.Close(),
+			closeBackendInstance(backendInstance),
+		)
 	}
 	engine = agent.New(provider, registry, agent.Options{
 		Model:               config.model,
@@ -125,6 +162,7 @@ func newAgentSessionWithCheckpointing(
 	session := &agentSession{
 		engine:        engine,
 		tools:         registry,
+		backend:       backendInstance,
 		thinkingLevel: currentThinkingLevel,
 	}
 	setThinkingLevel := func(level agent.ThinkingLevel) error {
@@ -156,12 +194,11 @@ func newAgentSessionWithCheckpointing(
 func newStoredAgentSession(
 	config agentConfig,
 	runtime appRuntime,
-	tokenSource openaiadapter.CodexTokenSource,
-	providerOptions openaiadapter.Options,
+	backendInstance backend.Instance,
 	store *sessionStore,
 	handle *sessionHandle,
 ) (*agentSession, error) {
-	session, err := newAgentSessionWithCheckpointing(config, runtime, tokenSource, providerOptions, true)
+	session, err := newAgentSessionWithCheckpointing(config, runtime, backendInstance, true)
 	if err != nil {
 		if handle != nil {
 			_ = handle.Close()
@@ -175,7 +212,16 @@ func newStoredAgentSession(
 		if checkpointErr != nil {
 			return nil, session.finish(checkpointErr)
 		}
-		handle, err = store.Create(config.cwd, config.model, session.thinkingLevel, agentCheckpoint, terminal.EmptyCheckpoint())
+		handle, err = store.Create(
+			config.provider,
+			config.cwd,
+			config.model,
+			config.subagentFastModel,
+			config.subagentBalancedModel,
+			session.thinkingLevel,
+			agentCheckpoint,
+			terminal.EmptyCheckpoint(),
+		)
 		if err != nil {
 			return nil, session.finish(err)
 		}
@@ -230,7 +276,19 @@ func (session *agentSession) finish(runErr error) error {
 			persistenceErr = fmt.Errorf("close session: %w", persistenceErr)
 		}
 	}
-	return errors.Join(runErr, toolErr, persistenceErr)
+	backendErr := closeBackendInstance(session.backend)
+	session.backend = nil
+	return errors.Join(runErr, toolErr, persistenceErr, backendErr)
+}
+
+func closeBackendInstance(instance backend.Instance) error {
+	if instance == nil {
+		return nil
+	}
+	if err := instance.Close(); err != nil {
+		return fmt.Errorf("close backend: %w", err)
+	}
+	return nil
 }
 
 func (config agentConfig) subagentModel(profile tool.SubagentModelProfile) string {
@@ -249,17 +307,15 @@ func (config agentConfig) subagentModel(profile tool.SubagentModelProfile) strin
 
 func runChildAgent(
 	ctx context.Context,
-	newProvider providerFactory,
+	backendInstance backend.Instance,
 	newToolset toolsetFactory,
-	tokenSource openaiadapter.CodexTokenSource,
-	providerOptions openaiadapter.Options,
 	config agentConfig,
 	modelProfile tool.SubagentModelProfile,
 	thinkingLevel agent.ThinkingLevel,
 	task string,
 	update func(tool.SubagentProgress),
 ) (agent.RunResult, error) {
-	provider, err := newProvider(tokenSource, providerOptions)
+	provider, err := backendInstance.NewProvider()
 	if err != nil {
 		return agent.RunResult{}, fmt.Errorf("configure subagent provider: %w", err)
 	}

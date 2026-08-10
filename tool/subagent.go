@@ -48,7 +48,7 @@ var subagentToolDefinition = agent.ToolDefinition{
 		},
 		"thinking_level": {
 			Type:        "string",
-			Description: "Thinking level for every task: off, minimal, low, medium, or high. Defaults to low. Choose the lowest sufficient level.",
+			Description: "Thinking level for every task: off, minimal, low, medium, or high. Defaults to low or the closest level supported by the selected model. Choose the lowest sufficient level.",
 		},
 	}, "tasks"),
 }
@@ -64,7 +64,7 @@ type SubagentRun func(context.Context, string, SubagentModelProfile, agent.Think
 
 type Subagent struct {
 	run                     SubagentRun
-	supportedThinkingLevels []agent.ThinkingLevel
+	supportedThinkingLevels func(SubagentModelProfile) []agent.ThinkingLevel
 
 	ctx       context.Context
 	cancel    context.CancelCauseFunc
@@ -134,10 +134,20 @@ func NewSubagent(run SubagentRun, supportedThinkingLevels ...agent.ThinkingLevel
 			agent.ThinkingHigh,
 		}
 	}
+	levels := slices.Clone(supportedThinkingLevels)
+	return NewSubagentWithThinkingLevels(run, func(SubagentModelProfile) []agent.ThinkingLevel {
+		return levels
+	})
+}
+
+func NewSubagentWithThinkingLevels(run SubagentRun, supportedThinkingLevels func(SubagentModelProfile) []agent.ThinkingLevel) *Subagent {
+	if supportedThinkingLevels == nil {
+		return NewSubagent(run)
+	}
 	ctx, cancel := context.WithCancelCause(context.Background())
 	return &Subagent{
 		run:                     run,
-		supportedThinkingLevels: slices.Clone(supportedThinkingLevels),
+		supportedThinkingLevels: supportedThinkingLevels,
 		ctx:                     ctx,
 		cancel:                  cancel,
 		jobs:                    make(map[string]*subagentJob),
@@ -150,7 +160,7 @@ func (*Subagent) Definition() agent.ToolDefinition {
 	return subagentToolDefinition
 }
 
-func (*Subagent) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
+func (s *Subagent) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
 	values, _ := snapshot.Arguments["tasks"].([]any)
 	tasks := make([]string, 0, len(values))
 	for _, value := range values {
@@ -162,7 +172,10 @@ func (*Subagent) Presentation(snapshot PresentationSnapshot) agent.ToolPresentat
 	if value, ok := snapshot.Arguments["model_profile"].(string); ok {
 		modelProfile = SubagentModelProfile(value)
 	}
-	thinkingLevel := agent.ThinkingLow
+	thinkingLevel, err := s.resolveThinkingLevel(modelProfile, nil)
+	if err != nil {
+		thinkingLevel = agent.ThinkingLow
+	}
 	if value, ok := snapshot.Arguments["thinking_level"].(string); ok {
 		thinkingLevel = agent.ThinkingLevel(value)
 	}
@@ -185,7 +198,7 @@ func (s *Subagent) Execute(ctx context.Context, arguments json.RawMessage, updat
 	if err != nil {
 		return errorResult(subagentToolName, err), nil
 	}
-	thinkingLevel, err := s.resolveThinkingLevel(args.ThinkingLevel)
+	thinkingLevel, err := s.resolveThinkingLevel(modelProfile, args.ThinkingLevel)
 	if err != nil {
 		return errorResult(subagentToolName, err), nil
 	}
@@ -253,9 +266,12 @@ func resolveSubagentModelProfile(value *string) (SubagentModelProfile, error) {
 	}
 }
 
-func (s *Subagent) resolveThinkingLevel(value *string) (agent.ThinkingLevel, error) {
+func (s *Subagent) resolveThinkingLevel(profile SubagentModelProfile, value *string) (agent.ThinkingLevel, error) {
+	supported := s.supportedThinkingLevels(profile)
 	level := agent.ThinkingLow
-	if value != nil {
+	if value == nil {
+		level = agent.ClampThinkingLevel(level, supported)
+	} else {
 		level = agent.ThinkingLevel(*value)
 	}
 
@@ -266,8 +282,8 @@ func (s *Subagent) resolveThinkingLevel(value *string) (agent.ThinkingLevel, err
 	default:
 		return "", fmt.Errorf("thinking level must be one of off, minimal, low, medium, or high")
 	}
-	if !slices.Contains(s.supportedThinkingLevels, level) {
-		return "", fmt.Errorf("thinking level %q is not supported by the current model", level)
+	if !slices.Contains(supported, level) {
+		return "", fmt.Errorf("thinking level %q is not supported by the %s model", level, profile)
 	}
 	return level, nil
 }

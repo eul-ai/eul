@@ -13,51 +13,114 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
-	oauth "github.com/eul-ai/eul/auth/openai"
-	openaiadapter "github.com/eul-ai/eul/provider/openai"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/terminal"
 	"github.com/eul-ai/eul/tool"
 )
 
 type providerFunction func(context.Context, agent.Request, agent.TextSink) (agent.Response, error)
 
-type fakeOAuthManager struct {
-	credential      oauth.AccessCredential
-	resolveErr      error
+type fakeBackendInstance struct {
+	checkCredentialsErr   error
+	checkCredentialsCalls int
+	closeErr              error
+	closeCalls            int
+	newProvider           func() (agent.Provider, error)
+}
+
+func (instance *fakeBackendInstance) CheckCredentials(context.Context) error {
+	instance.checkCredentialsCalls++
+	return instance.checkCredentialsErr
+}
+
+func (instance *fakeBackendInstance) NewProvider() (agent.Provider, error) {
+	return instance.newProvider()
+}
+
+func (instance *fakeBackendInstance) Close() error {
+	instance.closeCalls++
+	return instance.closeErr
+}
+
+type fakeBackendDriver struct {
+	descriptor      backend.Descriptor
+	defaults        backend.ModelDefaults
+	instance        *fakeBackendInstance
+	configureErr    error
 	loginErr        error
 	logoutErr       error
-	loginMethod     oauth.LoginMethod
+	loginDevice     bool
 	logoutCalls     int
 	interactionCall bool
-	resolveCalls    int
 }
 
-func (manager *fakeOAuthManager) Login(_ context.Context, method oauth.LoginMethod, interaction oauth.Interaction) error {
-	manager.loginMethod = method
-	if method == oauth.LoginDevice && interaction.DeviceCode != nil {
-		manager.interactionCall = true
-		_ = interaction.DeviceCode(oauth.DeviceCode{VerificationURL: "https://example.test/device", UserCode: "ABCD-EFGH"})
+func (driver *fakeBackendDriver) Descriptor() backend.Descriptor {
+	return driver.descriptor
+}
+
+func (driver *fakeBackendDriver) ModelDefaults() backend.ModelDefaults {
+	return driver.defaults
+}
+
+func (driver *fakeBackendDriver) Configure(backend.Options) (backend.Instance, error) {
+	return driver.instance, driver.configureErr
+}
+
+func (driver *fakeBackendDriver) Login(_ context.Context, options backend.AuthOptions, interaction backend.Interaction) error {
+	driver.loginDevice = options.Device
+	if options.Device && interaction.DeviceCode != nil {
+		driver.interactionCall = true
+		_ = interaction.DeviceCode("https://example.test/device", "ABCD-EFGH")
 	}
-	if method == oauth.LoginBrowser && interaction.AuthURL != nil {
-		manager.interactionCall = true
-		_ = interaction.AuthURL("https://example.test/authorize")
+	if !options.Device && interaction.OpenURL != nil {
+		driver.interactionCall = true
+		_ = interaction.OpenURL("https://example.test/authorize")
 	}
-
-	return manager.loginErr
+	return driver.loginErr
 }
 
-func (manager *fakeOAuthManager) Resolve(context.Context) (oauth.AccessCredential, error) {
-	manager.resolveCalls++
-	return manager.credential, manager.resolveErr
+func (driver *fakeBackendDriver) Logout(context.Context, backend.AuthOptions) error {
+	driver.logoutCalls++
+	return driver.logoutErr
 }
 
-func (manager *fakeOAuthManager) Logout(context.Context) error {
-	manager.logoutCalls++
-	return manager.logoutErr
+type providerOnlyInstance struct {
+	closeCalls int
+}
+
+func (*providerOnlyInstance) NewProvider() (agent.Provider, error) {
+	return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+		return agent.Response{}, nil
+	}), nil
+}
+
+func (instance *providerOnlyInstance) Close() error {
+	instance.closeCalls++
+	return nil
+}
+
+type providerOnlyDriver struct {
+	instance *providerOnlyInstance
+}
+
+func (*providerOnlyDriver) Descriptor() backend.Descriptor {
+	return backend.Descriptor{ID: "provider-only", Name: "Provider Only"}
+}
+
+func (*providerOnlyDriver) ModelDefaults() backend.ModelDefaults {
+	return backend.ModelDefaults{Main: "model"}
+}
+
+func (driver *providerOnlyDriver) Configure(backend.Options) (backend.Instance, error) {
+	return driver.instance, nil
 }
 
 func (function providerFunction) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {
 	return function(ctx, request, observer.Text)
+}
+
+func (providerFunction) ModelMetadata(string) agent.ModelMetadata {
+	return agent.ModelMetadata{ThinkingLevels: agent.ThinkingLevels()}
 }
 
 func TestBuildToolsWithoutLSPConfig(t *testing.T) {
@@ -114,17 +177,11 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 	var gotRequest agent.Request
 	factoryCalls := 0
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{
-		"OPENAI_MODEL":             "environment-model",
-		"OPENAI_REASONING_SUMMARY": "detailed",
-		"EUL_THINKING_LEVEL":       "high",
+		"EUL_THINKING_LEVEL": "high",
 	})
-	var providerOptions openaiadapter.Options
-	runtime.newProvider = func(source openaiadapter.CodexTokenSource, options openaiadapter.Options) (agent.Provider, error) {
-		providerOptions = options
+	driver := testBackendDriver(t, runtime)
+	driver.instance.newProvider = func() (agent.Provider, error) {
 		factoryCalls++
-		if source == nil {
-			t.Fatal("provider token source is nil")
-		}
 		return providerFunction(func(_ context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
 			gotRequest = request
 			if err := sink("answer"); err != nil {
@@ -138,15 +195,11 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := resolveAgentConfig(arguments, runtime)
+	config, err := resolveTestAgentConfig(arguments, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
-	options, err := openAIOptionsFromEnvironment(runtime.getenv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	session, err := newAgentSession(config, runtime, oauthTokenSource{manager: &fakeOAuthManager{}}, options)
+	session, err := newAgentSession(config, runtime, driver.instance)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +208,10 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if factoryCalls != 1 || providerOptions.ReasoningSummary != openaiadapter.ReasoningSummaryDetailed || gotRequest.Model != "gpt-5.6-sol" || gotRequest.ThinkingLevel != agent.ThinkingXHigh || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].Text != "test prompt" {
+	if driver.instance.closeCalls != 1 {
+		t.Fatalf("backend close calls = %d, want 1", driver.instance.closeCalls)
+	}
+	if factoryCalls != 1 || gotRequest.Model != "gpt-5.6-sol" || gotRequest.ThinkingLevel != agent.ThinkingXHigh || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].Text != "test prompt" {
 		t.Fatalf("factory calls=%d request=%+v", factoryCalls, gotRequest)
 	}
 	if result.Text != "answer" {
@@ -183,20 +239,14 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{
-		"OPENAI_MODEL":             "model",
-		"OPENAI_MODEL_BALANCED":    "balanced-model",
-		"OPENAI_MODEL_FAST":        "fast-model",
-		"OPENAI_REASONING_SUMMARY": "detailed",
-		"EUL_THINKING_LEVEL":       "high",
+		"EUL_THINKING_LEVEL": "high",
 	})
 	var mu sync.Mutex
 	factoryCalls := 0
 	var childRequests []agent.Request
 	mainCalls := 0
-	runtime.newProvider = func(_ openaiadapter.CodexTokenSource, options openaiadapter.Options) (agent.Provider, error) {
-		if options.ReasoningSummary != openaiadapter.ReasoningSummaryDetailed {
-			return nil, errors.New("provider did not receive detailed reasoning summary")
-		}
+	driver := testBackendDriver(t, runtime)
+	driver.instance.newProvider = func() (agent.Provider, error) {
 		mu.Lock()
 		factoryCalls++
 		call := factoryCalls
@@ -277,25 +327,28 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 		}), nil
 	}
 
-	arguments, err := parseAgentArguments(nil, runtime)
+	arguments, err := parseAgentArguments([]string{
+		"--model", "model",
+		"--fast-model", "fast-model",
+		"--balanced-model", "balanced-model",
+	}, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := resolveAgentConfig(arguments, runtime)
+	config, err := resolveTestAgentConfig(arguments, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
-	options, err := openAIOptionsFromEnvironment(runtime.getenv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	session, err := newAgentSession(config, runtime, oauthTokenSource{manager: &fakeOAuthManager{}}, options)
+	session, err := newAgentSession(config, runtime, driver.instance)
 	if err != nil {
 		t.Fatal(err)
 	}
 	result, runErr := session.engine.Run(context.Background(), "review in parallel", func(agent.Event) error { return nil })
 	if err := session.finish(runErr); err != nil {
 		t.Fatal(err)
+	}
+	if driver.instance.closeCalls != 1 {
+		t.Fatalf("backend close calls = %d, want 1", driver.instance.closeCalls)
 	}
 	if result.Text != "combined answer" || mainCalls != 4 {
 		t.Fatalf("result = %+v, main calls = %d", result, mainCalls)
@@ -327,61 +380,6 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	}
 }
 
-func TestAgentSessionUsesStoredOAuthAtRequestTime(t *testing.T) {
-	cwd := t.TempDir()
-	const access = "oauth-access-secret"
-	manager := &fakeOAuthManager{credential: oauth.AccessCredential{AccessToken: access, AccountID: "account"}}
-	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_MODEL": "subscription-model"})
-	runtime.newOAuth = fixedOAuth(manager)
-	runtime.newProvider = func(source openaiadapter.CodexTokenSource, _ openaiadapter.Options) (agent.Provider, error) {
-		if source == nil {
-			t.Fatal("provider token source is nil")
-		}
-		credential, err := source.Token(context.Background())
-		if err != nil {
-			return nil, err
-		}
-		if credential.AccessToken != access || credential.AccountID != "account" {
-			t.Fatalf("Codex credential = %+v", credential)
-		}
-		return providerFunction(func(_ context.Context, _ agent.Request, sink agent.TextSink) (agent.Response, error) {
-			if err := sink("oauth answer"); err != nil {
-				return agent.Response{}, err
-			}
-			return agent.Response{Text: "oauth answer"}, nil
-		}), nil
-	}
-
-	tokenSource, err := resolveTokenSource(runtime)
-	if err != nil {
-		t.Fatal(err)
-	}
-	arguments, err := parseAgentArguments(nil, runtime)
-	if err != nil {
-		t.Fatal(err)
-	}
-	config, err := resolveAgentConfig(arguments, runtime)
-	if err != nil {
-		t.Fatal(err)
-	}
-	options, err := openAIOptionsFromEnvironment(runtime.getenv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	session, err := newAgentSession(config, runtime, tokenSource, options)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, runErr := session.engine.Run(context.Background(), "hello", func(agent.Event) error { return nil })
-	if err := session.finish(runErr); err != nil {
-		t.Fatal(err)
-	}
-	if result.Text != "oauth answer" || manager.resolveCalls != 2 {
-		t.Fatalf("result=%+v resolveCalls=%d", result, manager.resolveCalls)
-	}
-}
-
 func TestOnlySessionRequestsRejectCleanupFailures(t *testing.T) {
 	newRequest := &terminal.NewSessionRequest{}
 	if !onlyNewSessionRequest(errors.Join(newRequest)) {
@@ -401,38 +399,62 @@ func TestOnlySessionRequestsRejectCleanupFailures(t *testing.T) {
 	}
 }
 
+func TestBackendAuthenticationCapabilitiesAreOptional(t *testing.T) {
+	driver := &providerOnlyDriver{instance: &providerOnlyInstance{}}
+	instance, err := configureBackendInstance(driver, t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := instance.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if driver.instance.closeCalls != 1 {
+		t.Fatalf("close calls = %d, want 1", driver.instance.closeCalls)
+	}
+
+	registry, err := backend.NewRegistry("provider-only", driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	runtime := testRuntime(t.TempDir(), &stdout, &stderr, nil)
+	runtime.backends = registry
+	for _, command := range []string{"login", "logout"} {
+		stdout.Reset()
+		stderr.Reset()
+		if code := run([]string{command}, runtime); code != exitFailure || !strings.Contains(stderr.String(), "does not support "+command) {
+			t.Fatalf("command=%q code=%d stdout=%q stderr=%q", command, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
 func TestRunLoginAndLogoutCommands(t *testing.T) {
 	cwd := t.TempDir()
 	for _, test := range []struct {
 		name       string
 		arguments  []string
-		wantMethod oauth.LoginMethod
+		wantDevice bool
 		wantText   string
 	}{
-		{name: "browser", arguments: []string{"login"}, wantMethod: oauth.LoginBrowser, wantText: "Open this URL"},
-		{name: "device", arguments: []string{"login", "--device-auth"}, wantMethod: oauth.LoginDevice, wantText: "ABCD-EFGH"},
+		{name: "browser", arguments: []string{"login"}, wantText: "Open this URL"},
+		{name: "device", arguments: []string{"login", "--device-auth"}, wantDevice: true, wantText: "ABCD-EFGH"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			manager := &fakeOAuthManager{credential: oauth.AccessCredential{AccessToken: "access-secret"}}
 			runtime := testRuntime(cwd, &stdout, &stderr, nil)
-			runtime.newOAuth = fixedOAuth(manager)
+			driver := testBackendDriver(t, runtime)
 
-			if code := run(test.arguments, runtime); code != exitSuccess || manager.loginMethod != test.wantMethod || !manager.interactionCall || !strings.Contains(stderr.String(), test.wantText) || stdout.String() != "Logged in with ChatGPT.\n" {
-				t.Fatalf("code=%d method=%q stdout=%q stderr=%q", code, manager.loginMethod, stdout.String(), stderr.String())
-			}
-			if strings.Contains(stdout.String()+stderr.String(), "access-secret") || strings.Contains(stdout.String()+stderr.String(), "refresh-secret") {
-				t.Fatal("OAuth secret leaked")
+			if code := run(test.arguments, runtime); code != exitSuccess || driver.loginDevice != test.wantDevice || !driver.interactionCall || !strings.Contains(stderr.String(), test.wantText) || stdout.String() != "Logged in with Test Provider.\n" {
+				t.Fatalf("code=%d device=%v stdout=%q stderr=%q", code, driver.loginDevice, stdout.String(), stderr.String())
 			}
 		})
 	}
 
 	var stdout, stderr bytes.Buffer
-	manager := &fakeOAuthManager{}
 	runtime := testRuntime(cwd, &stdout, &stderr, nil)
-	runtime.newOAuth = fixedOAuth(manager)
-	if code := run([]string{"logout"}, runtime); code != exitSuccess || manager.logoutCalls != 1 || stdout.String() != "Logged out.\n" {
-		t.Fatalf("code=%d calls=%d stdout=%q stderr=%q", code, manager.logoutCalls, stdout.String(), stderr.String())
+	driver := testBackendDriver(t, runtime)
+	if code := run([]string{"logout"}, runtime); code != exitSuccess || driver.logoutCalls != 1 || stdout.String() != "Logged out.\n" {
+		t.Fatalf("code=%d calls=%d stdout=%q stderr=%q", code, driver.logoutCalls, stdout.String(), stderr.String())
 	}
 
 	for _, arguments := range [][]string{{"login", "--help"}, {"logout", "--help"}} {
@@ -449,34 +471,36 @@ func TestRunConfigurationAndUsageErrors(t *testing.T) {
 	tests := []struct {
 		name        string
 		arguments   []string
-		environment map[string]string
 		missingAuth bool
 		wantCode    int
 		want        string
 	}{
 		{name: "help", arguments: []string{"--help"}, wantCode: exitSuccess, want: "Usage of eul:"},
-		{name: "missing authentication", environment: map[string]string{"OPENAI_MODEL": "model"}, missingAuth: true, wantCode: exitFailure, want: "run 'eul login'"},
-		{name: "explicit empty model", arguments: []string{"--model="}, environment: map[string]string{"OPENAI_MODEL": "fallback"}, wantCode: exitFailure, want: "model is required"},
+		{name: "missing authentication", missingAuth: true, wantCode: exitFailure, want: "run 'eul login'"},
+		{name: "explicit empty model", arguments: []string{"--model="}, wantCode: exitFailure, want: "model is required"},
 		{name: "model whitespace", arguments: []string{"--model", "bad model"}, wantCode: exitFailure, want: "must not contain whitespace"},
-		{name: "invalid thinking level", arguments: []string{"--thinking", "extreme"}, environment: map[string]string{"OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "thinking level must be one of"},
-		{name: "invalid reasoning summary", environment: map[string]string{"OPENAI_MODEL": "model", "OPENAI_REASONING_SUMMARY": "verbose"}, wantCode: exitUsage, want: "OPENAI_REASONING_SUMMARY"},
-		{name: "removed effort flag", arguments: []string{"--effort", "high"}, environment: map[string]string{"OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "flag provided but not defined"},
-		{name: "prompt argument", arguments: []string{"prompt"}, environment: map[string]string{"OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "accepts no prompt arguments"},
+		{name: "invalid thinking level", arguments: []string{"--thinking", "extreme"}, wantCode: exitUsage, want: "thinking level must be one of"},
+		{name: "removed effort flag", arguments: []string{"--effort", "high"}, wantCode: exitUsage, want: "flag provided but not defined"},
+		{name: "prompt argument", arguments: []string{"prompt"}, wantCode: exitUsage, want: "accepts no prompt arguments"},
 		{name: "bad flag", arguments: []string{"--missing"}, wantCode: exitUsage, want: "flag provided but not defined"},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			runtime := testRuntime(cwd, &stdout, &stderr, test.environment)
+			runtime := testRuntime(cwd, &stdout, &stderr, nil)
+			driver := testBackendDriver(t, runtime)
 			if test.missingAuth {
-				runtime.newOAuth = fixedOAuth(&fakeOAuthManager{resolveErr: errors.New("oauth: not logged in; run 'eul login'")})
+				driver.instance.checkCredentialsErr = errors.New("not logged in; run 'eul login'")
 			}
 
 			code := run(test.arguments, runtime)
 			combined := stdout.String() + stderr.String()
 			if code != test.wantCode || !strings.Contains(combined, test.want) {
 				t.Fatalf("run() code=%d stdout=%q stderr=%q, want code=%d containing %q", code, stdout.String(), stderr.String(), test.wantCode, test.want)
+			}
+			if test.missingAuth && driver.instance.closeCalls != 1 {
+				t.Fatalf("backend close calls = %d, want 1", driver.instance.closeCalls)
 			}
 		})
 	}
@@ -491,16 +515,12 @@ func TestRunRejectsInvalidWorkingDirectories(t *testing.T) {
 
 	for _, path := range []string{"missing", "file"} {
 		var stdout, stderr bytes.Buffer
-		runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{"OPENAI_MODEL": "model"})
+		runtime := testRuntime(cwd, &stdout, &stderr, nil)
 		code := run([]string{"--cwd", path}, runtime)
 		if code != exitFailure || !strings.Contains(stderr.String(), "working directory") {
 			t.Fatalf("path=%q code=%d stderr=%q", path, code, stderr.String())
 		}
 	}
-}
-
-func fixedOAuth(manager oauthManager) func() (oauthManager, error) {
-	return func() (oauthManager, error) { return manager, nil }
 }
 
 func writeMainTestLSPConfig(t *testing.T, cwd string) {
@@ -513,6 +533,24 @@ func writeMainTestLSPConfig(t *testing.T, cwd string) {
 
 func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[string]string) appRuntime {
 	values := maps.Clone(environment)
+	backendInstance := &fakeBackendInstance{newProvider: func() (agent.Provider, error) {
+		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+			return agent.Response{}, nil
+		}), nil
+	}}
+	driver := &fakeBackendDriver{
+		descriptor: backend.Descriptor{ID: "test", Name: "Test Provider"},
+		defaults: backend.ModelDefaults{
+			Main:     "gpt-5.6-sol",
+			Fast:     "gpt-5.6-luna",
+			Balanced: "gpt-5.6-terra",
+		},
+		instance: backendInstance,
+	}
+	backends, err := backend.NewRegistry("test", driver)
+	if err != nil {
+		panic(err)
+	}
 
 	return appRuntime{
 		stdin:         strings.NewReader("/exit\n"),
@@ -522,11 +560,7 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[strin
 		getwd:         func() (string, error) { return cwd, nil },
 		userHomeDir:   func() (string, error) { return filepath.Join(cwd, ".test-home"), nil },
 		userConfigDir: func() (string, error) { return filepath.Join(cwd, ".test-config"), nil },
-		newProvider: func(openaiadapter.CodexTokenSource, openaiadapter.Options) (agent.Provider, error) {
-			return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-				return agent.Response{}, nil
-			}), nil
-		},
+		backends:      backends,
 		newToolset: func(cwd string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
 			tools := []tool.Tool{tool.NewRead(cwd)}
 			if access == fullToolAccess {
@@ -535,7 +569,27 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[strin
 			tools = append(tools, additional...)
 			return tool.NewRegistry(tools)
 		},
-		newOAuth: fixedOAuth(&fakeOAuthManager{credential: oauth.AccessCredential{AccessToken: "access", AccountID: "account"}}),
-		openURL:  func(string) error { return nil },
+		openURL: func(string) error { return nil },
 	}
+}
+
+func testBackendDriver(t *testing.T, runtime appRuntime) *fakeBackendDriver {
+	t.Helper()
+	driver, err := runtime.backends.Lookup("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake, ok := driver.(*fakeBackendDriver)
+	if !ok {
+		t.Fatalf("backend driver = %T", driver)
+	}
+	return fake
+}
+
+func resolveTestAgentConfig(arguments agentArguments, runtime appRuntime) (agentConfig, error) {
+	driver, err := runtime.backends.Lookup(arguments.provider)
+	if err != nil {
+		return agentConfig{}, err
+	}
+	return resolveAgentConfig(arguments, runtime, driver.Descriptor(), driver.ModelDefaults())
 }

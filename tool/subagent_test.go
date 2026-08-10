@@ -149,6 +149,44 @@ func TestSubagentThinkingLevelValidationAndOutput(t *testing.T) {
 	}
 }
 
+func TestSubagentThinkingLevelsFollowModelProfile(t *testing.T) {
+	started := make(chan string, 2)
+	subagents := NewSubagentWithThinkingLevels(func(_ context.Context, _ string, profile SubagentModelProfile, thinkingLevel agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
+		started <- string(profile) + ":" + string(thinkingLevel)
+		return agent.RunResult{Text: "done"}, nil
+	}, func(profile SubagentModelProfile) []agent.ThinkingLevel {
+		switch profile {
+		case SubagentModelFast:
+			return []agent.ThinkingLevel{agent.ThinkingOff}
+		case SubagentModelBalanced:
+			return []agent.ThinkingLevel{agent.ThinkingHigh}
+		default:
+			return []agent.ThinkingLevel{agent.ThinkingLow}
+		}
+	})
+	defer subagents.Close()
+
+	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"],"model_profile":"fast"}`), nil)
+	if err != nil || result.IsError {
+		t.Fatalf("fast result = %+v, error = %v", result, err)
+	}
+	if got := <-started; got != "fast:off" {
+		t.Fatalf("fast launch = %q", got)
+	}
+
+	result, err = subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"],"model_profile":"balanced","thinking_level":"low"}`), nil)
+	if err != nil || !result.IsError || !strings.Contains(result.Output, "balanced model") {
+		t.Fatalf("unsupported result = %+v, error = %v", result, err)
+	}
+	result, err = subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"],"model_profile":"balanced","thinking_level":"high"}`), nil)
+	if err != nil || result.IsError {
+		t.Fatalf("balanced result = %+v, error = %v", result, err)
+	}
+	if got := <-started; got != "balanced:high" {
+		t.Fatalf("balanced launch = %q", got)
+	}
+}
+
 func TestSubagentModelProfileValidationAndOutput(t *testing.T) {
 	profiles := make(chan SubagentModelProfile, 1)
 	subagents := NewSubagent(func(_ context.Context, _ string, modelProfile SubagentModelProfile, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {

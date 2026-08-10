@@ -1,4 +1,4 @@
-package openai
+package oauth
 
 import (
 	"context"
