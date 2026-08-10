@@ -58,12 +58,14 @@ func (*resumeValue) IsBoolFlag() bool {
 }
 
 type agentConfig struct {
-	model               string
-	thinkingLevel       agent.ThinkingLevel
-	cwd                 string
-	projectInstructions string
-	skills              []agent.Skill
-	warnings            []string
+	model                 string
+	subagentFastModel     string
+	subagentBalancedModel string
+	thinkingLevel         agent.ThinkingLevel
+	cwd                   string
+	projectInstructions   string
+	skills                []agent.Skill
+	warnings              []string
 }
 
 func parseAgentArguments(arguments []string, runtime appRuntime) (agentArguments, error) {
@@ -115,6 +117,15 @@ func resolveAgentConfig(arguments agentArguments, runtime appRuntime) (agentConf
 	if err := validateModel(arguments.model); err != nil {
 		return agentConfig{}, err
 	}
+	subagentFastModel, err := modelFromEnvironment(runtime.getenv, "OPENAI_MODEL_FAST", arguments.model)
+	if err != nil {
+		return agentConfig{}, err
+	}
+	subagentBalancedModel, err := modelFromEnvironment(runtime.getenv, "OPENAI_MODEL_BALANCED", arguments.model)
+	if err != nil {
+		return agentConfig{}, err
+	}
+
 	cwd, err := resolveCWD(arguments.cwd, runtime.getwd)
 	if err != nil {
 		return agentConfig{}, err
@@ -130,13 +141,29 @@ func resolveAgentConfig(arguments agentArguments, runtime appRuntime) (agentConf
 	skills, warnings := agent.LoadSkills(skillDirectories...)
 
 	return agentConfig{
-		model:               arguments.model,
-		thinkingLevel:       arguments.thinkingLevel,
-		cwd:                 cwd,
-		projectInstructions: projectInstructions,
-		skills:              skills,
-		warnings:            warnings,
+		model:                 arguments.model,
+		subagentFastModel:     subagentFastModel,
+		subagentBalancedModel: subagentBalancedModel,
+		thinkingLevel:         arguments.thinkingLevel,
+		cwd:                   cwd,
+		projectInstructions:   projectInstructions,
+		skills:                skills,
+		warnings:              warnings,
 	}, nil
+}
+
+func modelFromEnvironment(getenv func(string) string, name, fallback string) (string, error) {
+	if getenv == nil {
+		return fallback, nil
+	}
+	model := getenv(name)
+	if model == "" {
+		return fallback, nil
+	}
+	if err := validateModel(model); err != nil {
+		return "", fmt.Errorf("%s: %w", name, err)
+	}
+	return model, nil
 }
 
 func openAIOptionsFromEnvironment(getenv func(string) string) (openaiadapter.Options, error) {

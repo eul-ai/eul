@@ -27,6 +27,22 @@ func TestParseAgentArguments(t *testing.T) {
 	}
 }
 
+func TestResolveAgentConfigLoadsSubagentModels(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	runtime := testRuntime(t.TempDir(), &stdout, &stderr, map[string]string{
+		"OPENAI_MODEL_FAST":     "fast-model",
+		"OPENAI_MODEL_BALANCED": "balanced-model",
+	})
+
+	config, err := resolveAgentConfig(agentArguments{model: "primary-model"}, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.subagentFastModel != "fast-model" || config.subagentBalancedModel != "balanced-model" {
+		t.Fatalf("config = %+v", config)
+	}
+}
+
 func TestParseAgentArgumentsParsesResumeSelection(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(t.TempDir(), &stdout, &stderr, map[string]string{"EUL_THINKING_LEVEL": "invalid-for-new-sessions"})

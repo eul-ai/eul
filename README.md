@@ -78,7 +78,9 @@ These environment variables provide common defaults:
 | --- | --- |
 | `EUL_HOME` | Credential, session, and global LSP configuration directory |
 | `EUL_THINKING_LEVEL` | Default thinking level |
-| `OPENAI_MODEL` | Default model |
+| `OPENAI_MODEL` | Default model and powerful subagent model |
+| `OPENAI_MODEL_BALANCED` | Balanced subagent model; defaults to `OPENAI_MODEL` |
+| `OPENAI_MODEL_FAST` | Fast subagent model; defaults to `OPENAI_MODEL` |
 | `OPENAI_REASONING_SUMMARY` | Reasoning summary mode: `auto`, `concise`, `detailed`, or `none` |
 
 ## Interactive mode
@@ -164,8 +166,11 @@ results continue to occupy capacity. `subagent_cancel` stops selected work.
 Canceling a turn while `subagent_wait` is active also stops the selected agents;
 canceling unrelated main-context work does not.
 
-A launch may select one thinking level for its batch from `off`, `minimal`, `low`,
-`medium`, or `high`; the default is `low`. Subagents begin a tool-free final
+A launch may select one model profile for its batch from `fast`, `balanced`, or
+`powerful`; the default is `balanced`. The fast and balanced profiles use
+`OPENAI_MODEL_FAST` and `OPENAI_MODEL_BALANCED`, while powerful uses the main
+session model. A launch may also select a thinking level from `off`, `minimal`,
+`low`, `medium`, or `high`; the default is `low`. Subagents begin a tool-free final
 response after five minutes or 20 normal provider generations. The final response
 is separate from the generation budget. While waiting, Eul shows cumulative input
 and output usage, normal-generation progress, and the reason finalization began.

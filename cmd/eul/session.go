@@ -97,8 +97,8 @@ func newAgentSessionWithCheckpointing(
 	if newToolset == nil {
 		newToolset = buildToolset
 	}
-	subagent := tool.NewSubagent(func(ctx context.Context, task string, thinkingLevel agent.ThinkingLevel, update func(tool.SubagentProgress)) (agent.RunResult, error) {
-		return runChildAgent(ctx, runtime.newProvider, newToolset, tokenSource, providerOptions, config, thinkingLevel, task, update)
+	subagent := tool.NewSubagent(func(ctx context.Context, task string, modelProfile tool.SubagentModelProfile, thinkingLevel agent.ThinkingLevel, update func(tool.SubagentProgress)) (agent.RunResult, error) {
+		return runChildAgent(ctx, runtime.newProvider, newToolset, tokenSource, providerOptions, config, modelProfile, thinkingLevel, task, update)
 	}, metadata.ThinkingLevels...)
 	subagentWait := tool.NewSubagentWait(subagent)
 	subagentCancel := tool.NewSubagentCancel(subagent)
@@ -233,6 +233,20 @@ func (session *agentSession) finish(runErr error) error {
 	return errors.Join(runErr, toolErr, persistenceErr)
 }
 
+func (config agentConfig) subagentModel(profile tool.SubagentModelProfile) string {
+	var model string
+	switch profile {
+	case tool.SubagentModelFast:
+		model = config.subagentFastModel
+	case tool.SubagentModelBalanced:
+		model = config.subagentBalancedModel
+	}
+	if model == "" {
+		return config.model
+	}
+	return model
+}
+
 func runChildAgent(
 	ctx context.Context,
 	newProvider providerFactory,
@@ -240,6 +254,7 @@ func runChildAgent(
 	tokenSource openaiadapter.CodexTokenSource,
 	providerOptions openaiadapter.Options,
 	config agentConfig,
+	modelProfile tool.SubagentModelProfile,
 	thinkingLevel agent.ThinkingLevel,
 	task string,
 	update func(tool.SubagentProgress),
@@ -254,7 +269,7 @@ func runChildAgent(
 		return agent.RunResult{}, fmt.Errorf("configure subagent tools: %w", err)
 	}
 	child := agent.New(provider, registry, agent.Options{
-		Model:               config.model,
+		Model:               config.subagentModel(modelProfile),
 		ThinkingLevel:       thinkingLevel,
 		WorkingDirectory:    config.cwd,
 		ProjectInstructions: config.projectInstructions,

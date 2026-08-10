@@ -24,14 +24,27 @@ var (
 	errSubagentSessionClosed = errors.New("subagent canceled by session shutdown")
 )
 
+type SubagentModelProfile string
+
+const (
+	SubagentModelFast           SubagentModelProfile = "fast"
+	SubagentModelBalanced       SubagentModelProfile = "balanced"
+	SubagentModelPowerful       SubagentModelProfile = "powerful"
+	defaultSubagentModelProfile                      = SubagentModelBalanced
+)
+
 var subagentToolDefinition = agent.ToolDefinition{
 	Name:        subagentToolName,
-	Description: "Start one to four independent read-only research tasks in the background. At most four may be outstanding. Use selectively for substantial parallel investigation that benefits from separate context; do not use for trivial work, tightly coupled steps, or tasks the main context can handle directly. Choose the lowest thinking level sufficient for the tasks. Do not delegate follow-up work for findings already available in context.",
+	Description: "Start one to four independent read-only research tasks in the background. At most four may be outstanding. Use selectively for substantial parallel investigation that benefits from separate context; do not use for trivial work, tightly coupled steps, or tasks the main context can handle directly. Choose the lowest model profile and thinking level sufficient for the tasks. Do not delegate follow-up work for findings already available in context.",
 	Parameters: strictObject(map[string]agent.JSONSchema{
 		"tasks": {
 			Type:        "array",
 			Description: "One to four independent tasks. Include all context each subagent needs.",
 			Items:       &agent.JSONSchema{Type: "string"},
+		},
+		"model_profile": {
+			Type:        "string",
+			Description: "Model profile for every task: fast, balanced, or powerful. Defaults to balanced. Choose fast for simple lookups, balanced for most research, and powerful only for difficult analysis.",
 		},
 		"thinking_level": {
 			Type:        "string",
@@ -47,7 +60,7 @@ type SubagentProgress struct {
 	FinalizationReason agent.FinalizationReason
 }
 
-type SubagentRun func(context.Context, string, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error)
+type SubagentRun func(context.Context, string, SubagentModelProfile, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error)
 
 type Subagent struct {
 	run                     SubagentRun
@@ -67,12 +80,14 @@ type Subagent struct {
 
 type subagentArguments struct {
 	Tasks         []string `json:"tasks"`
+	ModelProfile  *string  `json:"model_profile"`
 	ThinkingLevel *string  `json:"thinking_level"`
 }
 
 type subagentJob struct {
 	id                 string
 	task               string
+	modelProfile       SubagentModelProfile
 	thinkingLevel      agent.ThinkingLevel
 	ctx                context.Context
 	cancel             context.CancelCauseFunc
@@ -103,6 +118,7 @@ type subagentStatus struct {
 type subagentJobSnapshot struct {
 	id            string
 	task          string
+	modelProfile  SubagentModelProfile
 	thinkingLevel agent.ThinkingLevel
 	status        subagentStatus
 	result        subagentResult
@@ -142,11 +158,15 @@ func (*Subagent) Presentation(snapshot PresentationSnapshot) agent.ToolPresentat
 			tasks = append(tasks, task)
 		}
 	}
+	modelProfile := defaultSubagentModelProfile
+	if value, ok := snapshot.Arguments["model_profile"].(string); ok {
+		modelProfile = SubagentModelProfile(value)
+	}
 	thinkingLevel := agent.ThinkingLow
 	if value, ok := snapshot.Arguments["thinking_level"].(string); ok {
 		thinkingLevel = agent.ThinkingLevel(value)
 	}
-	return subagentLaunchPresentation(tasks, nil, thinkingLevel)
+	return subagentLaunchPresentation(tasks, nil, modelProfile, thinkingLevel)
 }
 
 func (s *Subagent) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
@@ -161,6 +181,10 @@ func (s *Subagent) Execute(ctx context.Context, arguments json.RawMessage, updat
 	if err := validateSubagentTasks(args.Tasks); err != nil {
 		return errorResult(subagentToolName, err), nil
 	}
+	modelProfile, err := resolveSubagentModelProfile(args.ModelProfile)
+	if err != nil {
+		return errorResult(subagentToolName, err), nil
+	}
 	thinkingLevel, err := s.resolveThinkingLevel(args.ThinkingLevel)
 	if err != nil {
 		return errorResult(subagentToolName, err), nil
@@ -169,7 +193,7 @@ func (s *Subagent) Execute(ctx context.Context, arguments json.RawMessage, updat
 		return agent.ToolResult{}, err
 	}
 
-	jobs, err := s.start(args.Tasks, thinkingLevel)
+	jobs, err := s.start(args.Tasks, modelProfile, thinkingLevel)
 	if err != nil {
 		return errorResult(subagentToolName, err), nil
 	}
@@ -179,9 +203,9 @@ func (s *Subagent) Execute(ctx context.Context, arguments json.RawMessage, updat
 		ids[index] = job.id
 	}
 	if updates != nil {
-		updates.SetFinal(subagentLaunchPresentation(args.Tasks, ids, thinkingLevel))
+		updates.SetFinal(subagentLaunchPresentation(args.Tasks, ids, modelProfile, thinkingLevel))
 	}
-	return successResult(formatSubagentLaunches(jobs, thinkingLevel)), nil
+	return successResult(formatSubagentLaunches(jobs, modelProfile, thinkingLevel)), nil
 }
 
 func (s *Subagent) StatusUpdates() <-chan agent.SubagentStatus {
@@ -215,6 +239,20 @@ func validateSubagentTasks(tasks []string) error {
 	return nil
 }
 
+func resolveSubagentModelProfile(value *string) (SubagentModelProfile, error) {
+	profile := defaultSubagentModelProfile
+	if value != nil {
+		profile = SubagentModelProfile(*value)
+	}
+
+	switch profile {
+	case SubagentModelFast, SubagentModelBalanced, SubagentModelPowerful:
+		return profile, nil
+	default:
+		return "", fmt.Errorf("model profile must be one of fast, balanced, or powerful")
+	}
+}
+
 func (s *Subagent) resolveThinkingLevel(value *string) (agent.ThinkingLevel, error) {
 	level := agent.ThinkingLow
 	if value != nil {
@@ -234,7 +272,7 @@ func (s *Subagent) resolveThinkingLevel(value *string) (agent.ThinkingLevel, err
 	return level, nil
 }
 
-func (s *Subagent) start(tasks []string, thinkingLevel agent.ThinkingLevel) ([]*subagentJob, error) {
+func (s *Subagent) start(tasks []string, modelProfile SubagentModelProfile, thinkingLevel agent.ThinkingLevel) ([]*subagentJob, error) {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -253,6 +291,7 @@ func (s *Subagent) start(tasks []string, thinkingLevel agent.ThinkingLevel) ([]*
 		job := &subagentJob{
 			id:            fmt.Sprintf("subagent-%d", s.nextID),
 			task:          task,
+			modelProfile:  modelProfile,
 			thinkingLevel: thinkingLevel,
 			ctx:           jobCtx,
 			cancel:        cancel,
@@ -277,7 +316,7 @@ func (s *Subagent) start(tasks []string, thinkingLevel agent.ThinkingLevel) ([]*
 func (s *Subagent) runJob(job *subagentJob) {
 	defer s.workers.Done()
 
-	result, runErr := s.run(job.ctx, job.task, job.thinkingLevel, func(progress SubagentProgress) {
+	result, runErr := s.run(job.ctx, job.task, job.modelProfile, job.thinkingLevel, func(progress SubagentProgress) {
 		s.mu.Lock()
 		stateChanged := false
 		if !subagentStateTerminal(job.state) {
@@ -375,6 +414,7 @@ func (s *Subagent) snapshotJobs(jobs []*subagentJob) ([]subagentJobSnapshot, boo
 		snapshots[index] = subagentJobSnapshot{
 			id:            job.id,
 			task:          job.task,
+			modelProfile:  job.modelProfile,
 			thinkingLevel: job.thinkingLevel,
 			status: subagentStatus{
 				state:              job.state,
@@ -405,6 +445,7 @@ func (s *Subagent) snapshotsForPresentation(ids []string) []subagentJobSnapshot 
 			continue
 		}
 		snapshots[index].task = job.task
+		snapshots[index].modelProfile = job.modelProfile
 		snapshots[index].thinkingLevel = job.thinkingLevel
 		snapshots[index].status = subagentStatus{
 			state:              job.state,
@@ -474,9 +515,9 @@ func subagentStateTerminal(state string) bool {
 	}
 }
 
-func formatSubagentLaunches(jobs []*subagentJob, thinkingLevel agent.ThinkingLevel) string {
+func formatSubagentLaunches(jobs []*subagentJob, modelProfile SubagentModelProfile, thinkingLevel agent.ThinkingLevel) string {
 	var output strings.Builder
-	fmt.Fprintf(&output, "Started subagents (thinking: %s):", thinkingLevel)
+	fmt.Fprintf(&output, "Started subagents (model: %s, thinking: %s):", modelProfile, thinkingLevel)
 	for _, job := range jobs {
 		label := boundPresentationLabel(strings.TrimSpace(strings.SplitN(job.task, "\n", 2)[0]), 120)
 		fmt.Fprintf(&output, "\n- %s: %s", job.id, label)
@@ -484,12 +525,12 @@ func formatSubagentLaunches(jobs []*subagentJob, thinkingLevel agent.ThinkingLev
 	return output.String()
 }
 
-func subagentLaunchPresentation(tasks, ids []string, thinkingLevel agent.ThinkingLevel) agent.ToolPresentation {
+func subagentLaunchPresentation(tasks, ids []string, modelProfile SubagentModelProfile, thinkingLevel agent.ThinkingLevel) agent.ToolPresentation {
 	presentation := agent.ToolPresentation{Title: subagentToolName, Markdown: true}
 	if len(tasks) > 1 {
-		presentation.Arguments = fmt.Sprintf("(%d, %s)", len(tasks), thinkingLevel)
+		presentation.Arguments = fmt.Sprintf("(%d, %s, %s)", len(tasks), modelProfile, thinkingLevel)
 	} else if len(tasks) == 1 {
-		presentation.Arguments = fmt.Sprintf("(%s)", thinkingLevel)
+		presentation.Arguments = fmt.Sprintf("(%s, %s)", modelProfile, thinkingLevel)
 	}
 	presentation.Lines = make([]string, len(tasks))
 	for index, task := range tasks {

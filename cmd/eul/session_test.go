@@ -49,6 +49,26 @@ func (current *closeRecordingTool) Close() error {
 	return current.closeErr
 }
 
+func TestAgentConfigSelectsSubagentModelProfiles(t *testing.T) {
+	config := agentConfig{
+		model:                 "powerful-model",
+		subagentBalancedModel: "balanced-model",
+		subagentFastModel:     "fast-model",
+	}
+	for _, test := range []struct {
+		profile tool.SubagentModelProfile
+		want    string
+	}{
+		{profile: tool.SubagentModelFast, want: "fast-model"},
+		{profile: tool.SubagentModelBalanced, want: "balanced-model"},
+		{profile: tool.SubagentModelPowerful, want: "powerful-model"},
+	} {
+		if got := config.subagentModel(test.profile); got != test.want {
+			t.Fatalf("profile %q selected %q, want %q", test.profile, got, test.want)
+		}
+	}
+}
+
 func TestNewAgentSessionWiresOptionalProviderUsage(t *testing.T) {
 	provider := usageCapableProvider{providerFunction: func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
 		return agent.Response{}, nil

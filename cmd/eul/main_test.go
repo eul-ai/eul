@@ -184,6 +184,8 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(cwd, &stdout, &stderr, map[string]string{
 		"OPENAI_MODEL":             "model",
+		"OPENAI_MODEL_BALANCED":    "balanced-model",
+		"OPENAI_MODEL_FAST":        "fast-model",
 		"OPENAI_REASONING_SUMMARY": "detailed",
 		"EUL_THINKING_LEVEL":       "high",
 	})
@@ -228,7 +230,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 						t.Fatalf("launch continuation inputs = %+v", request.Inputs)
 					}
 					output := request.Inputs[0].Text
-					if !strings.Contains(output, "Started subagents (thinking: low)") || !strings.Contains(output, "subagent-1: review alpha") || !strings.Contains(output, "subagent-2: review beta") || strings.Contains(output, "finding for") {
+					if !strings.Contains(output, "Started subagents (model: balanced, thinking: low)") || !strings.Contains(output, "subagent-1: review alpha") || !strings.Contains(output, "subagent-2: review beta") || strings.Contains(output, "finding for") {
 						t.Fatalf("launch output = %q", output)
 					}
 					return agent.Response{ToolCalls: []agent.ToolCall{{
@@ -250,7 +252,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 						t.Fatalf("wait continuation inputs = %+v", request.Inputs)
 					}
 					output := request.Inputs[0].Text
-					if !strings.Contains(output, "Subagent subagent-1 (thinking: low):\nfinding for review alpha") || !strings.Contains(output, "Subagent subagent-2 (thinking: low):\nfinding for review beta") {
+					if !strings.Contains(output, "Subagent subagent-1 (model: balanced, thinking: low):\nfinding for review alpha") || !strings.Contains(output, "Subagent subagent-2 (model: balanced, thinking: low):\nfinding for review beta") {
 						t.Fatalf("wait output = %q", output)
 					}
 					if err := sink("combined answer"); err != nil {
@@ -306,7 +308,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	}
 	var tasks []string
 	for _, request := range childRequests {
-		if request.Model != "model" || request.ThinkingLevel != agent.ThinkingLow || !strings.Contains(request.Instructions, projectInstructions) || !strings.Contains(request.Instructions, "Current working directory: "+filepath.ToSlash(cwd)) {
+		if request.Model != "balanced-model" || request.ThinkingLevel != agent.ThinkingLow || !strings.Contains(request.Instructions, projectInstructions) || !strings.Contains(request.Instructions, "Current working directory: "+filepath.ToSlash(cwd)) {
 			t.Fatalf("child request = %+v", request)
 		}
 		names := make([]string, len(request.Tools))

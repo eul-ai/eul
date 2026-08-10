@@ -25,6 +25,10 @@ func TestSubagentDefinitionsAllowSelectiveBackgroundUse(t *testing.T) {
 		t.Fatalf("tasks schema = %+v", launch.Parameters.Properties["tasks"])
 	}
 
+	model := launch.Parameters.Properties["model_profile"]
+	if model.Type != "string" || !strings.Contains(model.Description, "Defaults to balanced") {
+		t.Fatalf("model schema = %+v", model)
+	}
 	thinking := launch.Parameters.Properties["thinking_level"]
 	if thinking.Type != "string" || !strings.Contains(thinking.Description, "Defaults to low") {
 		t.Fatalf("thinking schema = %+v", thinking)
@@ -47,8 +51,8 @@ func TestSubagentDefinitionsAllowSelectiveBackgroundUse(t *testing.T) {
 func TestSubagentLaunchReturnsWhileTasksRun(t *testing.T) {
 	started := make(chan string, 2)
 	release := make(chan struct{})
-	subagents := NewSubagent(func(ctx context.Context, task string, thinkingLevel agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
-		started <- task + ":" + string(thinkingLevel)
+	subagents := NewSubagent(func(ctx context.Context, task string, modelProfile SubagentModelProfile, thinkingLevel agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
+		started <- task + ":" + string(modelProfile) + ":" + string(thinkingLevel)
 		select {
 		case <-release:
 			return agent.RunResult{Text: "result for " + task}, nil
@@ -63,10 +67,10 @@ func TestSubagentLaunchReturnsWhileTasksRun(t *testing.T) {
 	if err != nil || result.IsError {
 		t.Fatalf("launch result = %+v, error = %v", result, err)
 	}
-	if !strings.Contains(result.Output, "Started subagents (thinking: low)") || !strings.Contains(result.Output, "subagent-1: first") || !strings.Contains(result.Output, "subagent-2: second") {
+	if !strings.Contains(result.Output, "Started subagents (model: balanced, thinking: low)") || !strings.Contains(result.Output, "subagent-1: first") || !strings.Contains(result.Output, "subagent-2: second") {
 		t.Fatalf("launch output = %q", result.Output)
 	}
-	if updates.final.Arguments != "(2, low)" || !strings.Contains(strings.Join(updates.final.Lines, "\n"), "started (subagent-1)") {
+	if updates.final.Arguments != "(2, balanced, low)" || !strings.Contains(strings.Join(updates.final.Lines, "\n"), "started (subagent-1)") {
 		t.Fatalf("final presentation = %+v", updates.final)
 	}
 
@@ -79,7 +83,7 @@ func TestSubagentLaunchReturnsWhileTasksRun(t *testing.T) {
 			t.Fatal("tasks did not start")
 		}
 	}
-	if !seen["first:low"] || !seen["second:low"] {
+	if !seen["first:balanced:low"] || !seen["second:balanced:low"] {
 		t.Fatalf("started tasks = %v", seen)
 	}
 
@@ -91,7 +95,7 @@ func TestSubagentLaunchReturnsWhileTasksRun(t *testing.T) {
 func TestSubagentRunsFourJobsConcurrently(t *testing.T) {
 	started := make(chan struct{}, maxSubagents)
 	release := make(chan struct{})
-	subagents := NewSubagent(func(context.Context, string, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error) {
+	subagents := NewSubagent(func(context.Context, string, SubagentModelProfile, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error) {
 		started <- struct{}{}
 		<-release
 		return agent.RunResult{Text: "done"}, nil
@@ -117,7 +121,7 @@ func TestSubagentRunsFourJobsConcurrently(t *testing.T) {
 
 func TestSubagentThinkingLevelValidationAndOutput(t *testing.T) {
 	levels := make(chan agent.ThinkingLevel, 1)
-	subagents := NewSubagent(func(_ context.Context, _ string, thinkingLevel agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
+	subagents := NewSubagent(func(_ context.Context, _ string, _ SubagentModelProfile, thinkingLevel agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
 		levels <- thinkingLevel
 		return agent.RunResult{Text: "done"}, nil
 	}, agent.ThinkingLow, agent.ThinkingHigh)
@@ -137,11 +141,34 @@ func TestSubagentThinkingLevelValidationAndOutput(t *testing.T) {
 
 	updates := &recordingSubagentUpdates{}
 	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"],"thinking_level":"high"}`), updates)
-	if err != nil || result.IsError || !strings.Contains(result.Output, "thinking: high") || updates.final.Arguments != "(high)" {
+	if err != nil || result.IsError || !strings.Contains(result.Output, "thinking: high") || updates.final.Arguments != "(balanced, high)" {
 		t.Fatalf("result = %+v, presentation = %+v, error = %v", result, updates.final, err)
 	}
 	if level := <-levels; level != agent.ThinkingHigh {
 		t.Fatalf("thinking level = %q", level)
+	}
+}
+
+func TestSubagentModelProfileValidationAndOutput(t *testing.T) {
+	profiles := make(chan SubagentModelProfile, 1)
+	subagents := NewSubagent(func(_ context.Context, _ string, modelProfile SubagentModelProfile, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
+		profiles <- modelProfile
+		return agent.RunResult{Text: "done"}, nil
+	})
+	defer subagents.Close()
+
+	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"],"model_profile":"cheap"}`), nil)
+	if err != nil || !result.IsError || !strings.Contains(result.Output, "fast, balanced, or powerful") {
+		t.Fatalf("invalid profile result = %+v, error = %v", result, err)
+	}
+
+	updates := &recordingSubagentUpdates{}
+	result, err = subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"],"model_profile":"fast"}`), updates)
+	if err != nil || result.IsError || !strings.Contains(result.Output, "model: fast") || updates.final.Arguments != "(fast, low)" {
+		t.Fatalf("result = %+v, presentation = %+v, error = %v", result, updates.final, err)
+	}
+	if profile := <-profiles; profile != SubagentModelFast {
+		t.Fatalf("model profile = %q", profile)
 	}
 }
 
@@ -150,7 +177,7 @@ func TestSubagentWaitReturnsRequestedOrderAndConsumesResults(t *testing.T) {
 		"first":  make(chan struct{}),
 		"second": make(chan struct{}),
 	}
-	subagents := NewSubagent(func(_ context.Context, task string, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
+	subagents := NewSubagent(func(_ context.Context, task string, _ SubagentModelProfile, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
 		<-releases[task]
 		return agent.RunResult{Text: task + " result"}, nil
 	})
@@ -189,8 +216,8 @@ func TestSubagentWaitReturnsRequestedOrderAndConsumesResults(t *testing.T) {
 	if !strings.HasPrefix(completed.result.Output, subagentResultGuidance) {
 		t.Fatalf("wait guidance missing from %q", completed.result.Output)
 	}
-	second := strings.Index(completed.result.Output, "Subagent subagent-2 (thinking: low):\nsecond result")
-	first := strings.Index(completed.result.Output, "Subagent subagent-1 (thinking: low):\nfirst result")
+	second := strings.Index(completed.result.Output, "Subagent subagent-2 (model: balanced, thinking: low):\nsecond result")
+	first := strings.Index(completed.result.Output, "Subagent subagent-1 (model: balanced, thinking: low):\nfirst result")
 	if second < 0 || first < 0 || second >= first {
 		t.Fatalf("wait output = %q", completed.result.Output)
 	}
@@ -204,7 +231,7 @@ func TestSubagentWaitReturnsRequestedOrderAndConsumesResults(t *testing.T) {
 
 func TestSubagentCompletionReleasesContextAndRetainsResult(t *testing.T) {
 	contexts := make(chan context.Context, 1)
-	subagents := NewSubagent(func(ctx context.Context, _ string, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
+	subagents := NewSubagent(func(ctx context.Context, _ string, _ SubagentModelProfile, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
 		contexts <- ctx
 		return agent.RunResult{Text: "done"}, nil
 	})
@@ -231,7 +258,7 @@ func TestSubagentCompletionReleasesContextAndRetainsResult(t *testing.T) {
 }
 
 func TestSubagentWaitAfterCompletionReturnsImmediately(t *testing.T) {
-	subagents := NewSubagent(func(_ context.Context, task string, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
+	subagents := NewSubagent(func(_ context.Context, task string, _ SubagentModelProfile, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
 		return agent.RunResult{Text: "done " + task}, nil
 	})
 	defer subagents.Close()
@@ -251,7 +278,7 @@ func TestSubagentWaitAfterCompletionReturnsImmediately(t *testing.T) {
 func TestSubagentWaitPublishesLiveUsageAndCompletion(t *testing.T) {
 	usagePublished := make(chan struct{})
 	release := make(chan struct{})
-	subagents := NewSubagent(func(_ context.Context, _ string, _ agent.ThinkingLevel, update func(SubagentProgress)) (agent.RunResult, error) {
+	subagents := NewSubagent(func(_ context.Context, _ string, _ SubagentModelProfile, _ agent.ThinkingLevel, update func(SubagentProgress)) (agent.RunResult, error) {
 		usage := agent.Usage{InputTokens: 300, OutputTokens: 21, TotalTokens: 321}
 		update(SubagentProgress{Usage: usage, Generations: 7})
 		close(usagePublished)
@@ -306,7 +333,7 @@ func TestSubagentWaitPublishesLiveUsageAndCompletion(t *testing.T) {
 
 func TestSubagentWaitCancellationCancelsSelectedJob(t *testing.T) {
 	started := make(chan struct{})
-	subagents := NewSubagent(func(ctx context.Context, _ string, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
+	subagents := NewSubagent(func(ctx context.Context, _ string, _ SubagentModelProfile, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
 		close(started)
 		<-ctx.Done()
 		return agent.RunResult{}, ctx.Err()
@@ -347,7 +374,7 @@ func TestSubagentWaitCancellationCancelsSelectedJob(t *testing.T) {
 
 func TestSubagentCancelCancelsSelectedJobs(t *testing.T) {
 	started := make(chan string, 2)
-	subagents := NewSubagent(func(ctx context.Context, task string, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
+	subagents := NewSubagent(func(ctx context.Context, task string, _ SubagentModelProfile, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
 		started <- task
 		<-ctx.Done()
 		return agent.RunResult{}, ctx.Err()
@@ -376,7 +403,7 @@ func TestSubagentCancelCancelsSelectedJobs(t *testing.T) {
 func TestSubagentCloseCancelsAndJoinsJobs(t *testing.T) {
 	started := make(chan struct{}, 2)
 	finished := make(chan error, 2)
-	subagents := NewSubagent(func(ctx context.Context, _ string, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
+	subagents := NewSubagent(func(ctx context.Context, _ string, _ SubagentModelProfile, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
 		started <- struct{}{}
 		<-ctx.Done()
 		finished <- context.Cause(ctx)
@@ -413,7 +440,7 @@ func TestSubagentValidatesAndLimitsOutstandingJobsBeforeLaunching(t *testing.T) 
 	release := make(chan struct{})
 	started := make(chan struct{}, maxSubagents)
 	var calls atomic.Int64
-	subagents := NewSubagent(func(context.Context, string, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error) {
+	subagents := NewSubagent(func(context.Context, string, SubagentModelProfile, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error) {
 		calls.Add(1)
 		started <- struct{}{}
 		<-release
@@ -458,7 +485,7 @@ func TestSubagentValidatesAndLimitsOutstandingJobsBeforeLaunching(t *testing.T) 
 }
 
 func TestSubagentWaitFreesOnlyCollectedCapacity(t *testing.T) {
-	subagents := NewSubagent(func(_ context.Context, task string, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
+	subagents := NewSubagent(func(_ context.Context, task string, _ SubagentModelProfile, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
 		return agent.RunResult{Text: "done " + task}, nil
 	})
 	defer subagents.Close()
@@ -487,7 +514,7 @@ func TestSubagentWaitFreesOnlyCollectedCapacity(t *testing.T) {
 
 func TestSubagentWaitReturnsMixedResults(t *testing.T) {
 	failure := errors.New("child failed")
-	subagents := NewSubagent(func(_ context.Context, task string, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
+	subagents := NewSubagent(func(_ context.Context, task string, _ SubagentModelProfile, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
 		if task == "bad" {
 			return agent.RunResult{Text: "partial finding"}, failure
 		}
@@ -506,7 +533,7 @@ func TestSubagentWaitReturnsMixedResults(t *testing.T) {
 }
 
 func TestSubagentWaitValidatesIDsBeforeWaiting(t *testing.T) {
-	subagents := NewSubagent(func(context.Context, string, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error) {
+	subagents := NewSubagent(func(context.Context, string, SubagentModelProfile, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error) {
 		return agent.RunResult{Text: "done"}, nil
 	})
 	defer subagents.Close()
@@ -528,7 +555,7 @@ func TestSubagentWaitValidatesIDsBeforeWaiting(t *testing.T) {
 func TestSubagentWaitUpdateFailureLeavesResultAvailable(t *testing.T) {
 	updateErr := errors.New("update failed")
 	release := make(chan struct{})
-	subagents := NewSubagent(func(context.Context, string, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error) {
+	subagents := NewSubagent(func(context.Context, string, SubagentModelProfile, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error) {
 		<-release
 		return agent.RunResult{Text: "done"}, nil
 	})
@@ -553,7 +580,7 @@ func TestSubagentWaitUpdateFailureLeavesResultAvailable(t *testing.T) {
 }
 
 func TestSubagentWaitBoundsCombinedOutput(t *testing.T) {
-	subagents := NewSubagent(func(context.Context, string, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error) {
+	subagents := NewSubagent(func(context.Context, string, SubagentModelProfile, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error) {
 		return agent.RunResult{Text: strings.Repeat("x", defaultMaxBytes)}, nil
 	})
 	defer subagents.Close()
@@ -571,7 +598,7 @@ func TestSubagentWaitBoundsCombinedOutput(t *testing.T) {
 func TestSubagentPublishesFinalizingStatus(t *testing.T) {
 	finalizing := make(chan struct{})
 	release := make(chan struct{})
-	subagents := NewSubagent(func(_ context.Context, _ string, _ agent.ThinkingLevel, update func(SubagentProgress)) (agent.RunResult, error) {
+	subagents := NewSubagent(func(_ context.Context, _ string, _ SubagentModelProfile, _ agent.ThinkingLevel, update func(SubagentProgress)) (agent.RunResult, error) {
 		usage := agent.Usage{InputTokens: 190_000, OutputTokens: 10_000, TotalTokens: 200_000}
 		update(SubagentProgress{
 			Usage:              usage,
@@ -592,7 +619,7 @@ func TestSubagentPublishesFinalizingStatus(t *testing.T) {
 	assertSubagentStatus(t, subagents.StatusUpdates(), agent.SubagentStatus{Finalizing: 1})
 
 	presentation := NewSubagentWait(subagents).Presentation(PresentationSnapshot{Arguments: map[string]any{"ids": []any{"subagent-1"}}})
-	if len(presentation.Lines) != 1 || !strings.Contains(presentation.Lines[0], "finalizing — generation limit") || !strings.Contains(presentation.Lines[0], "190k input") || !strings.Contains(presentation.Lines[0], "10k output") || !strings.Contains(presentation.Lines[0], "20/20 generations") || !strings.Contains(presentation.Lines[0], "(low)") {
+	if len(presentation.Lines) != 1 || !strings.Contains(presentation.Lines[0], "finalizing — generation limit") || !strings.Contains(presentation.Lines[0], "190k input") || !strings.Contains(presentation.Lines[0], "10k output") || !strings.Contains(presentation.Lines[0], "20/20 generations") || !strings.Contains(presentation.Lines[0], "(balanced, low)") {
 		t.Fatalf("presentation = %+v", presentation)
 	}
 	close(release)

@@ -141,7 +141,7 @@ func formatSubagentResults(snapshots []subagentJobSnapshot) agent.ToolResult {
 	failed := false
 	for _, snapshot := range snapshots {
 		output.WriteString("\n\n")
-		fmt.Fprintf(&output, "Subagent %s (thinking: %s):\n", snapshot.id, snapshot.thinkingLevel)
+		fmt.Fprintf(&output, "Subagent %s (model: %s, thinking: %s):\n", snapshot.id, snapshot.modelProfile, snapshot.thinkingLevel)
 		if snapshot.result.text != "" {
 			output.WriteString(snapshot.result.text)
 		}
@@ -192,8 +192,8 @@ func subagentWaitPresentation(ids []string, snapshots []subagentJobSnapshot, now
 		}
 
 		line := fmt.Sprintf("%d. %s — %s", index+1, formatSubagentStatus(status, now), id)
-		if index < len(snapshots) && snapshots[index].thinkingLevel != "" {
-			line += " (" + string(snapshots[index].thinkingLevel) + ")"
+		if index < len(snapshots) && snapshots[index].modelProfile != "" && snapshots[index].thinkingLevel != "" {
+			line += " (" + string(snapshots[index].modelProfile) + ", " + string(snapshots[index].thinkingLevel) + ")"
 		}
 		if label := boundPresentationLabel(strings.TrimSpace(strings.SplitN(task, "\n", 2)[0]), 120); label != "" {
 			line += " — " + label
