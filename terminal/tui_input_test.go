@@ -259,6 +259,26 @@ func TestArrowDownMovesToNextInputLineBeforeHistory(t *testing.T) {
 	}
 }
 
+func TestHomeAndEndMoveWithinCurrentInputLine(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.setInput("first\nsecond\nthird")
+	model.cursor = len([]rune("first\nsec"))
+
+	if _, err := reduceKey(model, keyEvent{code: keyHome}); err != nil {
+		t.Fatal(err)
+	}
+	if model.cursor != len([]rune("first\n")) {
+		t.Fatalf("home cursor = %d", model.cursor)
+	}
+
+	if _, err := reduceKey(model, keyEvent{code: keyEnd}); err != nil {
+		t.Fatal(err)
+	}
+	if model.cursor != len([]rune("first\nsecond")) {
+		t.Fatalf("end cursor = %d", model.cursor)
+	}
+}
+
 func TestTUIModelDefaultsToMediumThinking(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	if model.thinkingLevel != agent.DefaultThinkingLevel {

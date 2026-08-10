@@ -105,11 +105,9 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 	case keyRight:
 		model.moveRight()
 	case keyHome:
-		model.cursor = 0
-		model.refreshInputPickers(false)
+		model.moveHome()
 	case keyEnd:
-		model.cursor = len(model.input)
-		model.refreshInputPickers(false)
+		model.moveEnd()
 	case keyBackspace:
 		model.backspace()
 	case keyDelete:

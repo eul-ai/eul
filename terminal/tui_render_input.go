@@ -1,6 +1,9 @@
 package terminal
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
 
 type tuiLayout struct {
 	conversationHeight int
@@ -113,6 +116,16 @@ func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {
 			}
 			flush()
 			continue
+		}
+
+		if !unicode.IsSpace(character) && (index == 0 || unicode.IsSpace(model.input[index-1])) {
+			wordWidth := 0
+			for wordEnd := index; wordEnd < len(model.input) && !unicode.IsSpace(model.input[wordEnd]); wordEnd++ {
+				wordWidth += runeWidth(model.input[wordEnd])
+			}
+			if lineWidth > 0 && lineWidth+wordWidth > contentWidth {
+				flush()
+			}
 		}
 
 		characterWidth := runeWidth(character)

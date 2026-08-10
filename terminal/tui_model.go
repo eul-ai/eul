@@ -357,6 +357,20 @@ func (m *tuiModel) moveRight() {
 	}
 }
 
+func (m *tuiModel) moveHome() {
+	for m.cursor > 0 && m.input[m.cursor-1] != '\n' {
+		m.cursor--
+	}
+	m.refreshInputPickers(false)
+}
+
+func (m *tuiModel) moveEnd() {
+	for m.cursor < len(m.input) && m.input[m.cursor] != '\n' {
+		m.cursor++
+	}
+	m.refreshInputPickers(false)
+}
+
 func (m *tuiModel) moveUp() bool {
 	lineStart := m.cursor
 	for lineStart > 0 && m.input[lineStart-1] != '\n' {

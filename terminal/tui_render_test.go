@@ -490,6 +490,21 @@ func TestInputWrapsAndKeepsCursorVisible(t *testing.T) {
 	}
 }
 
+func TestInputWrapsAtWordBoundaries(t *testing.T) {
+	model := newTUIModel(10, 6, Options{})
+	if err := model.insertInput("hello world"); err != nil {
+		t.Fatal(err)
+	}
+
+	input := renderInput(model, model.width, 2)
+	if len(input.lines) != 2 || input.lines[0] != "> hello " || input.lines[1] != "  world" {
+		t.Fatalf("input = %+v", input)
+	}
+	if input.cursorRow != 1 || input.cursorColumn != 8 {
+		t.Fatalf("cursor = %d,%d", input.cursorRow, input.cursorColumn)
+	}
+}
+
 func TestPaddedBlockBackgroundFillsWidth(t *testing.T) {
 	style := blockPresentation(blockTool)
 	var frame strings.Builder
