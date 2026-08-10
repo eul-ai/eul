@@ -97,7 +97,10 @@ func composeFrameRows(model *tuiModel, prepared renderPreparation) []styledLine 
 		topRule := styledLine{text: rule, style: ruleStyle}
 		bottom := max(0, len(prepared.conversationLines)-layout.conversationHeight)
 		if prepared.scrollTop < bottom {
-			topRule.rightText = "↓ more"
+			indicator := truncateCells("↓ more", width, false)
+			remaining := width - cellWidth(indicator)
+			left := remaining / 2
+			topRule.text = strings.Repeat("─", left) + indicator + strings.Repeat("─", remaining-left)
 		}
 		rows[layout.topRuleRow-1] = topRule
 	}

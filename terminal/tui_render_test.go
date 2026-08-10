@@ -890,7 +890,7 @@ func TestConversationDividerIndicatesTextBelow(t *testing.T) {
 
 	scrollConversation(model, -1, renderer.frame)
 	_ = renderer.render(model)
-	if !strings.HasSuffix(renderer.frame.plainRows[ruleRow], "↓ more") {
+	if renderer.frame.plainRows[ruleRow] != "───────↓ more───────" {
 		t.Fatalf("scrolled divider = %q", renderer.frame.plainRows[ruleRow])
 	}
 
