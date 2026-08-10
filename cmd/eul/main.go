@@ -13,8 +13,8 @@ import (
 
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/backend/builtin"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/terminal"
-	"github.com/eul-ai/eul/tool"
 )
 
 const (
@@ -23,15 +23,6 @@ const (
 	exitUsage       = 2
 	exitInterrupted = 130
 )
-
-type toolAccess uint8
-
-const (
-	fullToolAccess toolAccess = iota
-	readOnlyToolAccess
-)
-
-type toolsetFactory func(string, toolAccess, ...tool.Tool) (*tool.Registry, error)
 
 type appRuntime struct {
 	stdin         io.Reader
@@ -43,7 +34,6 @@ type appRuntime struct {
 	userConfigDir func() (string, error)
 	interrupts    <-chan os.Signal
 	backends      *backend.Registry
-	newToolset    toolsetFactory
 	openURL       func(string) error
 }
 
@@ -97,88 +87,17 @@ func run(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "%v", err)
 		return exitFailure
 	}
-	store := newSessionStore(home)
-	if runtime.newToolset == nil {
-		runtime.newToolset = func(cwd string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
-			return buildToolsetWithHome(cwd, home, access, additional...)
-		}
-	}
-
 	ctx := context.Background()
-	config, handle, driver, err := resolveInitialSession(ctx, parsed, runtime, store)
-	if err != nil {
-		writeCLIError(runtime.stderr, "%v", err)
-		return exitFailure
-	}
-	backendRuntime, err := openBackendRuntime(driver, home, runtime.interrupts)
-	if err != nil {
-		_ = closeSessionHandle(handle)
-		if errors.Is(err, context.Canceled) {
-			return exitInterrupted
-		}
-		writeCLIError(runtime.stderr, "%v", err)
-		return exitFailure
-	}
-	session, err := newStoredAgentSession(config, runtime, backendRuntime, store, handle)
-	if err != nil {
-		writeCLIError(runtime.stderr, "%v", err)
-		return exitFailure
-	}
-
-	runner, err := terminal.NewRunner(runtime.stdin, runtime.stdout)
-	if err != nil {
-		return finishRun(session.finish(err), runtime.stderr)
-	}
-	runSessions := func() error {
-		for {
-			runErr := session.run(ctx, runner)
-			if onlyNewSessionRequest(runErr) {
-				config, err = resolveAgentConfig(agentArguments{
-					model:            config.model,
-					modelSet:         true,
-					fastModel:        config.subagentFastModel,
-					fastModelSet:     true,
-					balancedModel:    config.subagentBalancedModel,
-					balancedModelSet: true,
-					thinkingLevel:    session.thinkingLevel,
-					cwd:              config.cwd,
-				}, runtime, driver.Descriptor(), driver.ModelDefaults())
-				if err != nil {
-					return err
-				}
-				backendRuntime, err = openBackendRuntime(driver, home, runtime.interrupts)
-				if err != nil {
-					return err
-				}
-				session, err = newStoredAgentSession(config, runtime, backendRuntime, store, nil)
-				if err != nil {
-					return err
-				}
-				continue
-			}
-
-			request, resume := onlyResumeRequest(runErr)
-			if !resume {
-				return runErr
-			}
-
-			config, handle, driver, err = resolveStoredSession(ctx, store, runtime, config.cwd, request.SessionID)
-			if err != nil {
-				return err
-			}
-			backendRuntime, err = openBackendRuntime(driver, home, runtime.interrupts)
-			if err != nil {
-				_ = handle.Close()
-				return err
-			}
-			session, err = newStoredAgentSession(config, runtime, backendRuntime, store, handle)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	runErr := runSessions()
-	return finishRun(errors.Join(runErr, runner.Close()), runtime.stderr)
+	runErr := session.Run(ctx, parsed, session.Dependencies{
+		Input:       runtime.stdin,
+		Output:      runtime.stdout,
+		Home:        home,
+		Getwd:       runtime.getwd,
+		UserHomeDir: runtime.userHomeDir,
+		Interrupts:  runtime.interrupts,
+		Backends:    runtime.backends,
+	})
+	return finishRun(runErr, runtime.stderr)
 }
 
 func finishRun(runErr error, errorOutput io.Writer) int {
@@ -191,47 +110,6 @@ func finishRun(runErr error, errorOutput io.Writer) int {
 
 	writeCLIError(errorOutput, "%v", runErr)
 	return exitFailure
-}
-
-func onlyNewSessionRequest(err error) bool {
-	joined, ok := err.(interface{ Unwrap() []error })
-	if !ok {
-		_, ok := err.(*terminal.NewSessionRequest)
-		return ok
-	}
-
-	causes := joined.Unwrap()
-	if len(causes) == 0 {
-		return false
-	}
-	for _, cause := range causes {
-		if !onlyNewSessionRequest(cause) {
-			return false
-		}
-	}
-	return true
-}
-
-func onlyResumeRequest(err error) (*terminal.ResumeRequest, bool) {
-	joined, ok := err.(interface{ Unwrap() []error })
-	if !ok {
-		request, ok := err.(*terminal.ResumeRequest)
-		return request, ok
-	}
-
-	causes := joined.Unwrap()
-	if len(causes) == 0 {
-		return nil, false
-	}
-	var selected *terminal.ResumeRequest
-	for _, cause := range causes {
-		request, ok := onlyResumeRequest(cause)
-		if !ok || selected != nil && selected.SessionID != request.SessionID {
-			return nil, false
-		}
-		selected = request
-	}
-	return selected, selected != nil
 }
 
 func isOnlyInterruption(err error) bool {
@@ -250,31 +128,6 @@ func isOnlyInterruption(err error) bool {
 		}
 	}
 	return true
-}
-
-func openBackendRuntime(driver backend.Driver, home string, interrupts <-chan os.Signal) (backend.Runtime, error) {
-	backendRuntime, err := driver.Open(backend.Options{Home: home})
-	if err != nil {
-		return nil, err
-	}
-	checker, ok := backendRuntime.(backend.CredentialChecker)
-	if !ok {
-		return backendRuntime, nil
-	}
-
-	ctx, cancel := contextWithInterrupt(interrupts)
-	defer cancel()
-	if err := checker.CheckCredentials(ctx); err != nil {
-		return nil, errors.Join(fmt.Errorf("authentication required: %w", err), closeBackendRuntime(backendRuntime))
-	}
-	return backendRuntime, nil
-}
-
-func closeSessionHandle(handle *sessionHandle) error {
-	if handle == nil {
-		return nil
-	}
-	return handle.Close()
 }
 
 func runLogin(arguments []string, runtime appRuntime) int {

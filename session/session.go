@@ -1,4 +1,4 @@
-package main
+package session
 
 import (
 	"context"
@@ -23,59 +23,59 @@ type agentSession struct {
 
 func resolveInitialSession(
 	ctx context.Context,
-	arguments agentArguments,
-	runtime appRuntime,
+	arguments Options,
+	runtime runtime,
 	store *sessionStore,
-) (agentConfig, *sessionHandle, backend.Driver, error) {
-	if !arguments.resume {
-		driver, err := runtime.backends.Lookup(arguments.provider)
+) (config, *sessionHandle, backend.Driver, error) {
+	if !arguments.Resume {
+		driver, err := runtime.backends.Lookup(arguments.Provider)
 		if err != nil {
-			return agentConfig{}, nil, nil, err
+			return config{}, nil, nil, err
 		}
-		config, err := resolveAgentConfig(arguments, runtime, driver.Descriptor(), driver.ModelDefaults())
+		config, err := resolveConfig(arguments, runtime, driver.Descriptor(), driver.ModelDefaults())
 		return config, nil, driver, err
 	}
 
 	cwd, err := resolveCWD("", runtime.getwd)
 	if err != nil {
-		return agentConfig{}, nil, nil, err
+		return config{}, nil, nil, err
 	}
-	return resolveStoredSession(ctx, store, runtime, cwd, arguments.sessionID)
+	return resolveStoredSession(ctx, store, runtime, cwd, arguments.SessionID)
 }
 
 func resolveStoredSession(
 	ctx context.Context,
 	store *sessionStore,
-	runtime appRuntime,
+	runtime runtime,
 	lookupCWD string,
 	sessionID string,
-) (agentConfig, *sessionHandle, backend.Driver, error) {
+) (config, *sessionHandle, backend.Driver, error) {
 	handle, err := store.Open(ctx, lookupCWD, sessionID)
 	if err != nil {
-		return agentConfig{}, nil, nil, err
+		return config{}, nil, nil, err
 	}
 	record := handle.Record()
 	driver, err := runtime.backends.Lookup(record.Provider)
 	if err != nil {
 		_ = handle.Close()
-		return agentConfig{}, nil, nil, err
+		return config{}, nil, nil, err
 	}
-	config, err := resolveAgentConfig(agentArguments{
-		model:            record.Model,
-		modelSet:         true,
-		fastModel:        record.FastModel,
-		fastModelSet:     record.FastModel != "",
-		balancedModel:    record.BalancedModel,
-		balancedModelSet: record.BalancedModel != "",
-		thinkingLevel:    record.ThinkingLevel,
-		cwd:              record.WorkingDirectory,
+	resolved, err := resolveConfig(Options{
+		Model:            record.Model,
+		ModelSet:         true,
+		FastModel:        record.FastModel,
+		FastModelSet:     record.FastModel != "",
+		BalancedModel:    record.BalancedModel,
+		BalancedModelSet: record.BalancedModel != "",
+		ThinkingLevel:    record.ThinkingLevel,
+		WorkingDirectory: record.WorkingDirectory,
 	}, runtime, driver.Descriptor(), driver.ModelDefaults())
 	if err != nil {
 		_ = handle.Close()
-		return agentConfig{}, nil, nil, err
+		return config{}, nil, nil, err
 	}
-	config.warnings = append(config.warnings, handle.warnings...)
-	return config, handle, driver, nil
+	resolved.warnings = append(resolved.warnings, handle.warnings...)
+	return resolved, handle, driver, nil
 }
 
 func providerModelMetadata(provider agent.Provider, model string) agent.ModelMetadata {
@@ -90,13 +90,13 @@ func providerModelMetadata(provider agent.Provider, model string) agent.ModelMet
 	return metadata
 }
 
-func newAgentSession(config agentConfig, runtime appRuntime, backendRuntime backend.Runtime) (*agentSession, error) {
+func newAgentSession(config config, runtime runtime, backendRuntime backend.Runtime) (*agentSession, error) {
 	return newAgentSessionWithCheckpointing(config, runtime, backendRuntime, false)
 }
 
 func newAgentSessionWithCheckpointing(
-	config agentConfig,
-	runtime appRuntime,
+	config config,
+	runtime runtime,
 	backendRuntime backend.Runtime,
 	checkpointing bool,
 ) (*agentSession, error) {
@@ -192,8 +192,8 @@ func newAgentSessionWithCheckpointing(
 }
 
 func newStoredAgentSession(
-	config agentConfig,
-	runtime appRuntime,
+	config config,
+	runtime runtime,
 	backendRuntime backend.Runtime,
 	store *sessionStore,
 	handle *sessionHandle,
@@ -291,7 +291,7 @@ func closeBackendRuntime(backendRuntime backend.Runtime) error {
 	return nil
 }
 
-func (config agentConfig) subagentModel(profile tool.SubagentModelProfile) string {
+func (config config) subagentModel(profile tool.SubagentModelProfile) string {
 	var model string
 	switch profile {
 	case tool.SubagentModelFast:
@@ -309,7 +309,7 @@ func runChildAgent(
 	ctx context.Context,
 	backendRuntime backend.Runtime,
 	newToolset toolsetFactory,
-	config agentConfig,
+	config config,
 	modelProfile tool.SubagentModelProfile,
 	thinkingLevel agent.ThinkingLevel,
 	task string,

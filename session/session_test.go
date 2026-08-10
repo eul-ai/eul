@@ -1,4 +1,4 @@
-package main
+package session
 
 import (
 	"bytes"
@@ -67,7 +67,7 @@ func (current *closeRecordingTool) Close() error {
 }
 
 func TestAgentConfigSelectsSubagentModelProfiles(t *testing.T) {
-	config := agentConfig{
+	config := config{
 		model:                 "powerful-model",
 		subagentBalancedModel: "balanced-model",
 		subagentFastModel:     "fast-model",
@@ -97,15 +97,15 @@ func TestNewAgentSessionWiresOptionalProviderUsage(t *testing.T) {
 	provider := usageCapableProvider{providerFunction: func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
 		return agent.Response{}, nil
 	}}
-	runtime := appRuntime{}
+	runtime := runtime{}
 	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return provider, nil
 	}}
 	cwd := t.TempDir()
-	writeMainTestLSPConfig(t, cwd)
+	writeTestLSPConfig(t, cwd)
 	skills := []agent.Skill{{Name: "review", Description: "Review code"}}
 	warnings := []string{"Skipped skill invalid: malformed"}
-	session, err := newAgentSession(agentConfig{model: "model", thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills, warnings: warnings}, runtime, backendRuntime)
+	session, err := newAgentSession(config{model: "model", thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills, warnings: warnings}, runtime, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,10 +144,10 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return provider, nil
 	}}
-	runtime := appRuntime{newToolset: func(_ string, _ toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
+	runtime := runtime{newToolset: func(_ string, _ toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
 		return tool.NewRegistry(additional)
 	}}
-	session, err := newAgentSession(agentConfig{
+	session, err := newAgentSession(config{
 		model:                 "main",
 		subagentFastModel:     "fast",
 		subagentBalancedModel: "balanced",
@@ -182,15 +182,15 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 }
 
 func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
-	runtime := appRuntime{}
+	runtime := runtime{}
 	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
 			return agent.Response{}, nil
 		}), nil
 	}}
 	cwd := t.TempDir()
-	writeMainTestLSPConfig(t, cwd)
-	session, err := newAgentSession(agentConfig{model: "model", cwd: cwd}, runtime, backendRuntime)
+	writeTestLSPConfig(t, cwd)
+	session, err := newAgentSession(config{model: "model", cwd: cwd}, runtime, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	cwd := t.TempDir()
 	var requests []agent.Request
-	runtime := appRuntime{
+	runtime := runtime{
 		stdin:  strings.NewReader(""),
 		stdout: io.Discard,
 		newToolset: func(string, toolAccess, ...tool.Tool) (*tool.Registry, error) {
@@ -232,7 +232,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 			}), nil
 		}}
 	}
-	config := agentConfig{provider: "test", model: "model", thinkingLevel: agent.ThinkingHigh, cwd: cwd}
+	config := config{provider: "test", model: "model", thinkingLevel: agent.ThinkingHigh, cwd: cwd}
 	store := newSessionStore(t.TempDir())
 
 	first, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, nil)
@@ -291,7 +291,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	cwd := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(cwd, &stdout, &stderr, nil)
+	runtime := testRuntime(cwd, &stdout, &stderr)
 	defaultDriver := testBackendDriver(t, runtime)
 	alternateRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
@@ -310,15 +310,15 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	runtime.backends = registry
 	store := newSessionStore(t.TempDir())
 
-	config, handle, selected, err := resolveInitialSession(context.Background(), agentArguments{
-		provider:         "alternate",
-		model:            "selected-model",
-		modelSet:         true,
-		fastModel:        "selected-fast-model",
-		fastModelSet:     true,
-		balancedModel:    "selected-balanced-model",
-		balancedModelSet: true,
-		thinkingLevel:    agent.ThinkingHigh,
+	config, handle, selected, err := resolveInitialSession(context.Background(), Options{
+		Provider:         "alternate",
+		Model:            "selected-model",
+		ModelSet:         true,
+		FastModel:        "selected-fast-model",
+		FastModelSet:     true,
+		BalancedModel:    "selected-balanced-model",
+		BalancedModelSet: true,
+		ThinkingLevel:    agent.ThinkingHigh,
 	}, runtime, store)
 	if err != nil {
 		t.Fatal(err)
@@ -346,9 +346,9 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	restored, handle, selected, err := resolveInitialSession(context.Background(), agentArguments{
-		resume:    true,
-		sessionID: sessionID,
+	restored, handle, selected, err := resolveInitialSession(context.Background(), Options{
+		Resume:    true,
+		SessionID: sessionID,
 	}, runtime, store)
 	if err != nil {
 		t.Fatal(err)
@@ -382,7 +382,7 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(cwd, &stdout, &stderr, nil)
+	runtime := testRuntime(cwd, &stdout, &stderr)
 	runtime.userHomeDir = func() (string, error) { return "", errors.New("home unavailable") }
 	config, handle, _, err := resolveStoredSession(context.Background(), store, runtime, cwd, "")
 	if err != nil {
@@ -399,7 +399,7 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 
 func TestNewAgentSessionReportsToolsetConfigurationFailure(t *testing.T) {
 	configureErr := errors.New("toolset failed")
-	runtime := appRuntime{
+	runtime := runtime{
 		newToolset: func(string, toolAccess, ...tool.Tool) (*tool.Registry, error) {
 			return nil, configureErr
 		},
@@ -410,7 +410,7 @@ func TestNewAgentSessionReportsToolsetConfigurationFailure(t *testing.T) {
 			return agent.Response{}, nil
 		}), nil
 	}}
-	_, err := newAgentSession(agentConfig{model: "model", cwd: t.TempDir()}, runtime, backendRuntime)
+	_, err := newAgentSession(config{model: "model", cwd: t.TempDir()}, runtime, backendRuntime)
 	if !errors.Is(err, configureErr) || !strings.Contains(err.Error(), "configure tools") {
 		t.Fatalf("newAgentSession error = %v", err)
 	}
@@ -434,16 +434,6 @@ func TestFinishRegistryClosesToolsAndPreservesRunError(t *testing.T) {
 	}
 	if !errors.Is(err, runErr) || !errors.Is(err, closeErr) || !strings.Contains(err.Error(), "close subagent tools") {
 		t.Fatalf("joined error = %v", err)
-	}
-}
-
-func TestFinishRunReportsCleanupFailureJoinedWithInterruption(t *testing.T) {
-	cleanupErr := errors.New("cleanup failed")
-	var output bytes.Buffer
-
-	code := finishRun(errors.Join(context.Canceled, cleanupErr), &output)
-	if code != exitFailure || !strings.Contains(output.String(), cleanupErr.Error()) {
-		t.Fatalf("code=%d output=%q", code, output.String())
 	}
 }
 
