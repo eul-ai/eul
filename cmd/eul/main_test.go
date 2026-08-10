@@ -242,14 +242,6 @@ func TestRunRejectsInvalidWorkingDirectories(t *testing.T) {
 	}
 }
 
-func writeMainTestLSPConfig(t *testing.T, cwd string) {
-	t.Helper()
-	content := `[{"name":"gopls","command":"gopls","languageID":"go","extensions":[".go"]}]`
-	if err := os.WriteFile(filepath.Join(cwd, "lsp.json"), []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[string]string) appRuntime {
 	values := maps.Clone(environment)
 	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
