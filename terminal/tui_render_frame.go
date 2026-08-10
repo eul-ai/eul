@@ -94,7 +94,12 @@ func composeFrameRows(model *tuiModel, prepared renderPreparation) []styledLine 
 	rule := strings.Repeat("─", width)
 	ruleStyle := lineStyle{foreground: currentTheme.thinkingColor(model.thinkingLevel)}
 	if layout.topRuleRow > 0 {
-		rows[layout.topRuleRow-1] = styledLine{text: rule, style: ruleStyle}
+		topRule := styledLine{text: rule, style: ruleStyle}
+		bottom := max(0, len(prepared.conversationLines)-layout.conversationHeight)
+		if prepared.scrollTop < bottom {
+			topRule.rightText = "↓ more"
+		}
+		rows[layout.topRuleRow-1] = topRule
 	}
 	inputStyle := lineStyle{
 		foreground:      currentTheme.foreground,

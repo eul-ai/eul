@@ -875,6 +875,32 @@ func TestInterruptedTurnClosesPendingToolBlocks(t *testing.T) {
 	}
 }
 
+func TestConversationDividerIndicatesTextBelow(t *testing.T) {
+	model := newTUIModel(20, 8, Options{})
+	for index := 0; index < 8; index++ {
+		model.appendBlock(blockInfo, strings.Repeat(string(rune('a'+index)), 20))
+	}
+
+	var renderer tuiRenderer
+	_ = renderer.render(model)
+	ruleRow := renderer.frame.layout.topRuleRow - 1
+	if strings.Contains(renderer.frame.plainRows[ruleRow], "↓ more") {
+		t.Fatalf("divider shows text below while following: %q", renderer.frame.plainRows[ruleRow])
+	}
+
+	scrollConversation(model, -1, renderer.frame)
+	_ = renderer.render(model)
+	if !strings.HasSuffix(renderer.frame.plainRows[ruleRow], "↓ more") {
+		t.Fatalf("scrolled divider = %q", renderer.frame.plainRows[ruleRow])
+	}
+
+	scrollConversation(model, 1, renderer.frame)
+	_ = renderer.render(model)
+	if strings.Contains(renderer.frame.plainRows[ruleRow], "↓ more") {
+		t.Fatalf("divider still shows text below at bottom: %q", renderer.frame.plainRows[ruleRow])
+	}
+}
+
 func TestConversationScrollingStopsAndResumesFollowing(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
 	for index := 0; index < 8; index++ {
