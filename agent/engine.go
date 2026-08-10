@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -17,6 +18,14 @@ type Options struct {
 	ProjectInstructions string
 	Skills              []Skill
 	Checkpointing       bool
+}
+
+type FinalizationPolicy struct {
+	AfterDuration    time.Duration
+	AfterTokens      int64
+	AfterGenerations int
+	Prompt           string
+	OnBegin          func()
 }
 
 type RunResult struct {
@@ -61,6 +70,14 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 }
 
 func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunResult, error) {
+	return e.run(ctx, userText, sink, FinalizationPolicy{})
+}
+
+func (e *Engine) RunWithFinalization(ctx context.Context, userText string, sink EventSink, policy FinalizationPolicy) (RunResult, error) {
+	return e.run(ctx, userText, sink, policy)
+}
+
+func (e *Engine) run(ctx context.Context, userText string, sink EventSink, policy FinalizationPolicy) (RunResult, error) {
 	if !e.mu.TryLock() {
 		return RunResult{}, errEngineBusy
 	}
@@ -85,6 +102,9 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 	}
 	current.inputs = append(current.inputs, Input{Kind: InputUser, Text: userText})
 	var result RunResult
+	started := time.Now()
+	normalGenerations := 0
+	latestText := ""
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -92,23 +112,55 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			return RunResult{}, err
 		}
 
+		finalizing := policy.shouldBegin(started, result.Usage, normalGenerations)
+		if finalizing && policy.OnBegin != nil {
+			policy.OnBegin()
+		}
+
 		request := e.request(current)
+		if finalizing {
+			request.Tools = nil
+			request.Instructions = appendFinalizationPrompt(request.Instructions, policy.Prompt)
+		}
 		var compactedUsage Usage
 		var err error
 		request, current, compactedUsage, err = e.compact(ctx, sink, request, current)
 		addUsage(&result.Usage, compactedUsage)
 		if err != nil {
 			current.checkpoint(e)
+			if finalizing {
+				result.Text = latestText
+				return result, err
+			}
 			return RunResult{}, err
 		}
+		if !finalizing && policy.shouldBegin(started, result.Usage, normalGenerations) {
+			finalizing = true
+			if policy.OnBegin != nil {
+				policy.OnBegin()
+			}
+			request.Tools = nil
+			request.Instructions = appendFinalizationPrompt(request.Instructions, policy.Prompt)
+		}
 
-		response, toolEvents, err := e.generateResponse(ctx, request, sink)
+		generationSink := sink
+		var finalText strings.Builder
+		if finalizing {
+			generationSink = func(event Event) error {
+				if event.Kind == EventAssistantText {
+					finalText.WriteString(event.Text)
+				}
+				return sink(event)
+			}
+		}
+
+		response, toolEvents, err := e.generateResponse(ctx, request, generationSink)
 		if err != nil {
 			var compacted bool
 			request, current, compactedUsage, compacted, err = e.compactAfterError(ctx, sink, request, current, err)
 			addUsage(&result.Usage, compactedUsage)
 			if err == nil && compacted {
-				response, toolEvents, err = e.generateResponse(ctx, request, sink)
+				response, toolEvents, err = e.generateResponse(ctx, request, generationSink)
 			}
 		}
 		if err != nil {
@@ -116,15 +168,37 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return RunResult{}, ctxErr
 			}
+			if finalizing {
+				result.Text = bestFinalizationText(finalText.String(), latestText)
+				return result, err
+			}
 			return RunResult{}, err
 		}
 
 		responseContinuation := continuation{state: response.State, usage: response.Usage}
 		addUsage(&result.Usage, response.Usage)
+		if !finalizing {
+			normalGenerations++
+			if strings.TrimSpace(response.Text) != "" {
+				latestText = response.Text
+			}
+		}
 		if err := emit(sink, Event{Kind: EventContextUsage, Usage: response.Usage}); err != nil {
 			responseContinuation.inputs = unexecutedToolInputs(response.ToolCalls, err)
 			responseContinuation.checkpoint(e)
 			return RunResult{}, err
+		}
+		if finalizing {
+			if err := toolEvents.closeRemaining(errors.New("tools are disabled during finalization")); err != nil {
+				return RunResult{}, err
+			}
+			if len(response.ToolCalls) == 0 {
+				if err := e.commitCheckpoint(responseContinuation, sink); err != nil {
+					return RunResult{}, err
+				}
+			}
+			result.Text = bestFinalizationText(response.Text, finalText.String(), latestText)
+			return result, nil
 		}
 		if err := toolEvents.reconcileFinal(response.ToolCalls); err != nil {
 			responseContinuation.inputs = unexecutedToolInputs(response.ToolCalls, err)
@@ -169,6 +243,29 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 			}
 		}
 	}
+}
+
+func (policy FinalizationPolicy) shouldBegin(started time.Time, usage Usage, generations int) bool {
+	return policy.AfterDuration > 0 && time.Since(started) >= policy.AfterDuration ||
+		policy.AfterTokens > 0 && usage.TotalTokens >= policy.AfterTokens ||
+		policy.AfterGenerations > 0 && generations >= policy.AfterGenerations
+}
+
+func appendFinalizationPrompt(instructions, prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return instructions
+	}
+	return strings.TrimSpace(instructions) + "\n\n" + prompt
+}
+
+func bestFinalizationText(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (e *Engine) request(current continuation) Request {

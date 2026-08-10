@@ -80,6 +80,38 @@ func TestRunTUIParentCancellationWinsAfterActiveEOF(t *testing.T) {
 	}
 }
 
+func TestRunTUIRendersSubagentUpdatesWhileIdle(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	updates := make(chan agent.SubagentStatus, 1)
+	output := newSignalingWriter("subagents: 1 running")
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runTUI(context.Background(), &fakeEngine{}, Options{
+			Input: reader, Output: output, SubagentUpdates: updates,
+		}, -1, 80, 24)
+	}()
+
+	updates <- agent.SubagentStatus{Running: 1}
+	select {
+	case <-output.seen:
+	case <-time.After(2 * time.Second):
+		t.Fatal("subagent status was not rendered")
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runTUI did not stop")
+	}
+}
+
 func TestRunTUILoadsProviderUsageAtStartupAndAfterTurn(t *testing.T) {
 	reader, writer := io.Pipe()
 	defer reader.Close()

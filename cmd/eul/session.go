@@ -96,9 +96,11 @@ func newAgentSessionWithCheckpointing(
 	if newToolset == nil {
 		newToolset = buildToolset
 	}
-	subagent := tool.NewSubagent(func(ctx context.Context, task string, usage func(agent.Usage)) (agent.RunResult, error) {
-		return runChildAgent(ctx, runtime.newProvider, newToolset, tokenSource, providerOptions, config, currentThinkingLevel, task, usage)
-	})
+	subagent := tool.NewSubagent(func(ctx context.Context, task string, thinkingLevel agent.ThinkingLevel, update func(tool.SubagentProgress)) (agent.RunResult, error) {
+		return runChildAgent(ctx, runtime.newProvider, newToolset, tokenSource, providerOptions, config, thinkingLevel, task, update)
+	}, metadata.ThinkingLevels...)
+	subagentWait := tool.NewSubagentWait(subagent)
+	subagentCancel := tool.NewSubagentCancel(subagent)
 	var engine *agent.Engine
 	updateGoal := tool.NewUpdateGoal(func() error {
 		if engine == nil {
@@ -106,8 +108,9 @@ func newAgentSessionWithCheckpointing(
 		}
 		return engine.CompleteGoal()
 	})
-	registry, err := newToolset(config.cwd, fullToolAccess, subagent, updateGoal)
+	registry, err := newToolset(config.cwd, fullToolAccess, subagent, subagentWait, subagentCancel, updateGoal)
 	if err != nil {
+		_ = subagent.Close()
 		return nil, fmt.Errorf("configure tools: %w", err)
 	}
 	engine = agent.New(provider, registry, agent.Options{
@@ -127,7 +130,6 @@ func newAgentSessionWithCheckpointing(
 		if err := engine.SetThinkingLevel(level); err != nil {
 			return err
 		}
-		currentThinkingLevel = level
 		session.thinkingLevel = level
 		return nil
 	}
@@ -144,6 +146,7 @@ func newAgentSessionWithCheckpointing(
 		Interrupts:       runtime.interrupts,
 		SetThinkingLevel: setThinkingLevel,
 		LoadUsage:        loadUsage,
+		SubagentUpdates:  subagent.StatusUpdates(),
 	}
 	return session, nil
 }
@@ -237,7 +240,7 @@ func runChildAgent(
 	config agentConfig,
 	thinkingLevel agent.ThinkingLevel,
 	task string,
-	usage func(agent.Usage),
+	update func(tool.SubagentProgress),
 ) (agent.RunResult, error) {
 	provider, err := newProvider(tokenSource, providerOptions)
 	if err != nil {
@@ -256,16 +259,19 @@ func runChildAgent(
 		Skills:              config.skills,
 	})
 	var liveUsage agent.Usage
-	result, runErr := child.Run(ctx, task, func(event agent.Event) error {
+	policy := tool.NewSubagentFinalizationPolicy(func() {
+		update(tool.SubagentProgress{Usage: liveUsage, Finalizing: true})
+	})
+	result, runErr := child.RunWithFinalization(ctx, task, func(event agent.Event) error {
 		switch event.Kind {
 		case agent.EventCompactionEnd, agent.EventContextUsage:
 			liveUsage.InputTokens += event.Usage.InputTokens
 			liveUsage.OutputTokens += event.Usage.OutputTokens
 			liveUsage.TotalTokens += event.Usage.TotalTokens
-			usage(liveUsage)
+			update(tool.SubagentProgress{Usage: liveUsage})
 		}
 		return nil
-	})
+	}, policy)
 	return result, finishRegistry(runErr, registry, "close subagent tools")
 }
 

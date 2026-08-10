@@ -82,6 +82,12 @@ type ToolResult struct {
 	IsError bool
 }
 
+type SubagentStatus struct {
+	Running    int
+	Finalizing int
+	Completed  int
+}
+
 type Toolbox interface {
 	Definitions() []ToolDefinition
 	Presentation(ToolCallSnapshot) ToolPresentation

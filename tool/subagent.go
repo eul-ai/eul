@@ -3,8 +3,11 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
@@ -16,41 +19,72 @@ const (
 	subagentUpdateInterval = time.Second
 )
 
+var (
+	errSubagentCanceled      = errors.New("subagent canceled by user")
+	errSubagentSessionClosed = errors.New("subagent canceled by session shutdown")
+)
+
 var subagentToolDefinition = agent.ToolDefinition{
 	Name:        subagentToolName,
-	Description: "Run independent read-only tasks concurrently and wait for all results. Use only when the user explicitly asks for subagents.",
+	Description: "Start one to four independent read-only research tasks in the background. At most four may be outstanding. Use selectively for substantial parallel investigation that benefits from separate context; do not use for trivial work, tightly coupled steps, or tasks the main context can handle directly. Choose the lowest thinking level sufficient for the tasks.",
 	Parameters: strictObject(map[string]agent.JSONSchema{
 		"tasks": {
 			Type:        "array",
 			Description: "One to four independent tasks. Include all context each subagent needs.",
 			Items:       &agent.JSONSchema{Type: "string"},
 		},
+		"thinking_level": {
+			Type:        "string",
+			Description: "Thinking level for every task: off, minimal, low, medium, or high. Defaults to low. Choose the lowest sufficient level.",
+		},
 	}, "tasks"),
 }
 
+type SubagentProgress struct {
+	Usage      agent.Usage
+	Finalizing bool
+}
+
+type SubagentRun func(context.Context, string, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error)
+
 type Subagent struct {
-	run func(context.Context, string, func(agent.Usage)) (agent.RunResult, error)
+	run                     SubagentRun
+	supportedThinkingLevels []agent.ThinkingLevel
+
+	ctx       context.Context
+	cancel    context.CancelCauseFunc
+	mu        sync.Mutex
+	jobs      map[string]*subagentJob
+	nextID    uint64
+	closed    bool
+	workers   sync.WaitGroup
+	closeOnce sync.Once
+	status    chan agent.SubagentStatus
+	changes   chan struct{}
 }
 
 type subagentArguments struct {
-	Tasks []string `json:"tasks"`
+	Tasks         []string `json:"tasks"`
+	ThinkingLevel *string  `json:"thinking_level"`
+}
+
+type subagentJob struct {
+	id            string
+	task          string
+	thinkingLevel agent.ThinkingLevel
+	ctx           context.Context
+	cancel        context.CancelCauseFunc
+	state         string
+	started       time.Time
+	elapsed       time.Duration
+	usage         agent.Usage
+	result        agent.RunResult
+	err           error
 }
 
 type subagentResult struct {
-	text  string
-	usage agent.Usage
-	err   error
-}
-
-type subagentCompletion struct {
-	index   int
-	elapsed time.Duration
-	result  subagentResult
-}
-
-type subagentProgress struct {
-	index int
-	usage agent.Usage
+	text string
+	err  error
 }
 
 type subagentStatus struct {
@@ -60,8 +94,34 @@ type subagentStatus struct {
 	tokens  int64
 }
 
-func NewSubagent(run func(context.Context, string, func(agent.Usage)) (agent.RunResult, error)) *Subagent {
-	return &Subagent{run: run}
+type subagentJobSnapshot struct {
+	id            string
+	task          string
+	thinkingLevel agent.ThinkingLevel
+	status        subagentStatus
+	result        subagentResult
+}
+
+func NewSubagent(run SubagentRun, supportedThinkingLevels ...agent.ThinkingLevel) *Subagent {
+	if len(supportedThinkingLevels) == 0 {
+		supportedThinkingLevels = []agent.ThinkingLevel{
+			agent.ThinkingOff,
+			agent.ThinkingMinimal,
+			agent.ThinkingLow,
+			agent.ThinkingMedium,
+			agent.ThinkingHigh,
+		}
+	}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	return &Subagent{
+		run:                     run,
+		supportedThinkingLevels: slices.Clone(supportedThinkingLevels),
+		ctx:                     ctx,
+		cancel:                  cancel,
+		jobs:                    make(map[string]*subagentJob),
+		status:                  make(chan agent.SubagentStatus, 1),
+		changes:                 make(chan struct{}, 1),
+	}
 }
 
 func (*Subagent) Definition() agent.ToolDefinition {
@@ -76,7 +136,11 @@ func (*Subagent) Presentation(snapshot PresentationSnapshot) agent.ToolPresentat
 			tasks = append(tasks, task)
 		}
 	}
-	return subagentPresentation(tasks, nil, time.Time{})
+	thinkingLevel := agent.ThinkingLow
+	if value, ok := snapshot.Arguments["thinking_level"].(string); ok {
+		thinkingLevel = agent.ThinkingLevel(value)
+	}
+	return subagentLaunchPresentation(tasks, nil, thinkingLevel)
 }
 
 func (s *Subagent) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
@@ -91,12 +155,43 @@ func (s *Subagent) Execute(ctx context.Context, arguments json.RawMessage, updat
 	if err := validateSubagentTasks(args.Tasks); err != nil {
 		return errorResult(subagentToolName, err), nil
 	}
-
-	results, err := s.collectResults(ctx, args.Tasks, updates)
+	thinkingLevel, err := s.resolveThinkingLevel(args.ThinkingLevel)
 	if err != nil {
+		return errorResult(subagentToolName, err), nil
+	}
+	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
-	return formatSubagentResults(results), nil
+
+	jobs, err := s.start(args.Tasks, thinkingLevel)
+	if err != nil {
+		return errorResult(subagentToolName, err), nil
+	}
+
+	ids := make([]string, len(jobs))
+	for index, job := range jobs {
+		ids[index] = job.id
+	}
+	if updates != nil {
+		updates.SetFinal(subagentLaunchPresentation(args.Tasks, ids, thinkingLevel))
+	}
+	return successResult(formatSubagentLaunches(jobs, thinkingLevel)), nil
+}
+
+func (s *Subagent) StatusUpdates() <-chan agent.SubagentStatus {
+	return s.status
+}
+
+func (s *Subagent) Close() error {
+	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		s.cancel(errSubagentSessionClosed)
+		s.mu.Unlock()
+
+		s.workers.Wait()
+	})
+	return nil
 }
 
 func validateSubagentTasks(tasks []string) error {
@@ -114,145 +209,292 @@ func validateSubagentTasks(tasks []string) error {
 	return nil
 }
 
-func (s *Subagent) collectResults(ctx context.Context, tasks []string, updates agent.ToolUpdateSink) ([]subagentResult, error) {
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
+func (s *Subagent) resolveThinkingLevel(value *string) (agent.ThinkingLevel, error) {
+	level := agent.ThinkingLow
+	if value != nil {
+		level = agent.ThinkingLevel(*value)
+	}
+
+	switch level {
+	case agent.ThinkingOff, agent.ThinkingMinimal, agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh:
+	case agent.ThinkingXHigh, agent.ThinkingMax:
+		return "", fmt.Errorf("thinking level %q is not available to subagents; use off, minimal, low, medium, or high", level)
+	default:
+		return "", fmt.Errorf("thinking level must be one of off, minimal, low, medium, or high")
+	}
+	if !slices.Contains(s.supportedThinkingLevels, level) {
+		return "", fmt.Errorf("thinking level %q is not supported by the current model", level)
+	}
+	return level, nil
+}
+
+func (s *Subagent) start(tasks []string, thinkingLevel agent.ThinkingLevel) ([]*subagentJob, error) {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("subagent manager is closed")
+	}
+	if len(s.jobs)+len(tasks) > maxSubagents {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("outstanding subagents must not exceed %d", maxSubagents)
+	}
 
 	started := time.Now()
-	statuses := make([]subagentStatus, len(tasks))
-	for index := range statuses {
-		statuses[index] = subagentStatus{state: "running", started: started}
-	}
-	if err := publishSubagentUpdate(updates, tasks, statuses, started); err != nil {
-		return nil, err
-	}
-
-	completions := make(chan subagentCompletion, len(tasks))
-	progress := make(chan subagentProgress, len(tasks))
+	jobs := make([]*subagentJob, len(tasks))
 	for index, task := range tasks {
-		go func(index int, task string) {
-			result, runErr := s.run(runCtx, task, func(usage agent.Usage) {
-				select {
-				case progress <- subagentProgress{index: index, usage: usage}:
-				case <-runCtx.Done():
-				}
-			})
-			completions <- subagentCompletion{
-				index:   index,
-				elapsed: time.Since(started),
-				result:  subagentResult{text: result.Text, usage: result.Usage, err: runErr},
-			}
-		}(index, task)
-	}
-
-	ticker := time.NewTicker(subagentUpdateInterval)
-	defer ticker.Stop()
-
-	results := make([]subagentResult, len(tasks))
-	remaining := len(tasks)
-	var updateErr error
-	for remaining > 0 {
-		select {
-		case completion := <-completions:
-			remaining--
-			results[completion.index] = completion.result
-			status := &statuses[completion.index]
-			status.elapsed = completion.elapsed
-			if completion.result.usage.TotalTokens > 0 {
-				status.tokens = completion.result.usage.TotalTokens
-			}
-			if completion.result.err != nil {
-				status.state = "failed"
-			} else {
-				status.state = "complete"
-			}
-			if updateErr == nil {
-				updateErr = publishSubagentUpdate(updates, tasks, statuses, time.Now())
-				if updateErr != nil {
-					cancel()
-				}
-			}
-		case childProgress := <-progress:
-			if statuses[childProgress.index].state != "running" {
-				continue
-			}
-			statuses[childProgress.index].tokens = childProgress.usage.TotalTokens
-			if updateErr == nil {
-				updateErr = publishSubagentUpdate(updates, tasks, statuses, time.Now())
-				if updateErr != nil {
-					cancel()
-				}
-			}
-		case now := <-ticker.C:
-			if updateErr == nil {
-				updateErr = publishSubagentUpdate(updates, tasks, statuses, now)
-				if updateErr != nil {
-					cancel()
-				}
-			}
+		s.nextID++
+		jobCtx, cancel := context.WithCancelCause(s.ctx)
+		job := &subagentJob{
+			id:            fmt.Sprintf("subagent-%d", s.nextID),
+			task:          task,
+			thinkingLevel: thinkingLevel,
+			ctx:           jobCtx,
+			cancel:        cancel,
+			state:         "running",
+			started:       started,
 		}
+		s.jobs[job.id] = job
+		jobs[index] = job
 	}
 
-	if updateErr != nil {
-		return nil, updateErr
+	s.workers.Add(len(jobs))
+	s.publishStatusLocked()
+	s.mu.Unlock()
+
+	s.signalChange()
+	for _, job := range jobs {
+		go s.runJob(job)
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return results, nil
+	return jobs, nil
 }
 
-func formatSubagentResults(results []subagentResult) agent.ToolResult {
-	var output strings.Builder
-	failed := false
-	for index, result := range results {
-		if index > 0 {
-			output.WriteString("\n\n")
+func (s *Subagent) runJob(job *subagentJob) {
+	defer s.workers.Done()
+
+	result, runErr := s.run(job.ctx, job.task, job.thinkingLevel, func(progress SubagentProgress) {
+		s.mu.Lock()
+		stateChanged := false
+		if !subagentStateTerminal(job.state) {
+			if progress.Usage != (agent.Usage{}) {
+				job.usage = progress.Usage
+			}
+			if progress.Finalizing && job.state == "running" {
+				job.state = "finalizing"
+				stateChanged = true
+			}
 		}
-		fmt.Fprintf(&output, "Subagent %d:\n", index+1)
-		if result.err != nil {
-			failed = true
-			fmt.Fprintf(&output, "error: %v", result.err)
+		if stateChanged {
+			s.publishStatusLocked()
+		}
+		s.mu.Unlock()
+		s.signalChange()
+	})
+	if cause := context.Cause(job.ctx); cause != nil {
+		runErr = cause
+	}
+
+	s.mu.Lock()
+	job.elapsed = time.Since(job.started)
+	job.result = result
+	job.err = runErr
+	if result.Usage.TotalTokens > 0 {
+		job.usage = result.Usage
+	}
+	switch {
+	case errors.Is(runErr, errSubagentCanceled), errors.Is(runErr, errSubagentSessionClosed):
+		job.state = "canceled"
+	case runErr != nil:
+		job.state = "failed"
+	default:
+		job.state = "complete"
+	}
+	s.publishStatusLocked()
+	s.mu.Unlock()
+	s.signalChange()
+}
+
+func (s *Subagent) jobsForIDs(ids []string) ([]*subagentJob, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return nil, fmt.Errorf("subagent manager is closed")
+	}
+
+	jobs := make([]*subagentJob, len(ids))
+	for index, id := range ids {
+		job, exists := s.jobs[id]
+		if !exists {
+			return nil, fmt.Errorf("unknown or expired subagent ID %q", id)
+		}
+		jobs[index] = job
+	}
+	return jobs, nil
+}
+
+func (s *Subagent) cancelJobs(jobs []*subagentJob, cause error) []string {
+	s.mu.Lock()
+	canceled := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		if subagentStateTerminal(job.state) || job.state == "canceling" {
 			continue
 		}
-		output.WriteString(result.text)
+		job.state = "canceling"
+		job.cancel(cause)
+		canceled = append(canceled, job.id)
 	}
-
-	formatted := output.String()
-	if truncateHead(formatted, defaultMaxLines, defaultMaxBytes).truncated {
-		formatted = boundHead(formatted, "subagent output truncated")
+	if len(canceled) > 0 {
+		s.publishStatusLocked()
 	}
-	return agent.ToolResult{Output: formatted, IsError: failed}
+	s.mu.Unlock()
+	if len(canceled) > 0 {
+		s.signalChange()
+	}
+	return canceled
 }
 
-func publishSubagentUpdate(updates agent.ToolUpdateSink, tasks []string, statuses []subagentStatus, now time.Time) error {
-	if updates == nil {
-		return nil
+func (s *Subagent) snapshotJobs(jobs []*subagentJob) ([]subagentJobSnapshot, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	snapshots := make([]subagentJobSnapshot, len(jobs))
+	complete := true
+	for index, job := range jobs {
+		snapshots[index] = subagentJobSnapshot{
+			id:            job.id,
+			task:          job.task,
+			thinkingLevel: job.thinkingLevel,
+			status: subagentStatus{
+				state:   job.state,
+				started: job.started,
+				elapsed: job.elapsed,
+				tokens:  job.usage.TotalTokens,
+			},
+			result: subagentResult{text: job.result.Text, err: job.err},
+		}
+		if !subagentStateTerminal(job.state) {
+			complete = false
+		}
 	}
-	return updates.Update(subagentPresentation(tasks, statuses, now))
+	return snapshots, complete
 }
 
-func subagentPresentation(tasks []string, statuses []subagentStatus, now time.Time) agent.ToolPresentation {
+func (s *Subagent) snapshotsForPresentation(ids []string) []subagentJobSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	snapshots := make([]subagentJobSnapshot, len(ids))
+	for index, id := range ids {
+		snapshots[index] = subagentJobSnapshot{id: id, status: subagentStatus{state: "pending"}}
+		job, exists := s.jobs[id]
+		if !exists {
+			continue
+		}
+		snapshots[index].task = job.task
+		snapshots[index].thinkingLevel = job.thinkingLevel
+		snapshots[index].status = subagentStatus{
+			state:   job.state,
+			started: job.started,
+			elapsed: job.elapsed,
+			tokens:  job.usage.TotalTokens,
+		}
+	}
+	return snapshots
+}
+
+func (s *Subagent) consume(jobs []*subagentJob) {
+	s.mu.Lock()
+	for _, job := range jobs {
+		if s.jobs[job.id] == job {
+			delete(s.jobs, job.id)
+		}
+	}
+	s.publishStatusLocked()
+	s.mu.Unlock()
+	s.signalChange()
+}
+
+func (s *Subagent) publishStatusLocked() {
+	status := agent.SubagentStatus{}
+	for _, job := range s.jobs {
+		switch job.state {
+		case "finalizing":
+			status.Finalizing++
+		case "running", "canceling":
+			status.Running++
+		default:
+			status.Completed++
+		}
+	}
+
+	select {
+	case s.status <- status:
+		return
+	default:
+	}
+	select {
+	case <-s.status:
+	default:
+	}
+	select {
+	case s.status <- status:
+	default:
+	}
+}
+
+func (s *Subagent) signalChange() {
+	select {
+	case s.changes <- struct{}{}:
+	default:
+	}
+}
+
+func subagentStateTerminal(state string) bool {
+	switch state {
+	case "complete", "failed", "canceled":
+		return true
+	default:
+		return false
+	}
+}
+
+func formatSubagentLaunches(jobs []*subagentJob, thinkingLevel agent.ThinkingLevel) string {
+	var output strings.Builder
+	fmt.Fprintf(&output, "Started subagents (thinking: %s):", thinkingLevel)
+	for _, job := range jobs {
+		label := boundPresentationLabel(strings.TrimSpace(strings.SplitN(job.task, "\n", 2)[0]), 120)
+		fmt.Fprintf(&output, "\n- %s: %s", job.id, label)
+	}
+	return output.String()
+}
+
+func subagentLaunchPresentation(tasks, ids []string, thinkingLevel agent.ThinkingLevel) agent.ToolPresentation {
 	presentation := agent.ToolPresentation{Title: subagentToolName, Markdown: true}
 	if len(tasks) > 1 {
-		presentation.Arguments = fmt.Sprintf("(%d)", len(tasks))
+		presentation.Arguments = fmt.Sprintf("(%d, %s)", len(tasks), thinkingLevel)
+	} else if len(tasks) == 1 {
+		presentation.Arguments = fmt.Sprintf("(%s)", thinkingLevel)
 	}
 	presentation.Lines = make([]string, len(tasks))
 	for index, task := range tasks {
-		status := "pending"
-		if index < len(statuses) {
-			status = formatSubagentStatus(statuses[index], now)
+		state := "pending"
+		if index < len(ids) {
+			state = "started (" + ids[index] + ")"
 		}
 		label := strings.TrimSpace(strings.SplitN(task, "\n", 2)[0])
 		label = boundPresentationLabel(label, 120)
-		presentation.Lines[index] = fmt.Sprintf("%d. %s — %s", index+1, status, label)
+		presentation.Lines[index] = fmt.Sprintf("%d. %s — %s", index+1, state, label)
 	}
 	return presentation
 }
 
 func formatSubagentStatus(status subagentStatus, now time.Time) string {
+	if status.state == "pending" {
+		return status.state
+	}
+
 	elapsed := status.elapsed
-	if status.state == "running" {
+	if !subagentStateTerminal(status.state) {
 		elapsed = now.Sub(status.started)
 	}
 	if elapsed < 0 {

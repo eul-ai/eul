@@ -21,6 +21,7 @@ const (
 	tuiEventKey
 	tuiEventEngine
 	tuiEventProviderUsage
+	tuiEventSubagentStatus
 	tuiEventFileSearch
 	tuiEventSpinner
 	tuiEventUsageClock
@@ -28,12 +29,13 @@ const (
 )
 
 type tuiEvent struct {
-	kind          tuiEventKind
-	key           keyEvent
-	engine        engineMessage
-	providerUsage providerUsageMessage
-	fileSearch    fileSearchResult
-	err           error
+	kind           tuiEventKind
+	key            keyEvent
+	engine         engineMessage
+	providerUsage  providerUsageMessage
+	subagentStatus agent.SubagentStatus
+	fileSearch     fileSearchResult
+	err            error
 }
 
 type tuiController struct {
@@ -161,6 +163,12 @@ func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, e
 	case tuiEventProviderUsage:
 		if event.providerUsage.err == nil {
 			c.model.providerUsage = agent.ProviderUsage{Windows: append([]agent.UsageWindow(nil), event.providerUsage.usage.Windows...)}
+		}
+	case tuiEventSubagentStatus:
+		c.model.subagentStatus = agent.SubagentStatus{
+			Running:    max(0, event.subagentStatus.Running),
+			Finalizing: max(0, event.subagentStatus.Finalizing),
+			Completed:  max(0, event.subagentStatus.Completed),
 		}
 	case tuiEventFileSearch:
 		if !c.model.applyFileSearchResult(event.fileSearch) {

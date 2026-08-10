@@ -204,6 +204,7 @@ func runTUIWithKeys(
 	}
 
 	interrupts := options.Interrupts
+	subagentUpdates := options.SubagentUpdates
 	parentDone := ctx.Done()
 	for {
 		var event tuiEvent
@@ -225,6 +226,12 @@ func runTUIWithKeys(
 			event = tuiEvent{kind: tuiEventEngine, engine: message}
 		case message := <-usageMessages:
 			event = tuiEvent{kind: tuiEventProviderUsage, providerUsage: message}
+		case status, ok := <-subagentUpdates:
+			if !ok {
+				subagentUpdates = nil
+				continue
+			}
+			event = tuiEvent{kind: tuiEventSubagentStatus, subagentStatus: status}
 		case result := <-fileSearchMessages:
 			event = tuiEvent{kind: tuiEventFileSearch, fileSearch: result}
 		case <-spinnerTicker.C:

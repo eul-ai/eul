@@ -20,7 +20,7 @@ persisted locally, and tools run directly on your machine with your permissions.
 - File search and references from the prompt with `@`
 - Steering messages that can be queued while the agent is working
 - Autonomous goals for longer tasks
-- Read-only parallel subagents when explicitly requested
+- Selective asynchronous read-only subagents for parallel research
 - Project instructions from `AGENTS.md`
 - Global and project-specific [Agent Skills](https://agentskills.io)
 - Automatic context compaction and usage information for supported models
@@ -133,7 +133,7 @@ Eul can use the following capabilities as needed:
 - Inspect language-server diagnostics
 - Look up hover information, definitions, references, and document symbols
 - Rename symbols across a workspace
-- Delegate independent read-only research to parallel subagents
+- Launch independent read-only research in background subagents and wait for selected results
 
 Language-server configuration is loaded from `lsp.json` under `EUL_HOME`, or
 the platform user configuration directory when `EUL_HOME` is unset. For
@@ -154,6 +154,21 @@ extensions it handles:
 ```
 
 Language-server features are available when a configured command is installed.
+
+## Subagents
+
+Eul may launch up to four independent read-only subagents when separate context
+and parallel investigation are useful. Launches return immediately; completed
+results remain available until `subagent_wait` collects them, and uncollected
+results continue to occupy capacity. `subagent_cancel` stops selected work.
+Canceling a turn while `subagent_wait` is active also stops the selected agents;
+canceling unrelated main-context work does not.
+
+A launch may select one thinking level for its batch from `off`, `minimal`, `low`,
+`medium`, or `high`; the default is `low`. Subagents begin a tool-free final
+response after five minutes, 200,000 cumulative tokens, or 20 normal provider
+generations. The final response is separate from the generation budget, and is
+returned even when time or token usage crosses a threshold.
 
 ## Goals
 
@@ -198,6 +213,9 @@ run bundled scripts with your permissions.
 - Saved sessions can contain prompts, source code, and tool output. They are
   protected with local filesystem permissions but are not encrypted at rest.
 - Canceling a turn does not undo tool side effects that already occurred.
-- Subagents are read-only and are used only when explicitly requested.
+- Canceling a subagent wait cancels its selected background tasks; canceling
+  unrelated main-context work leaves background tasks running.
+- Subagents are read-only, session-local, canceled on session shutdown, and are
+  not restored after process restart.
 - Markdown rendering is limited to inline bold, italic, and code formatting.
 - Eul currently uses ChatGPT authentication for OpenAI Codex models.

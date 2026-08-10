@@ -206,6 +206,146 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 	}
 }
 
+func TestEngineFinalizesWithoutToolsAfterCurrentToolRound(t *testing.T) {
+	toolExecuted := false
+	finalizing := false
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if len(request.Tools) != 1 {
+				t.Fatalf("normal tools = %v", toolNames(request.Tools))
+			}
+			return Response{
+				Text:      "working",
+				ToolCalls: []ToolCall{{ID: "read-1", Name: "read", Arguments: json.RawMessage(`{}`)}},
+				State:     []byte("working-state"),
+				Usage:     Usage{TotalTokens: 200_000},
+			}, nil
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if !toolExecuted || !finalizing {
+				t.Fatalf("finalization began before tool completion: tool=%t finalizing=%t", toolExecuted, finalizing)
+			}
+			if len(request.Tools) != 0 {
+				t.Fatalf("finalization tools = %v", toolNames(request.Tools))
+			}
+			if !strings.Contains(request.Instructions, "Return concise findings") {
+				t.Fatalf("finalization instructions = %q", request.Instructions)
+			}
+			if len(request.Inputs) != 1 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].Text != "contents" {
+				t.Fatalf("finalization inputs = %+v", request.Inputs)
+			}
+			return Response{Text: "final findings", Usage: Usage{TotalTokens: 25}}, nil
+		},
+	}}
+	toolbox := &fakeToolbox{
+		definitions: []ToolDefinition{{Name: "read"}},
+		execute: func(context.Context, ToolCall) (ToolResult, error) {
+			toolExecuted = true
+			return ToolResult{Output: "contents"}, nil
+		},
+	}
+	engine := newTestEngine(t, provider, toolbox, Options{})
+	result, err := engine.RunWithFinalization(context.Background(), "inspect", discardEvents, FinalizationPolicy{
+		AfterTokens: 200_000,
+		Prompt:      "Return concise findings and unfinished areas.",
+		OnBegin: func() {
+			finalizing = true
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.calls != 2 || result.Text != "final findings" || result.Usage.TotalTokens != 200_025 {
+		t.Fatalf("calls = %d, result = %+v", provider.calls, result)
+	}
+}
+
+func TestEngineTimeThresholdFinalizesAfterInFlightWork(t *testing.T) {
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(context.Context, Request, TextSink) (Response, error) {
+			time.Sleep(10 * time.Millisecond)
+			return Response{ToolCalls: []ToolCall{{ID: "read-1", Name: "read"}}}, nil
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if len(request.Tools) != 0 || len(request.Inputs) != 1 || request.Inputs[0].Text != "contents" {
+				t.Fatalf("finalization request = %+v", request)
+			}
+			return Response{Text: "usable final result"}, nil
+		},
+	}}
+	toolbox := &fakeToolbox{
+		definitions: []ToolDefinition{{Name: "read"}},
+		execute: func(context.Context, ToolCall) (ToolResult, error) {
+			return ToolResult{Output: "contents"}, nil
+		},
+	}
+	engine := newTestEngine(t, provider, toolbox, Options{})
+	result, err := engine.RunWithFinalization(context.Background(), "inspect", discardEvents, FinalizationPolicy{
+		AfterDuration: time.Millisecond,
+		Prompt:        "Finalize.",
+	})
+	if err != nil || result.Text != "usable final result" || provider.calls != 2 {
+		t.Fatalf("result = %+v, calls = %d, error = %v", result, provider.calls, err)
+	}
+}
+
+func TestFinalizationPolicyThresholds(t *testing.T) {
+	started := time.Now()
+	tests := []struct {
+		name        string
+		policy      FinalizationPolicy
+		started     time.Time
+		usage       Usage
+		generations int
+	}{
+		{name: "duration", policy: FinalizationPolicy{AfterDuration: 5 * time.Minute}, started: started.Add(-5 * time.Minute)},
+		{name: "tokens", policy: FinalizationPolicy{AfterTokens: 200_000}, started: started, usage: Usage{TotalTokens: 200_000}},
+		{name: "generations", policy: FinalizationPolicy{AfterGenerations: 20}, started: started, generations: 20},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if !test.policy.shouldBegin(test.started, test.usage, test.generations) {
+				t.Fatal("threshold did not begin finalization")
+			}
+		})
+	}
+	if (FinalizationPolicy{AfterDuration: time.Hour, AfterTokens: 10, AfterGenerations: 2}).shouldBegin(started, Usage{TotalTokens: 9}, 1) {
+		t.Fatal("finalization began below every threshold")
+	}
+}
+
+func TestEngineFinalizationFailurePreservesPartialOutput(t *testing.T) {
+	finalErr := errors.New("final request failed")
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(context.Context, Request, TextSink) (Response, error) {
+			return Response{Text: "partial finding", ToolCalls: []ToolCall{{ID: "read-1", Name: "read"}}}, nil
+		},
+		func(_ context.Context, request Request, onText TextSink) (Response, error) {
+			if len(request.Tools) != 0 {
+				t.Fatalf("finalization tools = %v", toolNames(request.Tools))
+			}
+			if err := onText("streamed final finding"); err != nil {
+				return Response{}, err
+			}
+			return Response{}, finalErr
+		},
+	}}
+	toolbox := &fakeToolbox{
+		definitions: []ToolDefinition{{Name: "read"}},
+		execute: func(context.Context, ToolCall) (ToolResult, error) {
+			return ToolResult{Output: "contents"}, nil
+		},
+	}
+	engine := newTestEngine(t, provider, toolbox, Options{})
+	result, err := engine.RunWithFinalization(context.Background(), "inspect", discardEvents, FinalizationPolicy{
+		AfterGenerations: 1,
+		Prompt:           "Finalize.",
+	})
+	if !errors.Is(err, finalErr) || result.Text != "streamed final finding" || provider.calls != 2 {
+		t.Fatalf("result = %+v, calls = %d, error = %v", result, provider.calls, err)
+	}
+}
+
 func TestCompleteToolCallSnapshotPreservesRawJSON(t *testing.T) {
 	call := ToolCall{ID: "call-1", Name: "write", Arguments: json.RawMessage(`{"path":"demo.go"}`)}
 	snapshot := completeToolCallSnapshot(call)

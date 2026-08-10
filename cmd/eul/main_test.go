@@ -168,13 +168,13 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 	for i, definition := range gotRequest.Tools {
 		names[i] = definition.Name
 	}
-	wantNames := []string{"bash", "edit", "read", "subagent", "update_goal", "write"}
+	wantNames := []string{"bash", "edit", "read", "subagent", "subagent_cancel", "subagent_wait", "update_goal", "write"}
 	if !slices.Equal(names, wantNames) {
 		t.Fatalf("tools = %v, want %v", names, wantNames)
 	}
 }
 
-func TestAgentSessionFeedsConcurrentSubagentsBackToMain(t *testing.T) {
+func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	cwd := t.TempDir()
 	projectInstructions := "Follow project instructions."
 	if err := os.WriteFile(filepath.Join(cwd, "AGENTS.md"), []byte(projectInstructions), 0o644); err != nil {
@@ -208,31 +208,50 @@ func TestAgentSessionFeedsConcurrentSubagentsBackToMain(t *testing.T) {
 					if request.ThinkingLevel != agent.ThinkingHigh {
 						t.Fatalf("main thinking level = %q", request.ThinkingLevel)
 					}
-					foundSubagent := false
+					definitions := make(map[string]agent.ToolDefinition, len(request.Tools))
 					for _, definition := range request.Tools {
-						if definition.Name != "subagent" {
-							continue
-						}
-						foundSubagent = true
-						if !strings.Contains(definition.Description, "explicitly asks") {
-							t.Fatalf("subagent description = %q", definition.Description)
-						}
+						definitions[definition.Name] = definition
 					}
-					if !foundSubagent || !strings.Contains(request.Instructions, "explicitly asks for subagents") {
-						t.Fatalf("main request omits explicit subagent rule: %+v", request)
+					if !strings.Contains(definitions["subagent"].Description, "Use selectively") || definitions["subagent_wait"].Name == "" || definitions["subagent_cancel"].Name == "" {
+						t.Fatalf("subagent definitions = %+v", definitions)
+					}
+					if strings.Contains(request.Instructions, "explicitly asks for subagents") {
+						t.Fatalf("main request retains explicit subagent rule: %+v", request)
 					}
 					return agent.Response{ToolCalls: []agent.ToolCall{{
-						ID:        "call-1",
+						ID:        "launch",
 						Name:      "subagent",
 						Arguments: []byte(`{"tasks":["review alpha","review beta"]}`),
 					}}}, nil
 				case 2:
 					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "subagent" {
-						t.Fatalf("main continuation inputs = %+v", request.Inputs)
+						t.Fatalf("launch continuation inputs = %+v", request.Inputs)
 					}
 					output := request.Inputs[0].Text
-					if !strings.Contains(output, "Subagent 1:\nfinding for review alpha") || !strings.Contains(output, "Subagent 2:\nfinding for review beta") {
-						t.Fatalf("subagent output = %q", output)
+					if !strings.Contains(output, "Started subagents (thinking: low)") || !strings.Contains(output, "subagent-1: review alpha") || !strings.Contains(output, "subagent-2: review beta") || strings.Contains(output, "finding for") {
+						t.Fatalf("launch output = %q", output)
+					}
+					return agent.Response{ToolCalls: []agent.ToolCall{{
+						ID:        "read",
+						Name:      "read",
+						Arguments: []byte(`{"path":"AGENTS.md"}`),
+					}}}, nil
+				case 3:
+					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "read" || !strings.Contains(request.Inputs[0].Text, projectInstructions) {
+						t.Fatalf("independent continuation inputs = %+v", request.Inputs)
+					}
+					return agent.Response{ToolCalls: []agent.ToolCall{{
+						ID:        "wait",
+						Name:      "subagent_wait",
+						Arguments: []byte(`{"ids":["subagent-1","subagent-2"]}`),
+					}}}, nil
+				case 4:
+					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "subagent_wait" {
+						t.Fatalf("wait continuation inputs = %+v", request.Inputs)
+					}
+					output := request.Inputs[0].Text
+					if !strings.Contains(output, "Subagent subagent-1 (thinking: low):\nfinding for review alpha") || !strings.Contains(output, "Subagent subagent-2 (thinking: low):\nfinding for review beta") {
+						t.Fatalf("wait output = %q", output)
 					}
 					if err := sink("combined answer"); err != nil {
 						return agent.Response{}, err
@@ -272,11 +291,11 @@ func TestAgentSessionFeedsConcurrentSubagentsBackToMain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, runErr := session.engine.Run(context.Background(), "use two subagents", func(agent.Event) error { return nil })
+	result, runErr := session.engine.Run(context.Background(), "review in parallel", func(agent.Event) error { return nil })
 	if err := session.finish(runErr); err != nil {
 		t.Fatal(err)
 	}
-	if result.Text != "combined answer" || mainCalls != 2 {
+	if result.Text != "combined answer" || mainCalls != 4 {
 		t.Fatalf("result = %+v, main calls = %d", result, mainCalls)
 	}
 
@@ -287,7 +306,7 @@ func TestAgentSessionFeedsConcurrentSubagentsBackToMain(t *testing.T) {
 	}
 	var tasks []string
 	for _, request := range childRequests {
-		if request.Model != "model" || request.ThinkingLevel != agent.ThinkingHigh || !strings.Contains(request.Instructions, projectInstructions) || !strings.Contains(request.Instructions, "Current working directory: "+filepath.ToSlash(cwd)) {
+		if request.Model != "model" || request.ThinkingLevel != agent.ThinkingLow || !strings.Contains(request.Instructions, projectInstructions) || !strings.Contains(request.Instructions, "Current working directory: "+filepath.ToSlash(cwd)) {
 			t.Fatalf("child request = %+v", request)
 		}
 		names := make([]string, len(request.Tools))

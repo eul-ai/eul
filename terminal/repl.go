@@ -70,6 +70,7 @@ type Options struct {
 	Interrupts         <-chan os.Signal
 	SetThinkingLevel   func(agent.ThinkingLevel) error
 	LoadUsage          func(context.Context) (agent.ProviderUsage, error)
+	SubagentUpdates    <-chan agent.SubagentStatus
 	InitialCheckpoint  *Checkpoint
 	SessionID          string
 	PreviousTurnActive bool
@@ -109,6 +110,9 @@ func toolHeading(call agent.ToolCall, presentation agent.ToolPresentation) strin
 }
 
 func toolActivityDetail(call agent.ToolCall, presentation agent.ToolPresentation) string {
+	if call.Name == "bash" || toolTitle(call, presentation) == "bash" {
+		return "bash"
+	}
 	return diagnostic(toolHeading(call, presentation), maxToolPresentationSummaryBytes)
 }
 

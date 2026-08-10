@@ -17,6 +17,7 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	model.beginTurn("  First line of the prompt  \nsecond line")
 	model.appendBlock(blockAssistant, "answer")
 	model.running = false
+	model.subagentStatus = agent.SubagentStatus{Running: 1, Completed: 1}
 	model.history = []string{"older prompt"}
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)
@@ -38,7 +39,7 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	}
 
 	restored := newTUIModel(100, 30, Options{InitialCheckpoint: &decoded})
-	if restored.running || restored.streamOpen || restored.activity.kind != activityReady {
+	if restored.running || restored.streamOpen || restored.activity.kind != activityReady || restored.subagentStatus != (agent.SubagentStatus{}) {
 		t.Fatalf("runtime state was restored: %+v", restored)
 	}
 	if len(restored.blocks) != 2 || restored.blocks[0].kind != blockUser || restored.blocks[1].text != "answer" {

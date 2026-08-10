@@ -65,6 +65,9 @@ func TestNewAgentSessionWiresOptionalProviderUsage(t *testing.T) {
 	if session.terminalOptions.LoadUsage == nil {
 		t.Fatal("provider usage was not wired to the terminal")
 	}
+	if session.terminalOptions.SubagentUpdates == nil {
+		t.Fatal("subagent status was not wired to the terminal")
+	}
 	if session.terminalOptions.WorkingDirectory != cwd {
 		t.Fatalf("terminal working directory = %q, want %q", session.terminalOptions.WorkingDirectory, cwd)
 	}

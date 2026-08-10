@@ -215,6 +215,30 @@ func TestTUIControllerNewSessionLeavesCurrentGoal(t *testing.T) {
 	}
 }
 
+func TestTUIControllerAppliesSubagentStatus(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	controller := tuiController{model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard}
+
+	_, err := controller.transition(context.Background(), tuiEvent{
+		kind:           tuiEventSubagentStatus,
+		subagentStatus: agent.SubagentStatus{Running: 2, Finalizing: 1, Completed: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.subagentStatus != (agent.SubagentStatus{Running: 2, Finalizing: 1, Completed: 1}) || !controller.dirty {
+		t.Fatalf("status=%+v dirty=%v", model.subagentStatus, controller.dirty)
+	}
+
+	_, err = controller.transition(context.Background(), tuiEvent{
+		kind:           tuiEventSubagentStatus,
+		subagentStatus: agent.SubagentStatus{Running: -1, Finalizing: -1, Completed: -1},
+	})
+	if err != nil || model.subagentStatus != (agent.SubagentStatus{}) {
+		t.Fatalf("sanitized status=%+v error=%v", model.subagentStatus, err)
+	}
+}
+
 func TestRenderFailureDoesNotCommitUnseenFrame(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
 	renderer := &tuiRenderer{}

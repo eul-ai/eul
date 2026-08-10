@@ -66,6 +66,28 @@ func TestStatusTruncatesSessionID(t *testing.T) {
 	}
 }
 
+func TestStatusShowsBackgroundSubagents(t *testing.T) {
+	model := newTUIModel(120, 12, Options{Model: "model"})
+	model.subagentStatus = agent.SubagentStatus{Running: 2, Finalizing: 1, Completed: 1}
+
+	left, _ := renderStatus(model, model.width)
+	if left != "ready · subagents: 2 running, 1 finalizing, 1 done" {
+		t.Fatalf("ready status = %q", left)
+	}
+
+	model.activity = activity{kind: activityThinking}
+	left, _ = renderStatus(model, model.width)
+	if left != "⠋ thinking · subagents: 2 running, 1 finalizing, 1 done" {
+		t.Fatalf("thinking status = %q", left)
+	}
+
+	model.subagentStatus = agent.SubagentStatus{Completed: 2}
+	left, _ = renderStatus(model, model.width)
+	if left != "⠋ thinking" {
+		t.Fatalf("completed status = %q", left)
+	}
+}
+
 func TestStatusShowsProviderUsageWindows(t *testing.T) {
 	now := time.Date(2027, time.January, 2, 10, 0, 0, 0, time.UTC)
 	model := newTUIModel(180, 12, Options{Model: "model"})
@@ -826,14 +848,14 @@ func TestCanceledTurnKeepsCancelingActivity(t *testing.T) {
 	}
 }
 
-func TestTUIToolPresentationBoundsSingleLineSummary(t *testing.T) {
+func TestTUIBashActivityOmitsCommand(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.applyAgentEvent(agent.Event{
 		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "bash-1", Name: "bash"},
 		Presentation: agent.ToolPresentation{Title: "bash", Arguments: "first\n" + strings.Repeat("x", 1_000)},
 	})
 	block := model.blocks[model.toolBlockIndex("bash-1")]
-	if strings.Contains(block.tool.Arguments, "\n") || len(block.tool.Arguments) > maxToolPresentationSummaryBytes || len(model.activity.detail) > maxToolPresentationSummaryBytes || model.activity.detail != toolActivityDetail(agent.ToolCall{}, block.tool) {
+	if strings.Contains(block.tool.Arguments, "\n") || len(block.tool.Arguments) > maxToolPresentationSummaryBytes || model.activity.detail != "bash" || toolActivityDetail(agent.ToolCall{}, block.tool) != "bash" {
 		t.Fatalf("presentation=%+v activity=%q", block.tool, model.activity.detail)
 	}
 }
