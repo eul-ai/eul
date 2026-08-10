@@ -456,7 +456,6 @@ func TestRunConfigurationAndUsageErrors(t *testing.T) {
 	}{
 		{name: "help", arguments: []string{"--help"}, wantCode: exitSuccess, want: "Usage of eul:"},
 		{name: "missing authentication", environment: map[string]string{"OPENAI_MODEL": "model"}, missingAuth: true, wantCode: exitFailure, want: "run 'eul login'"},
-		{name: "missing model", wantCode: exitFailure, want: "model is required"},
 		{name: "explicit empty model", arguments: []string{"--model="}, environment: map[string]string{"OPENAI_MODEL": "fallback"}, wantCode: exitFailure, want: "model is required"},
 		{name: "model whitespace", arguments: []string{"--model", "bad model"}, wantCode: exitFailure, want: "must not contain whitespace"},
 		{name: "invalid thinking level", arguments: []string{"--thinking", "extreme"}, environment: map[string]string{"OPENAI_MODEL": "model"}, wantCode: exitUsage, want: "thinking level must be one of"},

@@ -27,6 +27,19 @@ func TestParseAgentArguments(t *testing.T) {
 	}
 }
 
+func TestParseAgentArgumentsDefaultsModel(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	runtime := testRuntime(t.TempDir(), &stdout, &stderr, nil)
+
+	got, err := parseAgentArguments(nil, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.model != "gpt-5.6-sol" {
+		t.Fatalf("model = %q, want %q", got.model, "gpt-5.6-sol")
+	}
+}
+
 func TestResolveAgentConfigLoadsSubagentModels(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(t.TempDir(), &stdout, &stderr, map[string]string{

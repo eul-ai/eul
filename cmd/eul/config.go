@@ -13,6 +13,8 @@ import (
 	openaiadapter "github.com/eul-ai/eul/provider/openai"
 )
 
+const defaultModel = "gpt-5.6-sol"
+
 type reportedFlagError struct {
 	error
 }
@@ -74,9 +76,14 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (agentArguments
 		thinkingDefault = string(agent.DefaultThinkingLevel)
 	}
 
+	modelDefault := runtime.getenv("OPENAI_MODEL")
+	if modelDefault == "" {
+		modelDefault = defaultModel
+	}
+
 	flags := flag.NewFlagSet("eul", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
-	model := flags.String("model", runtime.getenv("OPENAI_MODEL"), "OpenAI model (or OPENAI_MODEL)")
+	model := flags.String("model", modelDefault, "OpenAI model (or OPENAI_MODEL)")
 	thinking := flags.String("thinking", thinkingDefault, "thinking level (or EUL_THINKING_LEVEL)")
 	cwd := flags.String("cwd", "", "fixed working directory")
 	resume := &resumeValue{}

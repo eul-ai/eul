@@ -40,7 +40,7 @@ Sign in and start an interactive session:
 
 ```sh
 ./eul login
-./eul --model <model> --cwd /path/to/project
+./eul --cwd /path/to/project
 ```
 
 For a headless environment, use device authorization:
@@ -55,7 +55,7 @@ Codex service. Its third-party API behavior may change.
 ## Usage
 
 ```text
-eul --model <model> [--thinking <level>] [--cwd <directory>]
+eul [--model <model>] [--thinking <level>] [--cwd <directory>]
 eul --resume[=<session-id>]
 eul login [--device-auth]
 eul logout
@@ -72,13 +72,15 @@ off, minimal, low, medium, high, xhigh, max
 
 The default is `medium`. Availability depends on the selected model.
 
+The model defaults to `gpt-5.6-sol`.
+
 These environment variables provide common defaults:
 
 | Variable | Purpose |
 | --- | --- |
 | `EUL_HOME` | Credential, session, and global LSP configuration directory |
 | `EUL_THINKING_LEVEL` | Default thinking level |
-| `OPENAI_MODEL` | Default model and powerful subagent model |
+| `OPENAI_MODEL` | Override the default model and powerful subagent model |
 | `OPENAI_MODEL_BALANCED` | Balanced subagent model; defaults to `OPENAI_MODEL` |
 | `OPENAI_MODEL_FAST` | Fast subagent model; defaults to `OPENAI_MODEL` |
 | `OPENAI_REASONING_SUMMARY` | Reasoning summary mode: `auto`, `concise`, `detailed`, or `none` |
