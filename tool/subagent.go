@@ -41,8 +41,10 @@ var subagentToolDefinition = agent.ToolDefinition{
 }
 
 type SubagentProgress struct {
-	Usage      agent.Usage
-	Finalizing bool
+	Usage              agent.Usage
+	Generations        int
+	Finalizing         bool
+	FinalizationReason agent.FinalizationReason
 }
 
 type SubagentRun func(context.Context, string, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error)
@@ -69,17 +71,19 @@ type subagentArguments struct {
 }
 
 type subagentJob struct {
-	id            string
-	task          string
-	thinkingLevel agent.ThinkingLevel
-	ctx           context.Context
-	cancel        context.CancelCauseFunc
-	state         string
-	started       time.Time
-	elapsed       time.Duration
-	usage         agent.Usage
-	result        agent.RunResult
-	err           error
+	id                 string
+	task               string
+	thinkingLevel      agent.ThinkingLevel
+	ctx                context.Context
+	cancel             context.CancelCauseFunc
+	state              string
+	started            time.Time
+	elapsed            time.Duration
+	usage              agent.Usage
+	generations        int
+	finalizationReason agent.FinalizationReason
+	result             agent.RunResult
+	err                error
 }
 
 type subagentResult struct {
@@ -88,10 +92,12 @@ type subagentResult struct {
 }
 
 type subagentStatus struct {
-	state   string
-	started time.Time
-	elapsed time.Duration
-	tokens  int64
+	state              string
+	started            time.Time
+	elapsed            time.Duration
+	usage              agent.Usage
+	generations        int
+	finalizationReason agent.FinalizationReason
 }
 
 type subagentJobSnapshot struct {
@@ -278,8 +284,12 @@ func (s *Subagent) runJob(job *subagentJob) {
 			if progress.Usage != (agent.Usage{}) {
 				job.usage = progress.Usage
 			}
+			if progress.Generations > job.generations {
+				job.generations = progress.Generations
+			}
 			if progress.Finalizing && job.state == "running" {
 				job.state = "finalizing"
+				job.finalizationReason = progress.FinalizationReason
 				stateChanged = true
 			}
 		}
@@ -365,10 +375,12 @@ func (s *Subagent) snapshotJobs(jobs []*subagentJob) ([]subagentJobSnapshot, boo
 			task:          job.task,
 			thinkingLevel: job.thinkingLevel,
 			status: subagentStatus{
-				state:   job.state,
-				started: job.started,
-				elapsed: job.elapsed,
-				tokens:  job.usage.TotalTokens,
+				state:              job.state,
+				started:            job.started,
+				elapsed:            job.elapsed,
+				usage:              job.usage,
+				generations:        job.generations,
+				finalizationReason: job.finalizationReason,
 			},
 			result: subagentResult{text: job.result.Text, err: job.err},
 		}
@@ -393,10 +405,12 @@ func (s *Subagent) snapshotsForPresentation(ids []string) []subagentJobSnapshot 
 		snapshots[index].task = job.task
 		snapshots[index].thinkingLevel = job.thinkingLevel
 		snapshots[index].status = subagentStatus{
-			state:   job.state,
-			started: job.started,
-			elapsed: job.elapsed,
-			tokens:  job.usage.TotalTokens,
+			state:              job.state,
+			started:            job.started,
+			elapsed:            job.elapsed,
+			usage:              job.usage,
+			generations:        job.generations,
+			finalizationReason: job.finalizationReason,
 		}
 	}
 	return snapshots
@@ -501,10 +515,52 @@ func formatSubagentStatus(status subagentStatus, now time.Time) string {
 		elapsed = 0
 	}
 	details := []string{elapsed.Truncate(time.Second).String()}
-	if status.tokens > 0 {
-		details = append(details, fmt.Sprintf("%d tokens", status.tokens))
+	switch {
+	case status.usage.InputTokens > 0 || status.usage.OutputTokens > 0:
+		details = append(
+			details,
+			formatSubagentTokenCount(status.usage.InputTokens)+" input",
+			formatSubagentTokenCount(status.usage.OutputTokens)+" output",
+		)
+	case status.usage.TotalTokens > 0:
+		details = append(details, formatSubagentTokenCount(status.usage.TotalTokens)+" processed")
 	}
-	return fmt.Sprintf("%s (%s)", status.state, strings.Join(details, ", "))
+	details = append(details, fmt.Sprintf("%d/%d generations", status.generations, subagentFinalizeAfterGenerations))
+
+	state := status.state
+	if reason := formatFinalizationReason(status.finalizationReason); reason != "" {
+		switch status.state {
+		case "finalizing":
+			state += " — " + reason
+		case "complete":
+			state += " — finalized by " + reason
+		case "failed":
+			state += " — finalization after " + reason
+		}
+	}
+	return fmt.Sprintf("%s (%s)", state, strings.Join(details, ", "))
+}
+
+func formatSubagentTokenCount(tokens int64) string {
+	switch {
+	case tokens >= 1_000_000:
+		return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(tokens)/1_000_000), ".0") + "m"
+	case tokens >= 1_000:
+		return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(tokens)/1_000), ".0") + "k"
+	default:
+		return fmt.Sprintf("%d", tokens)
+	}
+}
+
+func formatFinalizationReason(reason agent.FinalizationReason) string {
+	switch reason {
+	case agent.FinalizationReasonDuration:
+		return "time limit"
+	case agent.FinalizationReasonGenerations:
+		return "generation limit"
+	default:
+		return ""
+	}
 }
 
 func boundPresentationLabel(label string, maximum int) string {

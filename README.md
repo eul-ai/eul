@@ -166,9 +166,9 @@ canceling unrelated main-context work does not.
 
 A launch may select one thinking level for its batch from `off`, `minimal`, `low`,
 `medium`, or `high`; the default is `low`. Subagents begin a tool-free final
-response after five minutes, 200,000 cumulative tokens, or 20 normal provider
-generations. The final response is separate from the generation budget, and is
-returned even when time or token usage crosses a threshold.
+response after five minutes or 20 normal provider generations. The final response
+is separate from the generation budget. While waiting, Eul shows cumulative input
+and output usage, normal-generation progress, and the reason finalization began.
 
 ## Goals
 

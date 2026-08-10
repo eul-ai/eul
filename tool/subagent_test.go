@@ -221,10 +221,11 @@ func TestSubagentWaitPublishesLiveUsageAndCompletion(t *testing.T) {
 	usagePublished := make(chan struct{})
 	release := make(chan struct{})
 	subagents := NewSubagent(func(_ context.Context, _ string, _ agent.ThinkingLevel, update func(SubagentProgress)) (agent.RunResult, error) {
-		update(SubagentProgress{Usage: agent.Usage{TotalTokens: 321}})
+		usage := agent.Usage{InputTokens: 300, OutputTokens: 21, TotalTokens: 321}
+		update(SubagentProgress{Usage: usage, Generations: 7})
 		close(usagePublished)
 		<-release
-		return agent.RunResult{Text: "done", Usage: agent.Usage{TotalTokens: 321}}, nil
+		return agent.RunResult{Text: "done", Usage: usage}, nil
 	})
 	defer subagents.Close()
 	wait := NewSubagentWait(subagents)
@@ -246,7 +247,7 @@ func TestSubagentWaitPublishesLiveUsageAndCompletion(t *testing.T) {
 
 	select {
 	case update := <-updates:
-		if update.Title != "subagent_wait" || !strings.Contains(update.Lines[0], "running") || !strings.Contains(update.Lines[0], "321 tokens") || !strings.Contains(update.Lines[0], "subagent-1") {
+		if update.Title != "subagent_wait" || !strings.Contains(update.Lines[0], "running") || !strings.Contains(update.Lines[0], "300 input") || !strings.Contains(update.Lines[0], "21 output") || !strings.Contains(update.Lines[0], "7/20 generations") || !strings.Contains(update.Lines[0], "subagent-1") {
 			t.Fatalf("running update = %+v", update)
 		}
 	case <-time.After(2 * time.Second):
@@ -267,7 +268,7 @@ func TestSubagentWaitPublishesLiveUsageAndCompletion(t *testing.T) {
 	for len(updates) > 0 {
 		final = <-updates
 	}
-	if len(final.Lines) != 1 || !strings.Contains(final.Lines[0], "complete") || !strings.Contains(final.Lines[0], "321 tokens") {
+	if len(final.Lines) != 1 || !strings.Contains(final.Lines[0], "complete") || !strings.Contains(final.Lines[0], "300 input") || !strings.Contains(final.Lines[0], "21 output") || !strings.Contains(final.Lines[0], "7/20 generations") {
 		t.Fatalf("final update = %+v", final)
 	}
 }
@@ -540,10 +541,16 @@ func TestSubagentPublishesFinalizingStatus(t *testing.T) {
 	finalizing := make(chan struct{})
 	release := make(chan struct{})
 	subagents := NewSubagent(func(_ context.Context, _ string, _ agent.ThinkingLevel, update func(SubagentProgress)) (agent.RunResult, error) {
-		update(SubagentProgress{Usage: agent.Usage{TotalTokens: 200_000}, Finalizing: true})
+		usage := agent.Usage{InputTokens: 190_000, OutputTokens: 10_000, TotalTokens: 200_000}
+		update(SubagentProgress{
+			Usage:              usage,
+			Generations:        20,
+			Finalizing:         true,
+			FinalizationReason: agent.FinalizationReasonGenerations,
+		})
 		close(finalizing)
 		<-release
-		return agent.RunResult{Text: "final", Usage: agent.Usage{TotalTokens: 200_100}}, nil
+		return agent.RunResult{Text: "final", Usage: usage}, nil
 	})
 	defer subagents.Close()
 
@@ -554,21 +561,30 @@ func TestSubagentPublishesFinalizingStatus(t *testing.T) {
 	assertSubagentStatus(t, subagents.StatusUpdates(), agent.SubagentStatus{Finalizing: 1})
 
 	presentation := NewSubagentWait(subagents).Presentation(PresentationSnapshot{Arguments: map[string]any{"ids": []any{"subagent-1"}}})
-	if len(presentation.Lines) != 1 || !strings.Contains(presentation.Lines[0], "finalizing") || !strings.Contains(presentation.Lines[0], "200000 tokens") || !strings.Contains(presentation.Lines[0], "(low)") {
+	if len(presentation.Lines) != 1 || !strings.Contains(presentation.Lines[0], "finalizing — generation limit") || !strings.Contains(presentation.Lines[0], "190k input") || !strings.Contains(presentation.Lines[0], "10k output") || !strings.Contains(presentation.Lines[0], "20/20 generations") || !strings.Contains(presentation.Lines[0], "(low)") {
 		t.Fatalf("presentation = %+v", presentation)
 	}
 	close(release)
 	assertSubagentStatus(t, subagents.StatusUpdates(), agent.SubagentStatus{Completed: 1})
+	presentation = NewSubagentWait(subagents).Presentation(PresentationSnapshot{Arguments: map[string]any{"ids": []any{"subagent-1"}}})
+	if !strings.Contains(presentation.Lines[0], "complete — finalized by generation limit") {
+		t.Fatalf("complete presentation = %+v", presentation)
+	}
 }
 
-func TestSubagentWaitPresentationShowsElapsedTimeAndTokenCount(t *testing.T) {
+func TestSubagentWaitPresentationShowsElapsedUsageAndGenerations(t *testing.T) {
 	started := time.Unix(100, 0)
 	presentation := subagentWaitPresentation(nil, []subagentJobSnapshot{
-		{id: "subagent-1", task: "still working", status: subagentStatus{state: "running", started: started}},
-		{id: "subagent-2", task: "finished", status: subagentStatus{state: "complete", elapsed: 2*time.Second + 900*time.Millisecond, tokens: 1234}},
+		{id: "subagent-1", task: "still working", status: subagentStatus{state: "running", started: started, generations: 3}},
+		{id: "subagent-2", task: "finished", status: subagentStatus{
+			state:       "complete",
+			elapsed:     2*time.Second + 900*time.Millisecond,
+			usage:       agent.Usage{InputTokens: 1_200, OutputTokens: 34, TotalTokens: 1_234},
+			generations: 4,
+		}},
 	}, started.Add(time.Minute+5*time.Second))
 
-	if !strings.Contains(presentation.Lines[0], "running (1m5s)") || !strings.Contains(presentation.Lines[1], "complete (2s, 1234 tokens)") {
+	if !strings.Contains(presentation.Lines[0], "running (1m5s, 3/20 generations)") || !strings.Contains(presentation.Lines[1], "complete (2s, 1.2k input, 34 output, 4/20 generations)") {
 		t.Fatalf("presentation = %+v", presentation)
 	}
 }

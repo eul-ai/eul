@@ -20,12 +20,18 @@ type Options struct {
 	Checkpointing       bool
 }
 
+type FinalizationReason string
+
+const (
+	FinalizationReasonDuration    FinalizationReason = "duration"
+	FinalizationReasonGenerations FinalizationReason = "generations"
+)
+
 type FinalizationPolicy struct {
 	AfterDuration    time.Duration
-	AfterTokens      int64
 	AfterGenerations int
 	Prompt           string
-	OnBegin          func()
+	OnBegin          func(FinalizationReason)
 }
 
 type RunResult struct {
@@ -112,9 +118,9 @@ func (e *Engine) run(ctx context.Context, userText string, sink EventSink, polic
 			return RunResult{}, err
 		}
 
-		finalizing := policy.shouldBegin(started, result.Usage, normalGenerations)
+		finalizationReason, finalizing := policy.shouldBegin(started, normalGenerations)
 		if finalizing && policy.OnBegin != nil {
-			policy.OnBegin()
+			policy.OnBegin(finalizationReason)
 		}
 
 		request := e.request(current)
@@ -134,13 +140,15 @@ func (e *Engine) run(ctx context.Context, userText string, sink EventSink, polic
 			}
 			return RunResult{}, err
 		}
-		if !finalizing && policy.shouldBegin(started, result.Usage, normalGenerations) {
-			finalizing = true
-			if policy.OnBegin != nil {
-				policy.OnBegin()
+		if !finalizing {
+			finalizationReason, finalizing = policy.shouldBegin(started, normalGenerations)
+			if finalizing {
+				if policy.OnBegin != nil {
+					policy.OnBegin(finalizationReason)
+				}
+				request.Tools = nil
+				request.Instructions = appendFinalizationPrompt(request.Instructions, policy.Prompt)
 			}
-			request.Tools = nil
-			request.Instructions = appendFinalizationPrompt(request.Instructions, policy.Prompt)
 		}
 
 		generationSink := sink
@@ -245,10 +253,14 @@ func (e *Engine) run(ctx context.Context, userText string, sink EventSink, polic
 	}
 }
 
-func (policy FinalizationPolicy) shouldBegin(started time.Time, usage Usage, generations int) bool {
-	return policy.AfterDuration > 0 && time.Since(started) >= policy.AfterDuration ||
-		policy.AfterTokens > 0 && usage.TotalTokens >= policy.AfterTokens ||
-		policy.AfterGenerations > 0 && generations >= policy.AfterGenerations
+func (policy FinalizationPolicy) shouldBegin(started time.Time, generations int) (FinalizationReason, bool) {
+	if policy.AfterDuration > 0 && time.Since(started) >= policy.AfterDuration {
+		return FinalizationReasonDuration, true
+	}
+	if policy.AfterGenerations > 0 && generations >= policy.AfterGenerations {
+		return FinalizationReasonGenerations, true
+	}
+	return "", false
 }
 
 func appendFinalizationPrompt(instructions, prompt string) string {

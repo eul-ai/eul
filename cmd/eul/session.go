@@ -259,8 +259,16 @@ func runChildAgent(
 		Skills:              config.skills,
 	})
 	var liveUsage agent.Usage
-	policy := tool.NewSubagentFinalizationPolicy(func() {
-		update(tool.SubagentProgress{Usage: liveUsage, Finalizing: true})
+	normalGenerations := 0
+	finalizing := false
+	policy := tool.NewSubagentFinalizationPolicy(func(reason agent.FinalizationReason) {
+		finalizing = true
+		update(tool.SubagentProgress{
+			Usage:              liveUsage,
+			Generations:        normalGenerations,
+			Finalizing:         true,
+			FinalizationReason: reason,
+		})
 	})
 	result, runErr := child.RunWithFinalization(ctx, task, func(event agent.Event) error {
 		switch event.Kind {
@@ -268,7 +276,10 @@ func runChildAgent(
 			liveUsage.InputTokens += event.Usage.InputTokens
 			liveUsage.OutputTokens += event.Usage.OutputTokens
 			liveUsage.TotalTokens += event.Usage.TotalTokens
-			update(tool.SubagentProgress{Usage: liveUsage})
+			if event.Kind == agent.EventContextUsage && !finalizing {
+				normalGenerations++
+			}
+			update(tool.SubagentProgress{Usage: liveUsage, Generations: normalGenerations})
 		}
 		return nil
 	}, policy)
