@@ -74,6 +74,9 @@ func maximumPickerHeight(height int) int {
 }
 
 func (m *tuiModel) pickerHeight() int {
+	if m.resumePickerVisible() {
+		return m.resumePickerHeight()
+	}
 	if m.commandPickerVisible() {
 		return m.commandPickerHeight()
 	}
@@ -171,10 +174,52 @@ func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {
 }
 
 func renderPicker(model *tuiModel, height int) []styledLine {
+	if model.resumePickerVisible() {
+		return renderResumePicker(model, height)
+	}
 	if model.commandPickerVisible() {
 		return renderCommandPicker(model, height)
 	}
 	return renderFilePicker(model, height)
+}
+
+func renderResumePicker(model *tuiModel, height int) []styledLine {
+	if height <= 0 {
+		return nil
+	}
+	if len(model.resumePicker.matches) == 0 {
+		return []styledLine{{text: "  no saved sessions", style: lineStyle{foreground: currentTheme.muted}}}
+	}
+
+	selectedID := ""
+	if model.resumePicker.selected >= 0 && model.resumePicker.selected < len(model.resumePicker.matches) {
+		selectedID = model.resumePicker.matches[model.resumePicker.selected].ID
+	}
+	matches := model.visibleResumePickerMatches()
+	lines := make([]styledLine, 0, min(height, len(matches)))
+	for _, match := range matches[:min(height, len(matches))] {
+		detail := match.ID + " · " + match.UpdatedAt.Local().Format("Jan 2 15:04")
+		if match.Active {
+			detail += " · interrupted"
+		}
+		line := styledLine{
+			prefixText: "  ",
+			text:       resumeSummaryLabel(match),
+			rightText:  detail,
+			style:      lineStyle{foreground: currentTheme.muted},
+		}
+		if match.ID == selectedID {
+			line.prefixText = "> "
+			line.prefixForeground = &currentTheme.accent
+			line.style = lineStyle{
+				foreground:      currentTheme.foreground,
+				background:      currentTheme.selectedBackground,
+				paintBackground: true,
+			}
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 func renderCommandPicker(model *tuiModel, height int) []styledLine {

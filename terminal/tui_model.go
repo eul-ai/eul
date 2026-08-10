@@ -54,6 +54,7 @@ type tuiModel struct {
 	width                      int
 	height                     int
 	model                      string
+	sessionID                  string
 	thinkingLevel              agent.ThinkingLevel
 	thinkingLevels             []agent.ThinkingLevel
 	thinkingSelectionAvailable bool
@@ -71,6 +72,7 @@ type tuiModel struct {
 	commandCompletions         []commandCompletion
 	commandPicker              commandPickerState
 	filePicker                 filePickerState
+	resumePicker               resumePickerState
 	history                    []string
 	historyIndex               int
 	historyDraft               string
@@ -93,10 +95,11 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 		thinkingLevels = agent.ThinkingLevels()
 	}
 
-	return &tuiModel{
+	model := &tuiModel{
 		width:                      width,
 		height:                     height,
 		model:                      singleLine(options.Model, 120),
+		sessionID:                  singleLine(options.SessionID, 120),
 		thinkingLevel:              agent.ThinkingLevel(singleLine(string(thinkingLevel), 40)),
 		thinkingLevels:             thinkingLevels,
 		thinkingSelectionAvailable: options.SetThinkingLevel != nil,
@@ -107,6 +110,13 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 		following:                  true,
 		activity:                   activity{kind: activityReady},
 	}
+	if options.InitialCheckpoint != nil {
+		restoreModelCheckpoint(model, *options.InitialCheckpoint)
+	}
+	if options.PreviousTurnActive {
+		model.appendBlock(blockInfo, "Previous session ended during an active turn; tool side effects may remain")
+	}
+	return model
 }
 
 func (m *tuiModel) appendStream(kind blockKind, text string) {
@@ -307,6 +317,7 @@ func (m *tuiModel) refreshInputPickers(reopen bool) {
 func (m *tuiModel) clearInputPickers() {
 	m.clearCommandPicker()
 	m.clearFilePicker()
+	m.dismissResumePicker()
 }
 
 func (m *tuiModel) nextThinkingLevel() (agent.ThinkingLevel, error) {

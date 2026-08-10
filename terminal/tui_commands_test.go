@@ -73,7 +73,7 @@ func TestCommandPickerEnterCompletesAndSubmits(t *testing.T) {
 
 func TestCommandPickerLetsExactCommandSubmit(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
-	if err := model.insertInput("/clear"); err != nil {
+	if err := model.insertInput("/new"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -81,7 +81,7 @@ func TestCommandPickerLetsExactCommandSubmit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if action.kind != tuiActionReset || len(model.input) != 0 || len(model.history) != 1 {
+	if action.kind != tuiActionNewSession || len(model.input) != 0 || len(model.history) != 1 {
 		t.Fatalf("action=%+v input=%q history=%q", action, model.input, model.history)
 	}
 }

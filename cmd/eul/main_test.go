@@ -15,6 +15,7 @@ import (
 	"github.com/eul-ai/eul/agent"
 	oauth "github.com/eul-ai/eul/auth/openai"
 	openaiadapter "github.com/eul-ai/eul/provider/openai"
+	"github.com/eul-ai/eul/terminal"
 	"github.com/eul-ai/eul/tool"
 )
 
@@ -341,6 +342,25 @@ func TestAgentSessionUsesStoredOAuthAtRequestTime(t *testing.T) {
 	}
 }
 
+func TestOnlySessionRequestsRejectCleanupFailures(t *testing.T) {
+	newRequest := &terminal.NewSessionRequest{}
+	if !onlyNewSessionRequest(errors.Join(newRequest)) {
+		t.Fatal("new session request was not recognized")
+	}
+	if onlyNewSessionRequest(errors.Join(newRequest, errors.New("cleanup failed"))) {
+		t.Fatal("new session request hid cleanup failure")
+	}
+
+	request := &terminal.ResumeRequest{SessionID: "session"}
+	got, ok := onlyResumeRequest(errors.Join(request))
+	if !ok || got.SessionID != "session" {
+		t.Fatalf("request=%+v ok=%v", got, ok)
+	}
+	if _, ok := onlyResumeRequest(errors.Join(request, errors.New("cleanup failed"))); ok {
+		t.Fatal("resume request hid cleanup failure")
+	}
+}
+
 func TestRunLoginAndLogoutCommands(t *testing.T) {
 	cwd := t.TempDir()
 	for _, test := range []struct {
@@ -456,12 +476,13 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[strin
 	values := maps.Clone(environment)
 
 	return appRuntime{
-		stdin:       strings.NewReader("/exit\n"),
-		stdout:      stdout,
-		stderr:      stderr,
-		getenv:      func(key string) string { return values[key] },
-		getwd:       func() (string, error) { return cwd, nil },
-		userHomeDir: func() (string, error) { return filepath.Join(cwd, ".test-home"), nil },
+		stdin:         strings.NewReader("/exit\n"),
+		stdout:        stdout,
+		stderr:        stderr,
+		getenv:        func(key string) string { return values[key] },
+		getwd:         func() (string, error) { return cwd, nil },
+		userHomeDir:   func() (string, error) { return filepath.Join(cwd, ".test-home"), nil },
+		userConfigDir: func() (string, error) { return filepath.Join(cwd, ".test-config"), nil },
 		newProvider: func(openaiadapter.CodexTokenSource, openaiadapter.Options) (agent.Provider, error) {
 			return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
 				return agent.Response{}, nil

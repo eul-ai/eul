@@ -12,12 +12,11 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-func TestTUIControllerDoesNotClearConversationWhenResetFails(t *testing.T) {
-	resetErr := errors.New("engine busy")
-	engine := &fakeEngine{resetErr: resetErr}
+func TestTUIControllerNewSessionKeepsCurrentConversation(t *testing.T) {
+	engine := &fakeEngine{}
 	model := newTUIModel(80, 24, Options{})
 	model.appendBlock(blockAssistant, "keep me")
-	if err := model.insertInput("/clear"); err != nil {
+	if err := model.insertInput("/new"); err != nil {
 		t.Fatal(err)
 	}
 	controller := tuiController{
@@ -26,14 +25,12 @@ func TestTUIControllerDoesNotClearConversationWhenResetFails(t *testing.T) {
 	}
 
 	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}})
-	if err != nil || exit {
+	var request *NewSessionRequest
+	if !errors.As(err, &request) || exit {
 		t.Fatalf("transition exit=%v error=%v", exit, err)
 	}
 	if len(model.blocks) != 1 || model.blocks[0].text != "keep me" {
 		t.Fatalf("blocks = %+v", model.blocks)
-	}
-	if model.activity.kind != activityError || model.activity.detail != resetErr.Error() {
-		t.Fatalf("activity = %+v", model.activity)
 	}
 }
 
@@ -114,7 +111,7 @@ func TestTUIControllerSetsShowsAndClearsGoal(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("goal turn did not complete")
 	}
-	calls, _ := engine.snapshot()
+	calls := engine.snapshot()
 	if !slices.Equal(calls, []string{"finish migration"}) {
 		t.Fatalf("calls = %q", calls)
 	}
@@ -170,13 +167,13 @@ func TestTUIControllerDoesNotStartGoalWhenSetFails(t *testing.T) {
 	if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionSetGoal, prompt: "goal"}); err != nil {
 		t.Fatal(err)
 	}
-	calls, _ := engine.snapshot()
+	calls := engine.snapshot()
 	if len(calls) != 0 || model.running || model.activity.kind != activityError || model.activity.detail != setErr.Error() {
 		t.Fatalf("calls=%q running=%v activity=%+v", calls, model.running, model.activity)
 	}
 }
 
-func TestTUIControllerResetClearsGoal(t *testing.T) {
+func TestTUIControllerNewSessionLeavesCurrentGoal(t *testing.T) {
 	engine := &fakeEngine{goal: &agent.GoalState{Objective: "goal"}}
 	model := newTUIModel(80, 24, Options{})
 	controller := tuiController{
@@ -184,11 +181,13 @@ func TestTUIControllerResetClearsGoal(t *testing.T) {
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 	}
 
-	if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionReset}); err != nil {
-		t.Fatal(err)
+	_, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionNewSession})
+	var request *NewSessionRequest
+	if !errors.As(err, &request) {
+		t.Fatalf("new session error = %v", err)
 	}
-	if _, ok := engine.Goal(); ok {
-		t.Fatal("goal survived reset")
+	if _, ok := engine.Goal(); !ok {
+		t.Fatal("current goal was cleared")
 	}
 }
 
@@ -270,7 +269,7 @@ func TestTUIControllerQueuesAndDequeuesSteering(t *testing.T) {
 	if !slices.Equal(queued, []string{"steer"}) || !slices.Equal(model.steering, []string{"steer"}) {
 		t.Fatalf("engine queue=%q model queue=%q", queued, model.steering)
 	}
-	if calls, _ := engine.snapshot(); len(calls) != 0 {
+	if calls := engine.snapshot(); len(calls) != 0 {
 		t.Fatalf("steering started runs: %q", calls)
 	}
 
@@ -368,7 +367,7 @@ func TestTUIControllerRunsRejectedSteeringSequentially(t *testing.T) {
 	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventEngine, engine: secondDone}); err != nil {
 		t.Fatal(err)
 	}
-	calls, _ := engine.snapshot()
+	calls := engine.snapshot()
 	if !slices.Equal(calls, []string{"one", "two"}) || model.running || len(model.steering) != 0 {
 		t.Fatalf("calls=%q running=%v pending=%q", calls, model.running, model.steering)
 	}

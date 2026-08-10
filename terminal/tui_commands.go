@@ -26,8 +26,12 @@ var slashCommands = []slashCommandDefinition{
 		action: tuiActionHelp, complete: true,
 	},
 	{
-		text: "/clear", usage: "/clear", description: "discard conversation and goal state",
-		action: tuiActionReset, complete: true,
+		text: "/resume", usage: "/resume", description: "resume a saved session",
+		action: tuiActionOpenResume, complete: true,
+	},
+	{
+		text: "/new", usage: "/new", description: "start a new session",
+		action: tuiActionNewSession, complete: true,
 	},
 	{
 		text: "/compact", usage: "/compact", description: "compact the conversation context",

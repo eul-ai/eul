@@ -294,10 +294,9 @@ func TestHandleKeyCancelsIncompleteToolTurnWithoutResettingConversation(t *testi
 				continue
 			}
 			model.finishTurn(message.err)
-			_, resets := engine.snapshot()
 			last := model.blocks[len(model.blocks)-1].text
-			if resets != 0 || model.contextTokens != 456 || model.activity.kind != activityReady || !strings.Contains(last, "tool side effects may remain") || strings.Contains(last, "cleared") {
-				t.Fatalf("resets=%d context=%d activity=%+v blocks=%+v", resets, model.contextTokens, model.activity, model.blocks)
+			if model.contextTokens != 456 || model.activity.kind != activityReady || !strings.Contains(last, "tool side effects may remain") {
+				t.Fatalf("context=%d activity=%+v blocks=%+v", model.contextTokens, model.activity, model.blocks)
 			}
 			return
 		case <-timeout:
@@ -423,20 +422,22 @@ func TestHandleKeyCommands(t *testing.T) {
 		t.Fatalf("blocks = %+v", model.blocks)
 	}
 
-	if err := model.insertInput("/clear"); err != nil {
-		t.Fatal(err)
-	}
-	if exit, err := handleKey(context.Background(), model, engine, keyEvent{code: keyEnter}, messages, stopped, &cancel); err != nil || exit {
-		t.Fatalf("clear command exit=%v err=%v", exit, err)
-	}
-	if _, resets := engine.snapshot(); resets != 1 || len(model.blocks) != 0 || model.activity.kind != activityReady {
-		t.Fatalf("resets=%d blocks=%+v activity=%+v", resets, model.blocks, model.activity)
-	}
-
 	if err := model.insertInput("/exit"); err != nil {
 		t.Fatal(err)
 	}
 	if exit, err := handleKey(context.Background(), model, engine, keyEvent{code: keyEnter}, messages, stopped, &cancel); err != nil || !exit {
 		t.Fatalf("exit command exit=%v err=%v", exit, err)
+	}
+
+	if err := model.insertInput("/new"); err != nil {
+		t.Fatal(err)
+	}
+	exit, err := handleKey(context.Background(), model, engine, keyEvent{code: keyEnter}, messages, stopped, &cancel)
+	var request *NewSessionRequest
+	if !errors.As(err, &request) || exit {
+		t.Fatalf("new command exit=%v err=%v", exit, err)
+	}
+	if len(model.blocks) != 2 {
+		t.Fatalf("blocks=%+v", model.blocks)
 	}
 }

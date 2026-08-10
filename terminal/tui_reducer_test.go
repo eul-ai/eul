@@ -152,17 +152,17 @@ func TestReduceKeyActions(t *testing.T) {
 			},
 		},
 		{
-			name: "reset",
+			name: "new session",
 			setup: func(t *testing.T, model *tuiModel) {
-				model.appendBlock(blockAssistant, "keep until reset effect")
-				if err := model.insertInput("/clear"); err != nil {
+				model.appendBlock(blockAssistant, "keep in current session")
+				if err := model.insertInput("/new"); err != nil {
 					t.Fatal(err)
 				}
 			},
 			key:      keyEvent{code: keyEnter},
-			wantKind: tuiActionReset,
+			wantKind: tuiActionNewSession,
 			check: func(t *testing.T, model *tuiModel) {
-				if len(model.history) != 1 || model.history[0] != "/clear" || len(model.blocks) != 1 {
+				if len(model.history) != 1 || model.history[0] != "/new" || len(model.blocks) != 1 {
 					t.Fatalf("history=%q blocks=%+v", model.history, model.blocks)
 				}
 			},
@@ -335,13 +335,13 @@ func TestReduceKeyActions(t *testing.T) {
 			name: "running retains command",
 			setup: func(t *testing.T, model *tuiModel) {
 				model.running = true
-				if err := model.insertInput("/clear"); err != nil {
+				if err := model.insertInput("/new"); err != nil {
 					t.Fatal(err)
 				}
 			},
 			key: keyEvent{code: keyEnter},
 			check: func(t *testing.T, model *tuiModel) {
-				if string(model.input) != "/clear" || model.activity.kind != activityError {
+				if string(model.input) != "/new" || model.activity.kind != activityError {
 					t.Fatalf("input=%q activity=%+v", model.input, model.activity)
 				}
 			},

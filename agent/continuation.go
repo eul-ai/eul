@@ -118,6 +118,19 @@ func (arbiter *continuationArbiter) clearGoal() {
 	arbiter.goal = nil
 }
 
+func (arbiter *continuationArbiter) restoreGoal(goal *GoalState) {
+	arbiter.mu.Lock()
+	defer arbiter.mu.Unlock()
+
+	arbiter.steering = nil
+	arbiter.acceptingSteering = false
+	arbiter.goal = nil
+	if goal != nil {
+		restored := *goal
+		arbiter.goal = &restored
+	}
+}
+
 func (arbiter *continuationArbiter) completeGoal() error {
 	arbiter.mu.Lock()
 	defer arbiter.mu.Unlock()

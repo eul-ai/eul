@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -34,21 +35,46 @@ type Engine interface {
 	SetGoal(string) error
 	Goal() (agent.GoalState, bool)
 	ClearGoal()
-	Reset() error
+}
+
+type SessionSummary struct {
+	ID          string
+	Description string
+	UpdatedAt   time.Time
+	Active      bool
+}
+
+type ResumeRequest struct {
+	SessionID string
+}
+
+func (request *ResumeRequest) Error() string {
+	return "terminal: resume session " + request.SessionID
+}
+
+type NewSessionRequest struct{}
+
+func (*NewSessionRequest) Error() string {
+	return "terminal: start new session"
 }
 
 type Options struct {
-	Input            io.Reader
-	Output           io.Writer
-	Model            string
-	WorkingDirectory string
-	ThinkingLevel    agent.ThinkingLevel
-	ThinkingLevels   []agent.ThinkingLevel
-	ContextWindow    int64
-	Skills           []agent.Skill
-	Interrupts       <-chan os.Signal
-	SetThinkingLevel func(agent.ThinkingLevel) error
-	LoadUsage        func(context.Context) (agent.ProviderUsage, error)
+	Input              io.Reader
+	Output             io.Writer
+	Model              string
+	WorkingDirectory   string
+	ThinkingLevel      agent.ThinkingLevel
+	ThinkingLevels     []agent.ThinkingLevel
+	ContextWindow      int64
+	Skills             []agent.Skill
+	Interrupts         <-chan os.Signal
+	SetThinkingLevel   func(agent.ThinkingLevel) error
+	LoadUsage          func(context.Context) (agent.ProviderUsage, error)
+	InitialCheckpoint  *Checkpoint
+	SessionID          string
+	PreviousTurnActive bool
+	SaveCheckpoint     func(agent.Checkpoint, Checkpoint, bool) error
+	ListSessions       func(context.Context) ([]SessionSummary, error)
 }
 
 type fileDescriptor interface {

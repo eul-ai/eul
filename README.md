@@ -7,8 +7,8 @@ tasks in an interactive conversation.
 Eul is heavily inspired by [Pi](https://pi.dev/), with *some*
 batteries included while still staying deliberately minimal.
 
-Eul is intended for trusted local use on macOS and Linux. Conversations are kept
-in memory and tools run directly on your machine with your permissions.
+Eul is intended for trusted local use on macOS and Linux. Conversations are
+persisted locally, and tools run directly on your machine with your permissions.
 
 ## Features
 
@@ -24,6 +24,7 @@ in memory and tools run directly on your machine with your permissions.
 - Project instructions from `AGENTS.md`
 - Global and project-specific [Agent Skills](https://agentskills.io)
 - Automatic context compaction and usage information for supported models
+- Durable sessions with direct and interactive resumption
 - Inline bold, italic, and code Markdown in the conversation
 - Browser and device-code sign-in with ChatGPT
 
@@ -55,6 +56,7 @@ Codex service. Its third-party API behavior may change.
 
 ```text
 eul --model <model> [--thinking <level>] [--cwd <directory>]
+eul --resume[=<session-id>]
 eul login [--device-auth]
 eul logout
 ```
@@ -74,7 +76,7 @@ These environment variables provide common defaults:
 
 | Variable | Purpose |
 | --- | --- |
-| `EUL_HOME` | Credential storage directory |
+| `EUL_HOME` | Credential and session storage directory |
 | `EUL_THINKING_LEVEL` | Default thinking level |
 | `OPENAI_MODEL` | Default model |
 | `OPENAI_REASONING_SUMMARY` | Reasoning summary mode: `auto`, `concise`, `detailed`, or `none` |
@@ -111,7 +113,8 @@ Bracketed multiline paste preserves newlines and blank lines.
 | Command | Action |
 | --- | --- |
 | `/help` | Show available commands |
-| `/clear` | Clear the conversation and active goal |
+| `/resume` | Select a saved session for the current working directory |
+| `/new` | Start a new session |
 | `/compact` | Compact the conversation context |
 | `/exit` | Exit Eul |
 | `/goal <objective>` | Set or replace an autonomous goal |
@@ -158,6 +161,19 @@ of inspection, changes, and verification.
 You can steer the agent at any time. Steering takes priority over autonomous goal
 continuation. A goal remains active until it is completed or cleared.
 
+## Sessions
+
+Sessions are saved under `EUL_HOME`, or the platform user configuration directory
+when `EUL_HOME` is unset. `--resume` opens the most recently updated session for
+the current working directory, while `--resume=<session-id>` opens a specific
+session. Use `/resume` to select interactively from sessions for the current
+working directory, or `/new` to leave the current session intact and start a new
+one.
+
+If a process ended during an active turn, the restored session remains idle and
+shows a warning. Review the conversation before continuing because tool side
+effects may already have occurred.
+
 ## Skills
 
 Eul discovers Agent Skills from:
@@ -176,7 +192,8 @@ run bundled scripts with your permissions.
 
 - Tools are not sandboxed. Shell commands and file operations can make arbitrary
   changes accessible to your user account.
-- Sessions are not persisted. `/clear` discards the current conversation and goal.
+- Saved sessions can contain prompts, source code, and tool output. They are
+  protected with local filesystem permissions but are not encrypted at rest.
 - Canceling a turn does not undo tool side effects that already occurred.
 - Subagents are read-only and are used only when explicitly requested.
 - Markdown rendering is limited to inline bold, italic, and code formatting.

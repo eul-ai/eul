@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"golang.org/x/term"
@@ -24,6 +25,7 @@ type engineMessage struct {
 	event *agent.Event
 	err   error
 	done  bool
+	ack   chan error
 }
 
 type providerUsageMessage struct {
@@ -31,31 +33,79 @@ type providerUsageMessage struct {
 	err   error
 }
 
-func Run(ctx context.Context, engine Engine, options Options) (runErr error) {
-	inputFD, inputOK := descriptor(options.Input)
-	outputFD, outputOK := descriptor(options.Output)
-	if !inputOK || !outputOK || !term.IsTerminal(inputFD) || !term.IsTerminal(outputFD) {
-		return ErrNotTerminal
-	}
+type Runner struct {
+	input     io.Reader
+	output    io.Writer
+	inputFD   int
+	outputFD  int
+	state     *term.State
+	keys      chan keyEvent
+	stopped   chan struct{}
+	closeOnce sync.Once
+	closeErr  error
+}
 
-	width, height, err := term.GetSize(outputFD)
-	if err != nil {
-		return fmt.Errorf("terminal: get size: %w", err)
+func NewRunner(input io.Reader, output io.Writer) (*Runner, error) {
+	inputFD, inputOK := descriptor(input)
+	outputFD, outputOK := descriptor(output)
+	if !inputOK || !outputOK || !term.IsTerminal(inputFD) || !term.IsTerminal(outputFD) {
+		return nil, ErrNotTerminal
+	}
+	if _, _, err := term.GetSize(outputFD); err != nil {
+		return nil, fmt.Errorf("terminal: get size: %w", err)
 	}
 	state, err := term.MakeRaw(inputFD)
 	if err != nil {
-		return fmt.Errorf("terminal: enter raw mode: %w", err)
+		return nil, fmt.Errorf("terminal: enter raw mode: %w", err)
 	}
-	defer func() {
-		leaveErr := writeOutput(options.Output, "%s", leaveScreen)
+	if err := writeOutput(output, "%s", enterScreen); err != nil {
+		leaveErr := writeOutput(output, "%s", leaveScreen)
 		restoreErr := term.Restore(inputFD, state)
-		runErr = errors.Join(runErr, leaveErr, wrapRestoreError(restoreErr))
-	}()
+		return nil, errors.Join(err, leaveErr, wrapRestoreError(restoreErr))
+	}
 
-	if err := writeOutput(options.Output, "%s", enterScreen); err != nil {
+	runner := &Runner{
+		input:    input,
+		output:   output,
+		inputFD:  inputFD,
+		outputFD: outputFD,
+		state:    state,
+		keys:     make(chan keyEvent, 64),
+		stopped:  make(chan struct{}),
+	}
+	go readKeyEvents(input, runner.keys, runner.stopped)
+	return runner, nil
+}
+
+func (runner *Runner) Run(ctx context.Context, engine Engine, options Options) error {
+	width, height, err := term.GetSize(runner.outputFD)
+	if err != nil {
+		return fmt.Errorf("terminal: get size: %w", err)
+	}
+	options.Input = runner.input
+	options.Output = runner.output
+	return runTUIWithKeys(ctx, engine, options, runner.outputFD, width, height, runner.keys, runner.stopped)
+}
+
+func (runner *Runner) Close() error {
+	if runner == nil {
+		return nil
+	}
+	runner.closeOnce.Do(func() {
+		close(runner.stopped)
+		leaveErr := writeOutput(runner.output, "%s", leaveScreen)
+		restoreErr := term.Restore(runner.inputFD, runner.state)
+		runner.closeErr = errors.Join(leaveErr, wrapRestoreError(restoreErr))
+	})
+	return runner.closeErr
+}
+
+func Run(ctx context.Context, engine Engine, options Options) error {
+	runner, err := NewRunner(options.Input, options.Output)
+	if err != nil {
 		return err
 	}
-	return runTUI(ctx, engine, options, outputFD, width, height)
+	return errors.Join(runner.Run(ctx, engine, options), runner.Close())
 }
 
 func wrapRestoreError(err error) error {
@@ -66,16 +116,28 @@ func wrapRestoreError(err error) error {
 }
 
 func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width, height int) error {
+	keys := make(chan keyEvent, 64)
+	stopped := make(chan struct{})
+	defer close(stopped)
+	go readKeyEvents(options.Input, keys, stopped)
+	return runTUIWithKeys(ctx, engine, options, outputFD, width, height, keys, stopped)
+}
+
+func runTUIWithKeys(
+	ctx context.Context,
+	engine Engine,
+	options Options,
+	outputFD int,
+	width int,
+	height int,
+	keys <-chan keyEvent,
+	stopped <-chan struct{},
+) error {
 	model := newTUIModel(width, height, options)
 	fileSearch := newFileSearchRunner(options.WorkingDirectory)
 	defer fileSearch.close()
 	fileSearchMessages := make(chan fileSearchResult, 64)
-
-	keys := make(chan keyEvent, 64)
 	engineMessages := make(chan engineMessage, 256)
-	stopped := make(chan struct{})
-	defer close(stopped)
-	go readKeyEvents(options.Input, keys, stopped)
 
 	usageContext, cancelUsage := context.WithCancel(ctx)
 	defer cancelUsage()
@@ -116,6 +178,8 @@ func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width
 		fileSearchMessages: fileSearchMessages,
 		usageRequests:      usageRequests,
 		setThinkingLevel:   options.SetThinkingLevel,
+		saveCheckpoint:     options.SaveCheckpoint,
+		listSessions:       options.ListSessions,
 		dirty:              true,
 	}
 	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventRender}); err != nil {
@@ -244,9 +308,23 @@ func runEngineCompaction(ctx context.Context, engine Engine, messages chan<- eng
 
 func runEngineOperation(ctx context.Context, messages chan<- engineMessage, stopped <-chan struct{}, operation func(agent.EventSink) error) {
 	err := operation(func(event agent.Event) error {
+		message := engineMessage{event: &event}
+		if event.Kind == agent.EventCheckpoint {
+			message.ack = make(chan error, 1)
+		}
 		select {
-		case messages <- engineMessage{event: &event}:
+		case messages <- message:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-stopped:
+			return context.Canceled
+		}
+		if message.ack == nil {
 			return nil
+		}
+		select {
+		case err := <-message.ack:
+			return err
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-stopped:

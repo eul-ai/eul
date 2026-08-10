@@ -16,6 +16,7 @@ type Options struct {
 	WorkingDirectory    string
 	ProjectInstructions string
 	Skills              []Skill
+	Checkpointing       bool
 }
 
 type RunResult struct {
@@ -35,6 +36,7 @@ type Engine struct {
 	pendingInputs []Input
 	continuations continuationArbiter
 	skills        map[string]Skill
+	checkpointing bool
 }
 
 func New(provider Provider, tools Toolbox, options Options) *Engine {
@@ -54,6 +56,7 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 		thinkingLevel: thinkingLevel,
 		instructions:  buildSystemPrompt(tools.Definitions(), options.WorkingDirectory, options.ProjectInstructions, options.Skills),
 		skills:        skills,
+		checkpointing: options.Checkpointing,
 	}
 }
 
@@ -130,9 +133,12 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		}
 
 		if len(response.ToolCalls) == 0 {
+			if err := e.commitCheckpoint(responseContinuation, sink); err != nil {
+				return RunResult{}, err
+			}
+
 			next, ok := e.continuations.next(continuationBeforeSettle)
 			if !ok {
-				responseContinuation.checkpoint(e)
 				result.Text = response.Text
 				return result, nil
 			}
@@ -150,6 +156,9 @@ func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunR
 		current = responseContinuation
 		if err != nil {
 			current.checkpoint(e)
+			return RunResult{}, err
+		}
+		if err := e.commitCheckpoint(current, sink); err != nil {
 			return RunResult{}, err
 		}
 
@@ -272,6 +281,9 @@ func (e *Engine) compactRequest(ctx context.Context, sink EventSink, compactor C
 	request.State = current.state
 	request.Inputs = nil
 	if err := emit(sink, Event{Kind: EventCompactionEnd, Usage: compacted.Usage}); err != nil {
+		return request, current, compacted.Usage, err
+	}
+	if err := e.commitCheckpoint(current, sink); err != nil {
 		return request, current, compacted.Usage, err
 	}
 	return request, current, compacted.Usage, nil

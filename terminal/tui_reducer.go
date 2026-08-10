@@ -12,8 +12,10 @@ type tuiActionKind uint8
 const (
 	tuiActionNone tuiActionKind = iota
 	tuiActionHelp
+	tuiActionOpenResume
+	tuiActionResume
+	tuiActionNewSession
 	tuiActionCancel
-	tuiActionReset
 	tuiActionCompact
 	tuiActionExit
 	tuiActionSubmit
@@ -37,6 +39,9 @@ type tuiAction struct {
 func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tuiAction, error) {
 	if key.code == keyMouse {
 		return reduceMouse(model, key.mouse, frame), nil
+	}
+	if action, handled := reduceResumePickerKey(model, key); handled {
+		return action, nil
 	}
 	if reduceCommandPickerKey(model, key) {
 		return tuiAction{}, nil
@@ -131,6 +136,32 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 		return reducePrompt(model), nil
 	}
 	return tuiAction{}, nil
+}
+
+func reduceResumePickerKey(model *tuiModel, key keyEvent) (tuiAction, bool) {
+	if !model.resumePickerVisible() {
+		return tuiAction{}, false
+	}
+
+	switch key.code {
+	case keyUp:
+		model.moveResumePickerSelection(-1)
+	case keyDown:
+		model.moveResumePickerSelection(1)
+	case keyEnter:
+		sessionID, ok := model.selectedResumeSession()
+		if !ok {
+			return tuiAction{}, true
+		}
+		return tuiAction{kind: tuiActionResume, text: sessionID}, true
+	case keyEscape:
+		model.dismissResumePicker()
+	case keyEOF, keyCtrlC, keyCtrlD:
+		return tuiAction{}, false
+	default:
+		return tuiAction{}, true
+	}
+	return tuiAction{}, true
 }
 
 func reduceCommandPickerKey(model *tuiModel, key keyEvent) bool {

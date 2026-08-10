@@ -27,6 +27,31 @@ func TestParseAgentArguments(t *testing.T) {
 	}
 }
 
+func TestParseAgentArgumentsParsesResumeSelection(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	runtime := testRuntime(t.TempDir(), &stdout, &stderr, map[string]string{"EUL_THINKING_LEVEL": "invalid-for-new-sessions"})
+
+	mostRecent, err := parseAgentArguments([]string{"--resume"}, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mostRecent.resume || mostRecent.sessionID != "" {
+		t.Fatalf("most recent arguments = %+v", mostRecent)
+	}
+
+	explicit, err := parseAgentArguments([]string{"--resume=0123456789abcdef0123456789abcdef"}, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !explicit.resume || explicit.sessionID != "0123456789abcdef0123456789abcdef" {
+		t.Fatalf("explicit arguments = %+v", explicit)
+	}
+
+	if _, err := parseAgentArguments([]string{"--resume", "--model", "other"}, runtime); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("conflict error = %v", err)
+	}
+}
+
 func TestParseAgentArgumentsRejectsPrompts(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(t.TempDir(), &stdout, &stderr, nil)

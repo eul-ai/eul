@@ -15,8 +15,6 @@ type fakeEngine struct {
 	mu              sync.Mutex
 	calls           []string
 	compactions     int
-	resets          int
-	resetErr        error
 	setGoalErr      error
 	goal            *agent.GoalState
 	runFunction     func(context.Context, string, agent.EventSink) (agent.RunResult, error)
@@ -91,20 +89,10 @@ func (e *fakeEngine) ClearGoal() {
 	e.goal = nil
 }
 
-func (e *fakeEngine) Reset() error {
+func (e *fakeEngine) snapshot() []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.resets++
-	if e.resetErr == nil {
-		e.goal = nil
-	}
-	return e.resetErr
-}
-
-func (e *fakeEngine) snapshot() ([]string, int) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return append([]string(nil), e.calls...), e.resets
+	return append([]string(nil), e.calls...)
 }
 
 func (e *fakeEngine) compactionCount() int {

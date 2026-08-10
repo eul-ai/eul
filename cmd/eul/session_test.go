@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -101,6 +102,78 @@ func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 	goal, ok := session.engine.Goal()
 	if result.IsError || !ok || !goal.Complete {
 		t.Fatalf("result=%+v goal=%+v exists=%v", result, goal, ok)
+	}
+}
+
+func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
+	cwd := t.TempDir()
+	var requests []agent.Request
+	runtime := appRuntime{
+		stdin:  strings.NewReader(""),
+		stdout: io.Discard,
+		newProvider: func(openaiadapter.CodexTokenSource, openaiadapter.Options) (agent.Provider, error) {
+			return providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
+				requests = append(requests, request)
+				if len(requests) == 1 {
+					return agent.Response{Text: "first answer", State: []byte("saved-state")}, nil
+				}
+				return agent.Response{Text: "second answer", State: []byte("next-state")}, nil
+			}), nil
+		},
+		newToolset: func(string, toolAccess, ...tool.Tool) (*tool.Registry, error) {
+			return tool.NewRegistry(nil)
+		},
+	}
+	config := agentConfig{model: "model", thinkingLevel: agent.ThinkingHigh, cwd: cwd}
+	store := newSessionStore(t.TempDir())
+
+	first, err := newStoredAgentSession(config, runtime, nil, openaiadapter.Options{}, store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.engine.Run(context.Background(), "first prompt", func(agent.Event) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	agentCheckpoint, err := first.engine.Checkpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminalCheckpoint := sessionStoreTestTerminalCheckpoint(t, "first prompt")
+	if err := first.terminalOptions.SaveCheckpoint(agentCheckpoint, terminalCheckpoint, false); err != nil {
+		t.Fatal(err)
+	}
+	sessionID := first.persistence.record.ID
+	if err := first.finish(nil); err != nil {
+		t.Fatal(err)
+	}
+
+	handle, err := store.Open(context.Background(), cwd, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := newStoredAgentSession(config, runtime, nil, openaiadapter.Options{}, store, handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.terminalOptions.InitialCheckpoint == nil || second.terminalOptions.InitialCheckpoint.Description() != "first prompt" {
+		t.Fatalf("terminal checkpoint = %+v", second.terminalOptions.InitialCheckpoint)
+	}
+	summaries, err := second.terminalOptions.ListSessions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 0 {
+		t.Fatalf("current session was listed: %+v", summaries)
+	}
+	if _, err := second.engine.Run(context.Background(), "next prompt", func(agent.Event) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.finish(nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(requests) != 2 || string(requests[1].State) != "saved-state" || len(requests[1].Inputs) != 1 || requests[1].Inputs[0].Text != "next prompt" {
+		t.Fatalf("requests = %+v", requests)
 	}
 }
 

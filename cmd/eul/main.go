@@ -43,17 +43,18 @@ type oauthManager interface {
 }
 
 type appRuntime struct {
-	stdin       io.Reader
-	stdout      io.Writer
-	stderr      io.Writer
-	getenv      func(string) string
-	getwd       func() (string, error)
-	userHomeDir func() (string, error)
-	interrupts  <-chan os.Signal
-	newProvider providerFactory
-	newToolset  toolsetFactory
-	newOAuth    func() (oauthManager, error)
-	openURL     func(string) error
+	stdin         io.Reader
+	stdout        io.Writer
+	stderr        io.Writer
+	getenv        func(string) string
+	getwd         func() (string, error)
+	userHomeDir   func() (string, error)
+	userConfigDir func() (string, error)
+	interrupts    <-chan os.Signal
+	newProvider   providerFactory
+	newToolset    toolsetFactory
+	newOAuth      func() (oauthManager, error)
+	openURL       func(string) error
 }
 
 func main() {
@@ -61,13 +62,14 @@ func main() {
 	signal.Notify(interrupts, os.Interrupt)
 
 	code := run(os.Args[1:], appRuntime{
-		stdin:       os.Stdin,
-		stdout:      os.Stdout,
-		stderr:      os.Stderr,
-		getenv:      os.Getenv,
-		getwd:       os.Getwd,
-		userHomeDir: os.UserHomeDir,
-		interrupts:  interrupts,
+		stdin:         os.Stdin,
+		stdout:        os.Stdout,
+		stderr:        os.Stderr,
+		getenv:        os.Getenv,
+		getwd:         os.Getwd,
+		userHomeDir:   os.UserHomeDir,
+		userConfigDir: os.UserConfigDir,
+		interrupts:    interrupts,
 		newOAuth: func() (oauthManager, error) {
 			path, err := oauth.DefaultCredentialPath(os.Getenv("EUL_HOME"))
 			if err != nil {
@@ -115,7 +117,12 @@ func run(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "%v", err)
 		return exitUsage
 	}
-
+	home, err := resolveEULHome(runtime)
+	if err != nil {
+		writeCLIError(runtime.stderr, "%v", err)
+		return exitFailure
+	}
+	store := newSessionStore(home)
 	tokenSource, err := resolveTokenSource(runtime)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -125,18 +132,58 @@ func run(arguments []string, runtime appRuntime) int {
 		return exitFailure
 	}
 
-	config, err := resolveAgentConfig(parsed, runtime)
+	ctx := context.Background()
+	config, handle, err := resolveInitialSession(ctx, parsed, runtime, store)
 	if err != nil {
 		writeCLIError(runtime.stderr, "%v", err)
 		return exitFailure
 	}
-	session, err := newAgentSession(config, runtime, tokenSource, providerOptions)
+	session, err := newStoredAgentSession(config, runtime, tokenSource, providerOptions, store, handle)
 	if err != nil {
 		writeCLIError(runtime.stderr, "%v", err)
 		return exitFailure
 	}
 
-	return finishRun(session.run(context.Background()), runtime.stderr)
+	runner, err := terminal.NewRunner(runtime.stdin, runtime.stdout)
+	if err != nil {
+		return finishRun(session.finish(err), runtime.stderr)
+	}
+	runSessions := func() error {
+		for {
+			runErr := session.run(ctx, runner)
+			if onlyNewSessionRequest(runErr) {
+				config, err = resolveAgentConfig(agentArguments{
+					model:         config.model,
+					thinkingLevel: session.thinkingLevel,
+					cwd:           config.cwd,
+				}, runtime)
+				if err != nil {
+					return err
+				}
+				session, err = newStoredAgentSession(config, runtime, tokenSource, providerOptions, store, nil)
+				if err != nil {
+					return err
+				}
+				continue
+			}
+
+			request, resume := onlyResumeRequest(runErr)
+			if !resume {
+				return runErr
+			}
+
+			config, handle, err = resolveStoredSession(ctx, store, runtime, config.cwd, request.SessionID)
+			if err != nil {
+				return err
+			}
+			session, err = newStoredAgentSession(config, runtime, tokenSource, providerOptions, store, handle)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	runErr := runSessions()
+	return finishRun(errors.Join(runErr, runner.Close()), runtime.stderr)
 }
 
 func finishRun(runErr error, errorOutput io.Writer) int {
@@ -149,6 +196,47 @@ func finishRun(runErr error, errorOutput io.Writer) int {
 
 	writeCLIError(errorOutput, "%v", runErr)
 	return exitFailure
+}
+
+func onlyNewSessionRequest(err error) bool {
+	joined, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		_, ok := err.(*terminal.NewSessionRequest)
+		return ok
+	}
+
+	causes := joined.Unwrap()
+	if len(causes) == 0 {
+		return false
+	}
+	for _, cause := range causes {
+		if !onlyNewSessionRequest(cause) {
+			return false
+		}
+	}
+	return true
+}
+
+func onlyResumeRequest(err error) (*terminal.ResumeRequest, bool) {
+	joined, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		request, ok := err.(*terminal.ResumeRequest)
+		return request, ok
+	}
+
+	causes := joined.Unwrap()
+	if len(causes) == 0 {
+		return nil, false
+	}
+	var selected *terminal.ResumeRequest
+	for _, cause := range causes {
+		request, ok := onlyResumeRequest(cause)
+		if !ok || selected != nil && selected.SessionID != request.SessionID {
+			return nil, false
+		}
+		selected = request
+	}
+	return selected, selected != nil
 }
 
 func isOnlyInterruption(err error) bool {

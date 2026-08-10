@@ -9,6 +9,7 @@ const (
 	EventCompactionEnd      EventKind = "compaction_end"
 	EventContextUsage       EventKind = "context_usage"
 	EventGenerationRetry    EventKind = "generation_retry"
+	EventCheckpoint         EventKind = "checkpoint"
 	EventSteering           EventKind = "steering"
 	EventGoalContinuation   EventKind = "goal_continuation"
 	EventToolStart          EventKind = "tool_start"
@@ -25,6 +26,7 @@ type Event struct {
 	Result       ToolResult
 	Usage        Usage
 	Attempt      int
+	Checkpoint   *Checkpoint
 }
 
 type EventSink func(Event) error

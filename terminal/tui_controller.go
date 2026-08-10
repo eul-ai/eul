@@ -48,6 +48,8 @@ type tuiController struct {
 	fileSearchMessages chan<- fileSearchResult
 	usageRequests      chan<- struct{}
 	setThinkingLevel   func(agent.ThinkingLevel) error
+	saveCheckpoint     func(agent.Checkpoint, Checkpoint, bool) error
+	listSessions       func(context.Context) ([]SessionSummary, error)
 	turnCancel         context.CancelFunc
 	exitAfterTurn      error
 	deferredSteering   []string
@@ -59,6 +61,9 @@ func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, e
 	switch event.kind {
 	case tuiEventParentCanceled:
 		if !c.model.running {
+			if err := c.saveCurrentCheckpoint(false); err != nil {
+				return false, err
+			}
 			return true, event.err
 		}
 		c.exitAfterTurn = event.err
@@ -66,6 +71,9 @@ func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, e
 	case tuiEventInterrupt:
 		action, err := reduceInterrupt(c.model)
 		if err != nil {
+			if checkpointErr := c.saveCurrentCheckpoint(false); checkpointErr != nil {
+				return false, checkpointErr
+			}
 			return false, err
 		}
 		if action.kind == tuiActionCancel {
@@ -82,6 +90,11 @@ func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, e
 	case tuiEventKey:
 		action, err := reduceKeyWithFrame(c.model, event.key, c.renderer.frame)
 		if err != nil {
+			if !c.model.running {
+				if checkpointErr := c.saveCurrentCheckpoint(false); checkpointErr != nil {
+					return false, checkpointErr
+				}
+			}
 			return false, err
 		}
 		exit, err := c.applyAction(ctx, action)
@@ -107,6 +120,13 @@ func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, e
 		message := event.engine
 		if !message.done {
 			c.model.applyAgentEvent(*message.event)
+			if message.ack != nil {
+				err := c.saveAgentCheckpoint(message.event.Checkpoint, true)
+				message.ack <- err
+				if err != nil {
+					return false, err
+				}
+			}
 			break
 		}
 		if c.turnCancel != nil {
@@ -129,9 +149,14 @@ func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, e
 			c.model.restoreAllSteering()
 		}
 		c.model.finishTurn(message.err)
+		if err := c.saveCurrentCheckpoint(false); err != nil {
+			return false, err
+		}
 		requestProviderUsage(c.usageRequests)
 		if !interrupted && message.err == nil {
-			c.startDeferredTurn(ctx)
+			if err := c.startDeferredTurn(ctx); err != nil {
+				return false, err
+			}
 		}
 	case tuiEventProviderUsage:
 		if event.providerUsage.err == nil {
@@ -176,21 +201,45 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		return false, nil
 	case tuiActionHelp:
 		c.model.appendBlock(blockInfo, commandHelpText())
-	case tuiActionCancel:
-		c.cancelTurn()
-	case tuiActionReset:
-		if err := c.engine.Reset(); err != nil {
+		return false, c.saveCurrentCheckpoint(false)
+	case tuiActionOpenResume:
+		if c.listSessions == nil {
+			setInputError(c.model, errors.New("session resumption is unavailable"))
+			return false, nil
+		}
+		summaries, err := c.listSessions(ctx)
+		if err != nil {
 			setInputError(c.model, err)
 			return false, nil
 		}
-		c.deferredSteering = nil
-		c.model.clearConversation()
+		c.model.openResumePicker(summaries)
+	case tuiActionResume:
+		if err := c.saveCurrentCheckpoint(false); err != nil {
+			return false, err
+		}
+		return false, &ResumeRequest{SessionID: action.text}
+	case tuiActionNewSession:
+		if err := c.saveCurrentCheckpoint(false); err != nil {
+			return false, err
+		}
+		return false, &NewSessionRequest{}
+	case tuiActionCancel:
+		c.cancelTurn()
 	case tuiActionCompact:
 		c.model.beginCompaction()
+		if err := c.saveCurrentCheckpoint(true); err != nil {
+			return false, err
+		}
 		c.startCompaction(ctx)
 	case tuiActionExit:
+		if err := c.saveCurrentCheckpoint(false); err != nil {
+			return false, err
+		}
 		return true, nil
 	case tuiActionSubmit:
+		if err := c.saveCurrentCheckpoint(true); err != nil {
+			return false, err
+		}
 		c.startTurn(ctx, action.prompt)
 	case tuiActionSteer:
 		if len(c.deferredSteering) > 0 || !c.engine.Steer(action.prompt) {
@@ -207,12 +256,16 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		default:
 			c.model.appendBlock(blockInfo, "Goal: "+goal.Objective)
 		}
+		return false, c.saveCurrentCheckpoint(false)
 	case tuiActionSetGoal:
 		if err := c.engine.SetGoal(action.prompt); err != nil {
 			setInputError(c.model, err)
 			return false, nil
 		}
 		c.model.beginTurn(action.prompt)
+		if err := c.saveCurrentCheckpoint(true); err != nil {
+			return false, err
+		}
 		c.startTurn(ctx, action.prompt)
 	case tuiActionClearGoal:
 		_, hadGoal := c.engine.Goal()
@@ -221,6 +274,9 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 			c.model.appendBlock(blockInfo, "Goal cleared")
 		} else {
 			c.model.appendBlock(blockInfo, "No goal is set")
+		}
+		if !c.model.running {
+			return false, c.saveCurrentCheckpoint(false)
 		}
 	case tuiActionDequeue:
 		c.restoreQueuedInput()
@@ -234,6 +290,7 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 			return false, nil
 		}
 		c.model.thinkingLevel = action.thinkingLevel
+		return false, c.saveCurrentCheckpoint(false)
 	case tuiActionCopy:
 		encoded := base64.StdEncoding.EncodeToString([]byte(action.text))
 		if err := writeOutput(c.output, "\x1b]52;c;%s\x07", encoded); err != nil {
@@ -257,15 +314,19 @@ func (c *tuiController) startCompaction(ctx context.Context) {
 	go runEngineCompaction(turnContext, c.engine, c.engineMessages, c.stopped)
 }
 
-func (c *tuiController) startDeferredTurn(ctx context.Context) {
+func (c *tuiController) startDeferredTurn(ctx context.Context) error {
 	if len(c.deferredSteering) == 0 {
-		return
+		return nil
 	}
 	prompt := c.deferredSteering[0]
 	c.deferredSteering = c.deferredSteering[1:]
 	c.model.removeSteering([]string{prompt})
 	c.model.beginTurn(prompt)
+	if err := c.saveCurrentCheckpoint(true); err != nil {
+		return err
+	}
 	c.startTurn(ctx, prompt)
+	return nil
 }
 
 func (c *tuiController) restoreQueuedInput() {
@@ -281,4 +342,33 @@ func (c *tuiController) cancelTurn() {
 		c.turnCancel()
 	}
 	c.model.activity = activity{kind: activityCanceling}
+}
+
+type checkpointEngine interface {
+	Checkpoint() (agent.Checkpoint, error)
+}
+
+func (c *tuiController) saveCurrentCheckpoint(active bool) error {
+	if c.saveCheckpoint == nil {
+		return nil
+	}
+	engine, ok := c.engine.(checkpointEngine)
+	if !ok {
+		return errors.New("terminal: engine checkpointing is unavailable")
+	}
+	checkpoint, err := engine.Checkpoint()
+	if err != nil {
+		return err
+	}
+	return c.saveAgentCheckpoint(&checkpoint, active)
+}
+
+func (c *tuiController) saveAgentCheckpoint(checkpoint *agent.Checkpoint, active bool) error {
+	if c.saveCheckpoint == nil {
+		return nil
+	}
+	if checkpoint == nil {
+		return errors.New("terminal: agent checkpoint is missing")
+	}
+	return c.saveCheckpoint(*checkpoint, checkpointModel(c.model), active)
 }

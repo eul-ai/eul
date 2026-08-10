@@ -25,6 +25,36 @@ type agentArguments struct {
 	model         string
 	thinkingLevel agent.ThinkingLevel
 	cwd           string
+	resume        bool
+	sessionID     string
+}
+
+type resumeValue struct {
+	enabled   bool
+	sessionID string
+}
+
+func (value *resumeValue) String() string {
+	return value.sessionID
+}
+
+func (value *resumeValue) Set(raw string) error {
+	switch raw {
+	case "false":
+		value.enabled = false
+		value.sessionID = ""
+	case "true", "":
+		value.enabled = true
+		value.sessionID = ""
+	default:
+		value.enabled = true
+		value.sessionID = raw
+	}
+	return nil
+}
+
+func (*resumeValue) IsBoolFlag() bool {
+	return true
 }
 
 type agentConfig struct {
@@ -46,6 +76,8 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (agentArguments
 	model := flags.String("model", runtime.getenv("OPENAI_MODEL"), "OpenAI model (or OPENAI_MODEL)")
 	thinking := flags.String("thinking", thinkingDefault, "thinking level (or EUL_THINKING_LEVEL)")
 	cwd := flags.String("cwd", "", "fixed working directory")
+	resume := &resumeValue{}
+	flags.Var(resume, "resume", "resume the most recent session or a session selected with --resume=<id>")
 
 	if err := flags.Parse(arguments); err != nil {
 		return agentArguments{}, reportedFlagError{error: err}
@@ -54,12 +86,28 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (agentArguments
 		return agentArguments{}, errors.New("usage error: eul accepts no prompt arguments")
 	}
 
-	thinkingLevel, err := agent.ParseThinkingLevel(*thinking)
-	if err != nil {
-		return agentArguments{}, err
+	explicit := make(map[string]bool)
+	flags.Visit(func(current *flag.Flag) { explicit[current.Name] = true })
+	if resume.enabled && (explicit["model"] || explicit["thinking"] || explicit["cwd"]) {
+		return agentArguments{}, errors.New("usage error: --resume cannot be combined with --model, --thinking, or --cwd")
 	}
 
-	return agentArguments{model: *model, thinkingLevel: thinkingLevel, cwd: *cwd}, nil
+	thinkingLevel := agent.DefaultThinkingLevel
+	if !resume.enabled {
+		var err error
+		thinkingLevel, err = agent.ParseThinkingLevel(*thinking)
+		if err != nil {
+			return agentArguments{}, err
+		}
+	}
+
+	return agentArguments{
+		model:         *model,
+		thinkingLevel: thinkingLevel,
+		cwd:           *cwd,
+		resume:        resume.enabled,
+		sessionID:     resume.sessionID,
+	}, nil
 }
 
 func resolveAgentConfig(arguments agentArguments, runtime appRuntime) (agentConfig, error) {
@@ -108,6 +156,28 @@ func validateModel(model string) error {
 	}
 
 	return nil
+}
+
+func resolveEULHome(runtime appRuntime) (string, error) {
+	if configured := runtime.getenv("EUL_HOME"); configured != "" {
+		if !filepath.IsAbs(configured) {
+			return "", errors.New("EUL_HOME must be an absolute path")
+		}
+		return filepath.Clean(configured), nil
+	}
+
+	userConfigDir := runtime.userConfigDir
+	if userConfigDir == nil {
+		userConfigDir = os.UserConfigDir
+	}
+	config, err := userConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user config directory: %w", err)
+	}
+	if !filepath.IsAbs(config) {
+		return "", errors.New("user config directory is not absolute")
+	}
+	return filepath.Join(filepath.Clean(config), "eul"), nil
 }
 
 func resolveUserHome(userHomeDir func() (string, error)) string {

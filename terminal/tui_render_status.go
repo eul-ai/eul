@@ -18,23 +18,28 @@ func renderStatus(model *tuiModel, width int) (string, string) {
 func renderStatusAt(model *tuiModel, width int, now time.Time) (string, string) {
 	activity := activityText(model)
 	modelText := model.model + " (" + string(model.thinkingLevel) + ")"
+	modelTextShort := modelText
+	if model.sessionID != "" {
+		modelText += " · session " + model.sessionID
+		modelTextShort += " · session " + truncateCells(model.sessionID, 8, false)
+	}
 	contextLong, contextShort := contextText(model.contextTokens, model.contextWindow)
 	usageLong, usageShort := providerUsageText(model.providerUsage, now)
 
 	candidates := []string{
 		modelText + " · " + contextLong,
-		modelText + " · " + contextShort,
+		modelTextShort + " · " + contextShort,
 		contextShort,
 		"",
 	}
 	if usageLong != "" {
 		candidates = []string{
 			modelText + " · " + contextLong + " · " + usageLong,
-			modelText + " · " + contextShort + " · " + usageShort,
+			modelTextShort + " · " + contextShort + " · " + usageShort,
 			contextShort + " · " + usageShort,
 			usageLong,
 			usageShort,
-			modelText + " · " + contextLong,
+			modelTextShort + " · " + contextLong,
 			contextShort,
 			"",
 		}
