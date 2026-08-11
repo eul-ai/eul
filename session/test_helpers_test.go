@@ -83,10 +83,10 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer) runtime {
 		getwd:       func() (string, error) { return cwd, nil },
 		userHomeDir: func() (string, error) { return filepath.Join(cwd, ".test-home"), nil },
 		backends:    backends,
-		newToolset: func(cwd string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
+		newToolset: func(cwd string, access toolAccess, authorizeNetwork tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
 			tools := []tool.Tool{tool.NewRead(cwd)}
 			if access == fullToolAccess {
-				tools = append(tools, tool.NewWrite(cwd), tool.NewEdit(cwd), tool.NewBash(cwd))
+				tools = append(tools, tool.NewWrite(cwd), tool.NewEdit(cwd), tool.NewBashWithNetworkAuthorizer(cwd, authorizeNetwork))
 			}
 			tools = append(tools, additional...)
 			return tool.NewRegistry(tools)

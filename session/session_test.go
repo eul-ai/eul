@@ -199,7 +199,7 @@ func TestNewAgentSessionWarnsWhenDedicatedUsageProviderIsUnavailable(t *testing.
 				models:   modelSelection{main: "model"},
 				cwd:      t.TempDir(),
 				warnings: []string{"existing warning"},
-			}, runtime{newToolset: func(_ string, _ toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
+			}, runtime{newToolset: func(_ string, _ toolAccess, _ tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
 				return tool.NewRegistry(additional)
 			}}, backendRuntime)
 			if err != nil {
@@ -230,7 +230,7 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return provider, nil
 	}}
-	runtime := runtime{newToolset: func(_ string, _ toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
+	runtime := runtime{newToolset: func(_ string, _ toolAccess, _ tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
 		return tool.NewRegistry(additional)
 	}}
 	session, err := newAgentSession(resolvedConfig{
@@ -301,7 +301,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	runtime := runtime{
 		stdin:  strings.NewReader(""),
 		stdout: io.Discard,
-		newToolset: func(string, toolAccess, ...tool.Tool) (*tool.Registry, error) {
+		newToolset: func(string, toolAccess, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error) {
 			return tool.NewRegistry(nil)
 		},
 	}
@@ -484,7 +484,7 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 func TestNewAgentSessionReportsToolsetConfigurationFailure(t *testing.T) {
 	configureErr := errors.New("toolset failed")
 	runtime := runtime{
-		newToolset: func(string, toolAccess, ...tool.Tool) (*tool.Registry, error) {
+		newToolset: func(string, toolAccess, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error) {
 			return nil, configureErr
 		},
 	}

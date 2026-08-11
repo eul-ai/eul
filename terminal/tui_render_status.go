@@ -140,7 +140,7 @@ func usageWindowLabel(duration time.Duration) string {
 }
 
 func splitActivitySpinner(model *tuiModel, text string) (string, string) {
-	if model.activity.kind == activityReady || model.activity.kind == activityError || text == "" {
+	if model.activity.kind == activityReady || model.activity.kind == activityPermission || model.activity.kind == activityError || text == "" {
 		return "", text
 	}
 
@@ -164,12 +164,14 @@ func activityText(model *tuiModel) string {
 		label = "compacting context"
 	case activityTool:
 		label = model.activity.detail
+	case activityPermission:
+		label = "waiting for permission"
 	case activityCanceling:
 		label = "canceling"
 	case activityError:
 		label = "error: " + model.activity.detail
 	}
-	if model.activity.kind == activityReady || model.activity.kind == activityError {
+	if model.activity.kind == activityReady || model.activity.kind == activityPermission || model.activity.kind == activityError {
 		return label
 	}
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}

@@ -55,6 +55,49 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 	}
 }
 
+func TestRenderFrameShowsPermission(t *testing.T) {
+	model := newTUIModel(72, 12, Options{})
+	model.running = true
+	model.showPermission(PermissionRequest{
+		Title:        "Network access requested",
+		Subject:      "bash",
+		Description:  "needs access to the network",
+		Detail:       "git push origin main",
+		DetailPrefix: "$ ",
+		Notice:       "This command and its descendants will have network access.",
+	}, 1, 2)
+	if err := model.insertInput("queued steering"); err != nil {
+		t.Fatal(err)
+	}
+
+	frame := buildTerminalFrame(model)
+	joined := strings.Join(frame.plainRows, "\n")
+	for _, want := range []string{
+		"Network access requested (1 of 2)",
+		"bash needs access to the network",
+		"$ git push origin main",
+		"This command and its descendants will have network access.",
+		"[n] Deny",
+		"[y] Allow once",
+		"waiting for permission",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("frame omits %q: %q", want, frame.plainRows)
+		}
+	}
+	input, _ := modelInputLayout(model)
+	if len(input.lines) < 2 || strings.TrimSpace(input.lines[0]) != "" || strings.TrimSpace(input.lines[len(input.lines)-1]) != "" {
+		t.Fatalf("permission spacing = %q", input.lines)
+	}
+	description := input.styledLines[1]
+	if len(description.spans) != 3 || description.spans[0].text != "bash" || description.spans[0].style.foreground != inlineForegroundAccent || description.spans[2].style.foreground != inlineForegroundDefault {
+		t.Fatalf("permission description = %+v", description.spans)
+	}
+	if frame.cursorVisible || string(model.input) != "queued steering" {
+		t.Fatalf("cursor=%v input=%q", frame.cursorVisible, model.input)
+	}
+}
+
 func TestStatusTruncatesSessionID(t *testing.T) {
 	model := newTUIModel(120, 12, Options{
 		Model: "model", SessionID: "0123456789abcdef0123456789abcdef",

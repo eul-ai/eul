@@ -70,7 +70,7 @@ type lifecycleToolState struct {
 	closers     []*lifecycleCloser
 }
 
-func (state *lifecycleToolState) newToolset(_ string, _ toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
+func (state *lifecycleToolState) newToolset(_ string, _ toolAccess, _ tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
 	var closeErr error
 	if len(state.closers) < len(state.closeErrors) {
 		closeErr = state.closeErrors[len(state.closers)]

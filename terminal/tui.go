@@ -228,6 +228,7 @@ func runTUIWithKeys(
 
 	interrupts := options.Interrupts
 	subagentUpdates := options.SubagentUpdates
+	permissionRequests := options.PermissionRequests
 	parentDone := ctx.Done()
 	for {
 		var event tuiEvent
@@ -255,6 +256,12 @@ func runTUIWithKeys(
 				continue
 			}
 			event = tuiEvent{kind: tuiEventSubagentStatus, subagentStatus: status}
+		case request, ok := <-permissionRequests:
+			if !ok {
+				permissionRequests = nil
+				continue
+			}
+			event = tuiEvent{kind: tuiEventPermission, permission: request}
 		case result := <-fileSearchMessages:
 			event = tuiEvent{kind: tuiEventFileSearch, fileSearch: result}
 		case <-spinnerTicker.C:

@@ -42,6 +42,7 @@ const (
 	activityRetrying
 	activityCompacting
 	activityTool
+	activityPermission
 	activityCanceling
 	activityError
 )
@@ -73,8 +74,26 @@ type editorModel struct {
 	historyDraft       string
 }
 
+type permissionModel struct {
+	title         string
+	subject       string
+	description   string
+	detail        string
+	detailPrefix  string
+	notice        string
+	allowSelected bool
+	scroll        int
+	index         int
+	total         int
+}
+
+func (permission permissionModel) active() bool {
+	return permission.title != ""
+}
+
 type operationModel struct {
 	steering         []string
+	permission       permissionModel
 	turnExecutedTool bool
 	running          bool
 	interrupted      bool
@@ -558,12 +577,41 @@ func (m *tuiModel) restoreAllSteering() {
 	m.restoreSteering(messages)
 }
 
+func (m *tuiModel) showPermission(request PermissionRequest, index, total int) {
+	title := singleLine(request.Title, 200)
+	if strings.TrimSpace(title) == "" {
+		title = "Permission requested"
+	}
+	detailPrefix := strings.Map(func(character rune) rune {
+		if unicode.IsControl(character) {
+			return ' '
+		}
+		return character
+	}, request.DetailPrefix)
+	m.permission = permissionModel{
+		title:        title,
+		subject:      singleLine(request.Subject, 120),
+		description:  singleLine(request.Description, 500),
+		detail:       sanitizeAssistantText(request.Detail),
+		detailPrefix: truncateCells(detailPrefix, 20, false),
+		notice:       singleLine(request.Notice, 500),
+		index:        index,
+		total:        total,
+	}
+	m.activity = activity{kind: activityPermission}
+}
+
+func (m *tuiModel) clearPermission() {
+	m.permission = permissionModel{}
+}
+
 func (m *tuiModel) clearConversation() {
 	m.blocks = nil
 	m.steering = nil
 	m.conversationVersion++
 	m.closeStream()
 	m.contextTokens = 0
+	m.clearPermission()
 	m.turnExecutedTool = false
 	m.scrollTop = 0
 	m.following = true
@@ -601,6 +649,7 @@ func (m *tuiModel) beginCompaction() {
 
 func (m *tuiModel) finishTurn(runErr error) {
 	m.running = false
+	m.clearPermission()
 	m.refreshCommandPickerAvailability()
 	m.closeStream()
 	executedTool := m.turnExecutedTool

@@ -36,13 +36,14 @@ type sessionToolset struct {
 }
 
 type terminalOptionSource struct {
-	config           resolvedConfig
-	runtime          runtime
-	metadata         sessionModelMetadata
-	warnings         []string
-	loadUsage        func(context.Context) (agent.ProviderUsage, error)
-	subagentUpdates  <-chan agent.SubagentStatus
-	setThinkingLevel func(agent.ThinkingLevel) error
+	config             resolvedConfig
+	runtime            runtime
+	metadata           sessionModelMetadata
+	warnings           []string
+	loadUsage          func(context.Context) (agent.ProviderUsage, error)
+	subagentUpdates    <-chan agent.SubagentStatus
+	permissionRequests <-chan terminal.PermissionRequest
+	setThinkingLevel   func(agent.ThinkingLevel) error
 }
 
 func providerModelMetadata(provider agent.Provider, model string) agent.ModelMetadata {
@@ -85,11 +86,14 @@ func newSessionToolset(
 	runtime runtime,
 	backendRuntime backend.Runtime,
 	metadata sessionModelMetadata,
+	authorizeNetwork tool.NetworkAuthorizer,
 	completeGoal func() error,
 ) (sessionToolset, error) {
 	newToolset := runtime.newToolset
 	if newToolset == nil {
-		newToolset = buildToolset
+		newToolset = func(cwd string, access toolAccess, authorizeNetwork tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
+			return buildToolsetWithHomeAndNetworkAuthorizer(cwd, "", access, authorizeNetwork, additional...)
+		}
 	}
 	subagent := tool.NewSubagentWithThinkingLevels(func(ctx context.Context, task string, modelProfile tool.SubagentModelProfile, thinkingLevel agent.ThinkingLevel, update func(tool.SubagentProgress)) (agent.RunResult, error) {
 		return runChildAgent(ctx, backendRuntime, newToolset, config, modelProfile, thinkingLevel, task, update)
@@ -99,6 +103,7 @@ func newSessionToolset(
 	registry, err := newToolset(
 		config.cwd,
 		fullToolAccess,
+		authorizeNetwork,
 		subagent,
 		tool.NewSubagentWait(subagent),
 		tool.NewSubagentCancel(subagent),
@@ -112,19 +117,20 @@ func newSessionToolset(
 
 func (source terminalOptionSource) options() terminal.Options {
 	return terminal.Options{
-		Input:            source.runtime.stdin,
-		Output:           source.runtime.stdout,
-		Model:            source.config.models.main,
-		WorkingDirectory: source.config.cwd,
-		ThinkingLevel:    source.metadata.thinkingLevel,
-		ThinkingLevels:   source.metadata.main.ThinkingLevels,
-		ContextWindow:    source.metadata.main.ContextWindow,
-		Skills:           source.config.skills,
-		Warnings:         source.warnings,
-		Interrupts:       source.runtime.interrupts,
-		SetThinkingLevel: source.setThinkingLevel,
-		LoadUsage:        source.loadUsage,
-		SubagentUpdates:  source.subagentUpdates,
+		Input:              source.runtime.stdin,
+		Output:             source.runtime.stdout,
+		Model:              source.config.models.main,
+		WorkingDirectory:   source.config.cwd,
+		ThinkingLevel:      source.metadata.thinkingLevel,
+		ThinkingLevels:     source.metadata.main.ThinkingLevels,
+		ContextWindow:      source.metadata.main.ContextWindow,
+		Skills:             source.config.skills,
+		Warnings:           source.warnings,
+		Interrupts:         source.runtime.interrupts,
+		SetThinkingLevel:   source.setThinkingLevel,
+		LoadUsage:          source.loadUsage,
+		SubagentUpdates:    source.subagentUpdates,
+		PermissionRequests: source.permissionRequests,
 	}
 }
 
@@ -148,9 +154,10 @@ func newAgentSessionWithCheckpointing(
 		warnings = append(warnings, usageWarning)
 	}
 	metadata := resolveSessionModelMetadata(provider, config)
+	authorizeNetwork, permissionRequests := newNetworkPermissionBroker()
 
 	var engine *agent.Engine
-	tools, err := newSessionToolset(config, runtime, backendRuntime, metadata, func() error {
+	tools, err := newSessionToolset(config, runtime, backendRuntime, metadata, authorizeNetwork, func() error {
 		if engine == nil {
 			return errors.New("goal completion is unavailable")
 		}
@@ -181,13 +188,14 @@ func newAgentSessionWithCheckpointing(
 		return nil
 	}
 	session.terminalOptions = terminalOptionSource{
-		config:           config,
-		runtime:          runtime,
-		metadata:         metadata,
-		warnings:         warnings,
-		loadUsage:        loadUsage,
-		subagentUpdates:  tools.subagentUpdates,
-		setThinkingLevel: setThinkingLevel,
+		config:             config,
+		runtime:            runtime,
+		metadata:           metadata,
+		warnings:           warnings,
+		loadUsage:          loadUsage,
+		subagentUpdates:    tools.subagentUpdates,
+		permissionRequests: permissionRequests,
+		setThinkingLevel:   setThinkingLevel,
 	}.options()
 	return session, nil
 }

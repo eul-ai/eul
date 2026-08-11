@@ -89,18 +89,19 @@ diffs, errors, context usage, and model activity visible while you work.
 
 | Control | Action |
 | --- | --- |
-| Enter | Submit a prompt, queue steering, or apply a selected completion |
+| Enter | Submit a prompt, queue steering, or apply a selected completion or permission response |
 | Shift-Enter | Insert a newline |
 | Shift-Tab | Cycle supported thinking levels |
 | `/` | Show commands at the start of the editor |
 | `@` | Search for a file and insert its path |
-| Tab | Apply the selected command or file completion |
-| Up / Down | Navigate prompt history or completion results |
-| Page Up / Page Down | Scroll the conversation |
+| Tab | Apply a completion or switch the selected permission response |
+| Up / Down | Navigate prompt history or completion results, or scroll permission details |
+| Page Up / Page Down | Scroll the conversation or permission details |
 | Mouse wheel | Scroll the conversation |
 | Mouse drag | Select and copy conversation text |
 | Alt-Up | Restore queued steering messages to the editor |
-| Escape | Close the completion window or cancel the active turn |
+| Y / N | Allow once or deny an active permission request |
+| Escape | Close completions, deny a permission request, or cancel the active turn |
 | Ctrl-C | Clear the editor, cancel the active turn, or exit from an empty prompt |
 | Ctrl-D | Exit from an empty prompt |
 | Ctrl-L | Redraw the terminal |
@@ -133,6 +134,18 @@ Eul can use the following capabilities as needed:
 - Look up hover information, definitions, references, and document symbols
 - Rename symbols across a workspace
 - Launch independent read-only research in background subagents and wait for selected results
+
+Every Bash call declares whether it needs network access. Commands that do not
+request it run with OS-enforced network isolation: Linux uses a separate user and
+network namespace, while macOS uses the system `sandbox-exec` utility. Commands
+that request network access pause for one-time user approval. Eul refuses to run
+a network-disabled command when the platform isolation is unavailable.
+
+Linux isolation requires unprivileged user namespaces. Only the user's primary
+group is mapped, so supplementary-group file access may not be available to
+isolated commands. Both backends block ordinary IP networking for the full
+command process tree, but they are not filesystem sandboxes and do not prevent
+network delegation through accessible local services.
 
 Language-server configuration is loaded from `lsp.json` under `EUL_HOME`, or
 the platform user configuration directory when `EUL_HOME` is unset. For
@@ -210,8 +223,9 @@ run bundled scripts with your permissions.
 
 ## Safety and limitations
 
-- Tools are not sandboxed. Shell commands and file operations can make arbitrary
-  changes accessible to your user account.
+- Apart from Bash network isolation on Linux and macOS, tools are not sandboxed.
+  Shell commands and file operations can make arbitrary changes accessible to
+  your user account.
 - Saved sessions can contain prompts, source code, and tool output. They are
   protected with local filesystem permissions but are not encrypted at rest.
 - Canceling a turn does not undo tool side effects that already occurred.

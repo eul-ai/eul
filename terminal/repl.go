@@ -73,6 +73,16 @@ func (*NewSessionRequest) Error() string {
 	return "terminal: start new session"
 }
 
+type PermissionRequest struct {
+	Title        string
+	Subject      string
+	Description  string
+	Detail       string
+	DetailPrefix string
+	Notice       string
+	Response     chan<- bool
+}
+
 type Options struct {
 	Input              io.Reader
 	Output             io.Writer
@@ -87,6 +97,7 @@ type Options struct {
 	SetThinkingLevel   func(agent.ThinkingLevel) error
 	LoadUsage          func(context.Context) (agent.ProviderUsage, error)
 	SubagentUpdates    <-chan agent.SubagentStatus
+	PermissionRequests <-chan PermissionRequest
 	InitialCheckpoint  *Checkpoint
 	SessionID          string
 	PreviousTurnActive bool

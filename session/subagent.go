@@ -38,7 +38,7 @@ func runChildAgent(
 		return agent.RunResult{}, fmt.Errorf("configure subagent provider: %w", err)
 	}
 
-	registry, err := newToolset(config.cwd, readOnlyToolAccess)
+	registry, err := newToolset(config.cwd, readOnlyToolAccess, nil)
 	if err != nil {
 		return agent.RunResult{}, fmt.Errorf("configure subagent tools: %w", err)
 	}

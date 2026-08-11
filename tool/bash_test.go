@@ -17,6 +17,38 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
+func newTestBash(cwd string) *Bash {
+	return NewBashWithNetworkAuthorizer(cwd, func(context.Context, string) (bool, error) {
+		return true, nil
+	})
+}
+
+func TestBashNetworkAccessRequiresApproval(t *testing.T) {
+	cwd := t.TempDir()
+	marker := filepath.Join(cwd, "started")
+	command := `: > "$EUL_NETWORK_MARKER"`
+	t.Setenv("EUL_NETWORK_MARKER", marker)
+
+	for _, test := range []struct {
+		name string
+		bash *Bash
+		want string
+	}{
+		{name: "unavailable", bash: NewBash(cwd), want: "authorization is unavailable"},
+		{name: "denied", bash: NewBashWithNetworkAuthorizer(cwd, func(context.Context, string) (bool, error) { return false, nil }), want: "network access denied"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := executeJSON(t, test.bash, map[string]any{"command": command, "network": true})
+			if !result.IsError || !strings.Contains(result.Output, test.want) {
+				t.Fatalf("result = %+v, want %q", result, test.want)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("command started without approval: %v", err)
+			}
+		})
+	}
+}
+
 func TestBashReportsCombinedOutputStatusCWDAndEnvironment(t *testing.T) {
 	cwd := t.TempDir()
 	resolvedCWD, err := filepath.EvalSymlinks(cwd)
@@ -24,10 +56,10 @@ func TestBashReportsCombinedOutputStatusCWDAndEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("EUL_TEST", "value")
-	bashTool := NewBash(cwd)
+	bashTool := newTestBash(cwd)
 	command := `printf 'stdout:%s:%s\n' "$PWD" "$EUL_TEST"; printf 'stderr\n' >&2`
 
-	result := executeJSON(t, bashTool, map[string]any{"command": command})
+	result := executeJSON(t, bashTool, map[string]any{"command": command, "network": true})
 	if result.IsError {
 		t.Fatalf("bash result = %+v", result)
 	}
@@ -39,8 +71,8 @@ func TestBashReportsCombinedOutputStatusCWDAndEnvironment(t *testing.T) {
 }
 
 func TestBashFinalPresentationShowsOutputTailAndDuration(t *testing.T) {
-	bashTool := NewBash(t.TempDir())
-	arguments, err := json.Marshal(map[string]any{"command": `printf 'one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n'`})
+	bashTool := newTestBash(t.TempDir())
+	arguments, err := json.Marshal(map[string]any{"command": `printf 'one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n'`, "network": true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,8 +96,8 @@ func TestBashFinalPresentationShowsOutputTailAndDuration(t *testing.T) {
 }
 
 func TestBashStreamsOutputBeforeCommandCompletes(t *testing.T) {
-	bashTool := NewBash(t.TempDir())
-	arguments := json.RawMessage(`{"command":"printf 'first\\n'; sleep 0.4; printf 'second\\n'"}`)
+	bashTool := newTestBash(t.TempDir())
+	arguments := json.RawMessage(`{"command":"printf 'first\\n'; sleep 0.4; printf 'second\\n'","network":true}`)
 	updates := make(chan agent.ToolPresentation, 16)
 	type outcome struct {
 		result agent.ToolResult
@@ -102,14 +134,14 @@ func TestBashStreamsOutputBeforeCommandCompletes(t *testing.T) {
 }
 
 func TestBashUpdateFailureCancelsCommandAndReturnsError(t *testing.T) {
-	bashTool := NewBash(t.TempDir())
+	bashTool := newTestBash(t.TempDir())
 	bashTool.defaultTimeout = 5 * time.Second
 	bashTool.maxTimeout = 5 * time.Second
 	updateErr := errors.New("update failed")
 	started := time.Now()
 	result, err := bashTool.Execute(
 		context.Background(),
-		json.RawMessage(`{"command":"printf started; while :; do :; done"}`),
+		json.RawMessage(`{"command":"printf started; while :; do :; done","network":true}`),
 		toolUpdateSinkFunc(func(agent.ToolPresentation) error { return updateErr }),
 	)
 	if !errors.Is(err, updateErr) {
@@ -125,10 +157,10 @@ func TestBashUpdateFailureCancelsCommandAndReturnsError(t *testing.T) {
 
 func TestBashSupportsMVPDiscoveryCommands(t *testing.T) {
 	cwd := t.TempDir()
-	bashTool := NewBash(cwd)
+	bashTool := newTestBash(cwd)
 	command := `mkdir -p nested; printf 'TODO\n' > nested/note.txt; grep -R TODO .; find . -name '*.txt'; ls nested`
 
-	result := executeJSON(t, bashTool, map[string]any{"command": command})
+	result := executeJSON(t, bashTool, map[string]any{"command": command, "network": true})
 	if result.IsError {
 		t.Fatalf("discovery command result = %+v", result)
 	}
@@ -141,13 +173,13 @@ func TestBashSupportsMVPDiscoveryCommands(t *testing.T) {
 
 func TestBashReportsNonzeroExitAndNilStdin(t *testing.T) {
 	cwd := t.TempDir()
-	bashTool := NewBash(cwd)
+	bashTool := newTestBash(cwd)
 
-	result := executeJSON(t, bashTool, map[string]any{"command": `printf 'failure'; exit 7`})
+	result := executeJSON(t, bashTool, map[string]any{"command": `printf 'failure'; exit 7`, "network": true})
 	if !result.IsError || !strings.Contains(result.Output, "failure") || !strings.Contains(result.Output, "[exit status: 7]") {
 		t.Fatalf("nonzero result = %+v", result)
 	}
-	result = executeJSON(t, bashTool, map[string]any{"command": `if read value; then printf 'input:%s' "$value"; else printf 'eof'; fi`})
+	result = executeJSON(t, bashTool, map[string]any{"command": `if read value; then printf 'input:%s' "$value"; else printf 'eof'; fi`, "network": true})
 	if result.IsError || !strings.Contains(result.Output, "eof") || !strings.Contains(result.Output, "[exit status: 0]") {
 		t.Fatalf("stdin result = %+v", result)
 	}
@@ -161,13 +193,13 @@ func TestBashTimeoutIsRecoverableAndRetainsOutput(t *testing.T) {
 	t.Setenv("EUL_CHILD_READY", readyPath)
 	t.Setenv("EUL_CHILD_RELEASE", releasePath)
 	t.Setenv("EUL_CHILD_SURVIVED", survivedPath)
-	bashTool := NewBash(cwd)
+	bashTool := newTestBash(cwd)
 	bashTool.defaultTimeout = 500 * time.Millisecond
 	bashTool.maxTimeout = time.Second
 	bashTool.waitDelay = 20 * time.Millisecond
 
 	command := `printf 'before-timeout\n'; (: > "$EUL_CHILD_READY"; while [ ! -e "$EUL_CHILD_RELEASE" ]; do sleep 0.01; done; : > "$EUL_CHILD_SURVIVED") & wait`
-	arguments, err := json.Marshal(map[string]any{"command": command})
+	arguments, err := json.Marshal(map[string]any{"command": command, "network": true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +233,7 @@ func TestBashParentCancellationIsFatalAndReported(t *testing.T) {
 	t.Setenv("EUL_CHILD_READY", readyPath)
 	t.Setenv("EUL_CHILD_RELEASE", releasePath)
 	t.Setenv("EUL_CHILD_SURVIVED", survivedPath)
-	bashTool := NewBash(cwd)
+	bashTool := newTestBash(cwd)
 	bashTool.defaultTimeout = 5 * time.Second
 	bashTool.maxTimeout = 5 * time.Second
 	ctx, cancel := context.WithCancel(context.Background())
@@ -212,7 +244,7 @@ func TestBashParentCancellationIsFatalAndReported(t *testing.T) {
 	done := make(chan outcome, 1)
 	updates := &recordingBashUpdates{}
 	go func() {
-		arguments := json.RawMessage(`{"command":"printf ready; (: > \"$EUL_CHILD_READY\"; while [ ! -e \"$EUL_CHILD_RELEASE\" ]; do sleep 0.01; done; : > \"$EUL_CHILD_SURVIVED\") & wait"}`)
+		arguments := json.RawMessage(`{"command":"printf ready; (: > \"$EUL_CHILD_READY\"; while [ ! -e \"$EUL_CHILD_RELEASE\" ]; do sleep 0.01; done; : > \"$EUL_CHILD_SURVIVED\") & wait","network":true}`)
 		result, runErr := bashTool.Execute(ctx, arguments, updates)
 		done <- outcome{result: result, err: runErr}
 	}()
@@ -239,10 +271,10 @@ func TestBashParentCancellationIsFatalAndReported(t *testing.T) {
 
 func TestBashOutputKeepsBoundedTail(t *testing.T) {
 	cwd := t.TempDir()
-	bashTool := NewBash(cwd)
+	bashTool := newTestBash(cwd)
 	command := `printf 'START-MARKER\n'; i=0; while [ "$i" -lt 7000 ]; do printf 'line-%04d-xxxxxxxx\n' "$i"; i=$((i+1)); done; printf 'END-MARKER\n'`
 
-	result := executeJSON(t, bashTool, map[string]any{"command": command})
+	result := executeJSON(t, bashTool, map[string]any{"command": command, "network": true})
 	if result.IsError {
 		t.Fatalf("bash result = %+v", result)
 	}
@@ -259,11 +291,11 @@ func TestBashOutputKeepsBoundedTail(t *testing.T) {
 
 func TestBashValidationAndStartFailuresAreRecoverableAndBounded(t *testing.T) {
 	cwd := t.TempDir()
-	bashTool := NewBash(cwd)
+	bashTool := newTestBash(cwd)
 	bashTool.shell = filepath.Join(cwd, "missing-bash")
 
 	updates := &recordingBashUpdates{}
-	result, err := bashTool.Execute(context.Background(), json.RawMessage(`{"command":"echo no"}`), updates)
+	result, err := bashTool.Execute(context.Background(), json.RawMessage(`{"command":"echo no","network":true}`), updates)
 	if err != nil || !result.IsError || !strings.Contains(result.Output, "failed to start shell") || !strings.Contains(result.Output, "exit status: unavailable") {
 		t.Fatalf("start failure = %+v, err = %v", result, err)
 	}
@@ -272,7 +304,7 @@ func TestBashValidationAndStartFailuresAreRecoverableAndBounded(t *testing.T) {
 		t.Fatalf("start failure presentation = %+v, final calls = %d", presentation, finalCalls)
 	}
 
-	regular := NewBash(cwd)
+	regular := newTestBash(cwd)
 	for _, test := range []struct {
 		name string
 		json string

@@ -21,8 +21,8 @@ func Run(ctx context.Context, options Options, dependencies Dependencies) error 
 		backends:    dependencies.Backends,
 	}
 	home := dependencies.Home
-	runtime.newToolset = func(cwd string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
-		return buildToolsetWithHome(cwd, home, access, additional...)
+	runtime.newToolset = func(cwd string, access toolAccess, authorizeNetwork tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
+		return buildToolsetWithHomeAndNetworkAuthorizer(cwd, home, access, authorizeNetwork, additional...)
 	}
 	store := newSessionStore(home)
 

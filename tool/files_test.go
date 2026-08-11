@@ -42,7 +42,7 @@ func TestCoreToolDefinitionsUseStrictSchemas(t *testing.T) {
 		{tool: readTool, required: []string{"path", "offset", "limit"}, properties: map[string][]string{"path": {"string"}, "offset": {"integer", "null"}, "limit": {"integer", "null"}}},
 		{tool: writeTool, required: []string{"path", "content"}, properties: map[string][]string{"path": {"string"}, "content": {"string"}}},
 		{tool: editTool, required: []string{"path", "oldText", "newText"}, properties: map[string][]string{"path": {"string"}, "oldText": {"string"}, "newText": {"string"}}},
-		{tool: bashTool, required: []string{"command", "timeout"}, properties: map[string][]string{"command": {"string"}, "timeout": {"integer", "null"}}},
+		{tool: bashTool, required: []string{"command", "timeout", "network"}, properties: map[string][]string{"command": {"string"}, "timeout": {"integer", "null"}, "network": {"boolean"}}},
 	}
 	for _, test := range tests {
 		definition := test.tool.Definition()

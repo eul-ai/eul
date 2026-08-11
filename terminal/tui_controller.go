@@ -22,6 +22,7 @@ const (
 	tuiEventEngine
 	tuiEventProviderUsage
 	tuiEventSubagentStatus
+	tuiEventPermission
 	tuiEventFileSearch
 	tuiEventSpinner
 	tuiEventUsageClock
@@ -34,6 +35,7 @@ type tuiEvent struct {
 	engine         engineMessage
 	providerUsage  providerUsageMessage
 	subagentStatus agent.SubagentStatus
+	permission     PermissionRequest
 	fileSearch     fileSearchResult
 	err            error
 }
@@ -55,6 +57,8 @@ type tuiController struct {
 	turnCancel         context.CancelFunc
 	exitAfterTurn      error
 	deferredSteering   []string
+	permission         *PermissionRequest
+	queuedPermissions  []PermissionRequest
 	dirty              bool
 	forceRedraw        bool
 }
@@ -75,6 +79,8 @@ func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, e
 		return c.handleProviderUsage(event.providerUsage)
 	case tuiEventSubagentStatus:
 		return c.handleSubagentStatus(event.subagentStatus)
+	case tuiEventPermission:
+		return c.handlePermission(event.permission)
 	case tuiEventFileSearch:
 		return c.handleFileSearch(event.fileSearch)
 	case tuiEventSpinner:
@@ -171,6 +177,7 @@ func (c *tuiController) handleEngineMessage(ctx context.Context, message engineM
 		return c.handleAgentEvent(message)
 	}
 
+	c.denyPermissions()
 	if c.turnCancel != nil {
 		c.turnCancel()
 		c.turnCancel = nil
@@ -208,6 +215,9 @@ func (c *tuiController) handleEngineMessage(ctx context.Context, message engineM
 
 func (c *tuiController) handleAgentEvent(message engineMessage) (bool, error) {
 	c.model.applyAgentEvent(*message.event)
+	if c.model.permission.active() {
+		c.model.activity = activity{kind: activityPermission}
+	}
 	if message.ack != nil {
 		err := c.saveAgentCheckpoint(message.event.Checkpoint, true)
 		message.ack <- err
@@ -261,6 +271,27 @@ func sanitizeSubagentStatus(status agent.SubagentStatus) agent.SubagentStatus {
 	return sanitized
 }
 
+func (c *tuiController) handlePermission(request PermissionRequest) (bool, error) {
+	if request.Response == nil {
+		return false, nil
+	}
+	if !c.model.running || c.model.interrupted || c.model.activity.kind == activityCanceling {
+		respondPermission(request, false)
+		return false, nil
+	}
+	if c.permission != nil {
+		c.queuedPermissions = append(c.queuedPermissions, request)
+		c.model.permission.total++
+		c.dirty = true
+		return false, nil
+	}
+
+	c.permission = &request
+	c.model.showPermission(request, 1, 1)
+	c.dirty = true
+	return false, nil
+}
+
 func (c *tuiController) handleFileSearch(result fileSearchResult) (bool, error) {
 	if !c.model.applyFileSearchResult(result) {
 		return false, nil
@@ -271,7 +302,7 @@ func (c *tuiController) handleFileSearch(result fileSearchResult) (bool, error) 
 }
 
 func (c *tuiController) handleSpinner() (bool, error) {
-	if (c.model.activity.kind == activityReady || c.model.activity.kind == activityError) && c.model.subagentStatus.Running == 0 && c.model.subagentStatus.Finalizing == 0 {
+	if (c.model.activity.kind == activityReady || c.model.activity.kind == activityPermission || c.model.activity.kind == activityError) && c.model.subagentStatus.Running == 0 && c.model.subagentStatus.Finalizing == 0 {
 		return false, nil
 	}
 
@@ -388,6 +419,10 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		}
 		c.model.thinkingLevel = action.thinkingLevel
 		return false, c.saveCurrentCheckpoint(false)
+	case tuiActionAllowPermission:
+		c.resolvePermission(true)
+	case tuiActionDenyPermission:
+		c.resolvePermission(false)
 	case tuiActionCopy:
 		encoded := base64.StdEncoding.EncodeToString([]byte(action.text))
 		if err := writeOutput(c.output, "\x1b]52;c;%s\x07", encoded); err != nil {
@@ -445,7 +480,56 @@ func (c *tuiController) interruptTurn() {
 	c.cancelTurn()
 }
 
+func (c *tuiController) resolvePermission(allowed bool) {
+	if c.permission == nil {
+		return
+	}
+
+	respondPermission(*c.permission, allowed)
+	c.permission = nil
+	if len(c.queuedPermissions) == 0 {
+		c.model.clearPermission()
+		c.restoreActivityAfterPermission()
+		return
+	}
+
+	next := c.queuedPermissions[0]
+	c.queuedPermissions = c.queuedPermissions[1:]
+	index := c.model.permission.index + 1
+	total := c.model.permission.total
+	c.permission = &next
+	c.model.showPermission(next, index, total)
+}
+
+func (c *tuiController) denyPermissions() {
+	if c.permission != nil {
+		respondPermission(*c.permission, false)
+	}
+	for _, request := range c.queuedPermissions {
+		respondPermission(request, false)
+	}
+	c.permission = nil
+	c.queuedPermissions = nil
+	c.model.clearPermission()
+}
+
+func (c *tuiController) restoreActivityAfterPermission() {
+	if detail, ok := c.model.pendingToolActivity(); ok {
+		c.model.activity = activity{kind: activityTool, detail: detail}
+		return
+	}
+	c.model.activity = activity{kind: activityThinking}
+}
+
+func respondPermission(request PermissionRequest, allowed bool) {
+	select {
+	case request.Response <- allowed:
+	default:
+	}
+}
+
 func (c *tuiController) cancelTurn() {
+	c.denyPermissions()
 	c.restoreQueuedInput()
 	if c.turnCancel != nil {
 		c.turnCancel()

@@ -20,6 +20,46 @@ func (*checkpointingFakeEngine) Checkpoint() (agent.Checkpoint, error) {
 	return agent.Checkpoint{}, nil
 }
 
+func TestTUIControllerSerializesPermissions(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.running = true
+	controller := tuiController{model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard}
+	first := make(chan bool, 1)
+	second := make(chan bool, 1)
+
+	for _, request := range []PermissionRequest{
+		{Title: "Network access", Detail: "git push", Response: first},
+		{Title: "Network access", Detail: "ssh host", Response: second},
+	} {
+		if _, err := controller.handlePermission(request); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if model.permission.detail != "git push" || model.permission.total != 2 || len(controller.queuedPermissions) != 1 {
+		t.Fatalf("permission=%+v queued=%d", model.permission, len(controller.queuedPermissions))
+	}
+
+	if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionAllowPermission}); err != nil {
+		t.Fatal(err)
+	}
+	if allowed := <-first; !allowed {
+		t.Fatal("first request was denied")
+	}
+	if model.permission.detail != "ssh host" || model.permission.index != 2 || model.permission.total != 2 {
+		t.Fatalf("next permission = %+v", model.permission)
+	}
+
+	if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionDenyPermission}); err != nil {
+		t.Fatal(err)
+	}
+	if allowed := <-second; allowed {
+		t.Fatal("second request was allowed")
+	}
+	if model.permission.active() || controller.permission != nil {
+		t.Fatalf("permission remains active: model=%+v request=%+v", model.permission, controller.permission)
+	}
+}
+
 func TestTUIControllerEOFWhileRunningDefersCheckpoint(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.running = true

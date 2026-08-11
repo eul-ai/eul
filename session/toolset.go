@@ -15,7 +15,7 @@ const (
 	readOnlyToolAccess
 )
 
-type toolsetFactory func(string, toolAccess, ...tool.Tool) (*tool.Registry, error)
+type toolsetFactory func(string, toolAccess, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error)
 
 func finishRegistry(runErr error, registry *tool.Registry, operation string) error {
 	closeErr := registry.Close()
@@ -26,10 +26,20 @@ func finishRegistry(runErr error, registry *tool.Registry, operation string) err
 }
 
 func buildToolset(cwd string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
-	return buildToolsetWithHome(cwd, "", access, additional...)
+	return buildToolsetWithHomeAndNetworkAuthorizer(cwd, "", access, nil, additional...)
 }
 
 func buildToolsetWithHome(cwd, home string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
+	return buildToolsetWithHomeAndNetworkAuthorizer(cwd, home, access, nil, additional...)
+}
+
+func buildToolsetWithHomeAndNetworkAuthorizer(
+	cwd string,
+	home string,
+	access toolAccess,
+	authorizeNetwork tool.NetworkAuthorizer,
+	additional ...tool.Tool,
+) (*tool.Registry, error) {
 	var tools []tool.Tool
 	var lsp *lsptool.Set
 	var err error
@@ -39,7 +49,7 @@ func buildToolsetWithHome(cwd, home string, access toolAccess, additional ...too
 			tool.NewRead(cwd),
 			tool.NewWrite(cwd),
 			tool.NewEdit(cwd),
-			tool.NewBash(cwd),
+			tool.NewBashWithNetworkAuthorizer(cwd, authorizeNetwork),
 		}
 		lsp, err = lsptool.New(cwd, home)
 	case readOnlyToolAccess:
