@@ -197,6 +197,28 @@ func TestLoadAndPrepareRejectOversizedTextFiles(t *testing.T) {
 	}
 }
 
+func TestPrepareRejectsNonTextBeforeCreatingTemporaryFile(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "sample.txt")
+	if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, data := range [][]byte{{'a', 0, 'b'}, {'a', 0xff, 'b'}} {
+		if _, err := Prepare(snapshot, data); err == nil || !bytes.Contains([]byte(err.Error()), []byte("binary file")) {
+			t.Fatalf("Prepare(%q) error = %v", data, err)
+		}
+	}
+	matches, err := filepath.Glob(filepath.Join(directory, ".eul-replace-*"))
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("temporary files=%v error=%v", matches, err)
+	}
+}
+
 func TestLoadRejectsNonTextAndNonRegularFiles(t *testing.T) {
 	directory := t.TempDir()
 	binary := filepath.Join(directory, "binary")

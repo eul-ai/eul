@@ -27,13 +27,7 @@ type renderPreparation struct {
 func (r *tuiRenderer) prepare(model *tuiModel) renderPreparation {
 	input, layout := modelInputLayout(model)
 	if r.conversationWidth != model.width || r.conversationVersion != model.conversationVersion {
-		r.conversationLines = modelConversationLines(model, model.width)
-		r.conversationPlain = make([]string, len(r.conversationLines))
-		for index, line := range r.conversationLines {
-			r.conversationPlain[index] = renderedLineText(line, model.width)
-		}
-		r.conversationWidth = model.width
-		r.conversationVersion = model.conversationVersion
+		r.prepareConversation(model)
 	}
 
 	return renderPreparation{
@@ -43,6 +37,81 @@ func (r *tuiRenderer) prepare(model *tuiModel) renderPreparation {
 		conversationPlain: r.conversationPlain,
 		scrollTop:         model.scrollTop,
 	}
+}
+
+func (r *tuiRenderer) prepareConversation(model *tuiModel) {
+	if r.conversationWidth != model.width {
+		r.conversationBlocks = nil
+	}
+	if len(r.conversationBlocks) > len(model.blocks) {
+		clear(r.conversationBlocks[len(model.blocks):])
+		r.conversationBlocks = r.conversationBlocks[:len(model.blocks)]
+	}
+	for index, block := range model.blocks {
+		if index == len(r.conversationBlocks) {
+			r.conversationBlocks = append(r.conversationBlocks, renderConversationBlock(block, model.width))
+			continue
+		}
+		if !conversationBlocksEqual(r.conversationBlocks[index].block, block) {
+			r.conversationBlocks[index] = renderConversationBlock(block, model.width)
+		}
+	}
+
+	lineCapacity := len(r.conversationLines)
+	plainCapacity := len(r.conversationPlain)
+	lines := make([]styledLine, 0, lineCapacity)
+	plain := make([]string, 0, plainCapacity)
+	blankPlain := renderedLineText(styledLine{}, model.width)
+	appendBlank := func() {
+		lines = append(lines, styledLine{})
+		plain = append(plain, blankPlain)
+	}
+	for range conversationVerticalPadding {
+		appendBlank()
+	}
+
+	totalBlocks := len(model.blocks) + len(model.steering)
+	appendedBlocks := 0
+	appendBlock := func(rendered renderedConversationBlock) {
+		lines = append(lines, rendered.lines...)
+		plain = append(plain, rendered.plain...)
+		appendedBlocks++
+		if appendedBlocks < totalBlocks {
+			appendBlank()
+		}
+	}
+	for _, rendered := range r.conversationBlocks {
+		appendBlock(rendered)
+	}
+	for _, message := range model.steering {
+		appendBlock(renderConversationBlock(conversationBlock{kind: blockInfo, text: "Queued: " + message}, model.width))
+	}
+	for range conversationVerticalPadding {
+		appendBlank()
+	}
+
+	r.conversationLines = lines
+	r.conversationPlain = plain
+	r.conversationWidth = model.width
+	r.conversationVersion = model.conversationVersion
+}
+
+func renderConversationBlock(block conversationBlock, width int) renderedConversationBlock {
+	lines := conversationBlockLines(block, width)
+	plain := make([]string, len(lines))
+	for index, line := range lines {
+		plain[index] = renderedLineText(line, width)
+	}
+	block.tool = block.tool.Clone()
+	return renderedConversationBlock{block: block, lines: lines, plain: plain}
+}
+
+func conversationBlocksEqual(left, right conversationBlock) bool {
+	return left.kind == right.kind &&
+		left.text == right.text &&
+		left.toolCallID == right.toolCallID &&
+		left.toolOutcome == right.toolOutcome &&
+		left.tool.Equal(right.tool)
 }
 
 func (r *tuiRenderer) normalizeViewport(model *tuiModel) {

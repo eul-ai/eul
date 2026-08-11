@@ -107,10 +107,10 @@ func testBackendDriver(t *testing.T, runtime runtime) *fakeBackendDriver {
 	return fake
 }
 
-func resolveTestConfig(options Options, runtime runtime) (config, error) {
+func resolveTestConfig(options Options, runtime runtime) (resolvedConfig, error) {
 	driver, err := runtime.backends.Lookup(options.Provider)
 	if err != nil {
-		return config{}, err
+		return resolvedConfig{}, err
 	}
 	return resolveConfig(options, runtime, driver.Descriptor(), driver.ModelDefaults())
 }

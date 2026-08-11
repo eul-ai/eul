@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/eul-ai/eul/agent"
 )
@@ -265,6 +267,166 @@ func TestSubagentWaitReturnsRequestedOrderAndConsumesResults(t *testing.T) {
 	again, err := wait.Execute(context.Background(), json.RawMessage(`{"ids":["subagent-1"]}`), nil)
 	if err != nil || !again.IsError || !strings.Contains(again.Output, "unknown or expired") {
 		t.Fatalf("second wait = %+v, error = %v", again, err)
+	}
+}
+
+func TestSubagentConcurrentDisjointWaitsBroadcastCompletion(t *testing.T) {
+	for range 20 {
+		release := make(chan struct{})
+		started := make(chan struct{}, maxSubagents)
+		subagents := NewSubagent(func(context.Context, string, SubagentModelProfile, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error) {
+			started <- struct{}{}
+			<-release
+			return agent.RunResult{Text: "done"}, nil
+		})
+		wait := NewSubagentWait(subagents)
+
+		if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["one","two","three","four"]}`), nil); err != nil || result.IsError {
+			t.Fatalf("launch = %+v, error = %v", result, err)
+		}
+		for range maxSubagents {
+			<-started
+		}
+
+		ready := make(chan struct{}, maxSubagents)
+		results := make(chan subagentWaitTestResult, maxSubagents)
+		for index := 1; index <= maxSubagents; index++ {
+			arguments := json.RawMessage(fmt.Sprintf(`{"ids":["subagent-%d"]}`, index))
+			go func() {
+				result, err := wait.Execute(newSubagentWaitReadyContext(context.Background(), ready), arguments, nil)
+				results <- subagentWaitTestResult{result: result, err: err}
+			}()
+		}
+		for range maxSubagents {
+			<-ready
+		}
+
+		close(release)
+		for range maxSubagents {
+			select {
+			case completed := <-results:
+				if completed.err != nil || completed.result.IsError || !strings.Contains(completed.result.Output, "done") {
+					t.Fatalf("wait = %+v, error = %v", completed.result, completed.err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("concurrent disjoint wait did not wake")
+			}
+		}
+		if err := subagents.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestSubagentConcurrentOverlappingWaitsShareAcceptedResults(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan struct{}, 2)
+	subagents := NewSubagent(func(context.Context, string, SubagentModelProfile, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error) {
+		started <- struct{}{}
+		<-release
+		return agent.RunResult{Text: "shared result"}, nil
+	})
+	defer subagents.Close()
+	wait := NewSubagentWait(subagents)
+
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["one","two"]}`), nil); err != nil || result.IsError {
+		t.Fatalf("launch = %+v, error = %v", result, err)
+	}
+	<-started
+	<-started
+
+	ready := make(chan struct{}, 2)
+	results := make(chan subagentWaitTestResult, 2)
+	for _, arguments := range []json.RawMessage{
+		json.RawMessage(`{"ids":["subagent-1","subagent-2"]}`),
+		json.RawMessage(`{"ids":["subagent-2"]}`),
+	} {
+		go func() {
+			result, err := wait.Execute(newSubagentWaitReadyContext(context.Background(), ready), arguments, nil)
+			results <- subagentWaitTestResult{result: result, err: err}
+		}()
+	}
+	<-ready
+	<-ready
+	close(release)
+
+	for range 2 {
+		select {
+		case completed := <-results:
+			if completed.err != nil || completed.result.IsError || !strings.Contains(completed.result.Output, "Subagent subagent-2") {
+				t.Fatalf("overlapping wait = %+v, error = %v", completed.result, completed.err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("overlapping wait did not wake")
+		}
+	}
+
+	result, err := wait.Execute(context.Background(), json.RawMessage(`{"ids":["subagent-2"]}`), nil)
+	if err != nil || !result.IsError || !strings.Contains(result.Output, "unknown or expired") {
+		t.Fatalf("consumed result = %+v, error = %v", result, err)
+	}
+}
+
+func TestSubagentCanceledOverlappingWaitDoesNotConsumeResults(t *testing.T) {
+	started := make(chan string, 2)
+	releaseSecond := make(chan struct{})
+	subagents := NewSubagent(func(ctx context.Context, task string, _ SubagentModelProfile, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
+		started <- task
+		if task == "two" {
+			<-releaseSecond
+			return agent.RunResult{Text: "second result"}, nil
+		}
+		<-ctx.Done()
+		return agent.RunResult{}, ctx.Err()
+	})
+	defer subagents.Close()
+	wait := NewSubagentWait(subagents)
+
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["one","two"]}`), nil); err != nil || result.IsError {
+		t.Fatalf("launch = %+v, error = %v", result, err)
+	}
+	<-started
+	<-started
+
+	canceledContext, cancel := context.WithCancel(context.Background())
+	ready := make(chan struct{}, 2)
+	results := make(chan subagentWaitTestResult, 2)
+	go func() {
+		result, err := wait.Execute(newSubagentWaitReadyContext(canceledContext, ready), json.RawMessage(`{"ids":["subagent-1"]}`), nil)
+		results <- subagentWaitTestResult{result: result, err: err}
+	}()
+	go func() {
+		result, err := wait.Execute(newSubagentWaitReadyContext(context.Background(), ready), json.RawMessage(`{"ids":["subagent-1","subagent-2"]}`), nil)
+		results <- subagentWaitTestResult{result: result, err: err}
+	}()
+	<-ready
+	<-ready
+	cancel()
+	close(releaseSecond)
+
+	var canceled, successful bool
+	for range 2 {
+		select {
+		case completed := <-results:
+			switch {
+			case errors.Is(completed.err, context.Canceled):
+				canceled = true
+			case completed.err == nil && completed.result.IsError && strings.Contains(completed.result.Output, errSubagentCanceled.Error()) && strings.Contains(completed.result.Output, "second result"):
+				successful = true
+			default:
+				t.Fatalf("overlapping cancellation wait = %+v, error = %v", completed.result, completed.err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("overlapping cancellation wait did not settle")
+		}
+	}
+	if !canceled || !successful {
+		t.Fatalf("canceled = %t, successful = %t", canceled, successful)
+	}
+
+	result, err := wait.Execute(context.Background(), json.RawMessage(`{"ids":["subagent-1"]}`), nil)
+	if err != nil || !result.IsError || !strings.Contains(result.Output, "unknown or expired") {
+		t.Fatalf("successful waiter did not consume = %+v, error = %v", result, err)
 	}
 }
 
@@ -554,9 +716,12 @@ func TestSubagentWaitValidatesIDsBeforeWaiting(t *testing.T) {
 	}
 }
 
-func TestSubagentWaitBoundsCombinedOutput(t *testing.T) {
-	subagents := NewSubagent(func(context.Context, string, SubagentModelProfile, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error) {
-		return agent.RunResult{Text: strings.Repeat("x", defaultMaxBytes)}, nil
+func TestSubagentWaitFairlyBoundsEachResult(t *testing.T) {
+	subagents := NewSubagent(func(_ context.Context, task string, _ SubagentModelProfile, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
+		if task == "one" {
+			return agent.RunResult{Text: strings.Repeat("é\n", defaultMaxLines)}, nil
+		}
+		return agent.RunResult{Text: "later result"}, nil
 	})
 	defer subagents.Close()
 	wait := NewSubagentWait(subagents)
@@ -565,8 +730,46 @@ func TestSubagentWaitBoundsCombinedOutput(t *testing.T) {
 		t.Fatalf("launch = %+v, error = %v", result, err)
 	}
 	result, err := wait.Execute(context.Background(), json.RawMessage(`{"ids":["subagent-1","subagent-2"]}`), nil)
-	if err != nil || len(result.Output) > defaultMaxBytes || !strings.Contains(result.Output, "subagent output truncated") {
-		t.Fatalf("output bytes = %d, error = %v", len(result.Output), err)
+	if err != nil || result.IsError {
+		t.Fatalf("wait = %+v, error = %v", result, err)
+	}
+	if len(result.Output) > defaultMaxBytes || len(splitLines(result.Output)) > defaultMaxLines {
+		t.Fatalf("bounded output = %d bytes, %d lines", len(result.Output), len(splitLines(result.Output)))
+	}
+	if !utf8.ValidString(result.Output) {
+		t.Fatal("bounded output is not valid UTF-8")
+	}
+	first := strings.Index(result.Output, "Subagent subagent-1")
+	second := strings.Index(result.Output, "Subagent subagent-2")
+	if first < 0 || second <= first || !strings.Contains(result.Output, "[subagent result truncated]") || !strings.Contains(result.Output, "later result") {
+		t.Fatalf("fair output = %q", result.Output)
+	}
+}
+
+func TestSubagentWaitBoundsEveryLargeResultBeforeCombinedOutput(t *testing.T) {
+	subagents := NewSubagent(func(_ context.Context, task string, _ SubagentModelProfile, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
+		return agent.RunResult{Text: task + " " + strings.Repeat("x", defaultMaxBytes)}, nil
+	})
+	defer subagents.Close()
+	wait := NewSubagentWait(subagents)
+
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["one","two","three","four"]}`), nil); err != nil || result.IsError {
+		t.Fatalf("launch = %+v, error = %v", result, err)
+	}
+	result, err := wait.Execute(context.Background(), json.RawMessage(`{"ids":["subagent-1","subagent-2","subagent-3","subagent-4"]}`), nil)
+	if err != nil || result.IsError {
+		t.Fatalf("wait = %+v, error = %v", result, err)
+	}
+	if len(result.Output) > defaultMaxBytes || len(splitLines(result.Output)) > defaultMaxLines {
+		t.Fatalf("bounded output = %d bytes, %d lines", len(result.Output), len(splitLines(result.Output)))
+	}
+	if strings.Count(result.Output, "[subagent result truncated]") != maxSubagents {
+		t.Fatalf("truncation markers = %d", strings.Count(result.Output, "[subagent result truncated]"))
+	}
+	for index := 1; index <= maxSubagents; index++ {
+		if !strings.Contains(result.Output, fmt.Sprintf("Subagent subagent-%d", index)) {
+			t.Fatalf("missing heading for subagent-%d", index)
+		}
 	}
 }
 
@@ -616,6 +819,26 @@ func TestSubagentWaitPresentationIsCompact(t *testing.T) {
 	if presentation.Title != "subagent_wait" || !slices.Equal(presentation.Lines, []string{"Waiting for 2 subagent(s)."}) {
 		t.Fatalf("presentation = %+v", presentation)
 	}
+}
+
+type subagentWaitTestResult struct {
+	result agent.ToolResult
+	err    error
+}
+
+type subagentWaitReadyContext struct {
+	context.Context
+	ready chan<- struct{}
+	once  sync.Once
+}
+
+func newSubagentWaitReadyContext(ctx context.Context, ready chan<- struct{}) *subagentWaitReadyContext {
+	return &subagentWaitReadyContext{Context: ctx, ready: ready}
+}
+
+func (ctx *subagentWaitReadyContext) Done() <-chan struct{} {
+	ctx.once.Do(func() { ctx.ready <- struct{}{} })
+	return ctx.Context.Done()
 }
 
 type recordingSubagentUpdates struct {

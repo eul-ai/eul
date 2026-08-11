@@ -3,9 +3,11 @@ package lsp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -88,6 +90,36 @@ func (w *fakeLSPNativeWatcher) watchedPaths() []string {
 type lspWatchNotifications struct {
 	changes   chan []protocol.FileEvent
 	notifyErr error
+}
+
+type cancelAfterChecksContext struct {
+	context.Context
+
+	mu        sync.Mutex
+	remaining int
+	done      chan struct{}
+	canceled  bool
+}
+
+func newCancelAfterChecksContext(checks int) *cancelAfterChecksContext {
+	return &cancelAfterChecksContext{Context: context.Background(), remaining: checks, done: make(chan struct{})}
+}
+
+func (ctx *cancelAfterChecksContext) Done() <-chan struct{} { return ctx.done }
+
+func (ctx *cancelAfterChecksContext) Err() error {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	if ctx.canceled {
+		return context.Canceled
+	}
+	ctx.remaining--
+	if ctx.remaining > 0 {
+		return nil
+	}
+	ctx.canceled = true
+	close(ctx.done)
+	return context.Canceled
 }
 
 func newLSPWatchNotifications() *lspWatchNotifications {
@@ -419,6 +451,158 @@ func TestLSPWatchManagerRejectsRegistrationWithoutChangingExistingWatches(t *tes
 	count, err = manager.registrationCount(context.Background())
 	if err != nil || count != 1 {
 		t.Fatalf("registration count = %d, error = %v", count, err)
+	}
+}
+
+func TestLSPWatchManagerRejectsRootsOutsideWorkspace(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	manager, native, _ := newLSPWatchTestManager(t, root)
+	tests := []struct {
+		name    string
+		pattern protocol.GlobPattern
+	}{
+		{
+			name:    "absolute pattern",
+			pattern: protocol.Pattern(filepath.ToSlash(filepath.Join(outside, "**", "*.go"))),
+		},
+		{
+			name: "relative pattern",
+			pattern: &protocol.RelativePattern{
+				BaseURI: protocol.URI(uri.File(outside)),
+				Pattern: "**/*.go",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			registration := lspWatchTestRegistration(t, test.name, protocol.DidChangeWatchedFilesRegistrationOptions{Watchers: []protocol.FileSystemWatcher{
+				{GlobPattern: test.pattern},
+			}})
+			if err := manager.register(context.Background(), []protocol.Registration{registration}); err == nil || !strings.Contains(err.Error(), "outside workspace") {
+				t.Fatalf("register error = %v", err)
+			}
+		})
+	}
+	count, err := manager.registrationCount(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 || len(native.watchedPaths()) != 0 {
+		t.Fatalf("registration count = %d, watched paths = %q", count, native.watchedPaths())
+	}
+}
+
+func TestLSPWatchManagerAcceptedCommandReturnsCommittedResult(t *testing.T) {
+	manager, _, _ := newLSPWatchTestManager(t, t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+
+	if err := manager.execute(ctx, func(_ context.Context, state *lspWatchState) error {
+		state.registrations["committed"] = nil
+		cancel()
+		return nil
+	}); err != nil {
+		t.Fatalf("execute error = %v", err)
+	}
+	count, err := manager.registrationCount(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("registration count = %d, want 1", count)
+	}
+}
+
+func TestLSPWatchManagerCanceledRegistrationRollsBack(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "one", "two"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manager, native, _ := newLSPWatchTestManager(t, root)
+	registration := lspWatchTestRegistration(t, "go", protocol.DidChangeWatchedFilesRegistrationOptions{Watchers: []protocol.FileSystemWatcher{
+		{GlobPattern: protocol.Pattern("**/*.go")},
+	}})
+
+	ctx := newCancelAfterChecksContext(4)
+	if err := manager.register(ctx, []protocol.Registration{registration}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("register error = %v", err)
+	}
+	count, err := manager.registrationCount(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 || native.addCount() != 0 || len(native.watchedPaths()) != 0 {
+		t.Fatalf("registration count = %d, add calls = %d, watched paths = %q", count, native.addCount(), native.watchedPaths())
+	}
+	if err := manager.check(context.Background()); err != nil {
+		t.Fatalf("watcher was poisoned by cancellation: %v", err)
+	}
+}
+
+func TestLSPWatchManagerCanceledUnregistrationRollsBack(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "one", "two"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manager, native, _ := newLSPWatchTestManager(t, root)
+	registration := lspWatchTestRegistration(t, "go", protocol.DidChangeWatchedFilesRegistrationOptions{Watchers: []protocol.FileSystemWatcher{
+		{GlobPattern: protocol.Pattern("**/*.go")},
+	}})
+	if err := manager.register(context.Background(), []protocol.Registration{registration}); err != nil {
+		t.Fatal(err)
+	}
+	before := native.watchedPaths()
+
+	ctx := newCancelAfterChecksContext(3)
+	if err := manager.unregister(ctx, []protocol.Unregistration{{ID: "go", Method: protocol.MethodWorkspaceDidChangeWatchedFiles}}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("unregister error = %v", err)
+	}
+	count, err := manager.registrationCount(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || !slices.Equal(native.watchedPaths(), before) {
+		t.Fatalf("registration count = %d, watched paths = %q, want %q", count, native.watchedPaths(), before)
+	}
+	if err := manager.check(context.Background()); err != nil {
+		t.Fatalf("watcher was poisoned by cancellation: %v", err)
+	}
+}
+
+func TestLSPWatchManagerCanceledCheckRetainsPendingState(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "one", "two"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manager, _, _ := newLSPWatchTestManager(t, root)
+	registration := lspWatchTestRegistration(t, "go", protocol.DidChangeWatchedFilesRegistrationOptions{Watchers: []protocol.FileSystemWatcher{
+		{GlobPattern: protocol.Pattern("**/*.go")},
+	}})
+	if err := manager.register(context.Background(), []protocol.Registration{registration}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.execute(context.Background(), func(_ context.Context, state *lspWatchState) error {
+		state.pending[root] = struct{}{}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := newCancelAfterChecksContext(4)
+	if err := manager.check(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("check error = %v", err)
+	}
+	if err := manager.check(context.Background()); err != nil {
+		t.Fatalf("watcher was poisoned by cancellation: %v", err)
+	}
+	if err := manager.execute(context.Background(), func(_ context.Context, state *lspWatchState) error {
+		if len(state.pending) != 0 {
+			return fmt.Errorf("pending paths after retry = %d", len(state.pending))
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 

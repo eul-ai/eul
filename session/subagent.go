@@ -9,25 +9,25 @@ import (
 	"github.com/eul-ai/eul/tool"
 )
 
-func (config config) subagentModel(profile tool.SubagentModelProfile) string {
-	var model string
+func (models modelSelection) subagent(profile tool.SubagentModelProfile) string {
+	var selected string
 	switch profile {
 	case tool.SubagentModelFast:
-		model = config.subagentFastModel
+		selected = models.fast
 	case tool.SubagentModelBalanced:
-		model = config.subagentBalancedModel
+		selected = models.balanced
 	}
-	if model == "" {
-		return config.model
+	if selected == "" {
+		return models.main
 	}
-	return model
+	return selected
 }
 
 func runChildAgent(
 	ctx context.Context,
 	backendRuntime backend.Runtime,
 	newToolset toolsetFactory,
-	config config,
+	config resolvedConfig,
 	modelProfile tool.SubagentModelProfile,
 	thinkingLevel agent.ThinkingLevel,
 	task string,
@@ -43,7 +43,7 @@ func runChildAgent(
 		return agent.RunResult{}, fmt.Errorf("configure subagent tools: %w", err)
 	}
 	child := agent.New(provider, registry, agent.Options{
-		Model:               config.subagentModel(modelProfile),
+		Model:               config.models.subagent(modelProfile),
 		ThinkingLevel:       thinkingLevel,
 		WorkingDirectory:    config.cwd,
 		ProjectInstructions: config.projectInstructions,

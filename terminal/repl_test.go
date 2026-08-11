@@ -111,6 +111,21 @@ func TestRunRequiresTerminal(t *testing.T) {
 	}
 }
 
+func TestRunValidatesCheckpointCapabilityBeforeTerminalSetup(t *testing.T) {
+	var output bytes.Buffer
+	err := Run(context.Background(), &fakeEngine{}, Options{
+		Input:          strings.NewReader(""),
+		Output:         &output,
+		SaveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error { return nil },
+	})
+	if !errors.Is(err, errCheckpointUnavailable) {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("terminal output = %q", output.String())
+	}
+}
+
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("write failed") }

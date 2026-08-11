@@ -52,11 +52,11 @@ func resolveInitialSession(
 	arguments Options,
 	runtime runtime,
 	store *sessionStore,
-) (config, *sessionHandle, backend.Driver, error) {
+) (resolvedConfig, *sessionHandle, backend.Driver, error) {
 	if !arguments.Resume {
 		driver, err := runtime.backends.Lookup(arguments.Provider)
 		if err != nil {
-			return config{}, nil, nil, err
+			return resolvedConfig{}, nil, nil, err
 		}
 		config, err := resolveConfig(arguments, runtime, driver.Descriptor(), driver.ModelDefaults())
 		return config, nil, driver, err
@@ -64,7 +64,7 @@ func resolveInitialSession(
 
 	cwd, err := resolveCWD("", runtime.getwd)
 	if err != nil {
-		return config{}, nil, nil, err
+		return resolvedConfig{}, nil, nil, err
 	}
 	return resolveStoredSession(ctx, store, runtime, cwd, arguments.SessionID)
 }
@@ -75,30 +75,31 @@ func resolveStoredSession(
 	runtime runtime,
 	lookupCWD string,
 	sessionID string,
-) (config, *sessionHandle, backend.Driver, error) {
+) (resolvedConfig, *sessionHandle, backend.Driver, error) {
 	handle, err := store.Open(ctx, lookupCWD, sessionID)
 	if err != nil {
-		return config{}, nil, nil, err
+		return resolvedConfig{}, nil, nil, err
 	}
 	record := handle.Record()
 	driver, err := runtime.backends.Lookup(record.Provider)
 	if err != nil {
 		_ = handle.Close()
-		return config{}, nil, nil, err
+		return resolvedConfig{}, nil, nil, err
 	}
+	models := record.models()
 	resolved, err := resolveConfig(Options{
-		Model:            record.Model,
+		Model:            models.main,
 		ModelSet:         true,
-		FastModel:        record.FastModel,
-		FastModelSet:     record.FastModel != "",
-		BalancedModel:    record.BalancedModel,
-		BalancedModelSet: record.BalancedModel != "",
+		FastModel:        models.fast,
+		FastModelSet:     models.fast != "",
+		BalancedModel:    models.balanced,
+		BalancedModelSet: models.balanced != "",
 		ThinkingLevel:    record.ThinkingLevel,
 		WorkingDirectory: record.WorkingDirectory,
 	}, runtime, driver.Descriptor(), driver.ModelDefaults())
 	if err != nil {
 		_ = handle.Close()
-		return config{}, nil, nil, err
+		return resolvedConfig{}, nil, nil, err
 	}
 	resolved.warnings = append(resolved.warnings, handle.warnings...)
 	return resolved, handle, driver, nil
@@ -106,9 +107,9 @@ func resolveStoredSession(
 
 func runSessions(
 	ctx context.Context,
-	runner *terminal.Runner,
+	runner sessionRunner,
 	session *agentSession,
-	config config,
+	config resolvedConfig,
 	driver backend.Driver,
 	runtime runtime,
 	store *sessionStore,
@@ -119,11 +120,11 @@ func runSessions(
 		if onlyNewSessionRequest(runErr) {
 			var err error
 			config, err = resolveConfig(Options{
-				Model:            config.model,
+				Model:            config.models.main,
 				ModelSet:         true,
-				FastModel:        config.subagentFastModel,
+				FastModel:        config.models.fast,
 				FastModelSet:     true,
-				BalancedModel:    config.subagentBalancedModel,
+				BalancedModel:    config.models.balanced,
 				BalancedModelSet: true,
 				ThinkingLevel:    session.thinkingLevel,
 				WorkingDirectory: config.cwd,

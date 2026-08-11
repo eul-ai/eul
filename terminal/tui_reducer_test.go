@@ -132,7 +132,7 @@ func TestReduceKeyActions(t *testing.T) {
 			key:      keyEvent{code: keyCtrlC},
 			wantKind: tuiActionCancel,
 			check: func(t *testing.T, model *tuiModel) {
-				if !model.interrupted || model.activity.kind != activityCanceling {
+				if model.interrupted || model.activity.kind != activityThinking {
 					t.Fatalf("interrupted=%v activity=%+v", model.interrupted, model.activity)
 				}
 			},
@@ -146,7 +146,7 @@ func TestReduceKeyActions(t *testing.T) {
 			key:      keyEvent{code: keyEscape},
 			wantKind: tuiActionCancel,
 			check: func(t *testing.T, model *tuiModel) {
-				if !model.interrupted || model.activity.kind != activityCanceling {
+				if model.interrupted || model.activity.kind != activityThinking {
 					t.Fatalf("interrupted=%v activity=%+v", model.interrupted, model.activity)
 				}
 			},
@@ -234,7 +234,7 @@ func TestReduceKeyActions(t *testing.T) {
 			wantKind:   tuiActionSubmit,
 			wantPrompt: " hello ",
 			check: func(t *testing.T, model *tuiModel) {
-				if !model.running || len(model.history) != 1 || len(model.blocks) != 1 || model.blocks[0].kind != blockUser {
+				if model.running || len(model.history) != 1 || len(model.blocks) != 0 {
 					t.Fatalf("running=%v history=%q blocks=%+v", model.running, model.history, model.blocks)
 				}
 			},
@@ -267,7 +267,7 @@ func TestReduceKeyActions(t *testing.T) {
 			wantKind:   tuiActionSubmit,
 			wantPrompt: "/skill:review check tests",
 			check: func(t *testing.T, model *tuiModel) {
-				if !model.running || len(model.blocks) != 1 || model.blocks[0].kind != blockUser {
+				if model.running || len(model.blocks) != 0 {
 					t.Fatalf("running=%v blocks=%+v", model.running, model.blocks)
 				}
 			},

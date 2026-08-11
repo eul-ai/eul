@@ -122,7 +122,7 @@ func parseInterval(raw json.RawMessage) (time.Duration, error) {
 		number = parsed
 	}
 
-	if math.IsNaN(number) || math.IsInf(number, 0) || number < 0 || number > 300 {
+	if math.IsNaN(number) || math.IsInf(number, 0) || number < 1 || number > 300 {
 		return 0, errors.New("invalid interval")
 	}
 

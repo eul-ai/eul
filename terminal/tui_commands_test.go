@@ -158,7 +158,7 @@ func TestHiddenCommandPickerDoesNotInterceptEscape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if action.kind != tuiActionCancel || !model.interrupted {
+	if action.kind != tuiActionCancel || model.interrupted {
 		t.Fatalf("action=%+v interrupted=%t", action, model.interrupted)
 	}
 }

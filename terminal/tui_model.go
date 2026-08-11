@@ -12,16 +12,17 @@ import (
 
 type blockKind uint8
 
+// Values are persisted in terminal checkpoints and must remain stable.
 const (
-	blockUser blockKind = iota
-	blockAssistant
-	blockReasoning
-	blockToolPending
-	blockTool
-	blockToolError
-	blockContext
-	blockError
-	blockInfo
+	blockUser        blockKind = 0
+	blockAssistant   blockKind = 1
+	blockReasoning   blockKind = 2
+	blockToolPending blockKind = 3
+	blockTool        blockKind = 4
+	blockToolError   blockKind = 5
+	blockContext     blockKind = 6
+	blockError       blockKind = 7
+	blockInfo        blockKind = 8
 )
 
 type conversationBlock struct {
@@ -50,7 +51,36 @@ type activity struct {
 	detail string
 }
 
-type tuiModel struct {
+type conversationModel struct {
+	blocks              []conversationBlock
+	conversationVersion uint64
+	streamKind          blockKind
+	streamOpen          bool
+	scrollTop           int
+	following           bool
+	selection           textSelection
+}
+
+type editorModel struct {
+	input              []rune
+	cursor             int
+	commandCompletions []commandCompletion
+	commandPicker      commandPickerState
+	filePicker         filePickerState
+	resumePicker       resumePickerState
+	history            []string
+	historyIndex       int
+	historyDraft       string
+}
+
+type operationModel struct {
+	steering         []string
+	turnExecutedTool bool
+	running          bool
+	interrupted      bool
+}
+
+type statusModel struct {
 	width                      int
 	height                     int
 	model                      string
@@ -62,28 +92,15 @@ type tuiModel struct {
 	contextTokens              int64
 	providerUsage              agent.ProviderUsage
 	subagentStatus             agent.SubagentStatus
-	turnExecutedTool           bool
-	blocks                     []conversationBlock
-	conversationVersion        uint64
-	streamKind                 blockKind
-	streamOpen                 bool
-	input                      []rune
-	cursor                     int
-	steering                   []string
-	commandCompletions         []commandCompletion
-	commandPicker              commandPickerState
-	filePicker                 filePickerState
-	resumePicker               resumePickerState
-	history                    []string
-	historyIndex               int
-	historyDraft               string
-	scrollTop                  int
-	following                  bool
-	selection                  textSelection
-	running                    bool
-	interrupted                bool
 	activity                   activity
 	spinner                    int
+}
+
+type tuiModel struct {
+	conversationModel
+	editorModel
+	operationModel
+	statusModel
 }
 
 func newTUIModel(width, height int, options Options) *tuiModel {
@@ -97,19 +114,25 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 	}
 
 	model := &tuiModel{
-		width:                      width,
-		height:                     height,
-		model:                      singleLine(options.Model, 120),
-		sessionID:                  singleLine(options.SessionID, 120),
-		thinkingLevel:              agent.ThinkingLevel(singleLine(string(thinkingLevel), 40)),
-		thinkingLevels:             thinkingLevels,
-		thinkingSelectionAvailable: options.SetThinkingLevel != nil,
-		contextWindow:              options.ContextWindow,
-		commandCompletions:         commandCompletions(options.Skills),
-		filePicker:                 filePickerState{enabled: options.WorkingDirectory != ""},
-		historyIndex:               -1,
-		following:                  true,
-		activity:                   activity{kind: activityReady},
+		conversationModel: conversationModel{
+			following: true,
+		},
+		editorModel: editorModel{
+			commandCompletions: commandCompletions(options.Skills),
+			filePicker:         filePickerState{enabled: options.WorkingDirectory != ""},
+			historyIndex:       -1,
+		},
+		statusModel: statusModel{
+			width:                      width,
+			height:                     height,
+			model:                      singleLine(options.Model, 120),
+			sessionID:                  singleLine(options.SessionID, 120),
+			thinkingLevel:              agent.ThinkingLevel(singleLine(string(thinkingLevel), 40)),
+			thinkingLevels:             thinkingLevels,
+			thinkingSelectionAvailable: options.SetThinkingLevel != nil,
+			contextWindow:              options.ContextWindow,
+			activity:                   activity{kind: activityReady},
+		},
 	}
 	if options.InitialCheckpoint != nil {
 		restoreModelCheckpoint(model, *options.InitialCheckpoint)

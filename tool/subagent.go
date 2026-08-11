@@ -140,7 +140,7 @@ func NewSubagentWithThinkingLevels(run SubagentRun, supportedThinkingLevels func
 		cancel:                  cancel,
 		jobs:                    make(map[string]*subagentJob),
 		status:                  make(chan agent.SubagentStatus, 1),
-		changes:                 make(chan struct{}, 1),
+		changes:                 make(chan struct{}),
 	}
 }
 
@@ -218,6 +218,7 @@ func (s *Subagent) Close() error {
 		s.mu.Lock()
 		s.closed = true
 		s.cancel(errSubagentSessionClosed)
+		s.signalChangeLocked()
 		s.mu.Unlock()
 
 		s.workers.Wait()
@@ -309,9 +310,9 @@ func (s *Subagent) start(tasks []string, modelProfile SubagentModelProfile, thin
 
 	s.workers.Add(len(jobs))
 	s.publishStatusLocked()
+	s.signalChangeLocked()
 	s.mu.Unlock()
 
-	s.signalChange()
 	for _, job := range jobs {
 		go s.runJob(job)
 	}
@@ -335,9 +336,9 @@ func (s *Subagent) runJob(job *subagentJob) {
 				job.finalizationReason = progress.FinalizationReason
 			}
 			s.publishStatusLocked()
+			s.signalChangeLocked()
 		}
 		s.mu.Unlock()
-		s.signalChange()
 	})
 	cause := context.Cause(job.ctx)
 	job.cancel(nil)
@@ -360,8 +361,8 @@ func (s *Subagent) runJob(job *subagentJob) {
 		job.state = agent.SubagentComplete
 	}
 	s.publishStatusLocked()
+	s.signalChangeLocked()
 	s.mu.Unlock()
-	s.signalChange()
 }
 
 func (s *Subagent) jobsForIDs(ids []string) ([]*subagentJob, error) {
@@ -396,15 +397,13 @@ func (s *Subagent) cancelJobs(jobs []*subagentJob, cause error) []string {
 	}
 	if len(canceled) > 0 {
 		s.publishStatusLocked()
+		s.signalChangeLocked()
 	}
 	s.mu.Unlock()
-	if len(canceled) > 0 {
-		s.signalChange()
-	}
 	return canceled
 }
 
-func (s *Subagent) snapshotJobs(jobs []*subagentJob) ([]subagentJobSnapshot, bool) {
+func (s *Subagent) snapshotJobs(jobs []*subagentJob) ([]subagentJobSnapshot, bool, <-chan struct{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -421,7 +420,7 @@ func (s *Subagent) snapshotJobs(jobs []*subagentJob) ([]subagentJobSnapshot, boo
 			complete = false
 		}
 	}
-	return snapshots, complete
+	return snapshots, complete, s.changes
 }
 
 func (s *Subagent) consume(jobs []*subagentJob) {
@@ -432,8 +431,8 @@ func (s *Subagent) consume(jobs []*subagentJob) {
 		}
 	}
 	s.publishStatusLocked()
+	s.signalChangeLocked()
 	s.mu.Unlock()
-	s.signalChange()
 }
 
 func (s *Subagent) publishStatusLocked() {
@@ -490,11 +489,9 @@ func (s *Subagent) publishStatusLocked() {
 	}
 }
 
-func (s *Subagent) signalChange() {
-	select {
-	case s.changes <- struct{}{}:
-	default:
-	}
+func (s *Subagent) signalChangeLocked() {
+	close(s.changes)
+	s.changes = make(chan struct{})
 }
 
 func subagentStateTerminal(state agent.SubagentState) bool {

@@ -73,13 +73,13 @@ func providerUsageText(usage agent.ProviderUsage, now time.Time) (string, string
 		if window.Duration <= 0 {
 			continue
 		}
-		remaining := 100 - min(100, max(0, window.UsedPercent))
-		longText := fmt.Sprintf("limit %d%%", remaining)
+		used := min(100, max(0, window.UsedPercent))
+		longText := fmt.Sprintf("usage %d%%", used)
 		shortText := longText
 		if validWindows > 1 {
 			label := usageWindowLabel(window.Duration)
-			longText = fmt.Sprintf("%s limit %d%%", label, remaining)
-			shortText = fmt.Sprintf("%s %d%%", label, remaining)
+			longText = fmt.Sprintf("%s usage %d%%", label, used)
+			shortText = fmt.Sprintf("%s %d%%", label, used)
 		}
 		if !window.ResetsAt.IsZero() {
 			reset := resetCountdown(window.ResetsAt, now)

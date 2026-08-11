@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"context"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -141,19 +142,19 @@ func TestStatusShowsProviderUsageWindows(t *testing.T) {
 	}}
 
 	_, wide := renderStatusAt(model, 180, now)
-	for _, want := range []string{"model (medium)", "context 0", "5h limit 58% (resets in 3h 5m) · 7d limit 80% (resets in 3d 5h)"} {
+	for _, want := range []string{"model (medium)", "context 0", "5h usage 42% (resets in 3h 5m) · 7d usage 20% (resets in 3d 5h)"} {
 		if !strings.Contains(wide, want) {
 			t.Fatalf("wide status %q omits %q", wide, want)
 		}
 	}
 
 	_, narrow := renderStatusAt(model, 70, now)
-	if narrow != "context 0 · 5h 58% (resets in 3h 5m) · 7d 80% (resets in 3d 5h)" {
+	if narrow != "context 0 · 5h 42% (resets in 3h 5m) · 7d 20% (resets in 3d 5h)" {
 		t.Fatalf("narrow status = %q", narrow)
 	}
 }
 
-func TestStatusUsesCompactContextAndSingleLimit(t *testing.T) {
+func TestStatusUsesCompactContextAndSingleUsage(t *testing.T) {
 	now := time.Date(2027, time.January, 2, 10, 0, 0, 0, time.UTC)
 	model := newTUIModel(120, 12, Options{
 		Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, ContextWindow: 272_000,
@@ -163,7 +164,7 @@ func TestStatusUsesCompactContextAndSingleLimit(t *testing.T) {
 	}}}
 
 	_, status := renderStatusAt(model, 120, now)
-	want := "gpt-5.6-sol (xhigh) · context 0% · limit 41% (resets in 9h 41m)"
+	want := "gpt-5.6-sol (xhigh) · context 0% · usage 59% (resets in 9h 41m)"
 	if status != want {
 		t.Fatalf("status = %q, want %q", status, want)
 	}
@@ -476,6 +477,90 @@ func TestConversationWindowHasVerticalPadding(t *testing.T) {
 
 	if len(lines) != 3 || lines[0].text != "" || lines[1].text != "message" || lines[2].text != "" {
 		t.Fatalf("lines = %+v", lines)
+	}
+}
+
+func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
+	model := newTUIModel(48, 12, Options{Model: "model"})
+	model.appendBlock(blockUser, "Use **bold** text")
+	model.startTool(agent.ToolCall{ID: "read-1", Name: "read"}, agent.ToolPresentation{
+		Title: "read", Arguments: "README.md", Lines: []string{"before"},
+		Diff: []agent.ToolDiffLine{{Kind: agent.ToolDiffLineAdded, NewLine: 1, Text: "old diff"}},
+	})
+	model.appendStream(blockAssistant, "Active `streaming` response")
+
+	renderer := &tuiRenderer{}
+	assertCachedConversationMatchesUncached(t, renderer, model)
+	firstBlockLine := &renderer.conversationBlocks[0].lines[0]
+	previousFrame := projectTerminalFrame(model, renderer.prepare(model))
+	previousPlain := append([]string(nil), previousFrame.conversationLines...)
+
+	model.appendStream(blockAssistant, " with another delta")
+	assertCachedConversationMatchesUncached(t, renderer, model)
+	if &renderer.conversationBlocks[0].lines[0] != firstBlockLine {
+		t.Fatal("unchanged historical block was rerendered after active stream update")
+	}
+	if !slices.Equal(previousFrame.conversationLines, previousPlain) {
+		t.Fatal("conversation update mutated the previous frame's plain lines")
+	}
+
+	model.blocks[1].kind = blockTool
+	model.blocks[1].tool.Lines[0] = "after"
+	model.blocks[1].tool.Diff[0].Text = "new diff"
+	model.blocks[1].toolOutcome = "ok"
+	model.conversationVersion++
+	if renderer.conversationBlocks[1].block.tool.Lines[0] != "before" || renderer.conversationBlocks[1].block.tool.Diff[0].Text != "old diff" {
+		t.Fatal("cached block shares tool presentation slices with the model")
+	}
+	assertCachedConversationMatchesUncached(t, renderer, model)
+
+	beforeWidthChange := &renderer.conversationBlocks[0].lines[0]
+	model.width = 31
+	assertCachedConversationMatchesUncached(t, renderer, model)
+	if &renderer.conversationBlocks[0].lines[0] == beforeWidthChange {
+		t.Fatal("width change did not invalidate cached blocks")
+	}
+
+	model.queueSteering("inspect another file")
+	assertCachedConversationMatchesUncached(t, renderer, model)
+	model.removeSteering([]string{"inspect another file"})
+	assertCachedConversationMatchesUncached(t, renderer, model)
+
+	model.selection = textSelection{
+		anchor: selectionPoint{row: 1, column: 1, conversation: true},
+		focus:  selectionPoint{row: 1, column: 8, conversation: true},
+		set:    true,
+	}
+	assertCachedConversationMatchesUncached(t, renderer, model)
+
+	checkpoint := checkpointModel(model)
+	model.clearConversation()
+	assertCachedConversationMatchesUncached(t, renderer, model)
+	if len(renderer.conversationBlocks) != 0 {
+		t.Fatalf("cached blocks after clear = %d", len(renderer.conversationBlocks))
+	}
+	restoreModelCheckpoint(model, checkpoint)
+	assertCachedConversationMatchesUncached(t, renderer, model)
+}
+
+func assertCachedConversationMatchesUncached(t *testing.T, renderer *tuiRenderer, model *tuiModel) {
+	t.Helper()
+
+	prepared := renderer.prepare(model)
+	wantLines := modelConversationLines(model, model.width)
+	if !reflect.DeepEqual(prepared.conversationLines, wantLines) {
+		t.Fatalf("cached conversation lines differ from uncached projection:\ngot:  %+v\nwant: %+v", prepared.conversationLines, wantLines)
+	}
+	wantPlain := make([]string, len(wantLines))
+	for index, line := range wantLines {
+		wantPlain[index] = renderedLineText(line, model.width)
+	}
+	if !slices.Equal(prepared.conversationPlain, wantPlain) {
+		t.Fatalf("cached plain lines differ from uncached projection:\ngot:  %q\nwant: %q", prepared.conversationPlain, wantPlain)
+	}
+	frame := projectTerminalFrame(model, prepared)
+	if !slices.Equal(frame.conversationLines, wantPlain) {
+		t.Fatalf("frame plain conversation lines = %q, want %q", frame.conversationLines, wantPlain)
 	}
 }
 

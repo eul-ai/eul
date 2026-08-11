@@ -62,156 +62,233 @@ type tuiController struct {
 func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, error) {
 	switch event.kind {
 	case tuiEventParentCanceled:
-		if !c.model.running {
-			if err := c.saveCurrentCheckpoint(false); err != nil {
-				return false, err
-			}
-			return true, event.err
-		}
-		c.exitAfterTurn = event.err
-		c.cancelTurn()
+		return c.handleParentCanceled(event.err)
 	case tuiEventInterrupt:
-		action, err := reduceInterrupt(c.model)
-		if err != nil {
-			if checkpointErr := c.saveCurrentCheckpoint(false); checkpointErr != nil {
-				return false, checkpointErr
-			}
-			return false, err
-		}
-		if action.kind == tuiActionCancel {
-			c.cancelTurn()
-		}
+		return c.handleInterrupt()
 	case tuiEventResize:
-		width, height, err := term.GetSize(c.outputFD)
-		if err != nil {
-			return false, fmt.Errorf("terminal: get size: %w", err)
-		}
-		c.model.width = width
-		c.model.height = height
-		c.model.selection = textSelection{}
+		return c.handleResize()
 	case tuiEventKey:
-		action, err := reduceKeyWithFrame(c.model, event.key, c.renderer.frame)
-		if err != nil {
-			if !c.model.running {
-				if checkpointErr := c.saveCurrentCheckpoint(false); checkpointErr != nil {
-					return false, checkpointErr
-				}
-			}
-			return false, err
-		}
-		exit, err := c.applyAction(ctx, action)
-		if err != nil {
-			return false, err
-		}
-		if c.fileSearch != nil {
-			c.fileSearch.update(ctx, c.model.takeFileSearchCommand(), c.fileSearchMessages)
-		}
-		if exit {
-			if !c.model.running {
-				if err := ctx.Err(); err != nil {
-					return true, err
-				}
-				return true, nil
-			}
-			if c.exitAfterTurn == nil {
-				c.exitAfterTurn = io.EOF
-				c.cancelTurn()
-			}
-		}
+		return c.handleKey(ctx, event.key)
 	case tuiEventEngine:
-		message := event.engine
-		if !message.done {
-			c.model.applyAgentEvent(*message.event)
-			if message.ack != nil {
-				err := c.saveAgentCheckpoint(message.event.Checkpoint, true)
-				message.ack <- err
-				if err != nil {
-					return false, err
-				}
-			}
-			break
-		}
-		if c.turnCancel != nil {
-			c.turnCancel()
-			c.turnCancel = nil
-		}
-		if err := ctx.Err(); err != nil {
-			return true, err
-		}
-		if c.exitAfterTurn != nil {
-			if errors.Is(c.exitAfterTurn, io.EOF) {
-				return true, nil
-			}
-			return true, c.exitAfterTurn
-		}
-		interrupted := c.model.interrupted
-		if interrupted || message.err != nil {
-			c.engine.ClearSteering()
-			c.deferredSteering = nil
-			c.model.restoreAllSteering()
-		}
-		c.model.finishTurn(message.err)
+		return c.handleEngineMessage(ctx, event.engine)
+	case tuiEventProviderUsage:
+		return c.handleProviderUsage(event.providerUsage)
+	case tuiEventSubagentStatus:
+		return c.handleSubagentStatus(event.subagentStatus)
+	case tuiEventFileSearch:
+		return c.handleFileSearch(event.fileSearch)
+	case tuiEventSpinner:
+		return c.handleSpinner()
+	case tuiEventUsageClock:
+		return c.handleUsageClock()
+	case tuiEventRender:
+		return c.handleRender()
+	}
+
+	c.dirty = true
+	return false, nil
+}
+
+func (c *tuiController) handleParentCanceled(parentErr error) (bool, error) {
+	if !c.model.running {
 		if err := c.saveCurrentCheckpoint(false); err != nil {
 			return false, err
 		}
-		requestProviderUsage(c.usageRequests)
-		if !interrupted && message.err == nil {
-			if err := c.startDeferredTurn(ctx); err != nil {
-				return false, err
+		return true, parentErr
+	}
+
+	c.exitAfterTurn = parentErr
+	c.cancelTurn()
+	c.dirty = true
+	return false, nil
+}
+
+func (c *tuiController) handleInterrupt() (bool, error) {
+	action, err := reduceInterrupt(c.model)
+	if err != nil {
+		if checkpointErr := c.saveCurrentCheckpoint(false); checkpointErr != nil {
+			return false, checkpointErr
+		}
+		return false, err
+	}
+	if action.kind == tuiActionCancel {
+		c.interruptTurn()
+	}
+
+	c.dirty = true
+	return false, nil
+}
+
+func (c *tuiController) handleResize() (bool, error) {
+	width, height, err := term.GetSize(c.outputFD)
+	if err != nil {
+		return false, fmt.Errorf("terminal: get size: %w", err)
+	}
+	c.model.width = width
+	c.model.height = height
+	c.model.selection = textSelection{}
+	c.dirty = true
+	return false, nil
+}
+
+func (c *tuiController) handleKey(ctx context.Context, key keyEvent) (bool, error) {
+	action, err := reduceKeyWithFrame(c.model, key, c.renderer.frame)
+	if err != nil {
+		if !c.model.running {
+			if checkpointErr := c.saveCurrentCheckpoint(false); checkpointErr != nil {
+				return false, checkpointErr
 			}
 		}
-	case tuiEventProviderUsage:
-		if event.providerUsage.err == nil {
-			c.model.providerUsage = agent.ProviderUsage{Windows: append([]agent.UsageWindow(nil), event.providerUsage.usage.Windows...)}
-		}
-	case tuiEventSubagentStatus:
-		status := agent.SubagentStatus{
-			Running:    max(0, event.subagentStatus.Running),
-			Finalizing: max(0, event.subagentStatus.Finalizing),
-			Completed:  max(0, event.subagentStatus.Completed),
-			Jobs:       make([]agent.SubagentJobStatus, 0, len(event.subagentStatus.Jobs)),
-		}
-		for _, job := range event.subagentStatus.Jobs {
-			switch job.State {
-			case agent.SubagentRunning, agent.SubagentFinalizing, agent.SubagentCanceling:
-				job.ID = singleLine(job.ID, 120)
-				job.Task = singleLine(job.Task, 120)
-				job.Generations = max(0, job.Generations)
-				job.GenerationLimit = max(0, job.GenerationLimit)
-				status.Jobs = append(status.Jobs, job)
+		return false, err
+	}
+
+	exit, err := c.applyAction(ctx, action)
+	if err != nil {
+		return false, err
+	}
+	if c.fileSearch != nil {
+		c.fileSearch.update(ctx, c.model.takeFileSearchCommand(), c.fileSearchMessages)
+	}
+	if exit {
+		if !c.model.running {
+			if err := ctx.Err(); err != nil {
+				return true, err
 			}
+			return true, nil
 		}
-		c.model.subagentStatus = status
-	case tuiEventFileSearch:
-		if !c.model.applyFileSearchResult(event.fileSearch) {
-			return false, nil
+		if c.exitAfterTurn == nil {
+			c.exitAfterTurn = io.EOF
+			c.cancelTurn()
 		}
-	case tuiEventSpinner:
-		if (c.model.activity.kind == activityReady || c.model.activity.kind == activityError) && len(c.model.subagentStatus.Jobs) == 0 {
-			return false, nil
+	}
+
+	c.dirty = true
+	return false, nil
+}
+
+func (c *tuiController) handleEngineMessage(ctx context.Context, message engineMessage) (bool, error) {
+	if !message.done {
+		return c.handleAgentEvent(message)
+	}
+
+	if c.turnCancel != nil {
+		c.turnCancel()
+		c.turnCancel = nil
+	}
+	if err := ctx.Err(); err != nil {
+		return true, err
+	}
+	if c.exitAfterTurn != nil {
+		if errors.Is(c.exitAfterTurn, io.EOF) {
+			return true, nil
 		}
-		c.model.spinner++
-	case tuiEventUsageClock:
-		redraw := false
-		for _, window := range c.model.providerUsage.Windows {
-			if !window.ResetsAt.IsZero() {
-				redraw = true
-				break
-			}
-		}
-		if !redraw {
-			return false, nil
-		}
-	case tuiEventRender:
-		c.renderer.normalizeViewport(c.model)
-		if err := renderIfDirty(c.renderer, c.model, c.output, &c.dirty, c.forceRedraw); err != nil {
+		return true, c.exitAfterTurn
+	}
+
+	interrupted := c.model.interrupted
+	if interrupted || message.err != nil {
+		c.engine.ClearSteering()
+		c.deferredSteering = nil
+		c.model.restoreAllSteering()
+	}
+	c.model.finishTurn(message.err)
+	if err := c.saveCurrentCheckpoint(false); err != nil {
+		return false, err
+	}
+	requestProviderUsage(c.usageRequests)
+	if !interrupted && message.err == nil {
+		if err := c.startDeferredTurn(ctx); err != nil {
 			return false, err
 		}
-		c.forceRedraw = false
+	}
+
+	c.dirty = true
+	return false, nil
+}
+
+func (c *tuiController) handleAgentEvent(message engineMessage) (bool, error) {
+	c.model.applyAgentEvent(*message.event)
+	if message.ack != nil {
+		err := c.saveAgentCheckpoint(message.event.Checkpoint, true)
+		message.ack <- err
+		if err != nil {
+			return false, err
+		}
+	}
+
+	c.dirty = true
+	return false, nil
+}
+
+func (c *tuiController) handleProviderUsage(message providerUsageMessage) (bool, error) {
+	if message.err == nil {
+		c.model.providerUsage = agent.ProviderUsage{Windows: append([]agent.UsageWindow(nil), message.usage.Windows...)}
+	}
+
+	c.dirty = true
+	return false, nil
+}
+
+func (c *tuiController) handleSubagentStatus(status agent.SubagentStatus) (bool, error) {
+	c.model.subagentStatus = sanitizeSubagentStatus(status)
+	c.dirty = true
+	return false, nil
+}
+
+func sanitizeSubagentStatus(status agent.SubagentStatus) agent.SubagentStatus {
+	sanitized := agent.SubagentStatus{
+		Running:    max(0, status.Running),
+		Finalizing: max(0, status.Finalizing),
+		Completed:  max(0, status.Completed),
+		Jobs:       make([]agent.SubagentJobStatus, 0, len(status.Jobs)),
+	}
+	for _, job := range status.Jobs {
+		switch job.State {
+		case agent.SubagentRunning, agent.SubagentFinalizing, agent.SubagentCanceling:
+			job.ID = singleLine(job.ID, 120)
+			job.Task = singleLine(job.Task, 120)
+			job.Generations = max(0, job.Generations)
+			job.GenerationLimit = max(0, job.GenerationLimit)
+			sanitized.Jobs = append(sanitized.Jobs, job)
+		}
+	}
+	return sanitized
+}
+
+func (c *tuiController) handleFileSearch(result fileSearchResult) (bool, error) {
+	if !c.model.applyFileSearchResult(result) {
 		return false, nil
 	}
 
 	c.dirty = true
+	return false, nil
+}
+
+func (c *tuiController) handleSpinner() (bool, error) {
+	if (c.model.activity.kind == activityReady || c.model.activity.kind == activityError) && len(c.model.subagentStatus.Jobs) == 0 {
+		return false, nil
+	}
+
+	c.model.spinner++
+	c.dirty = true
+	return false, nil
+}
+
+func (c *tuiController) handleUsageClock() (bool, error) {
+	for _, window := range c.model.providerUsage.Windows {
+		if !window.ResetsAt.IsZero() {
+			c.dirty = true
+			return false, nil
+		}
+	}
+	return false, nil
+}
+
+func (c *tuiController) handleRender() (bool, error) {
+	if err := renderIfDirty(c.renderer, c.model, c.output, &c.dirty, c.forceRedraw); err != nil {
+		return false, err
+	}
+	c.forceRedraw = false
 	return false, nil
 }
 
@@ -247,13 +324,9 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		}
 		return false, &NewSessionRequest{}
 	case tuiActionCancel:
-		c.cancelTurn()
+		c.interruptTurn()
 	case tuiActionCompact:
-		c.model.beginCompaction()
-		if err := c.saveCurrentCheckpoint(true); err != nil {
-			return false, err
-		}
-		c.startCompaction(ctx)
+		return false, c.startCompaction(ctx)
 	case tuiActionExit:
 		if !c.model.running {
 			if err := c.saveCurrentCheckpoint(false); err != nil {
@@ -262,10 +335,7 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		}
 		return true, nil
 	case tuiActionSubmit:
-		if err := c.saveCurrentCheckpoint(true); err != nil {
-			return false, err
-		}
-		c.startTurn(ctx, action.prompt)
+		return false, c.startTurn(ctx, action.prompt)
 	case tuiActionSteer:
 		if len(c.deferredSteering) > 0 || !c.engine.Steer(action.prompt) {
 			c.deferredSteering = append(c.deferredSteering, action.prompt)
@@ -287,11 +357,7 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 			setInputError(c.model, err)
 			return false, nil
 		}
-		c.model.beginTurn(action.prompt)
-		if err := c.saveCurrentCheckpoint(true); err != nil {
-			return false, err
-		}
-		c.startTurn(ctx, action.prompt)
+		return false, c.startTurn(ctx, action.prompt)
 	case tuiActionClearGoal:
 		_, hadGoal := c.engine.Goal()
 		c.engine.ClearGoal()
@@ -327,16 +393,28 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 	return false, nil
 }
 
-func (c *tuiController) startTurn(ctx context.Context, prompt string) {
+func (c *tuiController) startTurn(ctx context.Context, prompt string) error {
+	c.model.beginTurn(prompt)
+	if err := c.saveCurrentCheckpoint(true); err != nil {
+		return err
+	}
+
 	turnContext, cancel := context.WithCancel(ctx)
 	c.turnCancel = cancel
 	go runEngineTurn(turnContext, c.engine, prompt, c.engineMessages, c.stopped)
+	return nil
 }
 
-func (c *tuiController) startCompaction(ctx context.Context) {
+func (c *tuiController) startCompaction(ctx context.Context) error {
+	c.model.beginCompaction()
+	if err := c.saveCurrentCheckpoint(true); err != nil {
+		return err
+	}
+
 	turnContext, cancel := context.WithCancel(ctx)
 	c.turnCancel = cancel
 	go runEngineCompaction(turnContext, c.engine, c.engineMessages, c.stopped)
+	return nil
 }
 
 func (c *tuiController) startDeferredTurn(ctx context.Context) error {
@@ -346,12 +424,7 @@ func (c *tuiController) startDeferredTurn(ctx context.Context) error {
 	prompt := c.deferredSteering[0]
 	c.deferredSteering = c.deferredSteering[1:]
 	c.model.removeSteering([]string{prompt})
-	c.model.beginTurn(prompt)
-	if err := c.saveCurrentCheckpoint(true); err != nil {
-		return err
-	}
-	c.startTurn(ctx, prompt)
-	return nil
+	return c.startTurn(ctx, prompt)
 }
 
 func (c *tuiController) restoreQueuedInput() {
@@ -359,6 +432,11 @@ func (c *tuiController) restoreQueuedInput() {
 	messages = append(messages, c.deferredSteering...)
 	c.deferredSteering = nil
 	c.model.restoreSteering(messages)
+}
+
+func (c *tuiController) interruptTurn() {
+	c.model.interrupted = true
+	c.cancelTurn()
 }
 
 func (c *tuiController) cancelTurn() {
@@ -369,17 +447,13 @@ func (c *tuiController) cancelTurn() {
 	c.model.activity = activity{kind: activityCanceling}
 }
 
-type checkpointEngine interface {
-	Checkpoint() (agent.Checkpoint, error)
-}
-
 func (c *tuiController) saveCurrentCheckpoint(active bool) error {
 	if c.saveCheckpoint == nil {
 		return nil
 	}
 	engine, ok := c.engine.(checkpointEngine)
 	if !ok {
-		return errors.New("terminal: engine checkpointing is unavailable")
+		return errCheckpointUnavailable
 	}
 	checkpoint, err := engine.Checkpoint()
 	if err != nil {

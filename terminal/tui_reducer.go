@@ -234,9 +234,6 @@ func reduceInterrupt(model *tuiModel) (tuiAction, error) {
 	if model.interrupted {
 		return tuiAction{}, nil
 	}
-
-	model.interrupted = true
-	model.activity = activity{kind: activityCanceling}
 	return tuiAction{kind: tuiActionCancel}, nil
 }
 
@@ -268,9 +265,6 @@ func reducePrompt(model *tuiModel) tuiAction {
 
 	trimmed := strings.TrimSpace(prompt)
 	if action, _, matched := matchSlashCommand(prompt, trimmed); matched {
-		if action.kind == tuiActionSubmit {
-			model.beginTurn(prompt)
-		}
 		return action
 	}
 	if strings.HasPrefix(trimmed, "/") {
@@ -279,7 +273,6 @@ func reducePrompt(model *tuiModel) tuiAction {
 		return tuiAction{}
 	}
 
-	model.beginTurn(prompt)
 	return tuiAction{kind: tuiActionSubmit, prompt: prompt}
 }
 

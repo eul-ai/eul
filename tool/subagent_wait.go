@@ -109,7 +109,7 @@ func validateSubagentIDs(ids []string) error {
 
 func (wait *SubagentWait) collect(ctx context.Context, jobs []*subagentJob) ([]subagentJobSnapshot, error) {
 	for {
-		snapshots, complete := wait.subagents.snapshotJobs(jobs)
+		snapshots, complete, changes := wait.subagents.snapshotJobs(jobs)
 		if complete {
 			return snapshots, nil
 		}
@@ -117,7 +117,7 @@ func (wait *SubagentWait) collect(ctx context.Context, jobs []*subagentJob) ([]s
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-wait.subagents.changes:
+		case <-changes:
 		}
 	}
 }
@@ -126,19 +126,25 @@ func formatSubagentResults(snapshots []subagentJobSnapshot) agent.ToolResult {
 	var output strings.Builder
 	output.WriteString(subagentResultGuidance)
 	failed := false
+	if len(snapshots) == 0 {
+		return agent.ToolResult{Output: output.String()}
+	}
+
+	sectionBytes := (defaultMaxBytes - len(subagentResultGuidance)) / len(snapshots)
+	sectionLines := (defaultMaxLines - 1) / len(snapshots)
 	for _, snapshot := range snapshots {
-		output.WriteString("\n\n")
-		fmt.Fprintf(&output, "Subagent %s (model: %s, thinking: %s):\n", snapshot.id, snapshot.modelProfile, snapshot.thinkingLevel)
-		if snapshot.result.text != "" {
-			output.WriteString(snapshot.result.text)
-		}
+		heading := fmt.Sprintf("\n\nSubagent %s (model: %s, thinking: %s):\n", snapshot.id, snapshot.modelProfile, snapshot.thinkingLevel)
+		output.WriteString(heading)
+
+		body := snapshot.result.text
 		if snapshot.result.err != nil {
 			failed = true
-			if snapshot.result.text != "" {
-				output.WriteString("\n\n")
+			if body != "" {
+				body += "\n\n"
 			}
-			fmt.Fprintf(&output, "error: %v", snapshot.result.err)
+			body += fmt.Sprintf("error: %v", snapshot.result.err)
 		}
+		output.WriteString(boundSubagentResult(body, sectionLines-3, sectionBytes-len(heading)))
 	}
 
 	formatted := output.String()
@@ -146,4 +152,19 @@ func formatSubagentResults(snapshots []subagentJobSnapshot) agent.ToolResult {
 		formatted = boundHead(formatted, "subagent output truncated")
 	}
 	return agent.ToolResult{Output: formatted, IsError: failed}
+}
+
+func boundSubagentResult(body string, maxLines, maxBytes int) string {
+	bounded := truncateHead(body, maxLines, maxBytes)
+	if !bounded.truncated {
+		return bounded.text
+	}
+
+	const marker = "[subagent result truncated]"
+	content := truncateHead(body, maxLines-1, maxBytes-len(marker)-1).text
+	content = strings.TrimSuffix(content, "\n")
+	if content == "" {
+		return truncateHead(marker, maxLines, maxBytes).text
+	}
+	return content + "\n" + marker
 }

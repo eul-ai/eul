@@ -30,7 +30,7 @@ persisted locally, and tools run directly on your machine with your permissions.
 
 ## Getting started
 
-Build Eul from source:
+Building Eul from source requires Go 1.26.
 
 ```sh
 go build -o eul ./cmd/eul

@@ -20,11 +20,12 @@ const (
 )
 
 var (
-	ErrInterrupted  = errors.New("terminal: interrupted")
-	ErrNotTerminal  = errors.New("terminal: interactive mode requires terminal input and output")
-	errInputTooLong = errors.New("terminal: input is too long")
-	errInvalidInput = errors.New("terminal: input must be valid UTF-8 text without NUL")
-	errOutput       = errors.New("terminal: write output")
+	ErrInterrupted           = errors.New("terminal: interrupted")
+	ErrNotTerminal           = errors.New("terminal: interactive mode requires terminal input and output")
+	errInputTooLong          = errors.New("terminal: input is too long")
+	errInvalidInput          = errors.New("terminal: input must be valid UTF-8 text without NUL")
+	errOutput                = errors.New("terminal: write output")
+	errCheckpointUnavailable = errors.New("terminal: engine checkpointing is unavailable")
 )
 
 type Engine interface {
@@ -35,6 +36,20 @@ type Engine interface {
 	SetGoal(string) error
 	Goal() (agent.GoalState, bool)
 	ClearGoal()
+}
+
+type checkpointEngine interface {
+	Checkpoint() (agent.Checkpoint, error)
+}
+
+func validateCheckpointCapability(engine Engine, required bool) error {
+	if !required {
+		return nil
+	}
+	if _, ok := engine.(checkpointEngine); !ok {
+		return errCheckpointUnavailable
+	}
+	return nil
 }
 
 type SessionSummary struct {

@@ -24,11 +24,12 @@ type ToolDefinition struct {
 
 type ToolDiffLineKind uint8
 
+// Values are persisted in terminal checkpoints and must remain stable.
 const (
-	ToolDiffLineContext ToolDiffLineKind = iota
-	ToolDiffLineAdded
-	ToolDiffLineRemoved
-	ToolDiffLineOmitted
+	ToolDiffLineContext ToolDiffLineKind = 0
+	ToolDiffLineAdded   ToolDiffLineKind = 1
+	ToolDiffLineRemoved ToolDiffLineKind = 2
+	ToolDiffLineOmitted ToolDiffLineKind = 3
 )
 
 type ToolDiffLine struct {

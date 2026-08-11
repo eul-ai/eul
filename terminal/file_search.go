@@ -1,19 +1,22 @@
 package terminal
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
 
-const filePickerMaxResults = 100
+const (
+	filePickerMaxResults = 100
+	fileSearchDebounce   = 75 * time.Millisecond
+)
 
 var errFileSearchComplete = errors.New("file search complete")
 
@@ -32,27 +35,22 @@ type fileSearchCommand struct {
 	cancel  bool
 }
 
-type fileSearchRunner struct {
-	cwd    string
-	fdPath string
-	cancel context.CancelFunc
-}
+type projectFileSearch func(context.Context, string, string) ([]string, error)
 
-func findFD() string {
-	for _, name := range []string{"fd", "fdfind"} {
-		if executable, err := exec.LookPath(name); err == nil {
-			return executable
-		}
-	}
-	return ""
+type fileSearchRunner struct {
+	cwd      string
+	debounce time.Duration
+	search   projectFileSearch
+	cancel   context.CancelFunc
+	wait     sync.WaitGroup
 }
 
 func newFileSearchRunner(cwd string) *fileSearchRunner {
-	runner := &fileSearchRunner{cwd: cwd}
-	if cwd != "" {
-		runner.fdPath = findFD()
+	return &fileSearchRunner{
+		cwd:      cwd,
+		debounce: fileSearchDebounce,
+		search:   searchProjectFiles,
 	}
-	return runner
 }
 
 func (r *fileSearchRunner) update(ctx context.Context, command fileSearchCommand, output chan<- fileSearchResult) {
@@ -70,13 +68,27 @@ func (r *fileSearchRunner) update(ctx context.Context, command fileSearchCommand
 	searchContext, cancel := context.WithCancel(ctx)
 	r.cancel = cancel
 	request := *command.request
+	r.wait.Add(1)
 	go func() {
-		paths, err := r.search(searchContext, request)
+		defer r.wait.Done()
+
+		timer := time.NewTimer(r.debounce)
+		defer timer.Stop()
+		select {
+		case <-searchContext.Done():
+			return
+		case <-timer.C:
+		}
+
+		paths, err := r.search(searchContext, r.cwd, request.query)
 		if err != nil {
 			if searchContext.Err() != nil {
 				return
 			}
 			paths = nil
+		}
+		if searchContext.Err() != nil {
+			return
 		}
 		select {
 		case output <- fileSearchResult{id: request.id, paths: paths}:
@@ -85,66 +97,15 @@ func (r *fileSearchRunner) update(ctx context.Context, command fileSearchCommand
 	}()
 }
 
-func (r *fileSearchRunner) search(ctx context.Context, request fileSearchRequest) ([]string, error) {
-	return searchProjectFiles(ctx, r.cwd, r.fdPath, request.query)
-}
-
 func (r *fileSearchRunner) close() {
 	if r.cancel != nil {
 		r.cancel()
 		r.cancel = nil
 	}
+	r.wait.Wait()
 }
 
-func searchProjectFiles(ctx context.Context, cwd, fdPath, query string) ([]string, error) {
-	if fdPath != "" {
-		return searchProjectFilesWithFD(ctx, cwd, fdPath, query)
-	}
-	return searchProjectFilesWithWalk(ctx, cwd, query)
-}
-
-func searchProjectFilesWithFD(ctx context.Context, cwd, fdPath, query string) ([]string, error) {
-	arguments := []string{
-		"--base-directory", cwd,
-		"--max-results", "100",
-		"--type", "f",
-		"--type", "d",
-		"--hidden",
-		"--exclude", ".git",
-		"--print0",
-		"--fixed-strings",
-		"--ignore-case",
-	}
-	if strings.Contains(query, "/") {
-		arguments = append(arguments, "--full-path")
-	}
-	if query != "" {
-		arguments = append(arguments, "--", query)
-	}
-
-	command := exec.CommandContext(ctx, fdPath, arguments...)
-	output, err := command.Output()
-	if err != nil {
-		return nil, err
-	}
-	return parseFDPaths(output), nil
-}
-
-func parseFDPaths(output []byte) []string {
-	parts := bytes.Split(output, []byte{0})
-	paths := make([]string, 0, min(len(parts), filePickerMaxResults))
-	for _, part := range parts {
-		if normalized, ok := normalizeDiscoveredPath(string(part)); ok {
-			paths = append(paths, normalized)
-			if len(paths) >= filePickerMaxResults {
-				break
-			}
-		}
-	}
-	return paths
-}
-
-func searchProjectFilesWithWalk(ctx context.Context, cwd, query string) ([]string, error) {
+func searchProjectFiles(ctx context.Context, cwd, query string) ([]string, error) {
 	var paths []string
 	normalizedQuery := strings.ToLower(filepath.ToSlash(query))
 	fullPath := strings.Contains(normalizedQuery, "/")
@@ -161,7 +122,7 @@ func searchProjectFilesWithWalk(ctx context.Context, cwd, query string) ([]strin
 			}
 			return nil
 		}
-		if filePath != cwd && entry.Name() == ".git" {
+		if filePath != cwd && strings.HasPrefix(entry.Name(), ".") {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
