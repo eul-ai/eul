@@ -226,12 +226,24 @@ func highlightCells(value string, start, end int) string {
 }
 
 func terminalEscapeLength(value string) int {
-	if len(value) < 3 || value[0] != '\x1b' || value[1] != '[' {
+	if len(value) < 3 || value[0] != '\x1b' {
 		return 0
 	}
-	for index := 2; index < len(value); index++ {
-		if value[index] >= 0x40 && value[index] <= 0x7e {
-			return index + 1
+	switch value[1] {
+	case '[':
+		for index := 2; index < len(value); index++ {
+			if value[index] >= 0x40 && value[index] <= 0x7e {
+				return index + 1
+			}
+		}
+	case ']':
+		for index := 2; index < len(value); index++ {
+			switch {
+			case value[index] == '\a':
+				return index + 1
+			case value[index] == '\x1b' && index+1 < len(value) && value[index+1] == '\\':
+				return index + 2
+			}
 		}
 	}
 	return 0

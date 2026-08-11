@@ -14,6 +14,7 @@ const (
 	ansiNotItalic       = "\x1b[23m"
 	ansiReverse         = "\x1b[7m"
 	ansiNotReverse      = "\x1b[27m"
+	ansiLinkClose       = "\x1b]8;;\x1b\\"
 )
 
 type lineStyle struct {
@@ -104,6 +105,7 @@ func renderLine(frame *strings.Builder, row, width int, line styledLine) {
 	} else {
 		bold := style.bold
 		italic := style.italic
+		link := ""
 		for _, span := range fitted.spans {
 			spanForeground := style.foreground
 			switch span.style.foreground {
@@ -117,8 +119,10 @@ func renderLine(frame *strings.Builder, row, width int, line styledLine) {
 			}
 			writeTextForeground(frame, spanForeground, &foreground)
 			writeTextAttributes(frame, style.bold || span.style.bold, style.italic || span.style.italic, &bold, &italic)
+			writeLink(frame, span.style.link, &link)
 			frame.WriteString(span.text)
 		}
+		writeLink(frame, "", &link)
 		writeTextForeground(frame, style.foreground, &foreground)
 		writeTextAttributes(frame, style.bold, style.italic, &bold, &italic)
 	}
@@ -126,6 +130,21 @@ func renderLine(frame *strings.Builder, row, width int, line styledLine) {
 	frame.WriteString(fitted.right)
 	frame.WriteString(strings.Repeat(" ", fitted.rightPadding))
 	frame.WriteString(ansiReset)
+}
+
+func writeLink(output *strings.Builder, link string, current *string) {
+	if link == *current {
+		return
+	}
+	if *current != "" {
+		output.WriteString(ansiLinkClose)
+	}
+	if link != "" {
+		output.WriteString("\x1b]8;;")
+		output.WriteString(link)
+		output.WriteString("\x1b\\")
+	}
+	*current = link
 }
 
 func writeTextForeground(output *strings.Builder, foreground terminalColor, current *terminalColor) {

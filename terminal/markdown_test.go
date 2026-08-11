@@ -20,6 +20,21 @@ func TestParseInlineMarkdown(t *testing.T) {
 	}
 }
 
+func TestParseInlineMarkdownLinks(t *testing.T) {
+	got := parseInlineMarkdown("Read [the **docs**](https://example.com/docs) or visit https://example.com.")
+	want := []inlineSpan{
+		{text: "Read ", style: inlineStyle{}},
+		{text: "the ", style: inlineStyle{link: "https://example.com/docs"}},
+		{text: "docs", style: inlineStyle{bold: true, link: "https://example.com/docs"}},
+		{text: " or visit ", style: inlineStyle{}},
+		{text: "https://example.com", style: inlineStyle{link: "https://example.com"}},
+		{text: ".", style: inlineStyle{}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("spans = %+v, want %+v", got, want)
+	}
+}
+
 func TestParseInlineMarkdownCodeSpans(t *testing.T) {
 	got := parseInlineMarkdown("Use `**name**` and ``a`b``")
 	want := []inlineSpan{
