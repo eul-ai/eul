@@ -66,13 +66,13 @@ Relative tool paths are resolved from that directory.
 
 Thinking levels are:
 
-- `off`
-- `minimal`
-- `low`
-- `medium` (default)
-- `high`
-- `xhigh`
-- `max`
+- off
+- minimal
+- low
+- medium (default)
+- high
+- xhigh
+- max
 
 Availability depends on the selected model.
 
