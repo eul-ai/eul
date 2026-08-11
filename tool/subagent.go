@@ -45,7 +45,7 @@ var subagentTaskSchema = strictObject(map[string]agent.JSONSchema{
 
 var subagentToolDefinition = agent.ToolDefinition{
 	Name:        subagentToolName,
-	Description: "Start one to four independent read-only research tasks in the background. At most four may be outstanding. Use selectively for substantial parallel investigation that benefits from separate context; do not use for trivial work, tightly coupled steps, or tasks the main context can handle directly. Choose the lowest model profile and thinking level sufficient for the tasks. Do not delegate follow-up work for findings already available in context.",
+	Description: "Launch one to four independent read-only research tasks, with at most four outstanding. Use only for worthwhile parallel investigation; choose the lowest sufficient profile and thinking level. Do not delegate follow-up work for findings already in context.",
 	Parameters: strictObject(map[string]agent.JSONSchema{
 		"tasks": {
 			Type:        "array",
@@ -54,11 +54,11 @@ var subagentToolDefinition = agent.ToolDefinition{
 		},
 		"model_profile": {
 			Type:        "string",
-			Description: "Model profile for every task: fast, balanced, or powerful. Defaults to balanced. Choose fast for simple lookups, balanced for most research, and powerful only for difficult analysis.",
+			Description: "fast, balanced (default), or powerful.",
 		},
 		"thinking_level": {
 			Type:        "string",
-			Description: "Thinking level for every task: off, minimal, low, medium, or high. Defaults to low or the closest level supported by the selected model. Choose the lowest sufficient level.",
+			Description: "off, minimal, low (default), medium, or high.",
 		},
 	}, "tasks"),
 }

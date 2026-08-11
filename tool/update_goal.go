@@ -11,9 +11,8 @@ import (
 const updateGoalToolName = "update_goal"
 
 var updateGoalToolDefinition = agent.ToolDefinition{
-	Name: updateGoalToolName,
-	Description: "Mark the active goal complete only after verifying that every requirement is achieved. " +
-		"Do not call this tool for partial progress, blockers, cancellation, or ordinary tasks without an active goal.",
+	Name:        updateGoalToolName,
+	Description: "Mark an active goal complete only when all requirements are verified.",
 	Parameters: strictObject(map[string]agent.JSONSchema{
 		"status": {Type: "string", Description: `Must be "complete".`},
 	}, "status"),

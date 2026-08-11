@@ -133,8 +133,8 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 			if got := toolNames(request.Tools); !slices.Equal(got, []string{"read", "write"}) {
 				t.Fatalf("tool order = %v, want [read write]", got)
 			}
-			if !strings.Contains(request.Instructions, "- read:") || !strings.Contains(request.Instructions, "- write:") {
-				t.Fatalf("instructions omit active tools:\n%s", request.Instructions)
+			if strings.Contains(request.Instructions, "Read file contents") || strings.Contains(request.Instructions, "Create or overwrite files") {
+				t.Fatalf("instructions duplicate tool descriptions:\n%s", request.Instructions)
 			}
 			if err := onText("Checking"); err != nil {
 				return Response{}, err

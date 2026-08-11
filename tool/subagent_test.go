@@ -21,7 +21,7 @@ func TestSubagentDefinitionsAllowSelectiveBackgroundUse(t *testing.T) {
 	defer subagents.Close()
 
 	launch := subagents.Definition()
-	if launch.Name != "subagent" || !strings.Contains(launch.Description, "Use selectively") || !strings.Contains(launch.Description, "follow-up work") || strings.Contains(launch.Description, "explicitly asks") {
+	if launch.Name != "subagent" || !strings.Contains(launch.Description, "worthwhile parallel investigation") || !strings.Contains(launch.Description, "follow-up work") || strings.Contains(launch.Description, "explicitly asks") {
 		t.Fatalf("launch definition = %+v", launch)
 	}
 	task := launch.Parameters.Properties["tasks"].Items
@@ -30,16 +30,16 @@ func TestSubagentDefinitionsAllowSelectiveBackgroundUse(t *testing.T) {
 	}
 
 	model := launch.Parameters.Properties["model_profile"]
-	if model.Type != "string" || !strings.Contains(model.Description, "Defaults to balanced") {
+	if model.Type != "string" || !strings.Contains(model.Description, "balanced (default)") {
 		t.Fatalf("model schema = %+v", model)
 	}
 	thinking := launch.Parameters.Properties["thinking_level"]
-	if thinking.Type != "string" || !strings.Contains(thinking.Description, "Defaults to low") {
+	if thinking.Type != "string" || !strings.Contains(thinking.Description, "low (default)") {
 		t.Fatalf("thinking schema = %+v", thinking)
 	}
 
 	wait := NewSubagentWait(subagents).Definition()
-	if wait.Name != "subagent_wait" || !strings.Contains(wait.Description, "synthesize the findings") {
+	if wait.Name != "subagent_wait" || !strings.Contains(wait.Description, "Continue other independent work") || strings.Contains(wait.Description, "follow-up") {
 		t.Fatalf("wait definition = %+v", wait)
 	}
 	if wait.Parameters.Properties["ids"].Items == nil || wait.Parameters.Properties["ids"].Items.Type != "string" {
@@ -269,8 +269,8 @@ func TestSubagentWaitReturnsRequestedOrderAndConsumesResults(t *testing.T) {
 	if !slices.Equal(updates.final.Lines, []string{"Waited for 2 subagent(s)."}) {
 		t.Fatalf("final wait presentation = %+v", updates.final)
 	}
-	if !strings.HasPrefix(completed.result.Output, subagentResultGuidance) {
-		t.Fatalf("wait guidance missing from %q", completed.result.Output)
+	if !strings.HasPrefix(completed.result.Output, "Subagent subagent-2") || strings.Contains(completed.result.Output, "Use these results") {
+		t.Fatalf("wait output has an unexpected prefix: %q", completed.result.Output)
 	}
 	second := strings.Index(completed.result.Output, "Subagent subagent-2 (model: balanced, thinking: low):\nsecond result")
 	first := strings.Index(completed.result.Output, "Subagent subagent-1 (model: balanced, thinking: low):\nfirst result")

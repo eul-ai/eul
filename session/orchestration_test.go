@@ -152,7 +152,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 					for _, definition := range request.Tools {
 						definitions[definition.Name] = definition
 					}
-					if !strings.Contains(definitions["subagent"].Description, "Use selectively") || definitions["subagent_wait"].Name == "" || definitions["subagent_cancel"].Name == "" {
+					if !strings.Contains(definitions["subagent"].Description, "worthwhile parallel investigation") || definitions["subagent_wait"].Name == "" || definitions["subagent_cancel"].Name == "" {
 						t.Fatalf("subagent definitions = %+v", definitions)
 					}
 					if strings.Contains(request.Instructions, "explicitly asks for subagents") {

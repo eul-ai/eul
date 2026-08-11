@@ -9,14 +9,11 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-const (
-	subagentWaitToolName   = "subagent_wait"
-	subagentResultGuidance = "Use these results in the eventual user response and continue in the main context; do not launch follow-up subagents for the same objective unless the user asks."
-)
+const subagentWaitToolName = "subagent_wait"
 
 var subagentWaitToolDefinition = agent.ToolDefinition{
 	Name:        subagentWaitToolName,
-	Description: "Wait for selected background subagents and return their results, which are collected once returned. When possible, continue useful independent work before waiting. After waiting, synthesize the findings and continue directly instead of launching follow-up subagents.",
+	Description: "Wait for and collect selected subagent results. Continue other independent work first when useful.",
 	Parameters: strictObject(map[string]agent.JSONSchema{
 		"ids": {
 			Type:        "array",
@@ -135,17 +132,19 @@ func (wait *SubagentWait) collect(ctx context.Context, jobs []*subagentJob) ([]s
 }
 
 func formatSubagentResults(snapshots []subagentJobSnapshot) agent.ToolResult {
-	var output strings.Builder
-	output.WriteString(subagentResultGuidance)
-	failed := false
 	if len(snapshots) == 0 {
-		return agent.ToolResult{Output: output.String()}
+		return agent.ToolResult{}
 	}
 
-	sectionBytes := (defaultMaxBytes - len(subagentResultGuidance)) / len(snapshots)
-	sectionLines := (defaultMaxLines - 1) / len(snapshots)
+	var output strings.Builder
+	failed := false
+	sectionBytes := defaultMaxBytes / len(snapshots)
+	sectionLines := defaultMaxLines / len(snapshots)
 	for _, snapshot := range snapshots {
-		heading := fmt.Sprintf("\n\nSubagent %s (model: %s, thinking: %s):\n", snapshot.id, snapshot.modelProfile, snapshot.thinkingLevel)
+		heading := fmt.Sprintf("Subagent %s (model: %s, thinking: %s):\n", snapshot.id, snapshot.modelProfile, snapshot.thinkingLevel)
+		if output.Len() > 0 {
+			heading = "\n\n" + heading
+		}
 		output.WriteString(heading)
 
 		body := snapshot.result.text

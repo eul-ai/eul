@@ -13,6 +13,9 @@ func TestUpdateGoalMarksActiveGoalComplete(t *testing.T) {
 		calls++
 		return nil
 	})
+	if description := goalTool.Definition().Description; description != "Mark an active goal complete only when all requirements are verified." {
+		t.Fatalf("description = %q", description)
+	}
 
 	result, err := goalTool.Execute(context.Background(), []byte(`{"status":"complete"}`), nil)
 	if err != nil {
