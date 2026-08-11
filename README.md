@@ -25,7 +25,6 @@ persisted locally, and tools run directly on your machine with your permissions.
 - Global and project-specific [Agent Skills](https://agentskills.io)
 - Automatic context compaction and usage information for supported models
 - Durable sessions with direct and interactive resumption
-- Inline bold, italic, and code Markdown in the conversation
 - Browser and device-code sign-in with ChatGPT
 
 ## Getting started
@@ -122,31 +121,18 @@ Bracketed multiline paste preserves newlines and blank lines.
 | `/goal clear` | Clear the active goal |
 | `/skill:<name> [instructions]` | Load a skill explicitly |
 
-## Built-in tools
+## Tool access
 
-Eul can use the following capabilities as needed:
-
-- Read UTF-8 text files
-- Create and overwrite files
-- Replace a specific matching section of a file
-- Run Bash commands
-- Inspect language-server diagnostics
-- Look up hover information, definitions, references, and document symbols
-- Rename symbols across a workspace
-- Launch independent read-only research in background subagents and wait for selected results
+Eul can read and edit files, run Bash commands, navigate code with configured
+language servers, and delegate research to read-only subagents.
 
 Bash commands run without network access by default. Commands that need network
-access pause for one-time user approval. Network isolation is supported on Linux
-and macOS.
-
-Language-server features are available when a configured server is installed.
+access pause for one-time user approval.
 
 ## Subagents
 
 Eul may launch up to four independent read-only subagents for parallel research.
-Subagents can use `fast`, `balanced`, or `powerful` model profiles and configurable
-thinking levels. They run in the background and can be canceled when no longer
-needed.
+They run in the background and can be canceled when no longer needed.
 
 ## Goals
 
@@ -192,5 +178,3 @@ run bundled scripts with your permissions.
 - Saved sessions can contain prompts, source code, and tool output. They are
   protected with local filesystem permissions but are not encrypted at rest.
 - Canceling a turn does not undo tool side effects that already occurred.
-- Markdown rendering is limited to inline bold, italic, and code formatting.
-- Eul currently uses ChatGPT authentication for OpenAI Codex models.
