@@ -75,6 +75,9 @@ func validateCheckpointData(data checkpointData) error {
 			if input.CallID == "" || input.Tool == "" {
 				return fmt.Errorf("agent: checkpoint input %d has incomplete tool metadata", index)
 			}
+			if input.Images != nil {
+				return fmt.Errorf("agent: checkpoint input %d has images on a tool result", index)
+			}
 		default:
 			return fmt.Errorf("agent: checkpoint input %d has unknown kind %q", index, input.Kind)
 		}
@@ -88,6 +91,11 @@ func validateCheckpointData(data checkpointData) error {
 func cloneCheckpointData(data checkpointData) checkpointData {
 	data.State = append([]byte(nil), data.State...)
 	data.PendingInputs = append([]Input(nil), data.PendingInputs...)
+	for index := range data.PendingInputs {
+		if data.PendingInputs[index].Images != nil {
+			data.PendingInputs[index].Images = cloneImages(data.PendingInputs[index].Images.Items)
+		}
+	}
 	if data.Goal != nil {
 		goal := *data.Goal
 		data.Goal = &goal

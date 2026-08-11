@@ -32,6 +32,26 @@ func TestBuildCreateRequest(t *testing.T) {
 	}
 }
 
+func TestEncodeInputImages(t *testing.T) {
+	items := encodeInputs([]agent.Input{{
+		Kind: agent.InputUser,
+		Text: "describe this",
+		Images: &agent.ImageAttachments{Items: []agent.Image{{
+			MediaType: "image/png",
+			Data:      []byte("png"),
+		}}},
+	}})
+	if len(items) != 1 {
+		t.Fatalf("items = %d", len(items))
+	}
+
+	encoded := string(items[0])
+	if !strings.Contains(encoded, `"type":"input_text","text":"describe this"`) ||
+		!strings.Contains(encoded, `"type":"input_image","image_url":"data:image/png;base64,cG5n"`) {
+		t.Fatalf("input = %s", encoded)
+	}
+}
+
 func TestContinuationStateVersionAndBounds(t *testing.T) {
 	for _, test := range []struct {
 		name  string

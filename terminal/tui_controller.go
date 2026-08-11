@@ -52,6 +52,7 @@ type tuiController struct {
 	setThinkingLevel   func(agent.ThinkingLevel) error
 	saveCheckpoint     func(agent.Checkpoint, Checkpoint, bool) error
 	listSessions       func(context.Context) ([]SessionSummary, []string, error)
+	readClipboardImage func(context.Context) (agent.Image, error)
 	turnCancel         context.CancelFunc
 	exitAfterTurn      error
 	deferredSteering   []string
@@ -265,7 +266,7 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		if err := c.saveCurrentCheckpoint(true); err != nil {
 			return false, err
 		}
-		c.startTurn(ctx, action.prompt)
+		c.startTurn(ctx, action.prompt, action.images)
 	case tuiActionSteer:
 		if len(c.deferredSteering) > 0 || !c.engine.Steer(action.prompt) {
 			c.deferredSteering = append(c.deferredSteering, action.prompt)
@@ -291,7 +292,7 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		if err := c.saveCurrentCheckpoint(true); err != nil {
 			return false, err
 		}
-		c.startTurn(ctx, action.prompt)
+		c.startTurn(ctx, action.prompt, nil)
 	case tuiActionClearGoal:
 		_, hadGoal := c.engine.Goal()
 		c.engine.ClearGoal()
@@ -316,6 +317,17 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		}
 		c.model.thinkingLevel = action.thinkingLevel
 		return false, c.saveCurrentCheckpoint(false)
+	case tuiActionAttachImage:
+		if c.readClipboardImage == nil {
+			setInputError(c.model, errors.New("clipboard images are unavailable"))
+			return false, nil
+		}
+		image, err := c.readClipboardImage(ctx)
+		if err != nil {
+			setInputError(c.model, err)
+			return false, nil
+		}
+		c.model.attachImage(image)
 	case tuiActionCopy:
 		encoded := base64.StdEncoding.EncodeToString([]byte(action.text))
 		if err := writeOutput(c.output, "\x1b]52;c;%s\x07", encoded); err != nil {
@@ -327,10 +339,10 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 	return false, nil
 }
 
-func (c *tuiController) startTurn(ctx context.Context, prompt string) {
+func (c *tuiController) startTurn(ctx context.Context, prompt string, images []agent.Image) {
 	turnContext, cancel := context.WithCancel(ctx)
 	c.turnCancel = cancel
-	go runEngineTurn(turnContext, c.engine, prompt, c.engineMessages, c.stopped)
+	go runEngineTurn(turnContext, c.engine, prompt, images, c.engineMessages, c.stopped)
 }
 
 func (c *tuiController) startCompaction(ctx context.Context) {
@@ -350,7 +362,7 @@ func (c *tuiController) startDeferredTurn(ctx context.Context) error {
 	if err := c.saveCurrentCheckpoint(true); err != nil {
 		return err
 	}
-	c.startTurn(ctx, prompt)
+	c.startTurn(ctx, prompt, nil)
 	return nil
 }
 

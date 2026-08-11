@@ -34,6 +34,7 @@ type terminalCheckpointData struct {
 type checkpointBlock struct {
 	Kind        blockKind              `json:"kind"`
 	Text        string                 `json:"text,omitempty"`
+	ImageCount  int                    `json:"image_count,omitempty"`
 	ToolCallID  string                 `json:"tool_call_id,omitempty"`
 	Tool        agent.ToolPresentation `json:"tool,omitempty"`
 	ToolOutcome string                 `json:"tool_outcome,omitempty"`
@@ -111,6 +112,9 @@ func validateTerminalCheckpointData(data terminalCheckpointData) error {
 		if block.Kind < blockUser || block.Kind > blockInfo {
 			return fmt.Errorf("terminal: checkpoint block %d has unknown kind %d", index, block.Kind)
 		}
+		if block.ImageCount < 0 {
+			return fmt.Errorf("terminal: checkpoint block %d has negative image count", index)
+		}
 	}
 	for index, prompt := range data.History {
 		if !utf8.ValidString(prompt) || len(prompt) > maxInputBytes {
@@ -151,6 +155,7 @@ func checkpointModel(model *tuiModel) Checkpoint {
 		blocks[index] = checkpointBlock{
 			Kind:        block.kind,
 			Text:        block.text,
+			ImageCount:  block.imageCount,
 			ToolCallID:  block.toolCallID,
 			Tool:        block.tool.Clone(),
 			ToolOutcome: block.toolOutcome,
@@ -182,6 +187,7 @@ func restoreModelCheckpoint(model *tuiModel, checkpoint Checkpoint) {
 		model.blocks[index] = conversationBlock{
 			kind:        kind,
 			text:        sanitizeAssistantText(block.Text),
+			imageCount:  block.ImageCount,
 			toolCallID:  block.ToolCallID,
 			tool:        sanitizeToolPresentation(agent.ToolCall{ID: block.ToolCallID}, block.Tool),
 			toolOutcome: sanitizeAssistantText(outcome),

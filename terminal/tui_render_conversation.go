@@ -46,6 +46,13 @@ func conversationLines(blocks []conversationBlock, width int) []styledLine {
 		if block.kind == blockReasoning {
 			text = strings.Trim(text, "\n")
 		}
+		if block.kind == blockUser && block.imageCount > 0 {
+			label := "[image attached]"
+			if block.imageCount > 1 {
+				label = fmt.Sprintf("[%d images attached]", block.imageCount)
+			}
+			text = label + "\n" + text
+		}
 
 		padding := conversationPadding
 		contentWidth := width - padding*2

@@ -2139,6 +2139,26 @@ func TestEngineRejectsPreCanceledContext(t *testing.T) {
 	}
 }
 
+func TestEngineRunWithImages(t *testing.T) {
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if len(request.Inputs) != 1 || request.Inputs[0].Images == nil || len(request.Inputs[0].Images.Items) != 1 {
+				t.Fatalf("inputs = %+v", request.Inputs)
+			}
+			image := request.Inputs[0].Images.Items[0]
+			if request.Inputs[0].Text != "describe" || image.MediaType != "image/png" || string(image.Data) != "png" {
+				t.Fatalf("input = %+v", request.Inputs[0])
+			}
+			return Response{Text: "done"}, nil
+		},
+	}}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+
+	if _, err := engine.RunWithImages(context.Background(), "describe", []Image{{MediaType: "image/png", Data: []byte("png")}}, discardEvents); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func newTestEngine(t *testing.T, provider Provider, toolbox Toolbox, options Options) *Engine {
 	t.Helper()
 	return New(provider, toolbox, options)

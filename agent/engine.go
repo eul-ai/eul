@@ -76,14 +76,18 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 }
 
 func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunResult, error) {
-	return e.run(ctx, userText, sink, FinalizationPolicy{})
+	return e.run(ctx, userText, nil, sink, FinalizationPolicy{})
+}
+
+func (e *Engine) RunWithImages(ctx context.Context, userText string, images []Image, sink EventSink) (RunResult, error) {
+	return e.run(ctx, userText, images, sink, FinalizationPolicy{})
 }
 
 func (e *Engine) RunWithFinalization(ctx context.Context, userText string, sink EventSink, policy FinalizationPolicy) (RunResult, error) {
-	return e.run(ctx, userText, sink, policy)
+	return e.run(ctx, userText, nil, sink, policy)
 }
 
-func (e *Engine) run(ctx context.Context, userText string, sink EventSink, policy FinalizationPolicy) (RunResult, error) {
+func (e *Engine) run(ctx context.Context, userText string, images []Image, sink EventSink, policy FinalizationPolicy) (RunResult, error) {
 	if !e.mu.TryLock() {
 		return RunResult{}, errEngineBusy
 	}
@@ -106,7 +110,7 @@ func (e *Engine) run(ctx context.Context, userText string, sink EventSink, polic
 		usage:  e.contextUsage,
 		inputs: append([]Input(nil), e.pendingInputs...),
 	}
-	current.inputs = append(current.inputs, Input{Kind: InputUser, Text: userText})
+	current.inputs = append(current.inputs, Input{Kind: InputUser, Text: userText, Images: cloneImages(images)})
 	var result RunResult
 	started := time.Now()
 	normalGenerations := 0

@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
 )
@@ -109,7 +110,12 @@ func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {
 	}
 
 	contentWidth := width - 2
-	contents := make([]string, 0, 1)
+	contents := make([]string, 0, 2)
+	if len(model.images) == 1 {
+		contents = append(contents, "[image attached]")
+	} else if len(model.images) > 1 {
+		contents = append(contents, fmt.Sprintf("[%d images attached]", len(model.images)))
+	}
 	var line strings.Builder
 	lineWidth := 0
 	cursorRow := 0

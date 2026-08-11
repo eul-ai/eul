@@ -25,6 +25,7 @@ const (
 	tuiActionClearGoal
 	tuiActionDequeue
 	tuiActionSetThinking
+	tuiActionAttachImage
 	tuiActionCopy
 	tuiActionRedraw
 )
@@ -33,6 +34,7 @@ type tuiAction struct {
 	kind          tuiActionKind
 	prompt        string
 	text          string
+	images        []agent.Image
 	thinkingLevel agent.ThinkingLevel
 }
 
@@ -69,13 +71,19 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 		if model.running {
 			return reduceInterrupt(model)
 		}
-		if len(model.input) > 0 {
+		if len(model.input) > 0 || len(model.images) > 0 {
 			model.clearInput()
 			return tuiAction{}, nil
 		}
 		return tuiAction{}, ErrInterrupted
 	case keyCtrlL:
 		return tuiAction{kind: tuiActionRedraw}, nil
+	case keyCtrlV:
+		if model.running {
+			setInputError(model, fmt.Errorf("images cannot be attached while the agent is running"))
+			return tuiAction{}, nil
+		}
+		return tuiAction{kind: tuiActionAttachImage}, nil
 	case keyPageUp:
 		scrollConversation(model, -1, frame)
 		return tuiAction{}, nil
@@ -114,7 +122,11 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 	case keyEnd:
 		model.moveEnd()
 	case keyBackspace:
-		model.backspace()
+		if model.cursor == 0 && len(model.input) == 0 && len(model.images) > 0 {
+			model.images = model.images[:len(model.images)-1]
+		} else {
+			model.backspace()
+		}
 	case keyDelete:
 		model.delete()
 	case keyUp:
@@ -126,7 +138,7 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 			model.historyDown()
 		}
 	case keyCtrlD:
-		if !model.running && len(model.input) == 0 {
+		if !model.running && len(model.input) == 0 && len(model.images) == 0 {
 			return tuiAction{kind: tuiActionExit}, nil
 		}
 	case keyEnter:
@@ -261,26 +273,28 @@ func reduceSteeringPrompt(model *tuiModel) tuiAction {
 }
 
 func reducePrompt(model *tuiModel) tuiAction {
-	prompt, ok := model.takePrompt()
+	prompt, images, ok := model.takeSubmission()
 	if !ok {
 		return tuiAction{}
 	}
 
 	trimmed := strings.TrimSpace(prompt)
-	if action, _, matched := matchSlashCommand(prompt, trimmed); matched {
-		if action.kind == tuiActionSubmit {
-			model.beginTurn(prompt)
+	if len(images) == 0 {
+		if action, _, matched := matchSlashCommand(prompt, trimmed); matched {
+			if action.kind == tuiActionSubmit {
+				model.beginTurn(prompt)
+			}
+			return action
 		}
-		return action
-	}
-	if strings.HasPrefix(trimmed, "/") {
-		model.appendBlock(blockError, "Unknown command "+diagnostic(trimmed, 120))
-		model.activity = activity{kind: activityError, detail: "unknown command"}
-		return tuiAction{}
+		if strings.HasPrefix(trimmed, "/") {
+			model.appendBlock(blockError, "Unknown command "+diagnostic(trimmed, 120))
+			model.activity = activity{kind: activityError, detail: "unknown command"}
+			return tuiAction{}
+		}
 	}
 
-	model.beginTurn(prompt)
-	return tuiAction{kind: tuiActionSubmit, prompt: prompt}
+	model.beginTurnWithImages(prompt, len(images))
+	return tuiAction{kind: tuiActionSubmit, prompt: prompt, images: images}
 }
 
 func setInputError(model *tuiModel, err error) {

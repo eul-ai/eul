@@ -2,6 +2,7 @@ package codex
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,7 +55,13 @@ type functionTool struct {
 
 type inputMessage struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
+}
+
+type inputContentPart struct {
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	ImageURL string `json:"image_url,omitempty"`
 }
 
 type functionCallOutput struct {
@@ -117,7 +124,7 @@ func buildCompactRequest(request agent.Request, maxStateBytes int) (compactReque
 func encodeInputs(inputs []agent.Input) []json.RawMessage {
 	items := make([]json.RawMessage, len(inputs))
 	for i, input := range inputs {
-		var value any = inputMessage{Role: "user", Content: input.Text}
+		var value any = inputMessage{Role: "user", Content: encodeUserContent(input)}
 		if input.Kind == agent.InputToolResult {
 			output := input.Text
 			if input.IsError {
@@ -128,6 +135,24 @@ func encodeInputs(inputs []agent.Input) []json.RawMessage {
 		items[i], _ = json.Marshal(value)
 	}
 	return items
+}
+
+func encodeUserContent(input agent.Input) any {
+	if input.Images == nil || len(input.Images.Items) == 0 {
+		return input.Text
+	}
+
+	parts := make([]inputContentPart, 0, len(input.Images.Items)+1)
+	if input.Text != "" {
+		parts = append(parts, inputContentPart{Type: "input_text", Text: input.Text})
+	}
+	for _, image := range input.Images.Items {
+		parts = append(parts, inputContentPart{
+			Type:     "input_image",
+			ImageURL: "data:" + image.MediaType + ";base64," + base64.StdEncoding.EncodeToString(image.Data),
+		})
+	}
+	return parts
 }
 
 func decodeState(encoded []byte, maxStateBytes int) ([]json.RawMessage, error) {

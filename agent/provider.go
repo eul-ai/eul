@@ -13,9 +13,30 @@ const (
 	InputToolResult InputKind = "tool_result"
 )
 
+type Image struct {
+	MediaType string
+	Data      []byte
+}
+
+type ImageAttachments struct {
+	Items []Image
+}
+
+func cloneImages(images []Image) *ImageAttachments {
+	if len(images) == 0 {
+		return nil
+	}
+	cloned := make([]Image, len(images))
+	for index, image := range images {
+		cloned[index] = Image{MediaType: image.MediaType, Data: append([]byte(nil), image.Data...)}
+	}
+	return &ImageAttachments{Items: cloned}
+}
+
 type Input struct {
 	Kind    InputKind
 	Text    string
+	Images  *ImageAttachments
 	CallID  string
 	Tool    string
 	IsError bool

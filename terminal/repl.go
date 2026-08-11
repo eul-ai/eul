@@ -77,6 +77,7 @@ type Options struct {
 	PreviousTurnActive bool
 	SaveCheckpoint     func(agent.Checkpoint, Checkpoint, bool) error
 	ListSessions       func(context.Context) ([]SessionSummary, []string, error)
+	ReadClipboardImage func(context.Context) (agent.Image, error)
 }
 
 type fileDescriptor interface {

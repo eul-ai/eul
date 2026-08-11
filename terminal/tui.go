@@ -183,6 +183,10 @@ func runTUIWithKeys(
 		usageClock = usageTicker.C
 	}
 
+	clipboardImageReader := options.ReadClipboardImage
+	if clipboardImageReader == nil {
+		clipboardImageReader = readClipboardImage
+	}
 	controller := &tuiController{
 		model:              model,
 		renderer:           &tuiRenderer{},
@@ -197,6 +201,7 @@ func runTUIWithKeys(
 		setThinkingLevel:   options.SetThinkingLevel,
 		saveCheckpoint:     options.SaveCheckpoint,
 		listSessions:       options.ListSessions,
+		readClipboardImage: clipboardImageReader,
 		dirty:              true,
 	}
 	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventRender}); err != nil {
@@ -317,9 +322,19 @@ func renderIfDirty(renderer *tuiRenderer, model *tuiModel, output io.Writer, dir
 	return nil
 }
 
-func runEngineTurn(ctx context.Context, engine Engine, prompt string, messages chan<- engineMessage, stopped <-chan struct{}) {
+func runEngineTurn(ctx context.Context, engine Engine, prompt string, images []agent.Image, messages chan<- engineMessage, stopped <-chan struct{}) {
 	runEngineOperation(ctx, messages, stopped, func(sink agent.EventSink) error {
-		_, err := engine.Run(ctx, prompt, sink)
+		if len(images) == 0 {
+			_, err := engine.Run(ctx, prompt, sink)
+			return err
+		}
+		imageEngine, ok := engine.(interface {
+			RunWithImages(context.Context, string, []agent.Image, agent.EventSink) (agent.RunResult, error)
+		})
+		if !ok {
+			return errors.New("engine does not support image attachments")
+		}
+		_, err := imageEngine.RunWithImages(ctx, prompt, images, sink)
 		return err
 	})
 }

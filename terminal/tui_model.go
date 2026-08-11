@@ -27,6 +27,7 @@ const (
 type conversationBlock struct {
 	kind        blockKind
 	text        string
+	imageCount  int
 	toolCallID  string
 	tool        agent.ToolPresentation
 	toolOutcome string
@@ -69,6 +70,7 @@ type tuiModel struct {
 	streamOpen                 bool
 	input                      []rune
 	cursor                     int
+	images                     []agent.Image
 	steering                   []string
 	commandCompletions         []commandCompletion
 	commandPicker              commandPickerState
@@ -308,6 +310,7 @@ func (m *tuiModel) insertRunes(inserted []rune) {
 func (m *tuiModel) clearInput() {
 	m.input = nil
 	m.cursor = 0
+	m.images = nil
 	m.historyIndex = -1
 	m.historyDraft = ""
 	m.clearInputPickers()
@@ -481,16 +484,29 @@ func (m *tuiModel) setInput(value string) {
 }
 
 func (m *tuiModel) takePrompt() (string, bool) {
+	prompt, _, ok := m.takeSubmission()
+	return prompt, ok
+}
+
+func (m *tuiModel) takeSubmission() (string, []agent.Image, bool) {
 	prompt := string(m.input)
-	if strings.TrimSpace(prompt) == "" {
-		return "", false
+	if strings.TrimSpace(prompt) == "" && len(m.images) == 0 {
+		return "", nil, false
 	}
 
-	if len(m.history) == 0 || m.history[len(m.history)-1] != prompt {
+	if strings.TrimSpace(prompt) != "" && (len(m.history) == 0 || m.history[len(m.history)-1] != prompt) {
 		m.history = append(m.history, prompt)
 	}
+	images := m.images
 	m.clearInput()
-	return prompt, true
+	return prompt, images, true
+}
+
+func (m *tuiModel) attachImage(image agent.Image) {
+	image.Data = append([]byte(nil), image.Data...)
+	m.images = append(m.images, image)
+	m.clearInputPickers()
+	m.activity = activity{kind: activityReady, detail: "image attached"}
 }
 
 func (m *tuiModel) queueSteering(prompt string) {
@@ -560,7 +576,13 @@ func (m *tuiModel) finishPendingTools(outcome string) {
 }
 
 func (m *tuiModel) beginTurn(prompt string) {
-	m.appendBlock(blockUser, prompt)
+	m.beginTurnWithImages(prompt, 0)
+}
+
+func (m *tuiModel) beginTurnWithImages(prompt string, imageCount int) {
+	m.closeStream()
+	m.blocks = append(m.blocks, conversationBlock{kind: blockUser, text: sanitizeAssistantText(prompt), imageCount: imageCount})
+	m.conversationVersion++
 	m.running = true
 	m.refreshCommandPickerAvailability()
 	m.interrupted = false

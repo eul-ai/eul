@@ -12,6 +12,24 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
+func TestTUIControllerPastesClipboardImage(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+		readClipboardImage: func(context.Context) (agent.Image, error) {
+			return agent.Image{MediaType: "image/png", Data: []byte("png")}, nil
+		},
+	}
+
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyCtrlV}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(model.images) != 1 || model.images[0].MediaType != "image/png" || string(model.images[0].Data) != "png" {
+		t.Fatalf("images = %+v", model.images)
+	}
+}
+
 func TestTUIControllerEOFWhileRunningDefersCheckpoint(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.running = true

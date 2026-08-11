@@ -392,3 +392,19 @@ func TestReduceKeyActions(t *testing.T) {
 		})
 	}
 }
+
+func TestImageAttachmentCanBeSubmittedWithoutText(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("png")})
+
+	action, err := reduceKey(model, keyEvent{code: keyEnter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.kind != tuiActionSubmit || len(action.images) != 1 || action.images[0].MediaType != "image/png" {
+		t.Fatalf("action = %+v", action)
+	}
+	if len(model.blocks) != 1 || model.blocks[0].imageCount != 1 {
+		t.Fatalf("blocks = %+v", model.blocks)
+	}
+}
