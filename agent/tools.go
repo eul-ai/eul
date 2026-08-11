@@ -98,14 +98,14 @@ const (
 )
 
 type SubagentJobStatus struct {
-	ID                 string
-	Task               string
-	State              SubagentState
-	Started            time.Time
-	Usage              Usage
-	Generations        int
-	GenerationLimit    int
-	FinalizationReason FinalizationReason
+	ID              string
+	Task            string
+	State           SubagentState
+	Started         time.Time
+	Finished        time.Time
+	Usage           Usage
+	Generations     int
+	GenerationLimit int
 }
 
 type SubagentStatus struct {

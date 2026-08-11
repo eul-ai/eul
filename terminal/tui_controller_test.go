@@ -425,14 +425,19 @@ func TestTUIControllerAppliesSubagentStatus(t *testing.T) {
 	_, err := controller.transition(context.Background(), tuiEvent{
 		kind: tuiEventSubagentStatus,
 		subagentStatus: agent.SubagentStatus{
-			Running: 2, Finalizing: 1, Completed: 1,
-			Jobs: []agent.SubagentJobStatus{{ID: "subagent-1\nignored", Task: "inspect\nignored", State: agent.SubagentRunning, Generations: -1}},
+			Running: 2, Finalizing: 1, Completed: 2,
+			Jobs: []agent.SubagentJobStatus{
+				{ID: "subagent-1\nignored", Task: "inspect\nignored", State: agent.SubagentRunning, Generations: -1},
+				{ID: "subagent-2", Task: "finished", State: agent.SubagentComplete},
+				{ID: "subagent-3", Task: "failed", State: agent.SubagentFailed},
+				{ID: "subagent-invalid", State: agent.SubagentState("invalid")},
+			},
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if model.subagentStatus.Running != 2 || model.subagentStatus.Finalizing != 1 || model.subagentStatus.Completed != 1 || len(model.subagentStatus.Jobs) != 1 || model.subagentStatus.Jobs[0].ID != "subagent-1 ignored" || model.subagentStatus.Jobs[0].Task != "inspect ignored" || model.subagentStatus.Jobs[0].Generations != 0 || !controller.dirty {
+	if model.subagentStatus.Running != 2 || model.subagentStatus.Finalizing != 1 || model.subagentStatus.Completed != 2 || len(model.subagentStatus.Jobs) != 3 || model.subagentStatus.Jobs[0].ID != "subagent-1 ignored" || model.subagentStatus.Jobs[0].Task != "inspect ignored" || model.subagentStatus.Jobs[0].Generations != 0 || model.subagentStatus.Jobs[1].State != agent.SubagentComplete || model.subagentStatus.Jobs[2].State != agent.SubagentFailed || !controller.dirty {
 		t.Fatalf("status=%+v dirty=%v", model.subagentStatus, controller.dirty)
 	}
 
@@ -474,6 +479,22 @@ func TestTUIControllerEventDirtiness(t *testing.T) {
 			},
 			event:     tuiEvent{kind: tuiEventSpinner},
 			wantDirty: true,
+		},
+		{
+			name: "running subagent spinner redraws",
+			prepare: func(model *tuiModel) {
+				model.subagentStatus = agent.SubagentStatus{Running: 1, Jobs: []agent.SubagentJobStatus{{State: agent.SubagentRunning}}}
+			},
+			event:     tuiEvent{kind: tuiEventSpinner},
+			wantDirty: true,
+		},
+		{
+			name: "completed subagent spinner is ignored",
+			prepare: func(model *tuiModel) {
+				model.subagentStatus = agent.SubagentStatus{Completed: 1, Jobs: []agent.SubagentJobStatus{{State: agent.SubagentComplete}}}
+			},
+			event:     tuiEvent{kind: tuiEventSpinner},
+			wantDirty: false,
 		},
 		{
 			name:      "usage clock without reset is ignored",

@@ -64,10 +64,9 @@ var subagentToolDefinition = agent.ToolDefinition{
 }
 
 type SubagentProgress struct {
-	Usage              agent.Usage
-	Generations        int
-	Finalizing         bool
-	FinalizationReason agent.FinalizationReason
+	Usage       agent.Usage
+	Generations int
+	Finalizing  bool
 }
 
 type SubagentRun func(context.Context, string, SubagentModelProfile, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error)
@@ -100,21 +99,21 @@ type subagentTask struct {
 }
 
 type subagentJob struct {
-	id                 string
-	order              uint64
-	description        string
-	task               string
-	modelProfile       SubagentModelProfile
-	thinkingLevel      agent.ThinkingLevel
-	ctx                context.Context
-	cancel             context.CancelCauseFunc
-	state              agent.SubagentState
-	started            time.Time
-	usage              agent.Usage
-	generations        int
-	finalizationReason agent.FinalizationReason
-	result             agent.RunResult
-	err                error
+	id            string
+	order         uint64
+	description   string
+	task          string
+	modelProfile  SubagentModelProfile
+	thinkingLevel agent.ThinkingLevel
+	ctx           context.Context
+	cancel        context.CancelCauseFunc
+	state         agent.SubagentState
+	started       time.Time
+	finished      time.Time
+	usage         agent.Usage
+	generations   int
+	result        agent.RunResult
+	err           error
 }
 
 type subagentResult struct {
@@ -358,7 +357,6 @@ func (s *Subagent) runJob(job *subagentJob) {
 			}
 			if progress.Finalizing && job.state == agent.SubagentRunning {
 				job.state = agent.SubagentFinalizing
-				job.finalizationReason = progress.FinalizationReason
 			}
 			s.publishStatusLocked()
 			s.signalChangeLocked()
@@ -372,6 +370,7 @@ func (s *Subagent) runJob(job *subagentJob) {
 	}
 
 	s.mu.Lock()
+	job.finished = time.Now()
 	job.result = result
 	job.err = runErr
 	if result.Usage.TotalTokens > 0 {
@@ -462,20 +461,19 @@ func (s *Subagent) consume(jobs []*subagentJob) {
 
 func (s *Subagent) publishStatusLocked() {
 	status := agent.SubagentStatus{}
-	active := make([]*subagentJob, 0, len(s.jobs))
+	jobs := make([]*subagentJob, 0, len(s.jobs))
 	for _, job := range s.jobs {
+		jobs = append(jobs, job)
 		switch job.state {
 		case agent.SubagentFinalizing:
 			status.Finalizing++
-			active = append(active, job)
 		case agent.SubagentRunning, agent.SubagentCanceling:
 			status.Running++
-			active = append(active, job)
 		default:
 			status.Completed++
 		}
 	}
-	slices.SortFunc(active, func(left, right *subagentJob) int {
+	slices.SortFunc(jobs, func(left, right *subagentJob) int {
 		switch {
 		case left.order < right.order:
 			return -1
@@ -485,17 +483,17 @@ func (s *Subagent) publishStatusLocked() {
 			return 0
 		}
 	})
-	status.Jobs = make([]agent.SubagentJobStatus, len(active))
-	for index, job := range active {
+	status.Jobs = make([]agent.SubagentJobStatus, len(jobs))
+	for index, job := range jobs {
 		status.Jobs[index] = agent.SubagentJobStatus{
-			ID:                 job.id,
-			Task:               job.description,
-			State:              job.state,
-			Started:            job.started,
-			Usage:              job.usage,
-			Generations:        job.generations,
-			GenerationLimit:    subagentFinalizeAfterGenerations,
-			FinalizationReason: job.finalizationReason,
+			ID:              job.id,
+			Task:            job.description,
+			State:           job.state,
+			Started:         job.started,
+			Finished:        job.finished,
+			Usage:           job.usage,
+			Generations:     job.generations,
+			GenerationLimit: subagentFinalizeAfterGenerations,
 		}
 	}
 
@@ -537,14 +535,20 @@ func formatSubagentLaunches(jobs []*subagentJob, modelProfile SubagentModelProfi
 	return output.String()
 }
 
-func subagentLaunchPresentation(tasks []subagentTask, _ []string, modelProfile SubagentModelProfile, thinkingLevel agent.ThinkingLevel) agent.ToolPresentation {
+func subagentLaunchPresentation(tasks []subagentTask, ids []string, modelProfile SubagentModelProfile, thinkingLevel agent.ThinkingLevel) agent.ToolPresentation {
 	presentation := agent.ToolPresentation{
 		Title:     subagentToolName,
 		Arguments: fmt.Sprintf("(%s, %s)", modelProfile, thinkingLevel),
 		Markdown:  true,
 	}
-	if len(tasks) > 0 {
-		presentation.Lines = []string{fmt.Sprintf("Starting %d subagent(s).", len(tasks))}
+	if len(tasks) == 0 {
+		return presentation
 	}
+
+	state := "Starting"
+	if len(ids) > 0 {
+		state = "Started"
+	}
+	presentation.Lines = []string{fmt.Sprintf("%s %d subagent(s).", state, len(tasks))}
 	return presentation
 }

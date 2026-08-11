@@ -9,8 +9,8 @@ import (
 )
 
 func TestSubagentFinalizationPolicyDefaults(t *testing.T) {
-	var reason agent.FinalizationReason
-	policy := NewSubagentFinalizationPolicy(func(got agent.FinalizationReason) { reason = got })
+	began := false
+	policy := NewSubagentFinalizationPolicy(func() { began = true })
 	if policy.AfterDuration != 5*time.Minute || policy.AfterGenerations != 20 {
 		t.Fatalf("policy = %+v", policy)
 	}
@@ -18,7 +18,7 @@ func TestSubagentFinalizationPolicyDefaults(t *testing.T) {
 		t.Fatalf("policy = %+v", policy)
 	}
 	policy.OnBegin(agent.FinalizationReasonGenerations)
-	if reason != agent.FinalizationReasonGenerations {
-		t.Fatalf("finalization reason = %q", reason)
+	if !began {
+		t.Fatal("finalization callback was not called")
 	}
 }

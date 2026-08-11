@@ -74,7 +74,7 @@ func TestSubagentLaunchReturnsWhileTasksRun(t *testing.T) {
 	if !strings.Contains(result.Output, "Started subagents (model: balanced, thinking: low)") || !strings.Contains(result.Output, "subagent-1: inspect authentication") || strings.Contains(result.Output, "Inspect every authentication path") || !strings.Contains(result.Output, "subagent-2: second") {
 		t.Fatalf("launch output = %q", result.Output)
 	}
-	if updates.final.Arguments != "(balanced, low)" || !slices.Equal(updates.final.Lines, []string{"Starting 2 subagent(s)."}) {
+	if updates.final.Arguments != "(balanced, low)" || !slices.Equal(updates.final.Lines, []string{"Started 2 subagent(s)."}) {
 		t.Fatalf("final presentation = %+v", updates.final)
 	}
 
@@ -100,7 +100,10 @@ func TestSubagentLaunchReturnsWhileTasksRun(t *testing.T) {
 		t.Fatal("running status was not published")
 	}
 	close(release)
-	assertSubagentStatus(t, subagents.StatusUpdates(), agent.SubagentStatus{Completed: 2})
+	status := waitForSubagentStatus(t, subagents.StatusUpdates(), agent.SubagentStatus{Completed: 2})
+	if len(status.Jobs) != 2 || status.Jobs[0].State != agent.SubagentComplete || status.Jobs[1].State != agent.SubagentComplete || status.Jobs[0].Finished.IsZero() || status.Jobs[1].Finished.IsZero() {
+		t.Fatalf("completed status = %+v", status)
+	}
 }
 
 func TestSubagentRunsFourJobsConcurrently(t *testing.T) {
@@ -788,10 +791,9 @@ func TestSubagentPublishesFinalizingStatus(t *testing.T) {
 	subagents := NewSubagent(func(_ context.Context, _ string, _ SubagentModelProfile, _ agent.ThinkingLevel, update func(SubagentProgress)) (agent.RunResult, error) {
 		usage := agent.Usage{InputTokens: 190_000, OutputTokens: 10_000, TotalTokens: 200_000}
 		update(SubagentProgress{
-			Usage:              usage,
-			Generations:        20,
-			Finalizing:         true,
-			FinalizationReason: agent.FinalizationReasonGenerations,
+			Usage:       usage,
+			Generations: 20,
+			Finalizing:  true,
 		})
 		close(finalizing)
 		<-release
@@ -811,7 +813,7 @@ func TestSubagentPublishesFinalizingStatus(t *testing.T) {
 				continue
 			}
 			job := status.Jobs[0]
-			if job.State != agent.SubagentFinalizing || job.Usage.InputTokens != 190_000 || job.Usage.OutputTokens != 10_000 || job.Generations != 20 || job.GenerationLimit != 20 || job.FinalizationReason != agent.FinalizationReasonGenerations {
+			if job.State != agent.SubagentFinalizing || job.Usage.InputTokens != 190_000 || job.Usage.OutputTokens != 10_000 || job.Generations != 20 || job.GenerationLimit != 20 {
 				t.Fatalf("finalizing job = %+v", job)
 			}
 			close(release)
@@ -871,12 +873,17 @@ func (updates *recordingSubagentUpdates) SetFinal(presentation agent.ToolPresent
 
 func assertSubagentStatus(t *testing.T, updates <-chan agent.SubagentStatus, want agent.SubagentStatus) {
 	t.Helper()
+	waitForSubagentStatus(t, updates, want)
+}
+
+func waitForSubagentStatus(t *testing.T, updates <-chan agent.SubagentStatus, want agent.SubagentStatus) agent.SubagentStatus {
+	t.Helper()
 	deadline := time.After(2 * time.Second)
 	for {
 		select {
 		case got := <-updates:
 			if got.Running == want.Running && got.Finalizing == want.Finalizing && got.Completed == want.Completed {
-				return
+				return got
 			}
 		case <-deadline:
 			t.Fatalf("subagent status did not reach %+v", want)

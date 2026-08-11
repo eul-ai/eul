@@ -12,11 +12,13 @@ const (
 	subagentFinalizationPrompt       = "The subagent work budget has been reached. Do not call tools. Return a concise final answer containing the useful findings and conclusions established so far, and clearly identify any unfinished areas."
 )
 
-func NewSubagentFinalizationPolicy(onBegin func(agent.FinalizationReason)) agent.FinalizationPolicy {
+func NewSubagentFinalizationPolicy(onBegin func()) agent.FinalizationPolicy {
 	return agent.FinalizationPolicy{
 		AfterDuration:    subagentFinalizeAfterDuration,
 		AfterGenerations: subagentFinalizeAfterGenerations,
 		Prompt:           subagentFinalizationPrompt,
-		OnBegin:          onBegin,
+		OnBegin: func(agent.FinalizationReason) {
+			onBegin()
+		},
 	}
 }

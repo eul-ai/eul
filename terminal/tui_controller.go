@@ -244,7 +244,13 @@ func sanitizeSubagentStatus(status agent.SubagentStatus) agent.SubagentStatus {
 	}
 	for _, job := range status.Jobs {
 		switch job.State {
-		case agent.SubagentRunning, agent.SubagentFinalizing, agent.SubagentCanceling:
+		case agent.SubagentPending,
+			agent.SubagentRunning,
+			agent.SubagentFinalizing,
+			agent.SubagentCanceling,
+			agent.SubagentComplete,
+			agent.SubagentFailed,
+			agent.SubagentCanceled:
 			job.ID = singleLine(job.ID, 120)
 			job.Task = singleLine(job.Task, 120)
 			job.Generations = max(0, job.Generations)
@@ -265,7 +271,7 @@ func (c *tuiController) handleFileSearch(result fileSearchResult) (bool, error) 
 }
 
 func (c *tuiController) handleSpinner() (bool, error) {
-	if (c.model.activity.kind == activityReady || c.model.activity.kind == activityError) && len(c.model.subagentStatus.Jobs) == 0 {
+	if (c.model.activity.kind == activityReady || c.model.activity.kind == activityError) && c.model.subagentStatus.Running == 0 && c.model.subagentStatus.Finalizing == 0 {
 		return false, nil
 	}
 

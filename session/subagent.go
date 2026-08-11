@@ -52,13 +52,12 @@ func runChildAgent(
 	var liveUsage agent.Usage
 	normalGenerations := 0
 	finalizing := false
-	policy := tool.NewSubagentFinalizationPolicy(func(reason agent.FinalizationReason) {
+	policy := tool.NewSubagentFinalizationPolicy(func() {
 		finalizing = true
 		update(tool.SubagentProgress{
-			Usage:              liveUsage,
-			Generations:        normalGenerations,
-			Finalizing:         true,
-			FinalizationReason: reason,
+			Usage:       liveUsage,
+			Generations: normalGenerations,
+			Finalizing:  true,
 		})
 	})
 	result, runErr := child.RunWithFinalization(ctx, task, func(event agent.Event) error {

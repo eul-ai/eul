@@ -10,6 +10,8 @@ type inlineForeground uint8
 const (
 	inlineForegroundDefault inlineForeground = iota
 	inlineForegroundAccent
+	inlineForegroundOrange
+	inlineForegroundSuccess
 	inlineForegroundError
 )
 

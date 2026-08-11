@@ -77,7 +77,7 @@ func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 		},
 		{
 			ID: "subagent-2", Task: "review progress", State: agent.SubagentFinalizing, Started: started,
-			Generations: 20, GenerationLimit: 20, FinalizationReason: agent.FinalizationReasonGenerations,
+			Generations: 20, GenerationLimit: 20,
 		},
 	}}
 
@@ -87,7 +87,7 @@ func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 	if !strings.Contains(first, "subagent-1  running (1m5s, 1.2k input, 34 output, 3/20 generations) — inspect layout") {
 		t.Fatalf("running line = %q", first)
 	}
-	if !strings.Contains(second, "subagent-2  finalizing — generation limit (1m5s, 20/20 generations) — review progress") {
+	if !strings.Contains(second, "subagent-2  finalizing (1m5s, 20/20 generations) — review progress") {
 		t.Fatalf("finalizing line = %q", second)
 	}
 
@@ -98,6 +98,45 @@ func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 	frame := buildTerminalFrame(model)
 	if !strings.Contains(frame.plainRows[layout.subagentRow-1], "subagent-1") || frame.cursorRow != layout.inputRow {
 		t.Fatalf("frame layout=%+v rows=%q", layout, frame.plainRows)
+	}
+}
+
+func TestSubagentStatusesUseStateColorsAndFreezeCompletedElapsed(t *testing.T) {
+	started := time.Unix(100, 0)
+	finished := started.Add(5 * time.Second)
+	model := newTUIModel(80, 10, Options{})
+	model.subagentStatus.Jobs = []agent.SubagentJobStatus{
+		{ID: "running", State: agent.SubagentRunning, Started: started},
+		{ID: "finalizing", State: agent.SubagentFinalizing, Started: started},
+		{ID: "complete", State: agent.SubagentComplete, Started: started, Finished: finished},
+		{ID: "failed", State: agent.SubagentFailed, Started: started, Finished: finished},
+	}
+
+	lines := renderSubagentsAt(model, 4, started.Add(time.Minute))
+	wantForegrounds := []inlineForeground{
+		inlineForegroundAccent,
+		inlineForegroundOrange,
+		inlineForegroundSuccess,
+		inlineForegroundError,
+	}
+	wantColors := []terminalColor{
+		currentTheme.accent,
+		currentTheme.orange,
+		currentTheme.green,
+		currentTheme.error,
+	}
+	for index, line := range lines {
+		if line.spans[2].style.foreground != wantForegrounds[index] {
+			t.Fatalf("line %d foreground = %v", index, line.spans[2].style.foreground)
+		}
+		var rendered strings.Builder
+		renderLine(&rendered, 1, model.width, line)
+		if !strings.Contains(rendered.String(), ansiForeground(wantColors[index])) {
+			t.Fatalf("line %d did not use color %+v: %q", index, wantColors[index], rendered.String())
+		}
+	}
+	if complete := renderedLineText(lines[2], model.width); !strings.Contains(complete, "complete (5s)") {
+		t.Fatalf("complete line = %q", complete)
 	}
 }
 
