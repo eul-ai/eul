@@ -165,17 +165,29 @@ func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, e
 			c.model.providerUsage = agent.ProviderUsage{Windows: append([]agent.UsageWindow(nil), event.providerUsage.usage.Windows...)}
 		}
 	case tuiEventSubagentStatus:
-		c.model.subagentStatus = agent.SubagentStatus{
+		status := agent.SubagentStatus{
 			Running:    max(0, event.subagentStatus.Running),
 			Finalizing: max(0, event.subagentStatus.Finalizing),
 			Completed:  max(0, event.subagentStatus.Completed),
+			Jobs:       make([]agent.SubagentJobStatus, 0, len(event.subagentStatus.Jobs)),
 		}
+		for _, job := range event.subagentStatus.Jobs {
+			switch job.State {
+			case agent.SubagentRunning, agent.SubagentFinalizing, agent.SubagentCanceling:
+				job.ID = singleLine(job.ID, 120)
+				job.Task = singleLine(job.Task, 120)
+				job.Generations = max(0, job.Generations)
+				job.GenerationLimit = max(0, job.GenerationLimit)
+				status.Jobs = append(status.Jobs, job)
+			}
+		}
+		c.model.subagentStatus = status
 	case tuiEventFileSearch:
 		if !c.model.applyFileSearchResult(event.fileSearch) {
 			return false, nil
 		}
 	case tuiEventSpinner:
-		if c.model.activity.kind == activityReady || c.model.activity.kind == activityError {
+		if (c.model.activity.kind == activityReady || c.model.activity.kind == activityError) && len(c.model.subagentStatus.Jobs) == 0 {
 			return false, nil
 		}
 		c.model.spinner++

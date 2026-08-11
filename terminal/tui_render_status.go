@@ -169,33 +169,11 @@ func activityText(model *tuiModel) string {
 	case activityError:
 		label = "error: " + model.activity.detail
 	}
-	if status := subagentStatusText(model.subagentStatus); status != "" {
-		label += " · " + status
-	}
-
 	if model.activity.kind == activityReady || model.activity.kind == activityError {
 		return label
 	}
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	return frames[model.spinner%len(frames)] + " " + label
-}
-
-func subagentStatusText(status agent.SubagentStatus) string {
-	if status.Running <= 0 && status.Finalizing <= 0 {
-		return ""
-	}
-
-	parts := make([]string, 0, 3)
-	if status.Running > 0 {
-		parts = append(parts, fmt.Sprintf("%d running", status.Running))
-	}
-	if status.Finalizing > 0 {
-		parts = append(parts, fmt.Sprintf("%d finalizing", status.Finalizing))
-	}
-	if status.Completed > 0 {
-		parts = append(parts, fmt.Sprintf("%d done", status.Completed))
-	}
-	return "subagents: " + strings.Join(parts, ", ")
 }
 
 func contextText(tokens, window int64) (string, string) {

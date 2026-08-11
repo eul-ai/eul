@@ -7,6 +7,8 @@ import (
 
 type tuiLayout struct {
 	conversationHeight int
+	subagentRow        int
+	subagentHeight     int
 	topRuleRow         int
 	inputRow           int
 	inputHeight        int
@@ -22,7 +24,7 @@ type renderedInput struct {
 	cursorColumn int
 }
 
-func calculateLayout(height, inputHeight, pickerHeight int) tuiLayout {
+func calculateLayout(height, inputHeight, pickerHeight, subagentHeight int) tuiLayout {
 	if height <= 0 {
 		return tuiLayout{}
 	}
@@ -39,17 +41,25 @@ func calculateLayout(height, inputHeight, pickerHeight int) tuiLayout {
 	}
 
 	pickerHeight = max(0, min(pickerHeight, height-4))
-	inputHeight = max(1, min(inputHeight, height-pickerHeight-3))
-	conversationHeight := height - inputHeight - pickerHeight - 3
-	bottomRuleRow := conversationHeight + inputHeight + 2
+	subagentHeight = max(0, min(subagentHeight, height-pickerHeight-5))
+	inputHeight = max(1, min(inputHeight, height-pickerHeight-subagentHeight-3))
+	conversationHeight := height - inputHeight - pickerHeight - subagentHeight - 3
+	subagentRow := 0
+	if subagentHeight > 0 {
+		subagentRow = conversationHeight + 1
+	}
+	topRuleRow := conversationHeight + subagentHeight + 1
+	bottomRuleRow := topRuleRow + inputHeight + 1
 	pickerRow := 0
 	if pickerHeight > 0 {
 		pickerRow = bottomRuleRow + 1
 	}
 	return tuiLayout{
 		conversationHeight: conversationHeight,
-		topRuleRow:         conversationHeight + 1,
-		inputRow:           conversationHeight + 2,
+		subagentRow:        subagentRow,
+		subagentHeight:     subagentHeight,
+		topRuleRow:         topRuleRow,
+		inputRow:           topRuleRow + 1,
 		inputHeight:        inputHeight,
 		bottomRuleRow:      bottomRuleRow,
 		pickerRow:          pickerRow,
@@ -84,9 +94,10 @@ func (m *tuiModel) pickerHeight() int {
 }
 
 func modelInputLayout(model *tuiModel) (renderedInput, tuiLayout) {
-	pickerHeight := min(model.pickerHeight(), maximumPickerHeight(model.height))
-	input := renderInput(model, model.width, maximumInputHeight(model.height, pickerHeight))
-	return input, calculateLayout(model.height, len(input.lines), pickerHeight)
+	subagentHeight := min(len(model.subagentStatus.Jobs), max(0, model.height-5))
+	pickerHeight := min(model.pickerHeight(), max(0, maximumPickerHeight(model.height)-subagentHeight))
+	input := renderInput(model, model.width, maximumInputHeight(model.height-subagentHeight, pickerHeight))
+	return input, calculateLayout(model.height, len(input.lines), pickerHeight, subagentHeight)
 }
 
 func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {

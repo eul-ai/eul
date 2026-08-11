@@ -84,7 +84,7 @@ func TestRunTUIRendersSubagentUpdatesWhileIdle(t *testing.T) {
 	reader, writer := io.Pipe()
 	defer reader.Close()
 	updates := make(chan agent.SubagentStatus, 1)
-	output := newSignalingWriter("subagents: 1 running")
+	output := newSignalingWriter("subagent-1")
 
 	done := make(chan error, 1)
 	go func() {
@@ -93,7 +93,12 @@ func TestRunTUIRendersSubagentUpdatesWhileIdle(t *testing.T) {
 		}, -1, 80, 24)
 	}()
 
-	updates <- agent.SubagentStatus{Running: 1}
+	updates <- agent.SubagentStatus{
+		Running: 1,
+		Jobs: []agent.SubagentJobStatus{{
+			ID: "subagent-1", Task: "inspect", State: agent.SubagentRunning, Started: time.Now(), GenerationLimit: 20,
+		}},
+	}
 	select {
 	case <-output.seen:
 	case <-time.After(2 * time.Second):

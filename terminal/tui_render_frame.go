@@ -91,6 +91,12 @@ func composeFrameRows(model *tuiModel, prepared renderPreparation) []styledLine 
 	rows := make([]styledLine, model.height)
 	copy(rows, conversationViewport(prepared.conversationLines, prepared.scrollTop, layout.conversationHeight))
 
+	if layout.subagentRow > 0 {
+		for index, line := range renderSubagents(model, layout.subagentHeight) {
+			rows[layout.subagentRow-1+index] = line
+		}
+	}
+
 	rule := strings.Repeat("─", width)
 	ruleStyle := lineStyle{foreground: currentTheme.thinkingColor(model.thinkingLevel)}
 	if layout.topRuleRow > 0 {

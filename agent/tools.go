@@ -82,10 +82,34 @@ type ToolResult struct {
 	IsError bool
 }
 
+type SubagentState string
+
+const (
+	SubagentPending    SubagentState = "pending"
+	SubagentRunning    SubagentState = "running"
+	SubagentFinalizing SubagentState = "finalizing"
+	SubagentCanceling  SubagentState = "canceling"
+	SubagentComplete   SubagentState = "complete"
+	SubagentFailed     SubagentState = "failed"
+	SubagentCanceled   SubagentState = "canceled"
+)
+
+type SubagentJobStatus struct {
+	ID                 string
+	Task               string
+	State              SubagentState
+	Started            time.Time
+	Usage              Usage
+	Generations        int
+	GenerationLimit    int
+	FinalizationReason FinalizationReason
+}
+
 type SubagentStatus struct {
 	Running    int
 	Finalizing int
 	Completed  int
+	Jobs       []SubagentJobStatus
 }
 
 type Toolbox interface {

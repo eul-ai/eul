@@ -39,7 +39,7 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	}
 
 	restored := newTUIModel(100, 30, Options{InitialCheckpoint: &decoded})
-	if restored.running || restored.streamOpen || restored.activity.kind != activityReady || restored.subagentStatus != (agent.SubagentStatus{}) {
+	if restored.running || restored.streamOpen || restored.activity.kind != activityReady || restored.subagentStatus.Running != 0 || len(restored.subagentStatus.Jobs) != 0 {
 		t.Fatalf("runtime state was restored: %+v", restored)
 	}
 	if len(restored.blocks) != 2 || restored.blocks[0].kind != blockUser || restored.blocks[1].text != "answer" {

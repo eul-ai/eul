@@ -66,25 +66,69 @@ func TestStatusTruncatesSessionID(t *testing.T) {
 	}
 }
 
-func TestStatusShowsBackgroundSubagents(t *testing.T) {
+func TestRunningSubagentsRenderAboveInput(t *testing.T) {
+	started := time.Unix(100, 0)
+	model := newTUIModel(100, 10, Options{})
+	model.subagentStatus = agent.SubagentStatus{Jobs: []agent.SubagentJobStatus{
+		{
+			ID: "subagent-1", Task: "inspect layout", State: agent.SubagentRunning, Started: started,
+			Usage: agent.Usage{InputTokens: 1_200, OutputTokens: 34}, Generations: 3, GenerationLimit: 20,
+		},
+		{
+			ID: "subagent-2", Task: "review progress", State: agent.SubagentFinalizing, Started: started,
+			Generations: 20, GenerationLimit: 20, FinalizationReason: agent.FinalizationReasonGenerations,
+		},
+	}}
+
+	lines := renderSubagentsAt(model, 2, started.Add(time.Minute+5*time.Second))
+	first := renderedLineText(lines[0], model.width)
+	second := renderedLineText(lines[1], model.width)
+	if !strings.Contains(first, "subagent-1  running (1m5s, 1.2k input, 34 output, 3/20 generations) — inspect layout") {
+		t.Fatalf("running line = %q", first)
+	}
+	if !strings.Contains(second, "subagent-2  finalizing — generation limit (1m5s, 20/20 generations) — review progress") {
+		t.Fatalf("finalizing line = %q", second)
+	}
+
+	_, layout := modelInputLayout(model)
+	if layout.subagentHeight != 2 || layout.subagentRow != layout.conversationHeight+1 || layout.topRuleRow != layout.subagentRow+layout.subagentHeight {
+		t.Fatalf("layout = %+v", layout)
+	}
+	frame := buildTerminalFrame(model)
+	if !strings.Contains(frame.plainRows[layout.subagentRow-1], "subagent-1") || frame.cursorRow != layout.inputRow {
+		t.Fatalf("frame layout=%+v rows=%q", layout, frame.plainRows)
+	}
+}
+
+func TestSubagentPanelIsCappedOnSmallTerminals(t *testing.T) {
+	model := newTUIModel(40, 8, Options{})
+	model.subagentStatus.Jobs = make([]agent.SubagentJobStatus, 4)
+	for index := range model.subagentStatus.Jobs {
+		model.subagentStatus.Jobs[index] = agent.SubagentJobStatus{ID: "subagent-" + strconv.Itoa(index+1), State: agent.SubagentRunning}
+	}
+
+	_, layout := modelInputLayout(model)
+	if layout.subagentHeight != 3 || layout.conversationHeight != 1 || layout.inputHeight != 1 || layout.statusRow != 8 {
+		t.Fatalf("layout = %+v", layout)
+	}
+}
+
+func TestStatusOmitsBackgroundSubagents(t *testing.T) {
 	model := newTUIModel(120, 12, Options{Model: "model"})
-	model.subagentStatus = agent.SubagentStatus{Running: 2, Finalizing: 1, Completed: 1}
+	model.subagentStatus = agent.SubagentStatus{
+		Running: 1,
+		Jobs:    []agent.SubagentJobStatus{{ID: "subagent-1", State: agent.SubagentRunning}},
+	}
 
 	left, _ := renderStatus(model, model.width)
-	if left != "ready · subagents: 2 running, 1 finalizing, 1 done" {
+	if left != "ready" {
 		t.Fatalf("ready status = %q", left)
 	}
 
 	model.activity = activity{kind: activityThinking}
 	left, _ = renderStatus(model, model.width)
-	if left != "⠋ thinking · subagents: 2 running, 1 finalizing, 1 done" {
-		t.Fatalf("thinking status = %q", left)
-	}
-
-	model.subagentStatus = agent.SubagentStatus{Completed: 2}
-	left, _ = renderStatus(model, model.width)
 	if left != "⠋ thinking" {
-		t.Fatalf("completed status = %q", left)
+		t.Fatalf("thinking status = %q", left)
 	}
 }
 
@@ -453,7 +497,7 @@ func TestMultilineInputExpandsEditorAndMovesCursor(t *testing.T) {
 	if input.cursorRow != 1 || input.cursorColumn != 9 {
 		t.Fatalf("cursor = %d,%d", input.cursorRow, input.cursorColumn)
 	}
-	layout := calculateLayout(model.height, len(input.lines), 0)
+	layout := calculateLayout(model.height, len(input.lines), 0, 0)
 	if layout.conversationHeight != 3 || layout.inputRow != 5 || layout.inputHeight != 2 {
 		t.Fatalf("layout = %+v", layout)
 	}

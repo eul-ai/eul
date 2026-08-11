@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/eul-ai/eul/agent"
 )
@@ -43,21 +42,17 @@ func (*SubagentWait) Definition() agent.ToolDefinition {
 	return subagentWaitToolDefinition
 }
 
-func (wait *SubagentWait) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
+func (*SubagentWait) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
 	values, _ := snapshot.Arguments["ids"].([]any)
-	ids := make([]string, 0, len(values))
-	for _, value := range values {
-		if id, ok := value.(string); ok {
-			ids = append(ids, id)
-		}
+	count := len(values)
+	presentation := agent.ToolPresentation{Title: subagentWaitToolName, Markdown: true}
+	if count > 0 {
+		presentation.Lines = []string{fmt.Sprintf("Waiting for %d subagent(s).", count)}
 	}
-	if wait.subagents == nil {
-		return subagentWaitPresentation(ids, nil, time.Now())
-	}
-	return subagentWaitPresentation(ids, wait.subagents.snapshotsForPresentation(ids), time.Now())
+	return presentation
 }
 
-func (wait *SubagentWait) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
+func (wait *SubagentWait) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
@@ -79,7 +74,7 @@ func (wait *SubagentWait) Execute(ctx context.Context, arguments json.RawMessage
 		return agent.ToolResult{}, err
 	}
 
-	snapshots, err := wait.collect(ctx, jobs, updates)
+	snapshots, err := wait.collect(ctx, jobs)
 	if err != nil {
 		if ctx.Err() != nil {
 			wait.subagents.cancelJobs(jobs, errSubagentCanceled)
@@ -112,16 +107,9 @@ func validateSubagentIDs(ids []string) error {
 	return nil
 }
 
-func (wait *SubagentWait) collect(ctx context.Context, jobs []*subagentJob, updates agent.ToolUpdateSink) ([]subagentJobSnapshot, error) {
-	ticker := time.NewTicker(subagentUpdateInterval)
-	defer ticker.Stop()
-
+func (wait *SubagentWait) collect(ctx context.Context, jobs []*subagentJob) ([]subagentJobSnapshot, error) {
 	for {
-		now := time.Now()
 		snapshots, complete := wait.subagents.snapshotJobs(jobs)
-		if err := publishSubagentWaitUpdate(updates, snapshots, now); err != nil {
-			return nil, err
-		}
 		if complete {
 			return snapshots, nil
 		}
@@ -130,7 +118,6 @@ func (wait *SubagentWait) collect(ctx context.Context, jobs []*subagentJob, upda
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-wait.subagents.changes:
-		case <-ticker.C:
 		}
 	}
 }
@@ -159,46 +146,4 @@ func formatSubagentResults(snapshots []subagentJobSnapshot) agent.ToolResult {
 		formatted = boundHead(formatted, "subagent output truncated")
 	}
 	return agent.ToolResult{Output: formatted, IsError: failed}
-}
-
-func publishSubagentWaitUpdate(updates agent.ToolUpdateSink, snapshots []subagentJobSnapshot, now time.Time) error {
-	if updates == nil {
-		return nil
-	}
-	return updates.Update(subagentWaitPresentation(nil, snapshots, now))
-}
-
-func subagentWaitPresentation(ids []string, snapshots []subagentJobSnapshot, now time.Time) agent.ToolPresentation {
-	count := len(snapshots)
-	if count == 0 {
-		count = len(ids)
-	}
-	presentation := agent.ToolPresentation{Title: subagentWaitToolName, Markdown: true}
-	if count > 1 {
-		presentation.Arguments = fmt.Sprintf("(%d)", count)
-	}
-	presentation.Lines = make([]string, count)
-	for index := range count {
-		id := ""
-		if index < len(ids) {
-			id = ids[index]
-		}
-		status := subagentStatus{state: "pending"}
-		task := ""
-		if index < len(snapshots) {
-			id = snapshots[index].id
-			status = snapshots[index].status
-			task = snapshots[index].task
-		}
-
-		line := fmt.Sprintf("%d. %s — %s", index+1, formatSubagentStatus(status, now), id)
-		if index < len(snapshots) && snapshots[index].modelProfile != "" && snapshots[index].thinkingLevel != "" {
-			line += " (" + string(snapshots[index].modelProfile) + ", " + string(snapshots[index].thinkingLevel) + ")"
-		}
-		if label := boundPresentationLabel(strings.TrimSpace(strings.SplitN(task, "\n", 2)[0]), 120); label != "" {
-			line += " — " + label
-		}
-		presentation.Lines[index] = line
-	}
-	return presentation
 }

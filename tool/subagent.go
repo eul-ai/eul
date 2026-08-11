@@ -14,9 +14,8 @@ import (
 )
 
 const (
-	subagentToolName       = "subagent"
-	maxSubagents           = 4
-	subagentUpdateInterval = time.Second
+	subagentToolName = "subagent"
+	maxSubagents     = 4
 )
 
 var (
@@ -86,14 +85,14 @@ type subagentArguments struct {
 
 type subagentJob struct {
 	id                 string
+	order              uint64
 	task               string
 	modelProfile       SubagentModelProfile
 	thinkingLevel      agent.ThinkingLevel
 	ctx                context.Context
 	cancel             context.CancelCauseFunc
-	state              string
+	state              agent.SubagentState
 	started            time.Time
-	elapsed            time.Duration
 	usage              agent.Usage
 	generations        int
 	finalizationReason agent.FinalizationReason
@@ -106,21 +105,10 @@ type subagentResult struct {
 	err  error
 }
 
-type subagentStatus struct {
-	state              string
-	started            time.Time
-	elapsed            time.Duration
-	usage              agent.Usage
-	generations        int
-	finalizationReason agent.FinalizationReason
-}
-
 type subagentJobSnapshot struct {
 	id            string
-	task          string
 	modelProfile  SubagentModelProfile
 	thinkingLevel agent.ThinkingLevel
-	status        subagentStatus
 	result        subagentResult
 }
 
@@ -306,12 +294,13 @@ func (s *Subagent) start(tasks []string, modelProfile SubagentModelProfile, thin
 		jobCtx, cancel := context.WithCancelCause(s.ctx)
 		job := &subagentJob{
 			id:            fmt.Sprintf("subagent-%d", s.nextID),
+			order:         s.nextID,
 			task:          task,
 			modelProfile:  modelProfile,
 			thinkingLevel: thinkingLevel,
 			ctx:           jobCtx,
 			cancel:        cancel,
-			state:         "running",
+			state:         agent.SubagentRunning,
 			started:       started,
 		}
 		s.jobs[job.id] = job
@@ -334,7 +323,6 @@ func (s *Subagent) runJob(job *subagentJob) {
 
 	result, runErr := s.run(job.ctx, job.task, job.modelProfile, job.thinkingLevel, func(progress SubagentProgress) {
 		s.mu.Lock()
-		stateChanged := false
 		if !subagentStateTerminal(job.state) {
 			if progress.Usage != (agent.Usage{}) {
 				job.usage = progress.Usage
@@ -342,13 +330,10 @@ func (s *Subagent) runJob(job *subagentJob) {
 			if progress.Generations > job.generations {
 				job.generations = progress.Generations
 			}
-			if progress.Finalizing && job.state == "running" {
-				job.state = "finalizing"
+			if progress.Finalizing && job.state == agent.SubagentRunning {
+				job.state = agent.SubagentFinalizing
 				job.finalizationReason = progress.FinalizationReason
-				stateChanged = true
 			}
-		}
-		if stateChanged {
 			s.publishStatusLocked()
 		}
 		s.mu.Unlock()
@@ -361,7 +346,6 @@ func (s *Subagent) runJob(job *subagentJob) {
 	}
 
 	s.mu.Lock()
-	job.elapsed = time.Since(job.started)
 	job.result = result
 	job.err = runErr
 	if result.Usage.TotalTokens > 0 {
@@ -369,11 +353,11 @@ func (s *Subagent) runJob(job *subagentJob) {
 	}
 	switch {
 	case errors.Is(runErr, errSubagentCanceled), errors.Is(runErr, errSubagentSessionClosed):
-		job.state = "canceled"
+		job.state = agent.SubagentCanceled
 	case runErr != nil:
-		job.state = "failed"
+		job.state = agent.SubagentFailed
 	default:
-		job.state = "complete"
+		job.state = agent.SubagentComplete
 	}
 	s.publishStatusLocked()
 	s.mu.Unlock()
@@ -403,10 +387,10 @@ func (s *Subagent) cancelJobs(jobs []*subagentJob, cause error) []string {
 	s.mu.Lock()
 	canceled := make([]string, 0, len(jobs))
 	for _, job := range jobs {
-		if subagentStateTerminal(job.state) || job.state == "canceling" {
+		if subagentStateTerminal(job.state) || job.state == agent.SubagentCanceling {
 			continue
 		}
-		job.state = "canceling"
+		job.state = agent.SubagentCanceling
 		job.cancel(cause)
 		canceled = append(canceled, job.id)
 	}
@@ -429,50 +413,15 @@ func (s *Subagent) snapshotJobs(jobs []*subagentJob) ([]subagentJobSnapshot, boo
 	for index, job := range jobs {
 		snapshots[index] = subagentJobSnapshot{
 			id:            job.id,
-			task:          job.task,
 			modelProfile:  job.modelProfile,
 			thinkingLevel: job.thinkingLevel,
-			status: subagentStatus{
-				state:              job.state,
-				started:            job.started,
-				elapsed:            job.elapsed,
-				usage:              job.usage,
-				generations:        job.generations,
-				finalizationReason: job.finalizationReason,
-			},
-			result: subagentResult{text: job.result.Text, err: job.err},
+			result:        subagentResult{text: job.result.Text, err: job.err},
 		}
 		if !subagentStateTerminal(job.state) {
 			complete = false
 		}
 	}
 	return snapshots, complete
-}
-
-func (s *Subagent) snapshotsForPresentation(ids []string) []subagentJobSnapshot {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	snapshots := make([]subagentJobSnapshot, len(ids))
-	for index, id := range ids {
-		snapshots[index] = subagentJobSnapshot{id: id, status: subagentStatus{state: "pending"}}
-		job, exists := s.jobs[id]
-		if !exists {
-			continue
-		}
-		snapshots[index].task = job.task
-		snapshots[index].modelProfile = job.modelProfile
-		snapshots[index].thinkingLevel = job.thinkingLevel
-		snapshots[index].status = subagentStatus{
-			state:              job.state,
-			started:            job.started,
-			elapsed:            job.elapsed,
-			usage:              job.usage,
-			generations:        job.generations,
-			finalizationReason: job.finalizationReason,
-		}
-	}
-	return snapshots
 }
 
 func (s *Subagent) consume(jobs []*subagentJob) {
@@ -489,14 +438,40 @@ func (s *Subagent) consume(jobs []*subagentJob) {
 
 func (s *Subagent) publishStatusLocked() {
 	status := agent.SubagentStatus{}
+	active := make([]*subagentJob, 0, len(s.jobs))
 	for _, job := range s.jobs {
 		switch job.state {
-		case "finalizing":
+		case agent.SubagentFinalizing:
 			status.Finalizing++
-		case "running", "canceling":
+			active = append(active, job)
+		case agent.SubagentRunning, agent.SubagentCanceling:
 			status.Running++
+			active = append(active, job)
 		default:
 			status.Completed++
+		}
+	}
+	slices.SortFunc(active, func(left, right *subagentJob) int {
+		switch {
+		case left.order < right.order:
+			return -1
+		case left.order > right.order:
+			return 1
+		default:
+			return 0
+		}
+	})
+	status.Jobs = make([]agent.SubagentJobStatus, len(active))
+	for index, job := range active {
+		status.Jobs[index] = agent.SubagentJobStatus{
+			ID:                 job.id,
+			Task:               job.task,
+			State:              job.state,
+			Started:            job.started,
+			Usage:              job.usage,
+			Generations:        job.generations,
+			GenerationLimit:    subagentFinalizeAfterGenerations,
+			FinalizationReason: job.finalizationReason,
 		}
 	}
 
@@ -522,9 +497,9 @@ func (s *Subagent) signalChange() {
 	}
 }
 
-func subagentStateTerminal(state string) bool {
+func subagentStateTerminal(state agent.SubagentState) bool {
 	switch state {
-	case "complete", "failed", "canceled":
+	case agent.SubagentComplete, agent.SubagentFailed, agent.SubagentCanceled:
 		return true
 	default:
 		return false
@@ -541,85 +516,16 @@ func formatSubagentLaunches(jobs []*subagentJob, modelProfile SubagentModelProfi
 	return output.String()
 }
 
-func subagentLaunchPresentation(tasks, ids []string, modelProfile SubagentModelProfile, thinkingLevel agent.ThinkingLevel) agent.ToolPresentation {
-	presentation := agent.ToolPresentation{Title: subagentToolName, Markdown: true}
-	if len(tasks) > 1 {
-		presentation.Arguments = fmt.Sprintf("(%d, %s, %s)", len(tasks), modelProfile, thinkingLevel)
-	} else if len(tasks) == 1 {
-		presentation.Arguments = fmt.Sprintf("(%s, %s)", modelProfile, thinkingLevel)
+func subagentLaunchPresentation(tasks, _ []string, modelProfile SubagentModelProfile, thinkingLevel agent.ThinkingLevel) agent.ToolPresentation {
+	presentation := agent.ToolPresentation{
+		Title:     subagentToolName,
+		Arguments: fmt.Sprintf("(%s, %s)", modelProfile, thinkingLevel),
+		Markdown:  true,
 	}
-	presentation.Lines = make([]string, len(tasks))
-	for index, task := range tasks {
-		state := "pending"
-		if index < len(ids) {
-			state = "started (" + ids[index] + ")"
-		}
-		label := strings.TrimSpace(strings.SplitN(task, "\n", 2)[0])
-		label = boundPresentationLabel(label, 120)
-		presentation.Lines[index] = fmt.Sprintf("%d. %s — %s", index+1, state, label)
+	if len(tasks) > 0 {
+		presentation.Lines = []string{fmt.Sprintf("Starting %d subagent(s).", len(tasks))}
 	}
 	return presentation
-}
-
-func formatSubagentStatus(status subagentStatus, now time.Time) string {
-	if status.state == "pending" {
-		return status.state
-	}
-
-	elapsed := status.elapsed
-	if !subagentStateTerminal(status.state) {
-		elapsed = now.Sub(status.started)
-	}
-	if elapsed < 0 {
-		elapsed = 0
-	}
-	details := []string{elapsed.Truncate(time.Second).String()}
-	switch {
-	case status.usage.InputTokens > 0 || status.usage.OutputTokens > 0:
-		details = append(
-			details,
-			formatSubagentTokenCount(status.usage.InputTokens)+" input",
-			formatSubagentTokenCount(status.usage.OutputTokens)+" output",
-		)
-	case status.usage.TotalTokens > 0:
-		details = append(details, formatSubagentTokenCount(status.usage.TotalTokens)+" processed")
-	}
-	details = append(details, fmt.Sprintf("%d/%d generations", status.generations, subagentFinalizeAfterGenerations))
-
-	state := status.state
-	if reason := formatFinalizationReason(status.finalizationReason); reason != "" {
-		switch status.state {
-		case "finalizing":
-			state += " — " + reason
-		case "complete":
-			state += " — finalized by " + reason
-		case "failed":
-			state += " — finalization after " + reason
-		}
-	}
-	return fmt.Sprintf("%s (%s)", state, strings.Join(details, ", "))
-}
-
-func formatSubagentTokenCount(tokens int64) string {
-	switch {
-	case tokens >= 1_000_000:
-		return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(tokens)/1_000_000), ".0") + "m"
-	case tokens >= 1_000:
-		return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(tokens)/1_000), ".0") + "k"
-	default:
-		return fmt.Sprintf("%d", tokens)
-	}
-}
-
-func formatFinalizationReason(reason agent.FinalizationReason) string {
-	switch reason {
-	case agent.FinalizationReasonDuration:
-		return "time limit"
-	case agent.FinalizationReasonGenerations:
-		return "generation limit"
-	default:
-		return ""
-	}
 }
 
 func boundPresentationLabel(label string, maximum int) string {
