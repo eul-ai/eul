@@ -66,11 +66,15 @@ Relative tool paths are resolved from that directory.
 
 Thinking levels are:
 
-```text
-off, minimal, low, medium, high, xhigh, max
-```
+- `off`
+- `minimal`
+- `low`
+- `medium` (default)
+- `high`
+- `xhigh`
+- `max`
 
-The default is `medium`. Availability depends on the selected model.
+Availability depends on the selected model.
 
 The main and powerful-subagent model defaults to `gpt-5.6-sol`. Balanced
 subagents default to `gpt-5.6-terra`, and fast subagents default to
