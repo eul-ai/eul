@@ -135,24 +135,14 @@ Eul can use the following capabilities as needed:
 - Rename symbols across a workspace
 - Launch independent read-only research in background subagents and wait for selected results
 
-Every Bash call declares whether it needs network access. Commands that do not
-request it run with OS-enforced network isolation: Linux uses a separate user and
-network namespace, while macOS uses the system `sandbox-exec` utility. Commands
-that request network access pause for one-time user approval. Eul refuses to run
-a network-disabled command when the platform isolation is unavailable.
-
-Linux isolation requires unprivileged user namespaces. Only the user's primary
-group is mapped, so supplementary-group file access may not be available to
-isolated commands. Both backends block ordinary IP networking for the full
-command process tree, but they are not filesystem sandboxes and do not prevent
-network delegation through accessible local services.
+Bash commands run without network access by default. Commands that need network
+access pause for one-time user approval. Network isolation is supported on Linux
+and macOS.
 
 Language-server configuration is loaded from `lsp.json` under `EUL_HOME`, or
-the platform user configuration directory when `EUL_HOME` is unset. For
-development, Eul falls back to `lsp.json` in the project root when the global
-file does not exist. If neither file exists, the session starts without
-language-server tools. Each entry defines a server command and the source
-extensions it handles:
+the platform user configuration directory when `EUL_HOME` is unset. Without a
+configuration file, the session starts without language-server tools. Each entry
+defines a server command and the source extensions it handles:
 
 ```json
 [
@@ -169,21 +159,10 @@ Language-server features are available when a configured command is installed.
 
 ## Subagents
 
-Eul may launch up to four independent read-only subagents when separate context
-and parallel investigation are useful. Launches return immediately; completed
-results remain available until `subagent_wait` collects them, and uncollected
-results continue to occupy capacity. `subagent_cancel` stops selected work.
-Canceling a turn while `subagent_wait` is active also stops the selected agents;
-canceling unrelated main-context work does not.
-
-A launch may select one model profile for its batch from `fast`, `balanced`, or
-`powerful`; the default is `balanced`. The profile models are selected when the
-session starts, while powerful uses the main session model. A launch may also
-select a thinking level from `off`, `minimal`, `low`, `medium`, or `high`; the
-default is `low`. Subagents begin a tool-free final response after five minutes or
-20 normal provider generations. The final response
-is separate from the generation budget. While waiting, Eul shows cumulative input
-and output usage, normal-generation progress, and the reason finalization began.
+Eul may launch up to four independent read-only subagents for parallel research.
+Subagents can use `fast`, `balanced`, or `powerful` model profiles and configurable
+thinking levels. They run in the background and can be canceled when no longer
+needed.
 
 ## Goals
 
@@ -229,9 +208,5 @@ run bundled scripts with your permissions.
 - Saved sessions can contain prompts, source code, and tool output. They are
   protected with local filesystem permissions but are not encrypted at rest.
 - Canceling a turn does not undo tool side effects that already occurred.
-- Canceling a subagent wait cancels its selected background tasks; canceling
-  unrelated main-context work leaves background tasks running.
-- Subagents are read-only, session-local, canceled on session shutdown, and are
-  not restored after process restart.
 - Markdown rendering is limited to inline bold, italic, and code formatting.
 - Eul currently uses ChatGPT authentication for OpenAI Codex models.
