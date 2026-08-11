@@ -101,15 +101,28 @@ func (m *tuiModel) pickerHeight() int {
 func modelInputLayout(model *tuiModel) (renderedInput, tuiLayout) {
 	subagentHeight := min(len(model.subagentStatus.Jobs), max(0, model.height-5))
 	pickerHeight := min(model.pickerHeight(), max(0, maximumPickerHeight(model.height)-subagentHeight))
-	input := renderInput(model, model.width, maximumInputHeight(model.height-subagentHeight, pickerHeight))
+	availableHeight := model.height - subagentHeight
+	maximumHeight := maximumInputHeight(availableHeight, pickerHeight)
+	if model.permission.active() {
+		maximumHeight = maximumPermissionInputHeight(availableHeight)
+	}
+	input := renderInput(model, model.width, maximumHeight)
 	return input, calculateLayout(model.height, len(input.lines), pickerHeight, subagentHeight)
 }
 
 const maximumPermissionHeight = 12
 
+func maximumPermissionInputHeight(height int) int {
+	maximumHeight := maximumInputHeight(height, 0)
+	if height >= 5 {
+		maximumHeight = min(maximumHeight+1, height-3)
+	}
+	return maximumHeight
+}
+
 func permissionDetailCapacityForModel(model *tuiModel) int {
 	subagentHeight := min(len(model.subagentStatus.Jobs), max(0, model.height-5))
-	maximumHeight := maximumInputHeight(model.height-subagentHeight, 0)
+	maximumHeight := maximumPermissionInputHeight(model.height - subagentHeight)
 	return permissionDetailCapacity(min(maximumPermissionHeight, maximumHeight))
 }
 
@@ -120,11 +133,11 @@ func permissionDetailCapacity(height int) int {
 	case height <= 3:
 		return 1
 	case height <= 5:
-		return height - 3
+		return 0
 	case height <= 7:
-		return height - 5
+		return height - 6
 	default:
-		return height - 7
+		return height - 8
 	}
 }
 
@@ -192,18 +205,18 @@ func renderPermission(model *tuiModel, width, maximumHeight int) renderedInput {
 	case height == 3:
 		styled = append([]styledLine{description}, details...)
 		styled = append(styled, buttons)
-	case height <= 5:
+	case height == 4:
+		styled = append(styled, notice, blank, buttons, blank)
+	case height == 5:
+		styled = append(styled, blank, notice, blank, buttons, blank)
+	case height <= 7:
 		styled = append(styled, description)
 		styled = append(styled, details...)
-		styled = append(styled, notice, buttons)
-	case height <= 7:
-		styled = append(styled, blank, description)
-		styled = append(styled, details...)
-		styled = append(styled, notice, buttons, blank)
+		styled = append(styled, blank, notice, blank, buttons, blank)
 	default:
 		styled = append(styled, blank, description, blank)
 		styled = append(styled, details...)
-		styled = append(styled, notice, blank, buttons, blank)
+		styled = append(styled, blank, notice, blank, buttons, blank)
 	}
 	styled = styled[:min(len(styled), height)]
 
@@ -226,7 +239,7 @@ func permissionButtons(allowSelected bool, style lineStyle) styledLine {
 		}
 	}
 	style.foreground = currentTheme.muted
-	return styledLine{spans: spans, style: style, padding: 2}
+	return styledLine{spans: spans, style: style}
 }
 
 func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {

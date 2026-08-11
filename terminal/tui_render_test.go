@@ -89,9 +89,21 @@ func TestRenderFrameShowsPermission(t *testing.T) {
 	if len(input.lines) < 2 || strings.TrimSpace(input.lines[0]) != "" || strings.TrimSpace(input.lines[len(input.lines)-1]) != "" {
 		t.Fatalf("permission spacing = %q", input.lines)
 	}
-	description := input.styledLines[1]
+	descriptionIndex := slices.IndexFunc(input.styledLines, func(line styledLine) bool { return len(line.spans) > 0 && line.spans[0].text == "bash" })
+	if descriptionIndex < 0 {
+		t.Fatalf("permission description missing: %q", input.lines)
+	}
+	description := input.styledLines[descriptionIndex]
 	if len(description.spans) != 3 || description.spans[0].text != "bash" || description.spans[0].style.foreground != inlineForegroundAccent || description.spans[2].style.foreground != inlineForegroundDefault {
 		t.Fatalf("permission description = %+v", description.spans)
+	}
+	noticeIndex := slices.IndexFunc(input.styledLines, func(line styledLine) bool { return line.text == model.permission.notice })
+	if noticeIndex < 1 || noticeIndex+2 >= len(input.lines) || strings.TrimSpace(input.lines[noticeIndex-1]) != "" || strings.TrimSpace(input.lines[noticeIndex+1]) != "" {
+		t.Fatalf("permission notice spacing = %q", input.lines)
+	}
+	buttons := input.lines[noticeIndex+2]
+	if cellWidth(buttons[:strings.Index(buttons, "[n] Deny")]) != strings.Index(input.lines[descriptionIndex], "bash") {
+		t.Fatalf("permission button alignment = %q, description = %q", buttons, input.lines[descriptionIndex])
 	}
 	if frame.cursorVisible || string(model.input) != "queued steering" {
 		t.Fatalf("cursor=%v input=%q", frame.cursorVisible, model.input)
