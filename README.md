@@ -139,23 +139,7 @@ Bash commands run without network access by default. Commands that need network
 access pause for one-time user approval. Network isolation is supported on Linux
 and macOS.
 
-Language-server configuration is loaded from `lsp.json` under `EUL_HOME`, or
-the platform user configuration directory when `EUL_HOME` is unset. Without a
-configuration file, the session starts without language-server tools. Each entry
-defines a server command and the source extensions it handles:
-
-```json
-[
-  {
-    "name": "gopls",
-    "command": "gopls",
-    "languageID": "go",
-    "extensions": [".go"]
-  }
-]
-```
-
-Language-server features are available when a configured command is installed.
+Language-server features are available when a configured server is installed.
 
 ## Subagents
 
