@@ -32,14 +32,25 @@ const (
 	defaultSubagentModelProfile                      = SubagentModelBalanced
 )
 
+var subagentTaskSchema = strictObject(map[string]agent.JSONSchema{
+	"description": {
+		Type:        "string",
+		Description: "A short description of the task for progress display.",
+	},
+	"prompt": {
+		Type:        "string",
+		Description: "The complete task prompt. Include all context the subagent needs.",
+	},
+}, "description", "prompt")
+
 var subagentToolDefinition = agent.ToolDefinition{
 	Name:        subagentToolName,
 	Description: "Start one to four independent read-only research tasks in the background. At most four may be outstanding. Use selectively for substantial parallel investigation that benefits from separate context; do not use for trivial work, tightly coupled steps, or tasks the main context can handle directly. Choose the lowest model profile and thinking level sufficient for the tasks. Do not delegate follow-up work for findings already available in context.",
 	Parameters: strictObject(map[string]agent.JSONSchema{
 		"tasks": {
 			Type:        "array",
-			Description: "One to four independent tasks. Include all context each subagent needs.",
-			Items:       &agent.JSONSchema{Type: "string"},
+			Description: "One to four independent tasks.",
+			Items:       &subagentTaskSchema,
 		},
 		"model_profile": {
 			Type:        "string",
@@ -78,14 +89,20 @@ type Subagent struct {
 }
 
 type subagentArguments struct {
-	Tasks         []string `json:"tasks"`
-	ModelProfile  *string  `json:"model_profile"`
-	ThinkingLevel *string  `json:"thinking_level"`
+	Tasks         []subagentTask `json:"tasks"`
+	ModelProfile  *string        `json:"model_profile"`
+	ThinkingLevel *string        `json:"thinking_level"`
+}
+
+type subagentTask struct {
+	Description string `json:"description"`
+	Prompt      string `json:"prompt"`
 }
 
 type subagentJob struct {
 	id                 string
 	order              uint64
+	description        string
 	task               string
 	modelProfile       SubagentModelProfile
 	thinkingLevel      agent.ThinkingLevel
@@ -150,11 +167,15 @@ func (*Subagent) Definition() agent.ToolDefinition {
 
 func (s *Subagent) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
 	values, _ := snapshot.Arguments["tasks"].([]any)
-	tasks := make([]string, 0, len(values))
+	tasks := make([]subagentTask, 0, len(values))
 	for _, value := range values {
-		if task, ok := value.(string); ok {
-			tasks = append(tasks, task)
+		task, ok := value.(map[string]any)
+		if !ok {
+			continue
 		}
+		description, _ := task["description"].(string)
+		prompt, _ := task["prompt"].(string)
+		tasks = append(tasks, subagentTask{Description: description, Prompt: prompt})
 	}
 	modelProfile := defaultSubagentModelProfile
 	if value, ok := snapshot.Arguments["model_profile"].(string); ok {
@@ -226,7 +247,7 @@ func (s *Subagent) Close() error {
 	return nil
 }
 
-func validateSubagentTasks(tasks []string) error {
+func validateSubagentTasks(tasks []subagentTask) error {
 	if len(tasks) == 0 {
 		return fmt.Errorf("at least one task is required")
 	}
@@ -234,8 +255,11 @@ func validateSubagentTasks(tasks []string) error {
 		return fmt.Errorf("tasks must not exceed %d", maxSubagents)
 	}
 	for _, task := range tasks {
-		if strings.TrimSpace(task) == "" {
-			return fmt.Errorf("tasks must be nonempty")
+		if strings.TrimSpace(task.Description) == "" {
+			return fmt.Errorf("task descriptions must be nonempty")
+		}
+		if strings.TrimSpace(task.Prompt) == "" {
+			return fmt.Errorf("task prompts must be nonempty")
 		}
 	}
 	return nil
@@ -277,7 +301,7 @@ func (s *Subagent) resolveThinkingLevel(profile SubagentModelProfile, value *str
 	return level, nil
 }
 
-func (s *Subagent) start(tasks []string, modelProfile SubagentModelProfile, thinkingLevel agent.ThinkingLevel) ([]*subagentJob, error) {
+func (s *Subagent) start(tasks []subagentTask, modelProfile SubagentModelProfile, thinkingLevel agent.ThinkingLevel) ([]*subagentJob, error) {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -296,7 +320,8 @@ func (s *Subagent) start(tasks []string, modelProfile SubagentModelProfile, thin
 		job := &subagentJob{
 			id:            fmt.Sprintf("subagent-%d", s.nextID),
 			order:         s.nextID,
-			task:          task,
+			description:   task.Description,
+			task:          task.Prompt,
 			modelProfile:  modelProfile,
 			thinkingLevel: thinkingLevel,
 			ctx:           jobCtx,
@@ -464,7 +489,7 @@ func (s *Subagent) publishStatusLocked() {
 	for index, job := range active {
 		status.Jobs[index] = agent.SubagentJobStatus{
 			ID:                 job.id,
-			Task:               job.task,
+			Task:               job.description,
 			State:              job.state,
 			Started:            job.started,
 			Usage:              job.usage,
@@ -507,13 +532,12 @@ func formatSubagentLaunches(jobs []*subagentJob, modelProfile SubagentModelProfi
 	var output strings.Builder
 	fmt.Fprintf(&output, "Started subagents (model: %s, thinking: %s):", modelProfile, thinkingLevel)
 	for _, job := range jobs {
-		label := boundPresentationLabel(strings.TrimSpace(strings.SplitN(job.task, "\n", 2)[0]), 120)
-		fmt.Fprintf(&output, "\n- %s: %s", job.id, label)
+		fmt.Fprintf(&output, "\n- %s: %s", job.id, strings.TrimSpace(job.description))
 	}
 	return output.String()
 }
 
-func subagentLaunchPresentation(tasks, _ []string, modelProfile SubagentModelProfile, thinkingLevel agent.ThinkingLevel) agent.ToolPresentation {
+func subagentLaunchPresentation(tasks []subagentTask, _ []string, modelProfile SubagentModelProfile, thinkingLevel agent.ThinkingLevel) agent.ToolPresentation {
 	presentation := agent.ToolPresentation{
 		Title:     subagentToolName,
 		Arguments: fmt.Sprintf("(%s, %s)", modelProfile, thinkingLevel),
@@ -523,12 +547,4 @@ func subagentLaunchPresentation(tasks, _ []string, modelProfile SubagentModelPro
 		presentation.Lines = []string{fmt.Sprintf("Starting %d subagent(s).", len(tasks))}
 	}
 	return presentation
-}
-
-func boundPresentationLabel(label string, maximum int) string {
-	if len(label) <= maximum {
-		return label
-	}
-	bounded, _ := truncateLine(label, maximum-3)
-	return bounded + "..."
 }

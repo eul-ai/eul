@@ -246,13 +246,13 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 	}
 
 	result, err := session.tools.Execute(context.Background(), agent.ToolCall{
-		ID: "fast", Name: "subagent", Arguments: json.RawMessage(`{"tasks":["inspect"],"model_profile":"fast","thinking_level":"high"}`),
+		ID: "fast", Name: "subagent", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}],"model_profile":"fast","thinking_level":"high"}`),
 	}, nil)
 	if err != nil || !result.IsError || !strings.Contains(result.Output, "fast model") {
 		t.Fatalf("fast result = %+v, error = %v", result, err)
 	}
 	result, err = session.tools.Execute(context.Background(), agent.ToolCall{
-		ID: "balanced", Name: "subagent", Arguments: json.RawMessage(`{"tasks":["inspect"],"model_profile":"balanced","thinking_level":"high"}`),
+		ID: "balanced", Name: "subagent", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}],"model_profile":"balanced","thinking_level":"high"}`),
 	}, nil)
 	if err != nil || result.IsError {
 		t.Fatalf("balanced result = %+v, error = %v", result, err)

@@ -24,7 +24,8 @@ func TestSubagentDefinitionsAllowSelectiveBackgroundUse(t *testing.T) {
 	if launch.Name != "subagent" || !strings.Contains(launch.Description, "Use selectively") || !strings.Contains(launch.Description, "follow-up work") || strings.Contains(launch.Description, "explicitly asks") {
 		t.Fatalf("launch definition = %+v", launch)
 	}
-	if launch.Parameters.Properties["tasks"].Items == nil || launch.Parameters.Properties["tasks"].Items.Type != "string" {
+	task := launch.Parameters.Properties["tasks"].Items
+	if task == nil || task.Type != "object" || !slices.Equal(task.Required, []string{"description", "prompt"}) || task.Properties["description"].Type != "string" || task.Properties["prompt"].Type != "string" {
 		t.Fatalf("tasks schema = %+v", launch.Parameters.Properties["tasks"])
 	}
 
@@ -66,11 +67,11 @@ func TestSubagentLaunchReturnsWhileTasksRun(t *testing.T) {
 	defer subagents.Close()
 
 	updates := &recordingSubagentUpdates{}
-	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["first","second"]}`), updates)
+	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect authentication","prompt":"Inspect every authentication path and report findings."},{"description":"second","prompt":"second"}]}`), updates)
 	if err != nil || result.IsError {
 		t.Fatalf("launch result = %+v, error = %v", result, err)
 	}
-	if !strings.Contains(result.Output, "Started subagents (model: balanced, thinking: low)") || !strings.Contains(result.Output, "subagent-1: first") || !strings.Contains(result.Output, "subagent-2: second") {
+	if !strings.Contains(result.Output, "Started subagents (model: balanced, thinking: low)") || !strings.Contains(result.Output, "subagent-1: inspect authentication") || strings.Contains(result.Output, "Inspect every authentication path") || !strings.Contains(result.Output, "subagent-2: second") {
 		t.Fatalf("launch output = %q", result.Output)
 	}
 	if updates.final.Arguments != "(balanced, low)" || !slices.Equal(updates.final.Lines, []string{"Starting 2 subagent(s)."}) {
@@ -86,11 +87,18 @@ func TestSubagentLaunchReturnsWhileTasksRun(t *testing.T) {
 			t.Fatal("tasks did not start")
 		}
 	}
-	if !seen["first:balanced:low"] || !seen["second:balanced:low"] {
+	if !seen["Inspect every authentication path and report findings.:balanced:low"] || !seen["second:balanced:low"] {
 		t.Fatalf("started tasks = %v", seen)
 	}
 
-	assertSubagentStatus(t, subagents.StatusUpdates(), agent.SubagentStatus{Running: 2})
+	select {
+	case status := <-subagents.StatusUpdates():
+		if status.Running != 2 || len(status.Jobs) != 2 || status.Jobs[0].Task != "inspect authentication" || status.Jobs[1].Task != "second" {
+			t.Fatalf("running status = %+v", status)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("running status was not published")
+	}
 	close(release)
 	assertSubagentStatus(t, subagents.StatusUpdates(), agent.SubagentStatus{Completed: 2})
 }
@@ -105,7 +113,7 @@ func TestSubagentRunsFourJobsConcurrently(t *testing.T) {
 	})
 	defer subagents.Close()
 
-	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["one","two","three","four"]}`), nil)
+	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"one","prompt":"one"},{"description":"two","prompt":"two"},{"description":"three","prompt":"three"},{"description":"four","prompt":"four"}]}`), nil)
 	if err != nil || result.IsError {
 		t.Fatalf("launch = %+v, error = %v", result, err)
 	}
@@ -131,10 +139,10 @@ func TestSubagentThinkingLevelValidationAndOutput(t *testing.T) {
 	defer subagents.Close()
 
 	for _, arguments := range []string{
-		`{"tasks":["inspect"],"thinking_level":"medium"}`,
-		`{"tasks":["inspect"],"thinking_level":"xhigh"}`,
-		`{"tasks":["inspect"],"thinking_level":"max"}`,
-		`{"tasks":["inspect"],"thinking_level":"extreme"}`,
+		`{"tasks":[{"description":"inspect","prompt":"inspect"}],"thinking_level":"medium"}`,
+		`{"tasks":[{"description":"inspect","prompt":"inspect"}],"thinking_level":"xhigh"}`,
+		`{"tasks":[{"description":"inspect","prompt":"inspect"}],"thinking_level":"max"}`,
+		`{"tasks":[{"description":"inspect","prompt":"inspect"}],"thinking_level":"extreme"}`,
 	} {
 		result, err := subagents.Execute(context.Background(), json.RawMessage(arguments), nil)
 		if err != nil || !result.IsError {
@@ -143,7 +151,7 @@ func TestSubagentThinkingLevelValidationAndOutput(t *testing.T) {
 	}
 
 	updates := &recordingSubagentUpdates{}
-	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"],"thinking_level":"high"}`), updates)
+	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}],"thinking_level":"high"}`), updates)
 	if err != nil || result.IsError || !strings.Contains(result.Output, "thinking: high") || updates.final.Arguments != "(balanced, high)" {
 		t.Fatalf("result = %+v, presentation = %+v, error = %v", result, updates.final, err)
 	}
@@ -169,7 +177,7 @@ func TestSubagentThinkingLevelsFollowModelProfile(t *testing.T) {
 	})
 	defer subagents.Close()
 
-	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"],"model_profile":"fast"}`), nil)
+	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}],"model_profile":"fast"}`), nil)
 	if err != nil || result.IsError {
 		t.Fatalf("fast result = %+v, error = %v", result, err)
 	}
@@ -177,11 +185,11 @@ func TestSubagentThinkingLevelsFollowModelProfile(t *testing.T) {
 		t.Fatalf("fast launch = %q", got)
 	}
 
-	result, err = subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"],"model_profile":"balanced","thinking_level":"low"}`), nil)
+	result, err = subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}],"model_profile":"balanced","thinking_level":"low"}`), nil)
 	if err != nil || !result.IsError || !strings.Contains(result.Output, "balanced model") {
 		t.Fatalf("unsupported result = %+v, error = %v", result, err)
 	}
-	result, err = subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"],"model_profile":"balanced","thinking_level":"high"}`), nil)
+	result, err = subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}],"model_profile":"balanced","thinking_level":"high"}`), nil)
 	if err != nil || result.IsError {
 		t.Fatalf("balanced result = %+v, error = %v", result, err)
 	}
@@ -198,13 +206,13 @@ func TestSubagentModelProfileValidationAndOutput(t *testing.T) {
 	})
 	defer subagents.Close()
 
-	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"],"model_profile":"cheap"}`), nil)
+	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}],"model_profile":"cheap"}`), nil)
 	if err != nil || !result.IsError || !strings.Contains(result.Output, "fast, balanced, or powerful") {
 		t.Fatalf("invalid profile result = %+v, error = %v", result, err)
 	}
 
 	updates := &recordingSubagentUpdates{}
-	result, err = subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"],"model_profile":"fast"}`), updates)
+	result, err = subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}],"model_profile":"fast"}`), updates)
 	if err != nil || result.IsError || !strings.Contains(result.Output, "model: fast") || updates.final.Arguments != "(fast, low)" {
 		t.Fatalf("result = %+v, presentation = %+v, error = %v", result, updates.final, err)
 	}
@@ -225,7 +233,7 @@ func TestSubagentWaitReturnsRequestedOrderAndConsumesResults(t *testing.T) {
 	defer subagents.Close()
 	wait := NewSubagentWait(subagents)
 
-	launch, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["first","second"]}`), nil)
+	launch, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"first","prompt":"first"},{"description":"second","prompt":"second"}]}`), nil)
 	if err != nil || launch.IsError {
 		t.Fatalf("launch = %+v, error = %v", launch, err)
 	}
@@ -281,7 +289,7 @@ func TestSubagentConcurrentDisjointWaitsBroadcastCompletion(t *testing.T) {
 		})
 		wait := NewSubagentWait(subagents)
 
-		if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["one","two","three","four"]}`), nil); err != nil || result.IsError {
+		if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"one","prompt":"one"},{"description":"two","prompt":"two"},{"description":"three","prompt":"three"},{"description":"four","prompt":"four"}]}`), nil); err != nil || result.IsError {
 			t.Fatalf("launch = %+v, error = %v", result, err)
 		}
 		for range maxSubagents {
@@ -329,7 +337,7 @@ func TestSubagentConcurrentOverlappingWaitsShareAcceptedResults(t *testing.T) {
 	defer subagents.Close()
 	wait := NewSubagentWait(subagents)
 
-	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["one","two"]}`), nil); err != nil || result.IsError {
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"one","prompt":"one"},{"description":"two","prompt":"two"}]}`), nil); err != nil || result.IsError {
 		t.Fatalf("launch = %+v, error = %v", result, err)
 	}
 	<-started
@@ -382,7 +390,7 @@ func TestSubagentCanceledOverlappingWaitDoesNotConsumeResults(t *testing.T) {
 	defer subagents.Close()
 	wait := NewSubagentWait(subagents)
 
-	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["one","two"]}`), nil); err != nil || result.IsError {
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"one","prompt":"one"},{"description":"two","prompt":"two"}]}`), nil); err != nil || result.IsError {
 		t.Fatalf("launch = %+v, error = %v", result, err)
 	}
 	<-started
@@ -438,7 +446,7 @@ func TestSubagentCompletionReleasesContextAndRetainsResult(t *testing.T) {
 	})
 	defer subagents.Close()
 
-	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"]}`), nil); err != nil || result.IsError {
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`), nil); err != nil || result.IsError {
 		t.Fatalf("launch = %+v, error = %v", result, err)
 	}
 	jobContext := <-contexts
@@ -465,7 +473,7 @@ func TestSubagentWaitAfterCompletionReturnsImmediately(t *testing.T) {
 	defer subagents.Close()
 	wait := NewSubagentWait(subagents)
 
-	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"]}`), nil); err != nil || result.IsError {
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`), nil); err != nil || result.IsError {
 		t.Fatalf("launch = %+v, error = %v", result, err)
 	}
 	assertSubagentStatus(t, subagents.StatusUpdates(), agent.SubagentStatus{Completed: 1})
@@ -488,7 +496,7 @@ func TestSubagentStatusPublishesLiveUsage(t *testing.T) {
 	})
 	defer subagents.Close()
 
-	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"]}`), nil); err != nil || result.IsError {
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`), nil); err != nil || result.IsError {
 		t.Fatalf("launch = %+v, error = %v", result, err)
 	}
 	<-usagePublished
@@ -517,7 +525,7 @@ func TestSubagentWaitCancellationCancelsSelectedJob(t *testing.T) {
 	defer subagents.Close()
 	wait := NewSubagentWait(subagents)
 
-	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"]}`), nil); err != nil || result.IsError {
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`), nil); err != nil || result.IsError {
 		t.Fatalf("launch = %+v, error = %v", result, err)
 	}
 	<-started
@@ -547,7 +555,7 @@ func TestSubagentCancelCancelsSelectedJobs(t *testing.T) {
 	wait := NewSubagentWait(subagents)
 	cancel := NewSubagentCancel(subagents)
 
-	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["one","two"]}`), nil); err != nil || result.IsError {
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"one","prompt":"one"},{"description":"two","prompt":"two"}]}`), nil); err != nil || result.IsError {
 		t.Fatalf("launch = %+v, error = %v", result, err)
 	}
 	<-started
@@ -574,7 +582,7 @@ func TestSubagentCloseCancelsAndJoinsJobs(t *testing.T) {
 		return agent.RunResult{}, ctx.Err()
 	})
 
-	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["one","two"]}`), nil); err != nil || result.IsError {
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"one","prompt":"one"},{"description":"two","prompt":"two"}]}`), nil); err != nil || result.IsError {
 		t.Fatalf("launch = %+v, error = %v", result, err)
 	}
 	for range 2 {
@@ -594,7 +602,7 @@ func TestSubagentCloseCancelsAndJoinsJobs(t *testing.T) {
 		}
 	}
 
-	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["three"]}`), nil)
+	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"three","prompt":"three"}]}`), nil)
 	if err != nil || !result.IsError || !strings.Contains(result.Output, "closed") {
 		t.Fatalf("launch after close = %+v, error = %v", result, err)
 	}
@@ -614,8 +622,9 @@ func TestSubagentValidatesAndLimitsOutstandingJobsBeforeLaunching(t *testing.T) 
 
 	for _, arguments := range []string{
 		`{"tasks":[]}`,
-		`{"tasks":["one","two","three","four","five"]}`,
-		`{"tasks":["one","  "]}`,
+		`{"tasks":[{"description":"one","prompt":"one"},{"description":"two","prompt":"two"},{"description":"three","prompt":"three"},{"description":"four","prompt":"four"},{"description":"five","prompt":"five"}]}`,
+		`{"tasks":[{"description":"  ","prompt":"one"}]}`,
+		`{"tasks":[{"description":"one","prompt":"  "}]}`,
 	} {
 		result, err := subagents.Execute(context.Background(), json.RawMessage(arguments), nil)
 		if err != nil || !result.IsError {
@@ -626,10 +635,10 @@ func TestSubagentValidatesAndLimitsOutstandingJobsBeforeLaunching(t *testing.T) 
 		t.Fatalf("callback calls = %d", calls.Load())
 	}
 
-	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["one","two","three"]}`), nil); err != nil || result.IsError {
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"one","prompt":"one"},{"description":"two","prompt":"two"},{"description":"three","prompt":"three"}]}`), nil); err != nil || result.IsError {
 		t.Fatalf("first launch = %+v, error = %v", result, err)
 	}
-	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["four","five"]}`), nil)
+	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"four","prompt":"four"},{"description":"five","prompt":"five"}]}`), nil)
 	if err != nil || !result.IsError || !strings.Contains(result.Output, "must not exceed 4") {
 		t.Fatalf("over-limit launch = %+v, error = %v", result, err)
 	}
@@ -655,12 +664,12 @@ func TestSubagentWaitFreesOnlyCollectedCapacity(t *testing.T) {
 	defer subagents.Close()
 	wait := NewSubagentWait(subagents)
 
-	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["one","two","three","four"]}`), nil); err != nil || result.IsError {
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"one","prompt":"one"},{"description":"two","prompt":"two"},{"description":"three","prompt":"three"},{"description":"four","prompt":"four"}]}`), nil); err != nil || result.IsError {
 		t.Fatalf("launch = %+v, error = %v", result, err)
 	}
 	assertSubagentStatus(t, subagents.StatusUpdates(), agent.SubagentStatus{Completed: 4})
 
-	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["five"]}`), nil)
+	result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"five","prompt":"five"}]}`), nil)
 	if err != nil || !result.IsError {
 		t.Fatalf("launch with uncollected results = %+v, error = %v", result, err)
 	}
@@ -670,7 +679,7 @@ func TestSubagentWaitFreesOnlyCollectedCapacity(t *testing.T) {
 	}
 	assertSubagentStatus(t, subagents.StatusUpdates(), agent.SubagentStatus{Completed: 2})
 
-	result, err = subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["five","six"]}`), nil)
+	result, err = subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"five","prompt":"five"},{"description":"six","prompt":"six"}]}`), nil)
 	if err != nil || result.IsError || !strings.Contains(result.Output, "subagent-5") || !strings.Contains(result.Output, "subagent-6") {
 		t.Fatalf("launch after partial wait = %+v, error = %v", result, err)
 	}
@@ -687,7 +696,7 @@ func TestSubagentWaitReturnsMixedResults(t *testing.T) {
 	defer subagents.Close()
 	wait := NewSubagentWait(subagents)
 
-	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["good","bad"]}`), nil); err != nil || result.IsError {
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"good","prompt":"good"},{"description":"bad","prompt":"bad"}]}`), nil); err != nil || result.IsError {
 		t.Fatalf("launch = %+v, error = %v", result, err)
 	}
 	result, err := wait.Execute(context.Background(), json.RawMessage(`{"ids":["subagent-1","subagent-2"]}`), nil)
@@ -726,7 +735,7 @@ func TestSubagentWaitFairlyBoundsEachResult(t *testing.T) {
 	defer subagents.Close()
 	wait := NewSubagentWait(subagents)
 
-	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["one","two"]}`), nil); err != nil || result.IsError {
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"one","prompt":"one"},{"description":"two","prompt":"two"}]}`), nil); err != nil || result.IsError {
 		t.Fatalf("launch = %+v, error = %v", result, err)
 	}
 	result, err := wait.Execute(context.Background(), json.RawMessage(`{"ids":["subagent-1","subagent-2"]}`), nil)
@@ -753,7 +762,7 @@ func TestSubagentWaitBoundsEveryLargeResultBeforeCombinedOutput(t *testing.T) {
 	defer subagents.Close()
 	wait := NewSubagentWait(subagents)
 
-	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["one","two","three","four"]}`), nil); err != nil || result.IsError {
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"one","prompt":"one"},{"description":"two","prompt":"two"},{"description":"three","prompt":"three"},{"description":"four","prompt":"four"}]}`), nil); err != nil || result.IsError {
 		t.Fatalf("launch = %+v, error = %v", result, err)
 	}
 	result, err := wait.Execute(context.Background(), json.RawMessage(`{"ids":["subagent-1","subagent-2","subagent-3","subagent-4"]}`), nil)
@@ -790,7 +799,7 @@ func TestSubagentPublishesFinalizingStatus(t *testing.T) {
 	})
 	defer subagents.Close()
 
-	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":["inspect"]}`), nil); err != nil || result.IsError {
+	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`), nil); err != nil || result.IsError {
 		t.Fatalf("launch = %+v, error = %v", result, err)
 	}
 	<-finalizing

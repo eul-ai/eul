@@ -161,7 +161,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 					return agent.Response{ToolCalls: []agent.ToolCall{{
 						ID:        "launch",
 						Name:      "subagent",
-						Arguments: []byte(`{"tasks":["review alpha","review beta"]}`),
+						Arguments: []byte(`{"tasks":[{"description":"review alpha","prompt":"review alpha"},{"description":"review beta","prompt":"review beta"}]}`),
 					}}}, nil
 				case 2:
 					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "subagent" {
