@@ -241,12 +241,13 @@ func TestSubagentWaitReturnsRequestedOrderAndConsumesResults(t *testing.T) {
 		t.Fatalf("launch = %+v, error = %v", launch, err)
 	}
 
+	updates := &recordingSubagentUpdates{}
 	done := make(chan struct {
 		result agent.ToolResult
 		err    error
 	}, 1)
 	go func() {
-		result, err := wait.Execute(context.Background(), json.RawMessage(`{"ids":["subagent-2","subagent-1"]}`), nil)
+		result, err := wait.Execute(context.Background(), json.RawMessage(`{"ids":["subagent-2","subagent-1"]}`), updates)
 		done <- struct {
 			result agent.ToolResult
 			err    error
@@ -264,6 +265,9 @@ func TestSubagentWaitReturnsRequestedOrderAndConsumesResults(t *testing.T) {
 	completed := <-done
 	if completed.err != nil || completed.result.IsError {
 		t.Fatalf("wait result = %+v, error = %v", completed.result, completed.err)
+	}
+	if !slices.Equal(updates.final.Lines, []string{"Waited for 2 subagent(s)."}) {
+		t.Fatalf("final wait presentation = %+v", updates.final)
 	}
 	if !strings.HasPrefix(completed.result.Output, subagentResultGuidance) {
 		t.Fatalf("wait guidance missing from %q", completed.result.Output)

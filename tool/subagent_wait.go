@@ -44,15 +44,10 @@ func (*SubagentWait) Definition() agent.ToolDefinition {
 
 func (*SubagentWait) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
 	values, _ := snapshot.Arguments["ids"].([]any)
-	count := len(values)
-	presentation := agent.ToolPresentation{Title: subagentWaitToolName, Markdown: true}
-	if count > 0 {
-		presentation.Lines = []string{fmt.Sprintf("Waiting for %d subagent(s).", count)}
-	}
-	return presentation
+	return subagentWaitPresentation(len(values), false)
 }
 
-func (wait *SubagentWait) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
+func (wait *SubagentWait) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
@@ -83,7 +78,24 @@ func (wait *SubagentWait) Execute(ctx context.Context, arguments json.RawMessage
 	}
 	result := formatSubagentResults(snapshots)
 	wait.subagents.consume(jobs)
+	if updates != nil {
+		updates.SetFinal(subagentWaitPresentation(len(args.IDs), true))
+	}
 	return result, nil
+}
+
+func subagentWaitPresentation(count int, complete bool) agent.ToolPresentation {
+	presentation := agent.ToolPresentation{Title: subagentWaitToolName, Markdown: true}
+	if count == 0 {
+		return presentation
+	}
+
+	state := "Waiting for"
+	if complete {
+		state = "Waited for"
+	}
+	presentation.Lines = []string{fmt.Sprintf("%s %d subagent(s).", state, count)}
+	return presentation
 }
 
 func validateSubagentIDs(ids []string) error {
