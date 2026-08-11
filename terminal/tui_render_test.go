@@ -330,6 +330,7 @@ func TestBashToolShowsOutputTailAndDuration(t *testing.T) {
 			Lines:     []string{"one", "two", "three", "ok github.com/eul-ai/eul/cmd", "ok github.com/eul-ai/eul/provider", "ok github.com/eul-ai/eul/terminal", "ok github.com/eul-ai/eul/tool", "ok github.com/eul-ai/eul/terminal race"},
 			TailLines: 5,
 			Elapsed:   2*time.Second + 900*time.Millisecond,
+			Timeout:   120 * time.Second,
 		},
 		toolOutcome: "exit status: 0",
 	}}, 80)
@@ -338,7 +339,7 @@ func TestBashToolShowsOutputTailAndDuration(t *testing.T) {
 	for _, line := range lines {
 		texts = append(texts, line.text)
 	}
-	for _, want := range []string{"bash go test ./... — exit status: 0", "... (3 earlier lines)", "ok github.com/eul-ai/eul/cmd", "ok github.com/eul-ai/eul/terminal race", "Took 2.9s"} {
+	for _, want := range []string{"bash go test ./... — exit status: 0", "... (3 earlier lines)", "ok github.com/eul-ai/eul/cmd", "ok github.com/eul-ai/eul/terminal race", "Took 2.9s (120s timeout)"} {
 		if !slices.Contains(texts, want) {
 			t.Fatalf("lines = %+v, missing %q", lines, want)
 		}

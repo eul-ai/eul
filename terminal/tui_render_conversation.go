@@ -146,7 +146,12 @@ func toolConversationLines(block conversationBlock, width int, style lineStyle, 
 		if block.kind == blockToolPending {
 			label = "Elapsed"
 		}
-		lines = append(lines, styledLine{text: fmt.Sprintf("%s %.1fs", label, block.tool.Elapsed.Seconds()), style: elapsedStyle, padding: padding})
+		elapsed := fmt.Sprintf("%s %.1fs", label, block.tool.Elapsed.Seconds())
+		if block.tool.Timeout > 0 {
+			timeout := strconv.FormatFloat(block.tool.Timeout.Seconds(), 'f', -1, 64)
+			elapsed += fmt.Sprintf(" (%ss timeout)", timeout)
+		}
+		lines = append(lines, styledLine{text: elapsed, style: elapsedStyle, padding: padding})
 	}
 	return lines
 }

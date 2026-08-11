@@ -9,14 +9,14 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-func setFinalBashPresentation(updates agent.ToolUpdateSink, command, output, outcome string, elapsed time.Duration) {
+func setFinalBashPresentation(updates agent.ToolUpdateSink, command, output, outcome string, elapsed, timeout time.Duration) {
 	if updates != nil {
-		updates.SetFinal(bashOutputPresentation(command, output, outcome, elapsed))
+		updates.SetFinal(bashOutputPresentation(command, output, outcome, elapsed, timeout))
 	}
 }
 
-func bashOutputPresentation(command, output, outcome string, elapsed time.Duration) agent.ToolPresentation {
-	presentation := bashPresentation(command)
+func bashOutputPresentation(command, output, outcome string, elapsed, timeout time.Duration) agent.ToolPresentation {
+	presentation := bashPresentation(command, timeout)
 	presentation.Outcome = outcome
 	if trimmed := strings.TrimSpace(output); trimmed != "" {
 		presentation.Lines = strings.Split(trimmed, "\n")
@@ -31,6 +31,7 @@ type bashOutputStreamer struct {
 	updates  agent.ToolUpdateSink
 	command  string
 	started  time.Time
+	timeout  time.Duration
 	cancel   context.CancelFunc
 	dirty    chan struct{}
 	stopNow  chan struct{}
@@ -45,6 +46,7 @@ func newBashOutputStreamer(
 	updates agent.ToolUpdateSink,
 	command string,
 	started time.Time,
+	timeout time.Duration,
 	cancel context.CancelFunc,
 ) *bashOutputStreamer {
 	return &bashOutputStreamer{
@@ -52,6 +54,7 @@ func newBashOutputStreamer(
 		updates: updates,
 		command: command,
 		started: started,
+		timeout: timeout,
 		cancel:  cancel,
 		dirty:   make(chan struct{}, 1),
 		stopNow: make(chan struct{}),
@@ -92,7 +95,7 @@ func (s *bashOutputStreamer) run() {
 				continue
 			}
 			output, _ := s.capture.String()
-			if err := s.updates.Update(bashOutputPresentation(s.command, output, "", elapsed)); err != nil {
+			if err := s.updates.Update(bashOutputPresentation(s.command, output, "", elapsed, s.timeout)); err != nil {
 				s.errMu.Lock()
 				s.err = err
 				s.errMu.Unlock()

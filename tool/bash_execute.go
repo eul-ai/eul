@@ -61,23 +61,23 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates a
 	started := time.Now()
 	var streamer *bashOutputStreamer
 	if updates != nil {
-		streamer = newBashOutputStreamer(capture, updates, args.Command, started, cancel)
+		streamer = newBashOutputStreamer(capture, updates, args.Command, started, timeout, cancel)
 		command.Stdout = streamer
 		command.Stderr = streamer
 	}
 	if err := command.Start(); err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			result := errorResult(bashToolName, fmt.Errorf("canceled before shell started; exit status: unavailable: %w", contextErr))
-			setFinalBashPresentation(updates, args.Command, "", "", time.Since(started))
+			setFinalBashPresentation(updates, args.Command, "", "", time.Since(started), timeout)
 			return result, contextErr
 		}
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			result := errorResult(bashToolName, fmt.Errorf("timed out after %s before shell started; exit status: unavailable", timeout))
-			setFinalBashPresentation(updates, args.Command, "", "", time.Since(started))
+			setFinalBashPresentation(updates, args.Command, "", "", time.Since(started), timeout)
 			return result, nil
 		}
 		result := errorResult(bashToolName, fmt.Errorf("failed to start shell: %w; exit status: unavailable", err))
-		setFinalBashPresentation(updates, args.Command, "", "", time.Since(started))
+		setFinalBashPresentation(updates, args.Command, "", "", time.Since(started), timeout)
 		return result, nil
 	}
 	if streamer != nil {
@@ -120,7 +120,7 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates a
 		notice = "earlier command output truncated"
 	}
 	result := agent.ToolResult{Output: boundTail(text, notice), IsError: isError}
-	setFinalBashPresentation(updates, args.Command, output, strings.Trim(status, "[]"), time.Since(started))
+	setFinalBashPresentation(updates, args.Command, output, strings.Trim(status, "[]"), time.Since(started), timeout)
 	if updateErr != nil {
 		return result, updateErr
 	}

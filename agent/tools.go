@@ -48,6 +48,7 @@ type ToolPresentation struct {
 	Outcome        string
 	TailLines      int
 	Elapsed        time.Duration
+	Timeout        time.Duration
 }
 
 func (presentation ToolPresentation) Clone() ToolPresentation {
@@ -64,6 +65,7 @@ func (presentation ToolPresentation) Equal(other ToolPresentation) bool {
 		presentation.Outcome == other.Outcome &&
 		presentation.TailLines == other.TailLines &&
 		presentation.Elapsed == other.Elapsed &&
+		presentation.Timeout == other.Timeout &&
 		slices.Equal(presentation.Lines, other.Lines) &&
 		slices.Equal(presentation.Diff, other.Diff)
 }

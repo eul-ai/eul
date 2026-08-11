@@ -55,7 +55,7 @@ func TestBashFinalPresentationShowsOutputTailAndDuration(t *testing.T) {
 		t.Fatalf("SetFinal calls = %d, want 1", finalCalls)
 	}
 	wantLines := []string{"one", "two", "three", "four", "five", "six", "seven", "eight"}
-	if !slices.Equal(presentation.Lines, wantLines) || presentation.TailLines != bashPreviewLines || presentation.Elapsed <= 0 {
+	if !slices.Equal(presentation.Lines, wantLines) || presentation.TailLines != bashPreviewLines || presentation.Elapsed <= 0 || presentation.Timeout != defaultBashTimeout {
 		t.Fatalf("presentation = %+v", presentation)
 	}
 	if presentation.Outcome != "exit status: 0" || !strings.Contains(result.Output, "one") || !strings.Contains(result.Output, "eight") {

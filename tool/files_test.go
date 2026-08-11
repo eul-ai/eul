@@ -240,7 +240,7 @@ func TestFileToolPresentationsSeparateTitleAndArguments(t *testing.T) {
 		NewRead(t.TempDir()).Presentation(snapshot),
 		NewWrite(t.TempDir()).Presentation(snapshot),
 		NewEdit(t.TempDir()).Presentation(snapshot),
-		bashPresentation("go test ./..."),
+		bashPresentation("go test ./...", defaultBashTimeout),
 	}
 	wantTitles := []string{"read", "write", "edit", "bash"}
 	wantArguments := []string{"demo.go", "demo.go", "demo.go", `"go test ./..."`}
@@ -248,6 +248,20 @@ func TestFileToolPresentationsSeparateTitleAndArguments(t *testing.T) {
 		if presentation.Title != wantTitles[index] || presentation.Arguments != wantArguments[index] {
 			t.Fatalf("presentation %d = %+v", index, presentation)
 		}
+	}
+}
+
+func TestBashPresentationShowsTimeout(t *testing.T) {
+	bashTool := NewBash(t.TempDir())
+
+	defaultPresentation := bashTool.Presentation(PresentationSnapshot{Arguments: map[string]any{"command": "sleep 1", "timeout": nil}})
+	if defaultPresentation.Timeout != defaultBashTimeout {
+		t.Fatalf("default presentation = %+v", defaultPresentation)
+	}
+
+	customPresentation := bashTool.Presentation(PresentationSnapshot{Arguments: map[string]any{"command": "sleep 1", "timeout": json.Number("30")}})
+	if customPresentation.Timeout != 30*time.Second {
+		t.Fatalf("custom presentation = %+v", customPresentation)
 	}
 }
 

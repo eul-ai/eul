@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
@@ -51,14 +52,22 @@ func (*Bash) Definition() agent.ToolDefinition {
 	return bashToolDefinition
 }
 
-func (*Bash) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
-	return bashPresentation(snapshotString(snapshot, "command"))
+func (b *Bash) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
+	timeout := b.defaultTimeout
+	if number, ok := snapshot.Arguments["timeout"].(json.Number); ok {
+		if seconds, err := number.Int64(); err == nil {
+			timeout = time.Duration(seconds) * time.Second
+		}
+	}
+
+	return bashPresentation(snapshotString(snapshot, "command"), timeout)
 }
 
-func bashPresentation(command string) agent.ToolPresentation {
+func bashPresentation(command string, timeout time.Duration) agent.ToolPresentation {
 	arguments := ""
 	if command != "" {
 		arguments = displayToolArgument(command)
 	}
-	return agent.ToolPresentation{Title: bashToolName, Arguments: arguments}
+
+	return agent.ToolPresentation{Title: bashToolName, Arguments: arguments, Timeout: timeout}
 }
