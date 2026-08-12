@@ -26,12 +26,13 @@ func BenchmarkSessionStoreSave(b *testing.B) {
 				agent.ThinkingHigh,
 				agentCheckpoint,
 				checkpoint,
+				false,
 			)
 			if err != nil {
 				b.Fatal(err)
 			}
 			b.Cleanup(func() { _ = handle.Close() })
-			if err := handle.Save(agentCheckpoint, checkpoint, false, agent.ThinkingHigh); err != nil {
+			if err := handle.Save(agentCheckpoint, checkpoint, false, agent.ThinkingHigh, false); err != nil {
 				b.Fatal(err)
 			}
 			info, err := os.Stat(handle.path)
@@ -43,7 +44,7 @@ func BenchmarkSessionStoreSave(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				if err := handle.Save(agentCheckpoint, checkpoint, false, agent.ThinkingHigh); err != nil {
+				if err := handle.Save(agentCheckpoint, checkpoint, false, agent.ThinkingHigh, false); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -65,11 +66,12 @@ func BenchmarkSessionStoreRead(b *testing.B) {
 				agent.ThinkingHigh,
 				agentCheckpoint,
 				checkpoint,
+				false,
 			)
 			if err != nil {
 				b.Fatal(err)
 			}
-			if err := handle.Save(agentCheckpoint, checkpoint, false, agent.ThinkingHigh); err != nil {
+			if err := handle.Save(agentCheckpoint, checkpoint, false, agent.ThinkingHigh, false); err != nil {
 				b.Fatal(err)
 			}
 			path := handle.path

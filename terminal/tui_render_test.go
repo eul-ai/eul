@@ -19,7 +19,7 @@ func renderFrame(model *tuiModel) string {
 
 func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 	model := newTUIModel(72, 12, Options{
-		Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, ContextWindow: 272_000,
+		Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, FastMode: true, ContextWindow: 272_000,
 	})
 	model.contextTokens = 84_320
 	model.appendBlock(blockUser, "hello")
@@ -28,7 +28,7 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 
 	frame := renderFrame(model)
 	for _, want := range []string{
-		"hello", "answer", "> ", "────────────────", "gpt-5.6-sol (xhigh)",
+		"hello", "answer", "> ", "────────────────", "gpt-5.6-sol (xhigh) fast",
 		"context 31%", "thinking",
 	} {
 		if !strings.Contains(frame, want) {

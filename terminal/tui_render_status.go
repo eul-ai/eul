@@ -18,6 +18,9 @@ func renderStatus(model *tuiModel, width int) (string, string) {
 func renderStatusAt(model *tuiModel, width int, now time.Time) (string, string) {
 	activity := activityText(model)
 	modelText := model.model + " (" + string(model.thinkingLevel) + ")"
+	if model.fastMode {
+		modelText += " fast"
+	}
 	if model.sessionID != "" {
 		modelText += " · session " + truncateCells(model.sessionID, 8, false)
 	}

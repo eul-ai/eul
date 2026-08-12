@@ -108,6 +108,7 @@ func (*Client) ModelMetadata(model string) agent.ModelMetadata {
 	return agent.ModelMetadata{
 		ContextWindow:  contextWindow(model),
 		ThinkingLevels: supportedThinkingLevels(model),
+		FastMode:       models[model].fastMode,
 	}
 }
 

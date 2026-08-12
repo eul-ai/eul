@@ -16,7 +16,7 @@ persisted locally, and tools run directly on your machine with your permissions.
 - File reading, writing, and targeted editing with visible diffs
 - Shell command execution with streamed output
 - Optional language-server diagnostics, navigation, symbol lookup, and rename
-- Adjustable model thinking levels and reasoning summaries
+- Adjustable model thinking levels, reasoning summaries, and provider-dependent fast inference
 - File search and references from the prompt with `@`
 - Steering messages that can be queued while the agent is working
 - Autonomous goals for longer tasks
@@ -54,7 +54,7 @@ Codex service. Its third-party API behavior may change.
 ## Usage
 
 ```text
-eul [--provider <provider>] [--model <model>] [--fast-model <model>] [--balanced-model <model>] [--thinking <level>] [--cwd <directory>] [--no-sandbox]
+eul [--provider <provider>] [--model <model>] [--fast-model <model>] [--balanced-model <model>] [--thinking <level>] [--fast] [--cwd <directory>] [--no-sandbox]
 eul --resume[=<session-id>]
 eul login [--provider <provider>] [--device-auth]
 eul logout [--provider <provider>]
@@ -75,6 +75,11 @@ Thinking levels are:
 - max
 
 Availability depends on the selected model.
+
+`--fast` enables the selected provider's faster inference tier for supported
+models. For OpenAI Codex, it requests priority processing, which is currently
+advertised as 1.5x speed with increased plan usage. Use `/fast` to toggle it in
+an interactive session.
 
 The main and powerful-subagent model defaults to `gpt-5.6-sol`. Balanced
 subagents default to `gpt-5.6-terra`, and fast subagents default to
@@ -119,6 +124,7 @@ Bracketed multiline paste preserves newlines and blank lines.
 | `/resume` | Select a saved session for the current working directory |
 | `/new` | Start a new session |
 | `/compact` | Compact the conversation context |
+| `/fast` | Toggle provider-dependent fast inference when supported |
 | `/exit` | Exit Eul |
 | `/goal <objective>` | Set or replace an autonomous goal |
 | `/goal` | Show the active goal |

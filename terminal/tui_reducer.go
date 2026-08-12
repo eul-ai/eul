@@ -17,6 +17,7 @@ const (
 	tuiActionNewSession
 	tuiActionCancel
 	tuiActionCompact
+	tuiActionToggleFast
 	tuiActionExit
 	tuiActionSubmit
 	tuiActionSteer
@@ -290,7 +291,7 @@ func reduceSteeringPrompt(model *tuiModel) tuiAction {
 		return tuiAction{}
 	}
 	if strings.HasPrefix(trimmed, "/") {
-		action, command, ok := matchSlashCommand(prompt, trimmed)
+		action, command, ok := matchSlashCommand(prompt, trimmed, model.fastModeAvailable)
 		if ok && command.availableDuringRun {
 			model.takePrompt()
 			return action
@@ -310,7 +311,7 @@ func reducePrompt(model *tuiModel) tuiAction {
 	}
 
 	trimmed := strings.TrimSpace(prompt)
-	if action, _, matched := matchSlashCommand(prompt, trimmed); matched {
+	if action, _, matched := matchSlashCommand(prompt, trimmed, model.fastModeAvailable); matched {
 		return action
 	}
 	if strings.HasPrefix(trimmed, "/") {

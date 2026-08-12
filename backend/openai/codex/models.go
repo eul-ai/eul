@@ -9,6 +9,7 @@ import (
 type modelMetadata struct {
 	contextWindow  int64
 	thinkingLevels agent.ThinkingLevelMap
+	fastMode       bool
 }
 
 var standardThinkingLevelMap = agent.ThinkingLevelMap{
@@ -30,9 +31,9 @@ var extendedThinkingLevelMap = agent.ThinkingLevelMap{
 }
 
 var models = map[string]modelMetadata{
-	"gpt-5.6-luna":  {contextWindow: 272_000, thinkingLevels: extendedThinkingLevelMap},
-	"gpt-5.6-terra": {contextWindow: 272_000, thinkingLevels: extendedThinkingLevelMap},
-	"gpt-5.6-sol":   {contextWindow: 272_000, thinkingLevels: extendedThinkingLevelMap},
+	"gpt-5.6-luna":  {contextWindow: 272_000, thinkingLevels: extendedThinkingLevelMap, fastMode: true},
+	"gpt-5.6-terra": {contextWindow: 272_000, thinkingLevels: extendedThinkingLevelMap, fastMode: true},
+	"gpt-5.6-sol":   {contextWindow: 272_000, thinkingLevels: extendedThinkingLevelMap, fastMode: true},
 }
 
 func contextWindow(model string) int64 {

@@ -15,17 +15,22 @@ func TestBuildCreateRequest(t *testing.T) {
 	}
 
 	request, newItems, err := buildCreateRequest(agent.Request{
-		Model:  "model",
-		State:  state,
-		Inputs: []agent.Input{{Kind: agent.InputToolResult, CallID: "call_1", Text: "failed", IsError: true}},
-		Tools:  []agent.ToolDefinition{strictTestTool("read")},
+		Model:    "model",
+		FastMode: true,
+		State:    state,
+		Inputs:   []agent.Input{{Kind: agent.InputToolResult, CallID: "call_1", Text: "failed", IsError: true}},
+		Tools:    []agent.ToolDefinition{strictTestTool("read")},
 	}, defaultMaxStateBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if request.Model != "model" || len(request.Input) != 2 || len(newItems) != 1 || len(request.Tools) != 1 || request.Tools[0].Strict != nil {
+	if request.Model != "model" || request.ServiceTier != "priority" || len(request.Input) != 2 || len(newItems) != 1 || len(request.Tools) != 1 || request.Tools[0].Strict != nil {
 		t.Fatalf("request=%+v newItems=%s", request, newItems)
+	}
+	compact, err := buildCompactRequest(agent.Request{Model: "model", FastMode: true}, defaultMaxStateBytes)
+	if err != nil || compact.ServiceTier != "priority" {
+		t.Fatalf("compact request=%+v error=%v", compact, err)
 	}
 	if !strings.Contains(string(newItems[0]), `[tool error]\nfailed`) {
 		t.Fatalf("tool result = %s", newItems[0])

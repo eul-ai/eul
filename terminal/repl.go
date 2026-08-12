@@ -90,11 +90,14 @@ type Options struct {
 	WorkingDirectory   string
 	ThinkingLevel      agent.ThinkingLevel
 	ThinkingLevels     []agent.ThinkingLevel
+	FastMode           bool
+	FastModeAvailable  bool
 	ContextWindow      int64
 	Skills             []agent.Skill
 	Warnings           []string
 	Interrupts         <-chan os.Signal
 	SetThinkingLevel   func(agent.ThinkingLevel) error
+	SetFastMode        func(bool) error
 	LoadUsage          func(context.Context) (agent.ProviderUsage, error)
 	SubagentUpdates    <-chan agent.SubagentStatus
 	PermissionRequests <-chan PermissionRequest
