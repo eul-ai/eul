@@ -398,6 +398,61 @@ func TestTUIControllerSetsShowsAndClearsGoal(t *testing.T) {
 	}
 }
 
+func TestTUIControllerShowsHelpAndGoalWhileRunning(t *testing.T) {
+	engine := &fakeEngine{goal: &agent.GoalState{Objective: "finish migration"}}
+	model := newTUIModel(80, 24, Options{})
+	model.running = true
+	checkpointCalls := 0
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+		saveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error {
+			checkpointCalls++
+			return nil
+		},
+	}
+
+	for _, command := range []string{"/help", "/goal"} {
+		if err := model.insertInput(command); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !model.running || checkpointCalls != 0 || len(model.blocks) != 2 {
+		t.Fatalf("running=%v checkpoints=%d blocks=%+v", model.running, checkpointCalls, model.blocks)
+	}
+	if !strings.Contains(model.blocks[0].text, "Commands:") || model.blocks[1].text != "Goal: finish migration" {
+		t.Fatalf("blocks=%+v", model.blocks)
+	}
+}
+
+func TestTUIControllerSetsGoalWhileRunning(t *testing.T) {
+	engine := &fakeEngine{}
+	model := newTUIModel(80, 24, Options{})
+	model.running = true
+	if err := model.insertInput("/goal finish migration"); err != nil {
+		t.Fatal(err)
+	}
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+	}
+
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
+		t.Fatal(err)
+	}
+	goal, ok := engine.Goal()
+	last := model.blocks[len(model.blocks)-1]
+	if !ok || goal.Objective != "finish migration" || !model.running || last.kind != blockInfo || last.text != "Goal set: finish migration" {
+		t.Fatalf("goal=%+v exists=%v running=%v block=%+v", goal, ok, model.running, last)
+	}
+	if calls := engine.snapshot(); len(calls) != 0 {
+		t.Fatalf("goal update started runs: %q", calls)
+	}
+}
+
 func TestTUIControllerClearsGoalWhileRunning(t *testing.T) {
 	engine := &fakeEngine{goal: &agent.GoalState{Objective: "finish migration"}}
 	model := newTUIModel(80, 24, Options{})
@@ -780,6 +835,32 @@ func TestTUIControllerRestoresSteeringAfterRunError(t *testing.T) {
 	}
 	if string(model.input) != "retry this" || len(model.steering) != 0 || model.activity.kind != activityError {
 		t.Fatalf("input=%q steering=%q activity=%+v", model.input, model.steering, model.activity)
+	}
+}
+
+func TestTUIControllerAppliesThinkingLevelWhileRunning(t *testing.T) {
+	var configured agent.ThinkingLevel
+	checkpointCalls := 0
+	model := newTUIModel(80, 24, Options{SetThinkingLevel: func(agent.ThinkingLevel) error { return nil }})
+	model.running = true
+	model.activity = activity{kind: activityThinking}
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+		setThinkingLevel: func(level agent.ThinkingLevel) error {
+			configured = level
+			return nil
+		},
+		saveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error {
+			checkpointCalls++
+			return nil
+		},
+	}
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyShiftTab}}); err != nil {
+		t.Fatal(err)
+	}
+	if configured != agent.ThinkingHigh || model.thinkingLevel != agent.ThinkingHigh || !model.running || model.activity.kind != activityThinking || checkpointCalls != 0 {
+		t.Fatalf("configured=%q model=%q running=%v activity=%+v checkpoints=%d", configured, model.thinkingLevel, model.running, model.activity, checkpointCalls)
 	}
 }
 

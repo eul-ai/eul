@@ -2318,8 +2318,11 @@ func TestEngineRejectsConcurrentOperations(t *testing.T) {
 	if err := engine.Compact(context.Background(), discardEvents); !errors.Is(err, errEngineBusy) {
 		t.Fatalf("concurrent Compact() error = %v", err)
 	}
-	if err := engine.SetThinkingLevel(ThinkingHigh); !errors.Is(err, errEngineBusy) {
+	if err := engine.SetThinkingLevel(ThinkingHigh); err != nil {
 		t.Fatalf("concurrent SetThinkingLevel() error = %v", err)
+	}
+	if got := engine.currentThinkingLevel(); got != ThinkingHigh {
+		t.Fatalf("concurrent thinking level = %q", got)
 	}
 
 	close(release)
@@ -2328,6 +2331,42 @@ func TestEngineRejectsConcurrentOperations(t *testing.T) {
 	}
 	if err := engine.Reset(); err != nil {
 		t.Fatalf("Reset() after Run = %v", err)
+	}
+}
+
+func TestEngineUsesThinkingLevelChangedDuringRunForNextGeneration(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if request.ThinkingLevel != DefaultThinkingLevel {
+				t.Fatalf("first thinking level = %q", request.ThinkingLevel)
+			}
+			close(started)
+			<-release
+			return Response{ToolCalls: []ToolCall{{ID: "tool", Name: "tool"}}}, nil
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if request.ThinkingLevel != ThinkingHigh {
+				t.Fatalf("second thinking level = %q", request.ThinkingLevel)
+			}
+			return Response{Text: "done"}, nil
+		},
+	}}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := engine.Run(context.Background(), "first", discardEvents)
+		done <- err
+	}()
+	<-started
+	if err := engine.SetThinkingLevel(ThinkingHigh); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -101,9 +101,6 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 			setInputError(model, err)
 		}
 	case keyShiftTab:
-		if model.running {
-			return tuiAction{}, nil
-		}
 		level, err := model.nextThinkingLevel()
 		if err != nil {
 			setInputError(model, err)

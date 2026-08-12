@@ -335,6 +335,9 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		return false, nil
 	case tuiActionHelp:
 		c.model.appendBlock(blockInfo, commandHelpText())
+		if c.model.running {
+			return false, nil
+		}
 		return false, c.saveCurrentCheckpoint(false)
 	case tuiActionOpenResume:
 		if c.listSessions == nil {
@@ -388,10 +391,17 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		default:
 			c.model.appendBlock(blockInfo, "Goal: "+goal.Objective)
 		}
+		if c.model.running {
+			return false, nil
+		}
 		return false, c.saveCurrentCheckpoint(false)
 	case tuiActionSetGoal:
 		if err := c.engine.SetGoal(action.prompt); err != nil {
 			setInputError(c.model, err)
+			return false, nil
+		}
+		if c.model.running {
+			c.model.appendBlock(blockInfo, "Goal set: "+action.prompt)
 			return false, nil
 		}
 		return false, c.startTurn(ctx, action.prompt)
@@ -418,6 +428,9 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 			return false, nil
 		}
 		c.model.thinkingLevel = action.thinkingLevel
+		if c.model.running {
+			return false, nil
+		}
 		return false, c.saveCurrentCheckpoint(false)
 	case tuiActionAllowPermission:
 		c.resolvePermission(true)

@@ -41,6 +41,7 @@ type RunResult struct {
 
 type Engine struct {
 	mu            sync.Mutex
+	thinkingMu    sync.RWMutex
 	provider      Provider
 	tools         Toolbox
 	model         string
@@ -345,7 +346,7 @@ func bestFinalizationText(values ...string) string {
 func (e *Engine) request(current conversationState) Request {
 	return Request{
 		Model:         e.model,
-		ThinkingLevel: e.thinkingLevel,
+		ThinkingLevel: e.currentThinkingLevel(),
 		Instructions:  e.instructions,
 		Inputs:        current.inputs,
 		Tools:         e.tools.Definitions(),
@@ -587,16 +588,22 @@ func (e *Engine) Compact(ctx context.Context, sink EventSink) error {
 }
 
 func (e *Engine) SetThinkingLevel(level ThinkingLevel) error {
-	if !e.mu.TryLock() {
-		return errEngineBusy
-	}
-	defer e.mu.Unlock()
-
 	if !level.Valid() {
 		return errors.New("agent: invalid thinking level")
 	}
+
+	e.thinkingMu.Lock()
+	defer e.thinkingMu.Unlock()
+
 	e.thinkingLevel = level
 	return nil
+}
+
+func (e *Engine) currentThinkingLevel() ThinkingLevel {
+	e.thinkingMu.RLock()
+	defer e.thinkingMu.RUnlock()
+
+	return e.thinkingLevel
 }
 
 func (e *Engine) Reset() error {

@@ -23,7 +23,7 @@ type slashCommandDefinition struct {
 var slashCommands = []slashCommandDefinition{
 	{
 		text: "/help", usage: "/help", description: "show this help",
-		action: tuiActionHelp, complete: true,
+		action: tuiActionHelp, complete: true, availableDuringRun: true,
 	},
 	{
 		text: "/resume", usage: "/resume", description: "resume a saved session",
@@ -43,7 +43,7 @@ var slashCommands = []slashCommandDefinition{
 	},
 	{
 		text: "/goal", usage: "/goal [objective]", description: "show or set the active goal",
-		action: tuiActionShowGoal, argumentAction: tuiActionSetGoal, complete: true,
+		action: tuiActionShowGoal, argumentAction: tuiActionSetGoal, complete: true, availableDuringRun: true,
 	},
 	{
 		text: "/goal clear", usage: "/goal clear", description: "clear the active goal",

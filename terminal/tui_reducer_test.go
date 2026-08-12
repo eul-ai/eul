@@ -370,6 +370,55 @@ func TestReduceKeyActions(t *testing.T) {
 			},
 		},
 		{
+			name: "running shows help",
+			setup: func(t *testing.T, model *tuiModel) {
+				model.running = true
+				if err := model.insertInput("/help"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			key:      keyEvent{code: keyEnter},
+			wantKind: tuiActionHelp,
+			check: func(t *testing.T, model *tuiModel) {
+				if len(model.input) != 0 || len(model.history) != 1 {
+					t.Fatalf("input=%q history=%q", model.input, model.history)
+				}
+			},
+		},
+		{
+			name: "running shows goal",
+			setup: func(t *testing.T, model *tuiModel) {
+				model.running = true
+				if err := model.insertInput("/goal"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			key:      keyEvent{code: keyEnter},
+			wantKind: tuiActionShowGoal,
+			check: func(t *testing.T, model *tuiModel) {
+				if len(model.input) != 0 || len(model.history) != 1 {
+					t.Fatalf("input=%q history=%q", model.input, model.history)
+				}
+			},
+		},
+		{
+			name: "running sets goal",
+			setup: func(t *testing.T, model *tuiModel) {
+				model.running = true
+				if err := model.insertInput("/goal finish migration"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			key:        keyEvent{code: keyEnter},
+			wantKind:   tuiActionSetGoal,
+			wantPrompt: "finish migration",
+			check: func(t *testing.T, model *tuiModel) {
+				if len(model.input) != 0 || len(model.history) != 1 {
+					t.Fatalf("input=%q history=%q", model.input, model.history)
+				}
+			},
+		},
+		{
 			name: "running clears goal",
 			setup: func(t *testing.T, model *tuiModel) {
 				model.running = true
@@ -401,7 +450,7 @@ func TestReduceKeyActions(t *testing.T) {
 			},
 		},
 		{
-			name: "running ignores thinking change",
+			name: "running changes thinking",
 			options: Options{
 				ThinkingLevel: agent.ThinkingMedium,
 				SetThinkingLevel: func(agent.ThinkingLevel) error {
@@ -412,7 +461,9 @@ func TestReduceKeyActions(t *testing.T) {
 				model.running = true
 				model.activity = activity{kind: activityThinking}
 			},
-			key: keyEvent{code: keyShiftTab},
+			key:       keyEvent{code: keyShiftTab},
+			wantKind:  tuiActionSetThinking,
+			wantLevel: agent.ThinkingHigh,
 			check: func(t *testing.T, model *tuiModel) {
 				if model.thinkingLevel != agent.ThinkingMedium || model.activity.kind != activityThinking {
 					t.Fatalf("thinking=%q activity=%+v", model.thinkingLevel, model.activity)
