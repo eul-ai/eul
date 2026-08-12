@@ -7,6 +7,15 @@ import (
 	"testing"
 )
 
+func TestHighlightCellsIgnoresClickableLinkEscapes(t *testing.T) {
+	open := "\x1b]8;;https://example.com\x1b\\"
+	value := open + "link" + ansiLinkClose
+	got := highlightCells(value, 0, 4)
+	if !strings.Contains(got, open+ansiReverse+"link"+ansiLinkClose) {
+		t.Fatalf("highlighted link = %q", got)
+	}
+}
+
 func TestMouseWheelScrollsConversationWithoutNavigatingHistory(t *testing.T) {
 	model := newTUIModel(24, 10, Options{})
 	model.appendBlock(blockAssistant, strings.Join([]string{
