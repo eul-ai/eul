@@ -30,6 +30,7 @@ func runChildAgent(
 	config resolvedConfig,
 	modelProfile tool.SubagentModelProfile,
 	thinkingLevel agent.ThinkingLevel,
+	fastMode bool,
 	task string,
 	update func(tool.SubagentProgress),
 ) (agent.RunResult, error) {
@@ -45,6 +46,7 @@ func runChildAgent(
 	child := agent.New(provider, registry, agent.Options{
 		Model:               config.models.subagent(modelProfile),
 		ThinkingLevel:       thinkingLevel,
+		FastMode:            fastMode,
 		WorkingDirectory:    config.cwd,
 		ProjectInstructions: config.projectInstructions,
 		Skills:              config.skills,

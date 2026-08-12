@@ -52,6 +52,7 @@ type tuiController struct {
 	fileSearchMessages chan<- fileSearchResult
 	usageRequests      chan<- struct{}
 	setThinkingLevel   func(agent.ThinkingLevel) error
+	setFastMode        func(bool) error
 	saveCheckpoint     func(agent.Checkpoint, Checkpoint, bool) error
 	listSessions       func(context.Context) ([]SessionSummary, []string, error)
 	turnCancel         context.CancelFunc
@@ -334,7 +335,7 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 	case tuiActionNone:
 		return false, nil
 	case tuiActionHelp:
-		c.model.appendBlock(blockInfo, commandHelpText())
+		c.model.appendBlock(blockInfo, commandHelpText(c.model.fastModeAvailable))
 		if c.model.running {
 			return false, nil
 		}
@@ -367,6 +368,25 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		c.interruptTurn()
 	case tuiActionCompact:
 		return false, c.startCompaction(ctx)
+	case tuiActionToggleFast:
+		if !c.model.fastModeAvailable || c.setFastMode == nil {
+			setInputError(c.model, errors.New("fast mode is unavailable for this model"))
+			return false, nil
+		}
+		if err := c.setFastMode(!c.model.fastMode); err != nil {
+			setInputError(c.model, err)
+			return false, nil
+		}
+		c.model.fastMode = !c.model.fastMode
+		state := "off"
+		if c.model.fastMode {
+			state = "on"
+		}
+		c.model.appendBlock(blockInfo, "Fast mode "+state)
+		if c.model.running {
+			return false, nil
+		}
+		return false, c.saveCurrentCheckpoint(false)
 	case tuiActionExit:
 		if !c.model.running {
 			if err := c.saveCurrentCheckpoint(false); err != nil {

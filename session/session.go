@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
@@ -21,6 +22,7 @@ type agentSession struct {
 	backendRuntime  backend.Runtime
 	terminalOptions terminal.Options
 	thinkingLevel   agent.ThinkingLevel
+	fastMode        bool
 	persistence     *sessionHandle
 }
 
@@ -44,6 +46,7 @@ type terminalOptionSource struct {
 	subagentUpdates    <-chan agent.SubagentStatus
 	permissionRequests <-chan terminal.PermissionRequest
 	setThinkingLevel   func(agent.ThinkingLevel) error
+	setFastMode        func(bool) error
 }
 
 func providerModelMetadata(provider agent.Provider, model string) agent.ModelMetadata {
@@ -86,6 +89,7 @@ func newSessionToolset(
 	runtime runtime,
 	backendRuntime backend.Runtime,
 	metadata sessionModelMetadata,
+	fastMode *atomic.Bool,
 	authorizeNetwork tool.NetworkAuthorizer,
 	completeGoal func() error,
 ) (sessionToolset, error) {
@@ -96,7 +100,8 @@ func newSessionToolset(
 		}
 	}
 	subagent := tool.NewSubagentWithThinkingLevels(func(ctx context.Context, task string, modelProfile tool.SubagentModelProfile, thinkingLevel agent.ThinkingLevel, update func(tool.SubagentProgress)) (agent.RunResult, error) {
-		return runChildAgent(ctx, backendRuntime, newToolset, config, modelProfile, thinkingLevel, task, update)
+		enabled := fastMode.Load() && metadata.subagent[modelProfile].FastMode
+		return runChildAgent(ctx, backendRuntime, newToolset, config, modelProfile, thinkingLevel, enabled, task, update)
 	}, func(profile tool.SubagentModelProfile) []agent.ThinkingLevel {
 		return metadata.subagent[profile].ThinkingLevels
 	})
@@ -124,11 +129,14 @@ func (source terminalOptionSource) options() terminal.Options {
 		WorkingDirectory:   source.config.cwd,
 		ThinkingLevel:      source.metadata.thinkingLevel,
 		ThinkingLevels:     source.metadata.main.ThinkingLevels,
+		FastMode:           source.config.fastMode,
+		FastModeAvailable:  source.metadata.main.FastMode,
 		ContextWindow:      source.metadata.main.ContextWindow,
 		Skills:             source.config.skills,
 		Warnings:           source.warnings,
 		Interrupts:         source.runtime.interrupts,
 		SetThinkingLevel:   source.setThinkingLevel,
+		SetFastMode:        source.setFastMode,
 		LoadUsage:          source.loadUsage,
 		SubagentUpdates:    source.subagentUpdates,
 		PermissionRequests: source.permissionRequests,
@@ -149,16 +157,21 @@ func newAgentSessionWithCheckpointing(
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("configure provider: %w", err), closeBackendRuntime(backendRuntime))
 	}
+	metadata := resolveSessionModelMetadata(provider, config)
+	if config.fastMode && !metadata.main.FastMode {
+		return nil, errors.Join(fmt.Errorf("fast mode is unavailable for model %q", config.models.main), closeBackendRuntime(backendRuntime))
+	}
 	loadUsage, usageWarning := dedicatedUsageLoader(backendRuntime, provider)
 	warnings := append([]string(nil), config.warnings...)
 	if usageWarning != "" {
 		warnings = append(warnings, usageWarning)
 	}
-	metadata := resolveSessionModelMetadata(provider, config)
 	authorizeNetwork, permissionRequests := newNetworkPermissionBroker(config.noSandbox)
+	var fastMode atomic.Bool
+	fastMode.Store(config.fastMode)
 
 	var engine *agent.Engine
-	tools, err := newSessionToolset(config, runtime, backendRuntime, metadata, authorizeNetwork, func() error {
+	tools, err := newSessionToolset(config, runtime, backendRuntime, metadata, &fastMode, authorizeNetwork, func() error {
 		if engine == nil {
 			return errors.New("goal completion is unavailable")
 		}
@@ -170,6 +183,7 @@ func newAgentSessionWithCheckpointing(
 	engine = agent.New(provider, tools.registry, agent.Options{
 		Model:               config.models.main,
 		ThinkingLevel:       metadata.thinkingLevel,
+		FastMode:            config.fastMode,
 		WorkingDirectory:    config.cwd,
 		ProjectInstructions: config.projectInstructions,
 		Skills:              config.skills,
@@ -180,12 +194,19 @@ func newAgentSessionWithCheckpointing(
 		tools:          tools.registry,
 		backendRuntime: backendRuntime,
 		thinkingLevel:  metadata.thinkingLevel,
+		fastMode:       fastMode.Load(),
 	}
 	setThinkingLevel := func(level agent.ThinkingLevel) error {
 		if err := engine.SetThinkingLevel(level); err != nil {
 			return err
 		}
 		session.thinkingLevel = level
+		return nil
+	}
+	setFastMode := func(enabled bool) error {
+		engine.SetFastMode(enabled)
+		fastMode.Store(enabled)
+		session.fastMode = enabled
 		return nil
 	}
 	session.terminalOptions = terminalOptionSource{
@@ -197,6 +218,7 @@ func newAgentSessionWithCheckpointing(
 		subagentUpdates:    tools.subagentUpdates,
 		permissionRequests: permissionRequests,
 		setThinkingLevel:   setThinkingLevel,
+		setFastMode:        setFastMode,
 	}.options()
 	return session, nil
 }
@@ -245,6 +267,7 @@ func newStoredAgentSession(
 			session.thinkingLevel,
 			agentCheckpoint,
 			terminal.EmptyCheckpoint(),
+			session.fastMode,
 		)
 		if err != nil {
 			return nil, session.finish(err)
@@ -269,7 +292,7 @@ func (session *agentSession) attachPersistence(handle *sessionHandle, restore bo
 	}
 
 	session.terminalOptions.SaveCheckpoint = func(agentCheckpoint agent.Checkpoint, terminalCheckpoint terminal.Checkpoint, active bool) error {
-		return handle.Save(agentCheckpoint, terminalCheckpoint, active, session.thinkingLevel)
+		return handle.Save(agentCheckpoint, terminalCheckpoint, active, session.thinkingLevel, session.fastMode)
 	}
 	session.terminalOptions.ListSessions = func(context.Context) ([]terminal.SessionSummary, []string, error) {
 		summaries, warnings, err := handle.store.List(handle.record.WorkingDirectory)

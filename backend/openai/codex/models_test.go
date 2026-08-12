@@ -22,8 +22,11 @@ func TestClientReasoningSummaryAndModelMetadata(t *testing.T) {
 		t.Fatalf("default reasoning summary = %q, err = %v", defaultClient.reasoningSummary, err)
 	}
 	metadata := client.ModelMetadata("unknown")
-	if metadata.ContextWindow != 0 || metadata.ClampThinkingLevel(agent.ThinkingXHigh) != agent.ThinkingHigh {
+	if metadata.ContextWindow != 0 || metadata.FastMode || metadata.ClampThinkingLevel(agent.ThinkingXHigh) != agent.ThinkingHigh {
 		t.Fatalf("metadata = %+v", metadata)
+	}
+	if metadata := client.ModelMetadata("gpt-5.6-sol"); !metadata.FastMode {
+		t.Fatalf("gpt-5.6-sol metadata = %+v", metadata)
 	}
 
 	if _, err := New(testTokenSource("token"), Options{ReasoningSummary: ReasoningSummary("verbose")}); err == nil {

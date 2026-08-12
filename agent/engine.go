@@ -14,6 +14,7 @@ var errEngineBusy = errors.New("agent: engine is busy")
 type Options struct {
 	Model               string
 	ThinkingLevel       ThinkingLevel
+	FastMode            bool
 	WorkingDirectory    string
 	ProjectInstructions string
 	Skills              []Skill
@@ -41,11 +42,12 @@ type RunResult struct {
 
 type Engine struct {
 	mu            sync.Mutex
-	thinkingMu    sync.RWMutex
+	settingsMu    sync.RWMutex
 	provider      Provider
 	tools         Toolbox
 	model         string
 	thinkingLevel ThinkingLevel
+	fastMode      bool
 	instructions  string
 	conversation  conversationState
 	continuations continuationArbiter
@@ -68,6 +70,7 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 		tools:         tools,
 		model:         options.Model,
 		thinkingLevel: thinkingLevel,
+		fastMode:      options.FastMode,
 		instructions:  buildSystemPrompt(tools.Definitions(), options.WorkingDirectory, options.ProjectInstructions, options.Skills),
 		skills:        skills,
 		checkpointing: options.Checkpointing,
@@ -344,9 +347,11 @@ func bestFinalizationText(values ...string) string {
 }
 
 func (e *Engine) request(current conversationState) Request {
+	thinkingLevel, fastMode := e.currentSettings()
 	return Request{
 		Model:         e.model,
-		ThinkingLevel: e.currentThinkingLevel(),
+		ThinkingLevel: thinkingLevel,
+		FastMode:      fastMode,
 		Instructions:  e.instructions,
 		Inputs:        current.inputs,
 		Tools:         e.tools.Definitions(),
@@ -592,18 +597,30 @@ func (e *Engine) SetThinkingLevel(level ThinkingLevel) error {
 		return errors.New("agent: invalid thinking level")
 	}
 
-	e.thinkingMu.Lock()
-	defer e.thinkingMu.Unlock()
+	e.settingsMu.Lock()
+	defer e.settingsMu.Unlock()
 
 	e.thinkingLevel = level
 	return nil
 }
 
-func (e *Engine) currentThinkingLevel() ThinkingLevel {
-	e.thinkingMu.RLock()
-	defer e.thinkingMu.RUnlock()
+func (e *Engine) SetFastMode(enabled bool) {
+	e.settingsMu.Lock()
+	defer e.settingsMu.Unlock()
 
-	return e.thinkingLevel
+	e.fastMode = enabled
+}
+
+func (e *Engine) currentThinkingLevel() ThinkingLevel {
+	level, _ := e.currentSettings()
+	return level
+}
+
+func (e *Engine) currentSettings() (ThinkingLevel, bool) {
+	e.settingsMu.RLock()
+	defer e.settingsMu.RUnlock()
+
+	return e.thinkingLevel, e.fastMode
 }
 
 func (e *Engine) Reset() error {

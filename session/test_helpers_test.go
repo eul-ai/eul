@@ -20,7 +20,7 @@ func (function providerFunction) Generate(ctx context.Context, request agent.Req
 }
 
 func (providerFunction) ModelMetadata(string) agent.ModelMetadata {
-	return agent.ModelMetadata{ThinkingLevels: agent.ThinkingLevels()}
+	return agent.ModelMetadata{ThinkingLevels: agent.ThinkingLevels(), FastMode: true}
 }
 
 type fakeBackendRuntime struct {

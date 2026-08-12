@@ -21,6 +21,7 @@ func TestParseAgentArguments(t *testing.T) {
 		"--fast-model", "gpt-5.6-luna",
 		"--balanced-model", "gpt-5.6-terra",
 		"--thinking", "high",
+		"--fast",
 		"--cwd", "project",
 		"--no-sandbox",
 	}, runtime)
@@ -36,6 +37,7 @@ func TestParseAgentArguments(t *testing.T) {
 		BalancedModel:    "gpt-5.6-terra",
 		BalancedModelSet: true,
 		ThinkingLevel:    agent.ThinkingHigh,
+		FastMode:         true,
 		WorkingDirectory: "project",
 		NoSandbox:        true,
 	}
@@ -77,8 +79,10 @@ func TestParseAgentArgumentsParsesResumeSelection(t *testing.T) {
 		t.Fatalf("explicit arguments = %+v", explicit)
 	}
 
-	if _, err := parseAgentArguments([]string{"--resume", "--model", "other"}, runtime); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
-		t.Fatalf("conflict error = %v", err)
+	for _, arguments := range [][]string{{"--resume", "--model", "other"}, {"--resume", "--fast"}} {
+		if _, err := parseAgentArguments(arguments, runtime); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+			t.Fatalf("arguments %v conflict error = %v", arguments, err)
+		}
 	}
 }
 

@@ -26,23 +26,26 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 	store.now = func() time.Time { return now }
 	agentCheckpoint := sessionStoreTestAgentCheckpoint(t)
 
-	first, err := store.Create("test", cwd, modelSelection{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingHigh, agentCheckpoint, sessionStoreTestTerminalCheckpoint(t, "first prompt\nmore"))
+	first, err := store.Create("test", cwd, modelSelection{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingHigh, agentCheckpoint, sessionStoreTestTerminalCheckpoint(t, "first prompt\nmore"), true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	firstID := first.record.ID
-	if first.record.Provider != "test" || first.record.FastModel != "fast-model" || first.record.BalancedModel != "balanced-model" {
+	if first.record.Provider != "test" || first.record.FastModel != "fast-model" || first.record.BalancedModel != "balanced-model" || !first.record.FastMode {
 		t.Fatalf("provider and models = %+v", first.record)
 	}
-	if err := first.Save(agentCheckpoint, first.record.Terminal, true, agent.ThinkingHigh); err != nil {
+	if err := first.Save(agentCheckpoint, first.record.Terminal, true, agent.ThinkingHigh, false); err != nil {
 		t.Fatal(err)
+	}
+	if first.record.FastMode {
+		t.Fatalf("fast mode was not updated: %+v", first.record)
 	}
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
 	}
 
 	now = now.Add(time.Hour)
-	second, err := store.Create("test", cwd, modelSelection{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, agentCheckpoint, sessionStoreTestTerminalCheckpoint(t, "second prompt"))
+	second, err := store.Create("test", cwd, modelSelection{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, agentCheckpoint, sessionStoreTestTerminalCheckpoint(t, "second prompt"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +209,7 @@ func TestSessionRecordModelSelectionKeepsVersionOneJSONFields(t *testing.T) {
 func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 	store := newSessionStore(t.TempDir())
 	cwd := t.TempDir()
-	handle, err := store.Create("test", cwd, modelSelection{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), terminal.EmptyCheckpoint())
+	handle, err := store.Create("test", cwd, modelSelection{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), terminal.EmptyCheckpoint(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +220,7 @@ func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 	if _, err := os.Stat(handle.path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("empty session file error = %v", err)
 	}
-	if err := handle.Save(sessionStoreTestAgentCheckpoint(t), terminal.EmptyCheckpoint(), false, agent.ThinkingMedium); err != nil {
+	if err := handle.Save(sessionStoreTestAgentCheckpoint(t), terminal.EmptyCheckpoint(), false, agent.ThinkingMedium, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(handle.path); !errors.Is(err, os.ErrNotExist) {
@@ -245,7 +248,7 @@ func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
 	store := newSessionStore(home)
-	handle, err := store.Create("test", cwd, modelSelection{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "prompt"))
+	handle, err := store.Create("test", cwd, modelSelection{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +277,7 @@ func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
 		t.Fatalf("most recent corrupt-only error = %v", err)
 	}
 
-	valid, err := store.Create("test", cwd, modelSelection{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "valid prompt"))
+	valid, err := store.Create("test", cwd, modelSelection{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "valid prompt"), false)
 	if err != nil {
 		t.Fatal(err)
 	}

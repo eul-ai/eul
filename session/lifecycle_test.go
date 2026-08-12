@@ -120,14 +120,17 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 			if err := options.SetThinkingLevel(agent.ThinkingLow); err != nil {
 				t.Fatal(err)
 			}
+			if err := options.SetFastMode(true); err != nil {
+				t.Fatal(err)
+			}
 			return &terminal.NewSessionRequest{}
 		},
 		func(_ context.Context, _ terminal.Engine, options terminal.Options) error {
 			if options.SessionID == "" || options.SessionID == initialID {
 				t.Fatalf("new session ID = %q, initial = %q", options.SessionID, initialID)
 			}
-			if options.Model != "main-model" || options.ThinkingLevel != agent.ThinkingLow {
-				t.Fatalf("new options = model %q, thinking %q", options.Model, options.ThinkingLevel)
+			if options.Model != "main-model" || options.ThinkingLevel != agent.ThinkingLow || !options.FastMode {
+				t.Fatalf("new options = model %q, thinking %q, fast %v", options.Model, options.ThinkingLevel, options.FastMode)
 			}
 			if err := options.SaveCheckpoint(sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "new session prompt"), false); err != nil {
 				t.Fatal(err)
@@ -153,7 +156,7 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open new session record: %v", err)
 	}
-	if newRecord.record.Model != "main-model" || newRecord.record.FastModel != "fast-model" || newRecord.record.BalancedModel != "balanced-model" || newRecord.record.ThinkingLevel != agent.ThinkingLow {
+	if newRecord.record.Model != "main-model" || newRecord.record.FastModel != "fast-model" || newRecord.record.BalancedModel != "balanced-model" || newRecord.record.ThinkingLevel != agent.ThinkingLow || !newRecord.record.FastMode {
 		t.Fatalf("new session record = %+v", newRecord.record)
 	}
 	if err := newRecord.Close(); err != nil {
@@ -180,6 +183,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 		agent.ThinkingMedium,
 		sessionStoreTestAgentCheckpoint(t),
 		targetTerminal,
+		true,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -222,8 +226,8 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 			if options.SessionID != targetID {
 				t.Fatalf("resumed session ID = %q, want %q", options.SessionID, targetID)
 			}
-			if options.Model != "resume-main" || options.ThinkingLevel != agent.ThinkingMedium || options.WorkingDirectory != targetCWD {
-				t.Fatalf("resumed options = model %q, thinking %q, cwd %q", options.Model, options.ThinkingLevel, options.WorkingDirectory)
+			if options.Model != "resume-main" || options.ThinkingLevel != agent.ThinkingMedium || !options.FastMode || options.WorkingDirectory != targetCWD {
+				t.Fatalf("resumed options = model %q, thinking %q, fast %v, cwd %q", options.Model, options.ThinkingLevel, options.FastMode, options.WorkingDirectory)
 			}
 			if options.InitialCheckpoint == nil || options.InitialCheckpoint.Description() != "resume target prompt" {
 				t.Fatalf("resumed checkpoint = %#v", options.InitialCheckpoint)
@@ -250,7 +254,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen resumed record: %v", err)
 	}
-	if reopened.record.ID != targetID || reopened.record.Model != "resume-main" || reopened.record.FastModel != "resume-fast" || reopened.record.BalancedModel != "resume-balanced" || reopened.record.ThinkingLevel != agent.ThinkingMedium {
+	if reopened.record.ID != targetID || reopened.record.Model != "resume-main" || reopened.record.FastModel != "resume-fast" || reopened.record.BalancedModel != "resume-balanced" || reopened.record.ThinkingLevel != agent.ThinkingMedium || !reopened.record.FastMode {
 		t.Fatalf("resumed record = %+v", reopened.record)
 	}
 	if err := reopened.Close(); err != nil {

@@ -85,6 +85,7 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 		Model:         "gpt-5.6-sol",
 		ModelSet:      true,
 		ThinkingLevel: agent.ThinkingXHigh,
+		FastMode:      true,
 	}, runtime)
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +102,7 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 	if driver.runtime.closeCalls != 1 {
 		t.Fatalf("backend close calls = %d, want 1", driver.runtime.closeCalls)
 	}
-	if factoryCalls != 1 || gotRequest.Model != "gpt-5.6-sol" || gotRequest.ThinkingLevel != agent.ThinkingXHigh || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].Text != "test prompt" {
+	if factoryCalls != 1 || gotRequest.Model != "gpt-5.6-sol" || gotRequest.ThinkingLevel != agent.ThinkingXHigh || !gotRequest.FastMode || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].Text != "test prompt" {
 		t.Fatalf("factory calls=%d request=%+v", factoryCalls, gotRequest)
 	}
 	if result.Text != "answer" {
@@ -223,6 +224,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 		BalancedModel:    "balanced-model",
 		BalancedModelSet: true,
 		ThinkingLevel:    agent.ThinkingHigh,
+		FastMode:         true,
 	}, runtime)
 	if err != nil {
 		t.Fatal(err)
@@ -249,7 +251,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	}
 	var tasks []string
 	for _, request := range childRequests {
-		if request.Model != "balanced-model" || request.ThinkingLevel != agent.ThinkingLow || !strings.Contains(request.Instructions, projectInstructions) || !strings.Contains(request.Instructions, "Current working directory: "+filepath.ToSlash(cwd)) {
+		if request.Model != "balanced-model" || request.ThinkingLevel != agent.ThinkingLow || !request.FastMode || !strings.Contains(request.Instructions, projectInstructions) || !strings.Contains(request.Instructions, "Current working directory: "+filepath.ToSlash(cwd)) {
 			t.Fatalf("child request = %+v", request)
 		}
 		names := make([]string, len(request.Tools))

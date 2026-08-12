@@ -37,6 +37,7 @@ func (*usageCapableProvider) ModelMetadata(string) agent.ModelMetadata {
 	return agent.ModelMetadata{
 		ContextWindow:  123_000,
 		ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh},
+		FastMode:       true,
 	}
 }
 
@@ -152,7 +153,7 @@ func TestNewAgentSessionWiresDedicatedProviderUsage(t *testing.T) {
 	if session.terminalOptions.WorkingDirectory != cwd {
 		t.Fatalf("terminal working directory = %q, want %q", session.terminalOptions.WorkingDirectory, cwd)
 	}
-	if session.terminalOptions.ContextWindow != 123_000 || session.terminalOptions.ThinkingLevel != agent.ThinkingHigh {
+	if session.terminalOptions.ContextWindow != 123_000 || session.terminalOptions.ThinkingLevel != agent.ThinkingHigh || !session.terminalOptions.FastModeAvailable {
 		t.Fatalf("terminal metadata = %+v", session.terminalOptions)
 	}
 	if len(session.terminalOptions.Skills) != 1 || session.terminalOptions.Skills[0].Name != "review" {
@@ -160,6 +161,23 @@ func TestNewAgentSessionWiresDedicatedProviderUsage(t *testing.T) {
 	}
 	if !slices.Equal(session.terminalOptions.Warnings, warnings) {
 		t.Fatalf("terminal warnings = %v", session.terminalOptions.Warnings)
+	}
+}
+
+func TestNewAgentSessionRejectsUnsupportedFastMode(t *testing.T) {
+	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
+		return metadataFreeProvider{}, nil
+	}}
+	session, err := newAgentSession(resolvedConfig{
+		models:   modelSelection{main: "model"},
+		fastMode: true,
+		cwd:      t.TempDir(),
+	}, runtime{}, backendRuntime)
+	if session != nil || err == nil || !strings.Contains(err.Error(), "fast mode is unavailable") {
+		t.Fatalf("session=%v error=%v", session, err)
+	}
+	if backendRuntime.closeCalls != 1 {
+		t.Fatalf("backend close calls = %d", backendRuntime.closeCalls)
 	}
 }
 
@@ -446,7 +464,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	cwd := t.TempDir()
 	store := newSessionStore(t.TempDir())
-	corrupt, err := store.Create("test", cwd, modelSelection{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "corrupt"))
+	corrupt, err := store.Create("test", cwd, modelSelection{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "corrupt"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +475,7 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	if err := os.WriteFile(corruptPath, []byte(`{"version":99}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	valid, err := store.Create("test", cwd, modelSelection{main: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "valid"))
+	valid, err := store.Create("test", cwd, modelSelection{main: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "valid"), false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -97,6 +97,7 @@ func resolveStoredSession(
 		BalancedModel:    models.balanced,
 		BalancedModelSet: models.balanced != "",
 		ThinkingLevel:    record.ThinkingLevel,
+		FastMode:         record.FastMode,
 		WorkingDirectory: record.WorkingDirectory,
 	}, runtime, driver.Descriptor(), driver.ModelDefaults())
 	if err != nil {
@@ -129,6 +130,7 @@ func runSessions(
 				BalancedModel:    config.models.balanced,
 				BalancedModelSet: true,
 				ThinkingLevel:    session.thinkingLevel,
+				FastMode:         session.fastMode,
 				WorkingDirectory: config.cwd,
 			}, runtime, driver.Descriptor(), driver.ModelDefaults())
 			if err != nil {

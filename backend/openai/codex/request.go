@@ -13,6 +13,7 @@ const continuationStateVersion = 1
 
 type createResponseRequest struct {
 	Model             string             `json:"model"`
+	ServiceTier       string             `json:"service_tier,omitempty"`
 	Instructions      string             `json:"instructions"`
 	Input             []json.RawMessage  `json:"input"`
 	Tools             []functionTool     `json:"tools"`
@@ -27,6 +28,7 @@ type createResponseRequest struct {
 
 type compactRequest struct {
 	Model             string             `json:"model"`
+	ServiceTier       string             `json:"service_tier,omitempty"`
 	Instructions      string             `json:"instructions,omitempty"`
 	Input             []json.RawMessage  `json:"input"`
 	Tools             []functionTool     `json:"tools"`
@@ -89,8 +91,14 @@ func buildCreateRequest(request agent.Request, maxStateBytes int) (createRespons
 		}
 	}
 
+	serviceTier := ""
+	if request.FastMode {
+		serviceTier = "priority"
+	}
+
 	return createResponseRequest{
 		Model:        request.Model,
+		ServiceTier:  serviceTier,
 		Instructions: request.Instructions,
 		Input:        input,
 		Tools:        tools,
@@ -108,6 +116,7 @@ func buildCompactRequest(request agent.Request, maxStateBytes int) (compactReque
 
 	return compactRequest{
 		Model:        createRequest.Model,
+		ServiceTier:  createRequest.ServiceTier,
 		Instructions: createRequest.Instructions,
 		Input:        createRequest.Input,
 		Tools:        createRequest.Tools,

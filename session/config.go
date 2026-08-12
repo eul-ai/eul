@@ -22,6 +22,7 @@ type Options struct {
 	BalancedModel    string
 	BalancedModelSet bool
 	ThinkingLevel    agent.ThinkingLevel
+	FastMode         bool
 	WorkingDirectory string
 	NoSandbox        bool
 	Resume           bool
@@ -58,6 +59,7 @@ type resolvedConfig struct {
 	provider            string
 	models              modelSelection
 	thinkingLevel       agent.ThinkingLevel
+	fastMode            bool
 	cwd                 string
 	projectInstructions string
 	skills              []agent.Skill
@@ -94,6 +96,7 @@ func resolveConfig(options Options, runtime runtime, descriptor backend.Descript
 		provider:            descriptor.ID,
 		models:              models,
 		thinkingLevel:       thinkingLevel,
+		fastMode:            options.FastMode,
 		cwd:                 cwd,
 		projectInstructions: projectInstructions,
 		skills:              skills,

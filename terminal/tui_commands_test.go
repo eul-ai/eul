@@ -31,6 +31,39 @@ func TestCommandReferenceRequiresCommandPositionAndTracksReplacement(t *testing.
 	}
 }
 
+func TestFastCommandOnlyAppearsWhenAvailable(t *testing.T) {
+	unavailable := newTUIModel(80, 24, Options{})
+	if err := unavailable.insertInput("/fast"); err != nil {
+		t.Fatal(err)
+	}
+	if unavailable.commandPickerVisible() {
+		t.Fatalf("unavailable picker = %+v", unavailable.commandPicker)
+	}
+
+	missingSetter := newTUIModel(80, 24, Options{FastModeAvailable: true})
+	if err := missingSetter.insertInput("/fast"); err != nil {
+		t.Fatal(err)
+	}
+	if missingSetter.commandPickerVisible() {
+		t.Fatalf("missing setter picker = %+v", missingSetter.commandPicker)
+	}
+
+	available := newTUIModel(80, 24, Options{FastModeAvailable: true, SetFastMode: func(bool) error { return nil }})
+	if err := available.insertInput("/fast"); err != nil {
+		t.Fatal(err)
+	}
+	action, err := reduceKey(available, keyEvent{code: keyEnter})
+	if err != nil || action.kind != tuiActionToggleFast {
+		t.Fatalf("action=%+v error=%v", action, err)
+	}
+	if help := commandHelpText(true); !strings.Contains(help, "/fast") {
+		t.Fatalf("help = %q", help)
+	}
+	if help := commandHelpText(false); strings.Contains(help, "/fast") {
+		t.Fatalf("help = %q", help)
+	}
+}
+
 func TestCommandPickerFiltersCommandsAndSkills(t *testing.T) {
 	model := newTUIModel(80, 24, Options{Skills: []agent.Skill{
 		{Name: "review", Description: "Review code"},

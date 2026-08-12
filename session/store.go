@@ -50,6 +50,7 @@ type sessionRecord struct {
 	FastModel        string              `json:"fast_model,omitempty"`
 	BalancedModel    string              `json:"balanced_model,omitempty"`
 	ThinkingLevel    agent.ThinkingLevel `json:"thinking_level"`
+	FastMode         bool                `json:"fast_mode,omitempty"`
 	Description      string              `json:"description,omitempty"`
 	Agent            agent.Checkpoint    `json:"agent"`
 	Terminal         terminal.Checkpoint `json:"terminal"`
@@ -88,6 +89,7 @@ func (store *sessionStore) Create(
 	thinkingLevel agent.ThinkingLevel,
 	agentCheckpoint agent.Checkpoint,
 	terminalCheckpoint terminal.Checkpoint,
+	fastMode bool,
 ) (*sessionHandle, error) {
 	workspaceDirectory := store.workspaceDirectory(cwd)
 	if err := secureSessionDirectory(store.root); err != nil {
@@ -124,6 +126,7 @@ func (store *sessionStore) Create(
 			FastModel:        models.fast,
 			BalancedModel:    models.balanced,
 			ThinkingLevel:    thinkingLevel,
+			FastMode:         fastMode,
 			Description:      terminalCheckpoint.Description(),
 			Agent:            agentCheckpoint,
 			Terminal:         terminalCheckpoint,
@@ -291,6 +294,7 @@ func (handle *sessionHandle) Save(
 	terminalCheckpoint terminal.Checkpoint,
 	active bool,
 	thinkingLevel agent.ThinkingLevel,
+	fastMode bool,
 ) error {
 	if handle.closed {
 		return errors.New("session is closed")
@@ -303,6 +307,7 @@ func (handle *sessionHandle) Save(
 		next.Status = sessionActive
 	}
 	next.ThinkingLevel = thinkingLevel
+	next.FastMode = fastMode
 	next.Agent = agentCheckpoint
 	next.Terminal = terminalCheckpoint
 	if next.Description == "" {

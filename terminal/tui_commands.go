@@ -17,6 +17,7 @@ type slashCommandDefinition struct {
 	argumentAction     tuiActionKind
 	complete           bool
 	dynamicSkills      bool
+	fastMode           bool
 	availableDuringRun bool
 }
 
@@ -36,6 +37,10 @@ var slashCommands = []slashCommandDefinition{
 	{
 		text: "/compact", usage: "/compact", description: "compact the conversation context",
 		action: tuiActionCompact, complete: true,
+	},
+	{
+		text: "/fast", usage: "/fast", description: "toggle fast inference mode",
+		action: tuiActionToggleFast, complete: true, fastMode: true, availableDuringRun: true,
 	},
 	{
 		text: "/exit", usage: "/exit", description: "exit eul",
@@ -71,9 +76,12 @@ type commandPickerState struct {
 	dismissed  bool
 }
 
-func commandCompletions(skills []agent.Skill) []commandCompletion {
+func commandCompletions(skills []agent.Skill, fastModeAvailable bool) []commandCompletion {
 	completions := make([]commandCompletion, 0, len(slashCommands)+len(skills))
 	for _, command := range slashCommands {
+		if command.fastMode && !fastModeAvailable {
+			continue
+		}
 		if command.complete {
 			completions = append(completions, commandCompletion{
 				text:               command.text,
@@ -103,12 +111,15 @@ func invokableSkillName(name string) bool {
 	}) < 0
 }
 
-func commandHelpText() string {
+func commandHelpText(fastModeAvailable bool) string {
 	const usageWidth = 18
 
 	var help strings.Builder
 	help.WriteString("Commands:")
 	for _, command := range slashCommands {
+		if command.fastMode && !fastModeAvailable {
+			continue
+		}
 		help.WriteString("\n  ")
 		help.WriteString(command.usage)
 		padding := usageWidth - len(command.usage)
@@ -121,14 +132,20 @@ func commandHelpText() string {
 	return help.String()
 }
 
-func matchSlashCommand(prompt, trimmed string) (tuiAction, slashCommandDefinition, bool) {
+func matchSlashCommand(prompt, trimmed string, fastModeAvailable bool) (tuiAction, slashCommandDefinition, bool) {
 	for _, command := range slashCommands {
+		if command.fastMode && !fastModeAvailable {
+			continue
+		}
 		if trimmed == command.text {
 			return tuiAction{kind: command.action, prompt: commandPrompt(command.action, prompt)}, command, true
 		}
 	}
 
 	for _, command := range slashCommands {
+		if command.fastMode && !fastModeAvailable {
+			continue
+		}
 		if command.argumentAction == tuiActionNone || !hasCommandArguments(trimmed, command.text) {
 			continue
 		}
@@ -137,6 +154,9 @@ func matchSlashCommand(prompt, trimmed string) (tuiAction, slashCommandDefinitio
 	}
 
 	for _, command := range slashCommands {
+		if command.fastMode && !fastModeAvailable {
+			continue
+		}
 		if command.dynamicSkills && strings.HasPrefix(trimmed, command.text) {
 			return tuiAction{kind: command.action, prompt: commandPrompt(command.action, prompt)}, command, true
 		}
