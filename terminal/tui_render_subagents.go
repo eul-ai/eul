@@ -17,7 +17,14 @@ func renderSubagentsAt(model *tuiModel, height int, now time.Time) []styledLine 
 	lines := make([]styledLine, 0, min(height, len(jobs)))
 	for _, job := range jobs[:min(height, len(jobs))] {
 		state := string(job.State)
-		details := []string{subagentElapsed(job.Started, job.Finished, now)}
+		details := make([]string, 0, 4)
+		if job.ModelProfile != "" {
+			details = append(details, job.ModelProfile)
+		}
+		if job.ThinkingLevel != "" {
+			details = append(details, string(job.ThinkingLevel)+" thinking")
+		}
+		details = append(details, subagentElapsed(job.Started, job.Finished, now))
 		switch {
 		case job.Usage.InputTokens > 0 || job.Usage.OutputTokens > 0:
 			details = append(details, formatTokens(job.Usage.InputTokens)+" input", formatTokens(job.Usage.OutputTokens)+" output")

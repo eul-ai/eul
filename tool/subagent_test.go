@@ -512,7 +512,7 @@ func TestSubagentStatusPublishesLiveUsage(t *testing.T) {
 	for {
 		select {
 		case status := <-subagents.StatusUpdates():
-			if len(status.Jobs) == 1 && status.Jobs[0].Usage.InputTokens == 300 && status.Jobs[0].Usage.OutputTokens == 21 && status.Jobs[0].Generations == 7 {
+			if len(status.Jobs) == 1 && status.Jobs[0].ModelProfile == "balanced" && status.Jobs[0].ThinkingLevel == agent.ThinkingLow && status.Jobs[0].Usage.InputTokens == 300 && status.Jobs[0].Usage.OutputTokens == 21 && status.Jobs[0].Generations == 7 {
 				close(release)
 				return
 			}

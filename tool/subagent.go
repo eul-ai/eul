@@ -488,6 +488,8 @@ func (s *Subagent) publishStatusLocked() {
 		status.Jobs[index] = agent.SubagentJobStatus{
 			ID:              job.id,
 			Task:            job.description,
+			ModelProfile:    string(job.modelProfile),
+			ThinkingLevel:   job.thinkingLevel,
 			State:           job.state,
 			Started:         job.started,
 			Finished:        job.finished,

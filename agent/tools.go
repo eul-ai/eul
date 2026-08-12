@@ -100,6 +100,8 @@ const (
 type SubagentJobStatus struct {
 	ID              string
 	Task            string
+	ModelProfile    string
+	ThinkingLevel   ThinkingLevel
 	State           SubagentState
 	Started         time.Time
 	Finished        time.Time

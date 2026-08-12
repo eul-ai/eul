@@ -124,11 +124,12 @@ func TestStatusTruncatesSessionID(t *testing.T) {
 
 func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 	started := time.Unix(100, 0)
-	model := newTUIModel(100, 10, Options{})
+	model := newTUIModel(140, 10, Options{})
 	model.subagentStatus = agent.SubagentStatus{Jobs: []agent.SubagentJobStatus{
 		{
-			ID: "subagent-1", Task: "inspect layout", State: agent.SubagentRunning, Started: started,
-			Usage: agent.Usage{InputTokens: 1_200, OutputTokens: 34}, Generations: 3, GenerationLimit: 20,
+			ID: "subagent-1", Task: "inspect layout", ModelProfile: "balanced", ThinkingLevel: agent.ThinkingLow,
+			State: agent.SubagentRunning, Started: started, Usage: agent.Usage{InputTokens: 1_200, OutputTokens: 34},
+			Generations: 3, GenerationLimit: 20,
 		},
 		{
 			ID: "subagent-2", Task: "review progress", State: agent.SubagentFinalizing, Started: started,
@@ -139,7 +140,7 @@ func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 	lines := renderSubagentsAt(model, 2, started.Add(time.Minute+5*time.Second))
 	first := renderedLineText(lines[0], model.width)
 	second := renderedLineText(lines[1], model.width)
-	if !strings.Contains(first, "subagent-1  running (1m5s, 1.2k input, 34 output, 3/20 generations) — inspect layout") {
+	if !strings.Contains(first, "subagent-1  running (balanced, low thinking, 1m5s, 1.2k input, 34 output, 3/20 generations) — inspect layout") {
 		t.Fatalf("running line = %q", first)
 	}
 	if !strings.Contains(second, "subagent-2  finalizing (1m5s, 20/20 generations) — review progress") {
