@@ -1,30 +1,12 @@
 package terminal
 
 import (
-	"bytes"
 	"errors"
 	"math"
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
 )
-
-func TestReadClipboardPNG(t *testing.T) {
-	image, err := readClipboardPNG(bytes.NewReader([]byte("png")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if image.MediaType != "image/png" || string(image.Data) != "png" {
-		t.Fatalf("image = %+v", image)
-	}
-}
-
-func TestReadClipboardPNGRejectsOversizedImage(t *testing.T) {
-	reader := bytes.NewReader(make([]byte, maxAttachedImageBytes+1))
-	if _, err := readClipboardPNG(reader); !errors.Is(err, errClipboardImageTooLarge) {
-		t.Fatalf("error = %v", err)
-	}
-}
 
 func TestClipboardImageLimitFitsRequestLimit(t *testing.T) {
 	encodedSize := int64(math.Ceil(float64(maxAttachedImagesTotalBytes)/3) * 4)

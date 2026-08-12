@@ -2,12 +2,23 @@ package terminal
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/eul-ai/eul/agent"
+)
+
+const (
+	maxAttachedImages           = 10
+	maxAttachedImagesTotalBytes = 10 * 1024 * 1024
+)
+
+var (
+	errTooManyImages  = fmt.Errorf("a prompt can include at most %d images", maxAttachedImages)
+	errImagesTooLarge = fmt.Errorf("attached images exceed %d MiB", maxAttachedImagesTotalBytes/(1024*1024))
 )
 
 type blockKind uint8

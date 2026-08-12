@@ -1,9 +1,10 @@
 //go:build darwin
 
-package terminal
+package clipboard
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,7 +13,10 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-func readClipboardImage(ctx context.Context) (agent.Image, error) {
+//go:embed clipboard_darwin.applescript
+var clipboardDarwinScript string
+
+func readImage(ctx context.Context) (agent.Image, error) {
 	file, err := os.CreateTemp("", "eul-clipboard-*.png")
 	if err != nil {
 		return agent.Image{}, fmt.Errorf("read clipboard image: %w", err)
@@ -24,32 +28,12 @@ func readClipboardImage(ctx context.Context) (agent.Image, error) {
 	}
 	defer os.Remove(path)
 
-	const script = `on run argv
-try
-set imageData to the clipboard as «class PNGf»
-on error
-return "no image"
-end try
-set outputPath to item 1 of argv
-set outputFile to open for access POSIX file outputPath with write permission
-try
-set eof outputFile to 0
-write imageData to outputFile
-close access outputFile
-on error message
-try
-close access outputFile
-end try
-error message
-end try
-return "ok"
-end run`
-	output, err := exec.CommandContext(ctx, "osascript", "-e", script, path).Output()
+	output, err := exec.CommandContext(ctx, "osascript", "-e", clipboardDarwinScript, path).Output()
 	if err != nil {
 		return agent.Image{}, fmt.Errorf("read clipboard image: %w", err)
 	}
 	if strings.TrimSpace(string(output)) != "ok" {
-		return agent.Image{}, errClipboardImageUnavailable
+		return agent.Image{}, errImageUnavailable
 	}
 
 	file, err = os.Open(path)
@@ -57,7 +41,7 @@ end run`
 		return agent.Image{}, fmt.Errorf("read clipboard image: %w", err)
 	}
 	defer file.Close()
-	image, err := readClipboardPNG(file)
+	image, err := readPNG(file)
 	if err != nil {
 		return agent.Image{}, fmt.Errorf("read clipboard image: %w", err)
 	}

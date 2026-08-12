@@ -1,6 +1,6 @@
 //go:build linux
 
-package terminal
+package clipboard
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-func readClipboardImage(ctx context.Context) (agent.Image, error) {
+func readImage(ctx context.Context) (agent.Image, error) {
 	commands := [][]string{
 		{"wl-paste", "--no-newline", "--type", "image/png"},
 		{"xclip", "-selection", "clipboard", "-t", "image/png", "-o"},
@@ -31,8 +31,8 @@ func readClipboardImage(ctx context.Context) (agent.Image, error) {
 		}
 		commandFound = true
 
-		image, readErr := readClipboardPNG(stdout)
-		if errors.Is(readErr, errClipboardImageTooLarge) {
+		image, readErr := readPNG(stdout)
+		if errors.Is(readErr, errImageTooLarge) {
 			_ = command.Process.Kill()
 			_ = command.Wait()
 			return agent.Image{}, readErr
@@ -48,5 +48,5 @@ func readClipboardImage(ctx context.Context) (agent.Image, error) {
 	if !commandFound {
 		return agent.Image{}, errors.New("clipboard images require wl-paste or xclip")
 	}
-	return agent.Image{}, errClipboardImageUnavailable
+	return agent.Image{}, errImageUnavailable
 }

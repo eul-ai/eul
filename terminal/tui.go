@@ -14,6 +14,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/terminal/clipboard"
 )
 
 const (
@@ -209,7 +210,7 @@ func runTUIWithKeys(
 
 	clipboardImageReader := options.ReadClipboardImage
 	if clipboardImageReader == nil {
-		clipboardImageReader = readClipboardImage
+		clipboardImageReader = clipboard.ReadImage
 	}
 	controller := &tuiController{
 		model:              model,

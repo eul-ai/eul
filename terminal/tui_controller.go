@@ -301,7 +301,10 @@ func (c *tuiController) handlePermission(request PermissionRequest) (bool, error
 }
 
 func (c *tuiController) handleClipboardImage(image agent.Image, err error) (bool, error) {
-	c.clipboardCancel = nil
+	if c.clipboardCancel != nil {
+		c.clipboardCancel()
+		c.clipboardCancel = nil
+	}
 	c.clipboardReading = false
 	if err != nil {
 		setInputError(c.model, err)
@@ -463,7 +466,7 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		if c.clipboardReading {
 			return false, nil
 		}
-		readContext, cancel := context.WithTimeout(ctx, clipboardReadTimeout)
+		readContext, cancel := context.WithCancel(ctx)
 		c.clipboardCancel = cancel
 		c.clipboardReading = true
 		go loadClipboardImage(readContext, c.readClipboardImage, c.clipboardImages)
