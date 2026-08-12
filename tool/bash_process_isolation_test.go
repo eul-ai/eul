@@ -13,7 +13,7 @@ import (
 func TestBashWithoutSandboxCanReachHostListener(t *testing.T) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
-		t.Fatal(err)
+		t.Skipf("local listeners are unavailable: %v", err)
 	}
 	defer listener.Close()
 
@@ -39,7 +39,7 @@ func TestBashWithoutSandboxCanReachHostListener(t *testing.T) {
 func TestBashWithoutNetworkCannotReachHostListener(t *testing.T) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
-		t.Fatal(err)
+		t.Skipf("local listeners are unavailable: %v", err)
 	}
 	defer listener.Close()
 

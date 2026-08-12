@@ -26,7 +26,7 @@ func TestBrowserLoginPKCEStorageAndRefreshRotation(t *testing.T) {
 	var mu sync.Mutex
 	var authorize url.Values
 	tokenCalls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/oauth/token" {
 			t.Errorf("unexpected auth path %s", request.URL.Path)
 			http.NotFound(writer, request)
@@ -131,7 +131,7 @@ func TestBrowserLoginPKCEStorageAndRefreshRotation(t *testing.T) {
 
 func TestBrowserCallbackRejectsWrongStateThenAcceptsValidState(t *testing.T) {
 	access := testJWT(t, "account", "state")
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writeTestJSON(t, writer, map[string]any{"access_token": access, "refresh_token": "refresh", "expires_in": 3600})
 	}))
 	defer server.Close()
@@ -183,7 +183,7 @@ func TestDeviceLoginAndLogout(t *testing.T) {
 	access := testJWT(t, "device-account", "device")
 	polls := 0
 	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server = newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/accounts/deviceauth/usercode":
 			writeTestJSON(t, writer, map[string]any{"device_auth_id": "device-id", "user_code": "ABCD-EFGH", "interval": "1"})
@@ -233,7 +233,7 @@ func TestDeviceLoginAndLogout(t *testing.T) {
 func TestRefreshPersistsRotatedcredentials(t *testing.T) {
 	oldAccess := testJWT(t, "old-account", "old")
 	newAccess := testJWT(t, "new-account", "new")
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writeTestJSON(t, writer, map[string]any{"access_token": newAccess, "refresh_token": "new-refresh", "expires_in": 3600})
 	}))
 	defer server.Close()
@@ -277,7 +277,7 @@ func TestNewManagerCopiesInjectedHTTPClientBeforeApplyingPolicy(t *testing.T) {
 
 func TestDeviceExchangeUsesPollingDeadline(t *testing.T) {
 	access := testJWT(t, "device-account", "deadline")
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/accounts/deviceauth/usercode":
 			writeTestJSON(t, writer, map[string]any{"device_auth_id": "device-id", "user_code": "code", "interval": 1})
@@ -340,9 +340,9 @@ func TestParseIntervalValidation(t *testing.T) {
 func TestOAuthHTTPRedirectBoundsAndCancellation(t *testing.T) {
 	t.Run("redirect", func(t *testing.T) {
 		destinationCalls := 0
-		destination := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { destinationCalls++ }))
+		destination := newTestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { destinationCalls++ }))
 		defer destination.Close()
-		origin := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		origin := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			http.Redirect(writer, request, destination.URL, http.StatusTemporaryRedirect)
 		}))
 		defer origin.Close()
@@ -354,7 +354,7 @@ func TestOAuthHTTPRedirectBoundsAndCancellation(t *testing.T) {
 	})
 
 	t.Run("bounded", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			_, _ = io.WriteString(writer, strings.Repeat("x", int(maxAuthResponseBytes)+1))
 		}))
 		defer server.Close()
@@ -366,7 +366,7 @@ func TestOAuthHTTPRedirectBoundsAndCancellation(t *testing.T) {
 	})
 
 	t.Run("cancellation", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			writeTestJSON(t, writer, map[string]any{"device_auth_id": "device", "user_code": "code", "interval": "1"})
 		}))
 		defer server.Close()
@@ -382,7 +382,7 @@ func TestOAuthHTTPRedirectBoundsAndCancellation(t *testing.T) {
 
 func TestDeviceLoginStopsOnExplicitDenial(t *testing.T) {
 	polls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/accounts/deviceauth/usercode":
 			writeTestJSON(t, writer, map[string]any{"device_auth_id": "device-id", "user_code": "ABCD-EFGH", "interval": "1"})

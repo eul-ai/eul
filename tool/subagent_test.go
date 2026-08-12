@@ -543,23 +543,28 @@ func TestSubagentWaitCancellationCancelsSelectedJob(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("wait error = %v", err)
 	}
-	assertSubagentStatus(t, subagents.StatusUpdates(), agent.SubagentStatus{Completed: 1})
+	assertSubagentStatus(t, subagents.StatusUpdates(), agent.SubagentStatus{})
 
 	result, err := wait.Execute(context.Background(), json.RawMessage(`{"ids":["subagent-1"]}`), nil)
-	if err != nil || !result.IsError || !strings.Contains(result.Output, errSubagentCanceled.Error()) {
+	if err != nil || !result.IsError || !strings.Contains(result.Output, "unknown or expired") {
 		t.Fatalf("later wait = %+v, error = %v", result, err)
 	}
 }
 
-func TestSubagentCancelCancelsSelectedJobs(t *testing.T) {
+func TestSubagentCancelShowsCancelingThenRemovesJob(t *testing.T) {
 	started := make(chan string, 2)
+	cancelObserved := make(chan struct{})
+	releaseCanceled := make(chan struct{})
 	subagents := NewSubagent(func(ctx context.Context, task string, _ SubagentModelProfile, _ agent.ThinkingLevel, _ func(SubagentProgress)) (agent.RunResult, error) {
 		started <- task
 		<-ctx.Done()
+		if task == "two" {
+			close(cancelObserved)
+			<-releaseCanceled
+		}
 		return agent.RunResult{}, ctx.Err()
 	})
 	defer subagents.Close()
-	wait := NewSubagentWait(subagents)
 	cancel := NewSubagentCancel(subagents)
 
 	if result, err := subagents.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"one","prompt":"one"},{"description":"two","prompt":"two"}]}`), nil); err != nil || result.IsError {
@@ -572,11 +577,34 @@ func TestSubagentCancelCancelsSelectedJobs(t *testing.T) {
 	if err != nil || result.IsError || !strings.Contains(result.Output, "subagent-2") {
 		t.Fatalf("cancel = %+v, error = %v", result, err)
 	}
-	result, err = wait.Execute(context.Background(), json.RawMessage(`{"ids":["subagent-2"]}`), nil)
-	if err != nil || !result.IsError || !strings.Contains(result.Output, errSubagentCanceled.Error()) {
-		t.Fatalf("wait = %+v, error = %v", result, err)
+	<-cancelObserved
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case status := <-subagents.StatusUpdates():
+			if slices.ContainsFunc(status.Jobs, func(job agent.SubagentJobStatus) bool {
+				return job.ID == "subagent-2" && job.State == agent.SubagentCanceling
+			}) {
+				close(releaseCanceled)
+				goto canceled
+			}
+		case <-deadline:
+			t.Fatal("canceling subagent was not published")
+		}
 	}
-	assertSubagentStatus(t, subagents.StatusUpdates(), agent.SubagentStatus{Running: 1})
+
+canceled:
+	status := waitForSubagentStatus(t, subagents.StatusUpdates(), agent.SubagentStatus{Running: 1})
+	if slices.ContainsFunc(status.Jobs, func(job agent.SubagentJobStatus) bool {
+		return job.ID == "subagent-2"
+	}) {
+		t.Fatalf("canceled subagent remained in status: %+v", status)
+	}
+	result, err = NewSubagentWait(subagents).Execute(context.Background(), json.RawMessage(`{"ids":["subagent-2"]}`), nil)
+	if err != nil || !result.IsError || !strings.Contains(result.Output, "unknown or expired") {
+		t.Fatalf("wait after cancellation = %+v, error = %v", result, err)
+	}
 }
 
 func TestSubagentCloseCancelsAndJoinsJobs(t *testing.T) {

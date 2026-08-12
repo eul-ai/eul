@@ -28,7 +28,7 @@ func generate(client *Client, ctx context.Context, request agent.Request, onText
 func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	const token = "secret-test-token"
 	var requestNumber atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		call := int(requestNumber.Add(1))
 		if request.Method != http.MethodPost || request.URL.Path != "/codex/responses" {
 			t.Errorf("request %d = %s %s", call, request.Method, request.URL.Path)
@@ -197,7 +197,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
 	const token = "compact-oauth-token"
 	var calls int
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		calls++
 		switch calls {
 		case 1:
@@ -361,7 +361,7 @@ func TestClientCompactBoundsCancellationAndOptionalUsage(t *testing.T) {
 
 	t.Run("request bound", func(t *testing.T) {
 		var calls atomic.Int32
-		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
+		server := newTestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
 		defer server.Close()
 		client := newTestClient(t, "key", server.URL, Options{})
 		client.maxRequestBytes = 100
@@ -398,7 +398,7 @@ func TestClientCompactBoundsCancellationAndOptionalUsage(t *testing.T) {
 func TestClientStreamsTextDeltas(t *testing.T) {
 	releaseTerminal := make(chan struct{})
 	released := false
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		var wire createResponseRequest
 		if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
 			t.Error(err)
@@ -457,7 +457,7 @@ func TestClientStreamsTextDeltas(t *testing.T) {
 }
 
 func TestClientStreamsRefusal(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(writer, "data: {\"type\":\"response.refusal.delta\",\"delta\":\"Cannot comply.\"}\n\n")
 		fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"content\":[{\"type\":\"refusal\",\"refusal\":\"Cannot comply.\"}]}}\n\n")
@@ -565,7 +565,7 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 	})
 
 	t.Run("SSE error", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			writer.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(writer, "data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"context_length_exceeded\",\"message\":\"too many tokens\"}}\n\n")
 		}))
@@ -592,7 +592,7 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 
 func TestClientRetriesTransientGenerationThroughEngine(t *testing.T) {
 	calls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		calls++
 		writer.Header().Set("Content-Type", "text/event-stream")
 		if calls == 1 {
@@ -622,7 +622,7 @@ func TestClientRetriesTransientGenerationThroughEngine(t *testing.T) {
 
 func TestClientRetriesHTTP2InternalStreamErrorThroughEngine(t *testing.T) {
 	var calls atomic.Int32
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newUnstartedTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.ProtoMajor != 2 {
 			t.Errorf("request protocol = %s", request.Proto)
 		}
@@ -652,7 +652,7 @@ func TestClientRetriesHTTP2InternalStreamErrorThroughEngine(t *testing.T) {
 func TestClientCompactsContextLimitErrorThroughEngine(t *testing.T) {
 	generationCalls := 0
 	compactCalls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/codex/responses":
 			generationCalls++
@@ -730,7 +730,7 @@ func TestClientCompactsContextLimitErrorThroughEngine(t *testing.T) {
 
 func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 	t.Run("SSE server error", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			writer.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(writer, "data: {\"type\":\"error\",\"error\":{\"type\":\"server_error\",\"code\":\"server_error\",\"message\":\"failed\"}}\n\n")
 		}))
@@ -745,7 +745,7 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 	})
 
 	t.Run("SSE overloaded code", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			writer.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(writer, "data: {\"type\":\"error\",\"error\":{\"code\":\"server_is_overloaded\",\"message\":\"overloaded\"}}\n\n")
 		}))
@@ -781,7 +781,7 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 	})
 
 	t.Run("Retry-After is bounded", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			writer.Header().Set("Content-Type", "application/json")
 			writer.Header().Set("Retry-After", "600")
 			writer.WriteHeader(http.StatusTooManyRequests)
@@ -848,7 +848,7 @@ func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
 	})
 	t.Run("request", func(t *testing.T) {
 		var calls atomic.Int32
-		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
+		server := newTestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
 		defer server.Close()
 		client := newTestClient(t, "key", server.URL, Options{})
 		client.maxRequestBytes = 100
@@ -888,7 +888,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 	})
 	t.Run("HTTP timeout", func(t *testing.T) {
 		release := make(chan struct{})
-		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		server := newTestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			<-release
 		}))
 		client := newTestClient(t, "key", server.URL, Options{HTTPClient: &http.Client{Timeout: 30 * time.Millisecond}})
@@ -923,7 +923,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		}
 	})
 	t.Run("streaming sink", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			writer.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"answer\"}\n\n")
 		}))
@@ -936,7 +936,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		}
 	})
 	t.Run("stream cancellation", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			writer.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
 			writer.(http.Flusher).Flush()
@@ -964,9 +964,9 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 	})
 	t.Run("redirect", func(t *testing.T) {
 		var destinationCalls atomic.Int32
-		destination := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { destinationCalls.Add(1) }))
+		destination := newTestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { destinationCalls.Add(1) }))
 		defer destination.Close()
-		origin := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		origin := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			http.Redirect(writer, request, destination.URL, http.StatusTemporaryRedirect)
 		}))
 		defer origin.Close()
@@ -1101,7 +1101,7 @@ func baseRequest() agent.Request {
 
 func responseServer(t *testing.T, status int, body string) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	return newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if status >= 200 && status < 300 {
 			payload := body
 			var compact bytes.Buffer
@@ -1124,7 +1124,7 @@ func responseServer(t *testing.T, status int, body string) *httptest.Server {
 
 func compactResponseServer(t *testing.T, status int, body string) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	return newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(status)
 		if _, err := io.WriteString(writer, body); err != nil {

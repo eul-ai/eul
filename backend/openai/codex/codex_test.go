@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -25,7 +24,7 @@ func (function TokenSourceFunc) Token(ctx context.Context) (Credential, error) {
 func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 	const token = "oauth-access-token"
 	const accountID = "account-123"
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPost || request.URL.Path != "/codex/responses" {
 			t.Errorf("request = %s %s", request.Method, request.URL.Path)
 		}
@@ -98,7 +97,7 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 
 func TestCodexSSEStopsAtTerminalEventWithoutWaitingForEOF(t *testing.T) {
 	release := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}}\n\n")
 		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
@@ -136,7 +135,7 @@ func TestCodexSSEStopsAtTerminalEventWithoutWaitingForEOF(t *testing.T) {
 
 func TestCodexSSEToolCallAndReasoningReplay(t *testing.T) {
 	call := 0
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		call++
 		var wire createResponseRequest
 		if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
@@ -189,7 +188,7 @@ func TestCodexSSEToolCallAndReasoningReplay(t *testing.T) {
 
 func TestCodexStreamsPartialToolArgumentsBeforeResponseCompletes(t *testing.T) {
 	release := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		flusher := writer.(http.Flusher)
 		writer.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(writer, "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_write\",\"name\":\"write\",\"arguments\":\"\"}}\n\n")
@@ -380,9 +379,9 @@ func TestCodexDefaultEndpointAndRedirects(t *testing.T) {
 	}
 
 	destinationCalls := 0
-	destination := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { destinationCalls++ }))
+	destination := newTestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { destinationCalls++ }))
 	defer destination.Close()
-	origin := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	origin := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		http.Redirect(writer, request, destination.URL, http.StatusTemporaryRedirect)
 	}))
 	defer origin.Close()

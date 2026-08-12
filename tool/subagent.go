@@ -377,7 +377,12 @@ func (s *Subagent) runJob(job *subagentJob) {
 		job.usage = result.Usage
 	}
 	switch {
-	case errors.Is(runErr, errSubagentCanceled), errors.Is(runErr, errSubagentSessionClosed):
+	case errors.Is(runErr, errSubagentCanceled):
+		job.state = agent.SubagentCanceled
+		if s.jobs[job.id] == job {
+			delete(s.jobs, job.id)
+		}
+	case errors.Is(runErr, errSubagentSessionClosed):
 		job.state = agent.SubagentCanceled
 	case runErr != nil:
 		job.state = agent.SubagentFailed
