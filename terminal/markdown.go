@@ -85,21 +85,23 @@ func parseInlineMarkdown(text string) []inlineSpan {
 func parseInlineMarkdownStyle(text string, inherited inlineStyle) []inlineSpan {
 	var spans []inlineSpan
 	for index := 0; index < len(text); {
-		if label, destination, consumed, ok := parseMarkdownLink(text[index:]); ok {
-			style := inherited
-			style.link = destination
-			for _, span := range parseInlineMarkdownStyle(label, style) {
-				appendInlineSpan(&spans, span.text, span.style)
+		if inherited.link == "" {
+			if label, destination, consumed, ok := parseMarkdownLink(text[index:]); ok {
+				style := inherited
+				style.link = destination
+				for _, span := range parseInlineMarkdownStyle(label, style) {
+					appendInlineSpan(&spans, span.text, span.style)
+				}
+				index += consumed
+				continue
 			}
-			index += consumed
-			continue
-		}
-		if destination, consumed, ok := parseAutolink(text[index:]); ok {
-			style := inherited
-			style.link = destination
-			appendInlineSpan(&spans, destination, style)
-			index += consumed
-			continue
+			if destination, consumed, ok := parseAutolink(text[index:]); ok {
+				style := inherited
+				style.link = destination
+				appendInlineSpan(&spans, destination, style)
+				index += consumed
+				continue
+			}
 		}
 
 		delimiter := ""
@@ -192,8 +194,7 @@ func markdownDestinationEnd(text string, start int) int {
 }
 
 func parseAutolink(text string) (string, int, bool) {
-	angled := strings.HasPrefix(text, "<http://") || strings.HasPrefix(text, "<https://")
-	if angled {
+	if strings.HasPrefix(text, "<") {
 		end := strings.IndexByte(text, '>')
 		if end < 0 || !clickableURL(text[1:end]) {
 			return "", 0, false
@@ -212,13 +213,26 @@ func parseAutolink(text string) (string, int, bool) {
 		}
 		end += size
 	}
-	for end > 0 && strings.ContainsRune(".,;:!?)]}>\"'*", rune(text[end-1])) {
-		end--
-	}
-	if !clickableURL(text[:end]) {
-		return "", 0, false
-	}
+	end = bareURLDestinationEnd(text, end)
 	return text[:end], end, true
+}
+
+func bareURLDestinationEnd(text string, end int) int {
+	for end > 0 {
+		character := rune(text[end-1])
+		switch {
+		case strings.ContainsRune(".,;:!?]}>\"'*", character):
+			end--
+		case character == ')':
+			if strings.Count(text[:end], ")") <= strings.Count(text[:end], "(") {
+				return end
+			}
+			end--
+		default:
+			return end
+		}
+	}
+	return end
 }
 
 func clickableURL(destination string) bool {
