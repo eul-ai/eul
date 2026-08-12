@@ -17,18 +17,20 @@ const (
 )
 
 type renderedConversationBlock struct {
-	block conversationBlock
-	lines []styledLine
-	plain []string
+	block         conversationBlock
+	lines         []styledLine
+	plain         []string
+	continuations []bool
 }
 
 type tuiRenderer struct {
-	frame               terminalFrame
-	conversationBlocks  []renderedConversationBlock
-	conversationLines   []styledLine
-	conversationPlain   []string
-	conversationWidth   int
-	conversationVersion uint64
+	frame                     terminalFrame
+	conversationBlocks        []renderedConversationBlock
+	conversationLines         []styledLine
+	conversationPlain         []string
+	conversationContinuations []bool
+	conversationWidth         int
+	conversationVersion       uint64
 }
 
 func (r *tuiRenderer) render(model *tuiModel) string {

@@ -102,25 +102,50 @@ func selectedText(model *tuiModel, frame terminalFrame) string {
 
 	lines := frame.plainRows
 	if bounds.start.conversation {
-		lines = frame.conversationLines
+		return selectedConversationText(frame.conversationLines, frame.conversationContinuations, bounds)
 	}
 	return selectedTextFromLines(lines, bounds)
 }
 
+func selectedConversationText(lines []string, continuations []bool, bounds selectionBounds) string {
+	return selectedTextFromLinesWithSeparators(lines, bounds, conversationPadding, func(row int) string {
+		if row < len(continuations) && continuations[row] {
+			return ""
+		}
+		return "\n"
+	})
+}
+
 func selectedTextFromLines(lines []string, bounds selectionBounds) string {
+	return selectedTextFromLinesWithSeparators(lines, bounds, 0, func(int) string { return "\n" })
+}
+
+func selectedTextFromLinesWithSeparators(lines []string, bounds selectionBounds, leftPadding int, separator func(int) string) string {
 	if len(lines) == 0 || bounds.start.row >= len(lines) || bounds.end.row < 0 {
 		return ""
 	}
 
 	startRow := max(0, bounds.start.row)
 	endRow := min(len(lines)-1, bounds.end.row)
-	selected := make([]string, 0, endRow-startRow+1)
+	var selected strings.Builder
 	for row := startRow; row <= endRow; row++ {
+		if row > startRow {
+			selected.WriteString(separator(row))
+		}
 		columns := selectedColumns(lines[row], row, bounds)
 		line := sliceCells(lines[row], columns.start, columns.end)
-		selected = append(selected, strings.TrimRightFunc(line, unicode.IsSpace))
+		line = strings.TrimRightFunc(line, unicode.IsSpace)
+		selected.WriteString(trimLeftPadding(line, leftPadding))
 	}
-	return strings.Join(selected, "\n")
+	return selected.String()
+}
+
+func trimLeftPadding(line string, padding int) string {
+	for padding > 0 && strings.HasPrefix(line, " ") {
+		line = line[1:]
+		padding--
+	}
+	return line
 }
 
 func selectedColumns(line string, row int, bounds selectionBounds) cellRange {
@@ -268,5 +293,8 @@ func selectionForScreenRow(model *tuiModel, layout tuiLayout, row int, line stri
 
 	line = strings.TrimRightFunc(line, unicode.IsSpace)
 	columns := selectedColumns(line, selectionRow, bounds)
+	if bounds.start.conversation {
+		columns.start = max(columns.start, min(conversationPadding, cellWidth(line)))
+	}
 	return columns, columns.end > columns.start
 }

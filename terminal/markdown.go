@@ -30,8 +30,9 @@ type inlineSpan struct {
 }
 
 type formattedLine struct {
-	text  string
-	spans []inlineSpan
+	text         string
+	spans        []inlineSpan
+	continuation bool
 }
 
 func wrapInlineMarkdown(text string, width int) []formattedLine {
@@ -46,8 +47,9 @@ func wrapInlineSpans(spans []inlineSpan, width int) []formattedLine {
 	lines := make([]formattedLine, 0, 1)
 	current := make([]inlineSpan, 0, 1)
 	lineWidth := 0
+	continuation := false
 	flush := func() {
-		lines = append(lines, formattedLine{text: inlineSpanText(current), spans: current})
+		lines = append(lines, formattedLine{text: inlineSpanText(current), spans: current, continuation: continuation})
 		current = nil
 		lineWidth = 0
 	}
@@ -55,6 +57,7 @@ func wrapInlineSpans(spans []inlineSpan, width int) []formattedLine {
 		characterWidth := runeWidth(character)
 		if lineWidth > 0 && lineWidth+characterWidth > width {
 			flush()
+			continuation = true
 		}
 		appendInlineSpan(&current, string(character), style)
 		lineWidth += characterWidth
@@ -65,6 +68,7 @@ func wrapInlineSpans(spans []inlineSpan, width int) []formattedLine {
 			switch character {
 			case '\n':
 				flush()
+				continuation = false
 			case '\t':
 				for range 4 {
 					appendCharacter(' ', span.style)
