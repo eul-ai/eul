@@ -7,8 +7,8 @@ import (
 	"github.com/eul-ai/eul/tool"
 )
 
-func newNetworkPermissionBroker(skipPermissions bool) (tool.NetworkAuthorizer, <-chan terminal.PermissionRequest) {
-	if skipPermissions {
+func newNetworkPermissionBroker(noSandbox bool) (tool.NetworkAuthorizer, <-chan terminal.PermissionRequest) {
+	if noSandbox {
 		return func(context.Context, string) (bool, error) { return true, nil }, nil
 	}
 

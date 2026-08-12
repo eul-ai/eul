@@ -38,7 +38,11 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates a
 		timeout = time.Duration(*args.Timeout) * time.Second
 	}
 
-	if args.Network {
+	if b.noSandbox {
+		args.Network = true
+	}
+
+	if args.Network && !b.noSandbox {
 		if b.authorizeNetwork == nil {
 			return errorResult(bashToolName, errors.New("network access requires approval, but authorization is unavailable")), nil
 		}

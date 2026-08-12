@@ -21,8 +21,8 @@ func Run(ctx context.Context, options Options, dependencies Dependencies) error 
 		backends:    dependencies.Backends,
 	}
 	home := dependencies.Home
-	runtime.newToolset = func(cwd string, access toolAccess, authorizeNetwork tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
-		return buildToolsetWithHomeAndNetworkAuthorizer(cwd, home, access, authorizeNetwork, additional...)
+	runtime.newToolset = func(cwd string, access toolAccess, noSandbox bool, authorizeNetwork tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
+		return buildToolsetWithHomeAndNetworkAuthorizer(cwd, home, access, noSandbox, authorizeNetwork, additional...)
 	}
 	store := newSessionStore(home)
 
@@ -67,7 +67,7 @@ func resolveInitialSession(
 		return resolvedConfig{}, nil, nil, err
 	}
 	config, handle, driver, err := resolveStoredSession(ctx, store, runtime, cwd, arguments.SessionID)
-	config.skipPermissions = arguments.SkipPermissions
+	config.noSandbox = arguments.NoSandbox
 	return config, handle, driver, err
 }
 

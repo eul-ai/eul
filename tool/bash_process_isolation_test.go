@@ -10,6 +10,32 @@ import (
 	"time"
 )
 
+func TestBashWithoutSandboxCanReachHostListener(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+	result := executeJSON(t, NewBashWithoutSandbox(t.TempDir()), map[string]any{
+		"command": `printf connected > /dev/tcp/127.0.0.1/` + port,
+		"network": false,
+	})
+	if result.IsError {
+		t.Fatalf("result = %+v", result)
+	}
+
+	if err := listener.(*net.TCPListener).SetDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	connection, err := listener.Accept()
+	if err != nil {
+		t.Fatalf("command did not reach listener: %v", err)
+	}
+	connection.Close()
+}
+
 func TestBashWithoutNetworkCannotReachHostListener(t *testing.T) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {

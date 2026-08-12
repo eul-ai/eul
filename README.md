@@ -54,7 +54,7 @@ Codex service. Its third-party API behavior may change.
 ## Usage
 
 ```text
-eul [--provider <provider>] [--model <model>] [--fast-model <model>] [--balanced-model <model>] [--thinking <level>] [--cwd <directory>]
+eul [--provider <provider>] [--model <model>] [--fast-model <model>] [--balanced-model <model>] [--thinking <level>] [--cwd <directory>] [--no-sandbox]
 eul --resume[=<session-id>]
 eul login [--provider <provider>] [--device-auth]
 eul logout [--provider <provider>]
@@ -131,7 +131,8 @@ Eul can read and edit files, run Bash commands, navigate code with configured
 language servers, and delegate research to read-only subagents.
 
 Bash commands run without network access by default. Commands that need network
-access pause for one-time user approval.
+access pause for one-time user approval. `--no-sandbox` disables Bash network
+isolation and automatically allows network access.
 
 ## Subagents
 

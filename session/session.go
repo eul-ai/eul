@@ -91,8 +91,8 @@ func newSessionToolset(
 ) (sessionToolset, error) {
 	newToolset := runtime.newToolset
 	if newToolset == nil {
-		newToolset = func(cwd string, access toolAccess, authorizeNetwork tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
-			return buildToolsetWithHomeAndNetworkAuthorizer(cwd, "", access, authorizeNetwork, additional...)
+		newToolset = func(cwd string, access toolAccess, noSandbox bool, authorizeNetwork tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
+			return buildToolsetWithHomeAndNetworkAuthorizer(cwd, "", access, noSandbox, authorizeNetwork, additional...)
 		}
 	}
 	subagent := tool.NewSubagentWithThinkingLevels(func(ctx context.Context, task string, modelProfile tool.SubagentModelProfile, thinkingLevel agent.ThinkingLevel, update func(tool.SubagentProgress)) (agent.RunResult, error) {
@@ -103,6 +103,7 @@ func newSessionToolset(
 	registry, err := newToolset(
 		config.cwd,
 		fullToolAccess,
+		config.noSandbox,
 		authorizeNetwork,
 		subagent,
 		tool.NewSubagentWait(subagent),
@@ -154,7 +155,7 @@ func newAgentSessionWithCheckpointing(
 		warnings = append(warnings, usageWarning)
 	}
 	metadata := resolveSessionModelMetadata(provider, config)
-	authorizeNetwork, permissionRequests := newNetworkPermissionBroker(config.skipPermissions)
+	authorizeNetwork, permissionRequests := newNetworkPermissionBroker(config.noSandbox)
 
 	var engine *agent.Engine
 	tools, err := newSessionToolset(config, runtime, backendRuntime, metadata, authorizeNetwork, func() error {

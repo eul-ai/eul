@@ -15,7 +15,7 @@ const (
 	readOnlyToolAccess
 )
 
-type toolsetFactory func(string, toolAccess, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error)
+type toolsetFactory func(string, toolAccess, bool, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error)
 
 func finishRegistry(runErr error, registry *tool.Registry, operation string) error {
 	closeErr := registry.Close()
@@ -26,17 +26,18 @@ func finishRegistry(runErr error, registry *tool.Registry, operation string) err
 }
 
 func buildToolset(cwd string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
-	return buildToolsetWithHomeAndNetworkAuthorizer(cwd, "", access, nil, additional...)
+	return buildToolsetWithHomeAndNetworkAuthorizer(cwd, "", access, false, nil, additional...)
 }
 
 func buildToolsetWithHome(cwd, home string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
-	return buildToolsetWithHomeAndNetworkAuthorizer(cwd, home, access, nil, additional...)
+	return buildToolsetWithHomeAndNetworkAuthorizer(cwd, home, access, false, nil, additional...)
 }
 
 func buildToolsetWithHomeAndNetworkAuthorizer(
 	cwd string,
 	home string,
 	access toolAccess,
+	noSandbox bool,
 	authorizeNetwork tool.NetworkAuthorizer,
 	additional ...tool.Tool,
 ) (*tool.Registry, error) {
@@ -45,11 +46,15 @@ func buildToolsetWithHomeAndNetworkAuthorizer(
 	var err error
 	switch access {
 	case fullToolAccess:
+		bash := tool.NewBashWithNetworkAuthorizer(cwd, authorizeNetwork)
+		if noSandbox {
+			bash = tool.NewBashWithoutSandbox(cwd)
+		}
 		tools = []tool.Tool{
 			tool.NewRead(cwd),
 			tool.NewWrite(cwd),
 			tool.NewEdit(cwd),
-			tool.NewBashWithNetworkAuthorizer(cwd, authorizeNetwork),
+			bash,
 		}
 		lsp, err = lsptool.New(cwd, home)
 	case readOnlyToolAccess:

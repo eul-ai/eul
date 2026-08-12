@@ -33,6 +33,7 @@ type Bash struct {
 	workspace        workspace
 	shell            string
 	authorizeNetwork NetworkAuthorizer
+	noSandbox        bool
 	defaultTimeout   time.Duration
 	maxTimeout       time.Duration
 	waitDelay        time.Duration
@@ -49,10 +50,19 @@ func NewBash(cwd string) *Bash {
 }
 
 func NewBashWithNetworkAuthorizer(cwd string, authorizeNetwork NetworkAuthorizer) *Bash {
+	return newBash(cwd, authorizeNetwork, false)
+}
+
+func NewBashWithoutSandbox(cwd string) *Bash {
+	return newBash(cwd, nil, true)
+}
+
+func newBash(cwd string, authorizeNetwork NetworkAuthorizer, noSandbox bool) *Bash {
 	return &Bash{
 		workspace:        newWorkspace(cwd),
 		shell:            bashToolName,
 		authorizeNetwork: authorizeNetwork,
+		noSandbox:        noSandbox,
 		defaultTimeout:   defaultBashTimeout,
 		maxTimeout:       maximumBashTimeout,
 		waitDelay:        defaultWaitDelay,

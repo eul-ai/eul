@@ -22,7 +22,7 @@ func TestParseAgentArguments(t *testing.T) {
 		"--balanced-model", "gpt-5.6-terra",
 		"--thinking", "high",
 		"--cwd", "project",
-		"--skip-permissions",
+		"--no-sandbox",
 	}, runtime)
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestParseAgentArguments(t *testing.T) {
 		BalancedModelSet: true,
 		ThinkingLevel:    agent.ThinkingHigh,
 		WorkingDirectory: "project",
-		SkipPermissions:  true,
+		NoSandbox:        true,
 	}
 	if got != want {
 		t.Fatalf("arguments = %+v, want %+v", got, want)
