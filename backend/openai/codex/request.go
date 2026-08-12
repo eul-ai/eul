@@ -25,16 +25,6 @@ type createResponseRequest struct {
 	ParallelToolCalls bool               `json:"parallel_tool_calls,omitempty"`
 }
 
-type compactRequest struct {
-	Model             string             `json:"model"`
-	Instructions      string             `json:"instructions,omitempty"`
-	Input             []json.RawMessage  `json:"input"`
-	Tools             []functionTool     `json:"tools"`
-	ParallelToolCalls bool               `json:"parallel_tool_calls"`
-	Reasoning         *responseReasoning `json:"reasoning,omitempty"`
-	Text              *responseText      `json:"text,omitempty"`
-}
-
 type responseText struct {
 	Verbosity string `json:"verbosity"`
 }
@@ -100,18 +90,36 @@ func buildCreateRequest(request agent.Request, maxStateBytes int) (createRespons
 	}, newItems, nil
 }
 
-func buildCompactRequest(request agent.Request, maxStateBytes int) (compactRequest, error) {
-	createRequest, _, err := buildCreateRequest(request, maxStateBytes)
+func buildCompactRequest(request agent.Request, maxStateBytes int) (createResponseRequest, error) {
+	compactRequest, _, err := buildCreateRequest(request, maxStateBytes)
 	if err != nil {
-		return compactRequest{}, err
+		return createResponseRequest{}, err
 	}
 
-	return compactRequest{
-		Model:        createRequest.Model,
-		Instructions: createRequest.Instructions,
-		Input:        createRequest.Input,
-		Tools:        createRequest.Tools,
-	}, nil
+	trigger, _ := json.Marshal(struct {
+		Type string `json:"type"`
+	}{Type: "compaction_trigger"})
+	compactRequest.Input = append(compactRequest.Input, trigger)
+
+	return compactRequest, nil
+}
+
+func compactedStateItems(input, output []json.RawMessage) []json.RawMessage {
+	items := make([]json.RawMessage, 0, len(input)+len(output))
+	for _, raw := range input {
+		var item struct {
+			Type string `json:"type"`
+			Role string `json:"role"`
+		}
+		if json.Unmarshal(raw, &item) != nil {
+			continue
+		}
+		if item.Type == "agent_message" || item.Role == "user" || item.Role == "developer" || item.Role == "system" {
+			items = append(items, raw)
+		}
+	}
+
+	return append(items, output...)
 }
 
 func encodeInputs(inputs []agent.Input) []json.RawMessage {

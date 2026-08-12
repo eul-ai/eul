@@ -32,6 +32,41 @@ func TestBuildCreateRequest(t *testing.T) {
 	}
 }
 
+func TestBuildCompactRequest(t *testing.T) {
+	request, err := buildCompactRequest(agent.Request{
+		Model:  "model",
+		Inputs: []agent.Input{{Kind: agent.InputUser, Text: "hello"}},
+	}, defaultMaxStateBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Input) != 2 {
+		t.Fatalf("compact input count = %d, want 2", len(request.Input))
+	}
+
+	var trigger struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(request.Input[1], &trigger); err != nil || trigger.Type != "compaction_trigger" {
+		t.Fatalf("compact trigger = %s, error = %v", request.Input[1], err)
+	}
+}
+
+func TestCompactedStateItems(t *testing.T) {
+	input := []json.RawMessage{
+		json.RawMessage(`{"type":"reasoning"}`),
+		json.RawMessage(`{"type":"message","role":"assistant"}`),
+		json.RawMessage(`{"type":"message","role":"user"}`),
+		json.RawMessage(`{"type":"agent_message"}`),
+	}
+	output := []json.RawMessage{json.RawMessage(`{"type":"compaction"}`)}
+
+	items := compactedStateItems(input, output)
+	if len(items) != 3 || !strings.Contains(string(items[0]), `"role":"user"`) || !strings.Contains(string(items[1]), `"type":"agent_message"`) || !strings.Contains(string(items[2]), `"type":"compaction"`) {
+		t.Fatalf("compacted items = %s", items)
+	}
+}
+
 func TestContinuationStateVersionAndBounds(t *testing.T) {
 	for _, test := range []struct {
 		name  string
