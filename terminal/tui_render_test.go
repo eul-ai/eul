@@ -47,7 +47,7 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 	if !strings.Contains(frame, ansiColors(currentTheme.error, terminalColor{}, false)) {
 		t.Fatalf("frame does not use the xhigh thinking color: %q", frame)
 	}
-	if strings.Contains(frame, "\x1b[48;2;23;27;36m") || !strings.Contains(frame, "\x1b[49m") {
+	if strings.Contains(frame, "\x1b[48;2;23;27;36m") || strings.Contains(frame, ansiColors(currentTheme.foreground, currentTheme.editorLine, true)) || !strings.Contains(frame, "\x1b[49m") {
 		t.Fatalf("frame does not preserve the terminal background: %q", frame)
 	}
 	if !strings.HasPrefix(frame, ansiBeginSynchronizedOutput+ansiHideCursor) || !strings.HasSuffix(frame, ansiEndSynchronizedOutput) {
@@ -96,6 +96,10 @@ func TestRenderFrameShowsPermission(t *testing.T) {
 	description := input.styledLines[descriptionIndex]
 	if len(description.spans) != 3 || description.spans[0].text != "bash" || description.spans[0].style.foreground != inlineForegroundAccent || description.spans[2].style.foreground != inlineForegroundDefault {
 		t.Fatalf("permission description = %+v", description.spans)
+	}
+	detailIndex := slices.IndexFunc(input.styledLines, func(line styledLine) bool { return line.text == model.permission.detail })
+	if detailIndex < 0 || input.styledLines[detailIndex].style != (lineStyle{foreground: currentTheme.markdownCode, background: currentTheme.editorLine, paintBackground: true}) {
+		t.Fatalf("permission detail does not use the panel background: %+v", input.styledLines)
 	}
 	noticeIndex := slices.IndexFunc(input.styledLines, func(line styledLine) bool { return line.text == model.permission.notice })
 	if noticeIndex < 1 || noticeIndex+2 >= len(input.lines) || strings.TrimSpace(input.lines[noticeIndex-1]) != "" || strings.TrimSpace(input.lines[noticeIndex+1]) != "" {

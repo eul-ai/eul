@@ -189,11 +189,7 @@ func composeFrameRows(model *tuiModel, prepared renderPreparation) []styledLine 
 		}
 		rows[layout.topRuleRow-1] = topRule
 	}
-	inputStyle := lineStyle{
-		foreground:      currentTheme.foreground,
-		background:      currentTheme.editorLine,
-		paintBackground: true,
-	}
+	inputStyle := lineStyle{foreground: currentTheme.foreground}
 	for index, line := range prepared.input.lines {
 		row := styledLine{text: line, style: inputStyle}
 		if len(prepared.input.styledLines) > index {

@@ -160,7 +160,6 @@ func renderPermission(model *tuiModel, width, maximumHeight int) renderedInput {
 	mutedStyle.foreground = currentTheme.muted
 	commandStyle := panelStyle
 	commandStyle.foreground = currentTheme.markdownCode
-	commandStyle.background = currentTheme.toolPendingBackground
 
 	var descriptionSpans []inlineSpan
 	if model.permission.subject != "" {
