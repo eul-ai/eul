@@ -11,22 +11,8 @@ const baseSystemPrompt = `You are a coding agent. Use the available tools to ins
 func buildSystemPrompt(definitions []ToolDefinition, workingDirectory, projectInstructions string, skills []Skill) string {
 	var prompt strings.Builder
 	prompt.WriteString(baseSystemPrompt)
-	prompt.WriteString("\n\nAvailable tools:\n")
-
-	if len(definitions) == 0 {
-		prompt.WriteString("(none)")
-	}
-	for _, definition := range definitions {
-		prompt.WriteString("- ")
-		prompt.WriteString(definition.Name)
-		if description := strings.TrimSpace(definition.Description); description != "" {
-			prompt.WriteString(": ")
-			prompt.WriteString(description)
-		}
-		prompt.WriteByte('\n')
-	}
 	if len(definitions) > 0 {
-		prompt.WriteString("\nTool calls in the same response execute concurrently. Put dependent operations in separate responses.\n")
+		prompt.WriteString("\n\nIndependent tool calls may run concurrently; separate dependent calls.\n")
 	}
 
 	if projectInstructions != "" {

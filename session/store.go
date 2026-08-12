@@ -55,6 +55,14 @@ type sessionRecord struct {
 	Terminal         terminal.Checkpoint `json:"terminal"`
 }
 
+func (record sessionRecord) models() modelSelection {
+	return modelSelection{
+		main:     record.Model,
+		fast:     record.FastModel,
+		balanced: record.BalancedModel,
+	}
+}
+
 type sessionStore struct {
 	root string
 	now  func() time.Time
@@ -76,9 +84,7 @@ func newSessionStore(home string) *sessionStore {
 func (store *sessionStore) Create(
 	provider string,
 	cwd string,
-	model string,
-	fastModel string,
-	balancedModel string,
+	models modelSelection,
 	thinkingLevel agent.ThinkingLevel,
 	agentCheckpoint agent.Checkpoint,
 	terminalCheckpoint terminal.Checkpoint,
@@ -114,9 +120,9 @@ func (store *sessionStore) Create(
 			Status:           sessionIdle,
 			Provider:         provider,
 			WorkingDirectory: cwd,
-			Model:            model,
-			FastModel:        fastModel,
-			BalancedModel:    balancedModel,
+			Model:            models.main,
+			FastModel:        models.fast,
+			BalancedModel:    models.balanced,
 			ThinkingLevel:    thinkingLevel,
 			Description:      terminalCheckpoint.Description(),
 			Agent:            agentCheckpoint,

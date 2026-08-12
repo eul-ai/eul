@@ -14,10 +14,10 @@ func TestBuildSystemPrompt(t *testing.T) {
 		{Name: "write", Description: "Create or overwrite files"},
 	}, workingDirectory, projectInstructions, nil)
 
-	if !strings.Contains(prompt, "- read: Read file contents") || !strings.Contains(prompt, "- write: Create or overwrite files") {
-		t.Fatalf("prompt omits tools:\n%s", prompt)
+	if strings.Contains(prompt, "Available tools:") || strings.Contains(prompt, "Read file contents") || strings.Contains(prompt, "Create or overwrite files") {
+		t.Fatalf("prompt duplicates tool definitions:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "Tool calls in the same response execute concurrently") {
+	if !strings.Contains(prompt, "Independent tool calls may run concurrently; separate dependent calls.") {
 		t.Fatalf("prompt omits concurrent tool guidance:\n%s", prompt)
 	}
 	instructionPath := filepath.ToSlash(filepath.Join(workingDirectory, "AGENTS.md"))
@@ -33,8 +33,8 @@ func TestBuildSystemPrompt(t *testing.T) {
 func TestBuildSystemPromptWithNoToolsOrWorkingDirectory(t *testing.T) {
 	prompt := buildSystemPrompt(nil, "", "", []Skill{{Name: "review", Description: "Review code", FilePath: "/skills/review/SKILL.md"}})
 
-	if !strings.Contains(prompt, "Available tools:\n(none)") {
-		t.Fatalf("prompt does not identify an empty toolset:\n%s", prompt)
+	if strings.Contains(prompt, "concurrently") {
+		t.Fatalf("prompt includes tool guidance without tools:\n%s", prompt)
 	}
 	if strings.Contains(prompt, "Current working directory:") {
 		t.Fatalf("prompt unexpectedly identifies a working directory:\n%s", prompt)

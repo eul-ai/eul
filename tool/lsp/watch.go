@@ -163,7 +163,7 @@ func (m *lspWatchManager) run() {
 				return
 			}
 			if errors.Is(watchErr, fsnotify.ErrEventOverflow) {
-				if err := state.flushReconciled(); err != nil {
+				if err := state.flushReconciled(m.ctx); err != nil {
 					state.fail(err)
 				}
 				continue
@@ -171,7 +171,7 @@ func (m *lspWatchManager) run() {
 			state.fail(fmt.Errorf("file watcher: %w", watchErr))
 		case <-timerChannel:
 			timerChannel = nil
-			if err := state.flushPending(); err != nil {
+			if err := state.flushPending(m.ctx); err != nil {
 				state.fail(err)
 			}
 		}
@@ -186,8 +186,8 @@ func (m *lspWatchManager) register(ctx context.Context, registrations []protocol
 	if len(parsed) == 0 {
 		return nil
 	}
-	return m.execute(ctx, func(state *lspWatchState) error {
-		return state.register(parsed)
+	return m.execute(ctx, func(ctx context.Context, state *lspWatchState) error {
+		return state.register(ctx, parsed)
 	})
 }
 
@@ -201,8 +201,8 @@ func (m *lspWatchManager) unregister(ctx context.Context, unregisterations []pro
 	if len(ids) == 0 {
 		return nil
 	}
-	return m.execute(ctx, func(state *lspWatchState) error {
-		return state.unregister(ids)
+	return m.execute(ctx, func(ctx context.Context, state *lspWatchState) error {
+		return state.unregister(ctx, ids)
 	})
 }
 
@@ -218,17 +218,23 @@ func (m *lspWatchManager) reportCommitted(ctx context.Context, paths []string) e
 		}
 		resolved[index] = filepath.Clean(absolute)
 	}
-	return m.execute(ctx, func(state *lspWatchState) error {
-		return state.reportCommitted(resolved)
+	return m.execute(ctx, func(ctx context.Context, state *lspWatchState) error {
+		return state.reportCommitted(ctx, resolved)
 	})
 }
 
 func (m *lspWatchManager) check(ctx context.Context) error {
-	return m.execute(ctx, func(state *lspWatchState) error {
-		if state.failure == nil {
-			state.fail(state.flushPending())
+	return m.execute(ctx, func(ctx context.Context, state *lspWatchState) error {
+		if state.failure != nil {
+			return state.failure
 		}
-		return state.failure
+		if err := state.flushPending(ctx); err != nil {
+			if !lspWatchContextError(ctx, err) {
+				state.fail(err)
+			}
+			return err
+		}
+		return nil
 	})
 }
 
@@ -252,9 +258,9 @@ func (m *lspWatchManager) registrationCount(ctx context.Context) (int, error) {
 	}
 }
 
-func (m *lspWatchManager) execute(ctx context.Context, operation func(*lspWatchState) error) error {
+func (m *lspWatchManager) execute(ctx context.Context, operation func(context.Context, *lspWatchState) error) error {
 	result := make(chan error, 1)
-	command := func(state *lspWatchState) { result <- operation(state) }
+	command := func(state *lspWatchState) { result <- operation(ctx, state) }
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -263,14 +269,7 @@ func (m *lspWatchManager) execute(ctx context.Context, operation func(*lspWatchS
 	case m.commands <- command:
 	}
 
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-m.done:
-		return errors.New("language server file watcher is closed")
-	case err := <-result:
-		return err
-	}
+	return <-result
 }
 
 func (m *lspWatchManager) close() error {
@@ -358,6 +357,10 @@ func (m *lspWatchManager) parsePattern(watcher protocol.FileSystemWatcher) (lspW
 	if err != nil {
 		return lspWatchPattern{}, err
 	}
+	workspaceRoot := filepath.Clean(m.folder.URI.FsPath())
+	if !lspPathWithin(root, workspaceRoot) {
+		return lspWatchPattern{}, fmt.Errorf("glob root %s is outside workspace %s", filepath.ToSlash(root), filepath.ToSlash(workspaceRoot))
+	}
 	kind := watcher.Kind
 	if kind == 0 {
 		kind = protocol.WatchKindCreate | protocol.WatchKindChange | protocol.WatchKindDelete
@@ -389,7 +392,7 @@ func lspGlobRoot(glob string) (string, error) {
 	return filepath.Clean(root), nil
 }
 
-func (state *lspWatchState) register(registrations []lspWatchRegistration) error {
+func (state *lspWatchState) register(ctx context.Context, registrations []lspWatchRegistration) error {
 	if state.failure != nil {
 		return state.failure
 	}
@@ -402,18 +405,21 @@ func (state *lspWatchState) register(registrations []lspWatchRegistration) error
 	for _, registration := range registrations {
 		state.registrations[registration.id] = registration.patterns
 	}
-	if err := state.reconcile(); err != nil {
+	if err := state.reconcile(ctx); err != nil {
 		for _, registration := range registrations {
 			delete(state.registrations, registration.id)
 		}
-		_ = state.reconcile()
-		state.fail(err)
-		return err
+		rollbackErr := state.reconcile(state.manager.ctx)
+		if !lspWatchContextError(ctx, err) {
+			state.fail(err)
+		}
+		state.fail(rollbackErr)
+		return errors.Join(err, rollbackErr)
 	}
 	return nil
 }
 
-func (state *lspWatchState) unregister(ids []string) error {
+func (state *lspWatchState) unregister(ctx context.Context, ids []string) error {
 	removed := make(map[string][]lspWatchPattern)
 	for _, id := range ids {
 		if patterns, exists := state.registrations[id]; exists {
@@ -421,16 +427,19 @@ func (state *lspWatchState) unregister(ids []string) error {
 			delete(state.registrations, id)
 		}
 	}
-	if err := state.reconcile(); err != nil {
+	if err := state.reconcile(ctx); err != nil {
 		maps.Copy(state.registrations, removed)
-		_ = state.reconcile()
-		state.fail(err)
-		return err
+		rollbackErr := state.reconcile(state.manager.ctx)
+		if !lspWatchContextError(ctx, err) {
+			state.fail(err)
+		}
+		state.fail(rollbackErr)
+		return errors.Join(err, rollbackErr)
 	}
 	return nil
 }
 
-func (state *lspWatchState) reportCommitted(paths []string) error {
+func (state *lspWatchState) reportCommitted(ctx context.Context, paths []string) error {
 	if state.failure != nil {
 		return state.failure
 	}
@@ -439,6 +448,9 @@ func (state *lspWatchState) reportCommitted(paths []string) error {
 	notified := make(map[string]struct{}, len(paths))
 	events := make([]protocol.FileEvent, 0, len(paths))
 	for _, name := range paths {
+		if err := state.contextError(ctx); err != nil {
+			return err
+		}
 		info, err := os.Stat(name)
 		if err != nil {
 			return err
@@ -453,8 +465,10 @@ func (state *lspWatchState) reportCommitted(paths []string) error {
 			notified[name] = struct{}{}
 		}
 	}
-	if err := state.notify(events); err != nil {
-		state.fail(err)
+	if err := state.notify(ctx, events); err != nil {
+		if !lspWatchContextError(ctx, err) {
+			state.fail(err)
+		}
 		return err
 	}
 
@@ -471,16 +485,29 @@ func (state *lspWatchState) reportCommitted(paths []string) error {
 	return nil
 }
 
-func (state *lspWatchState) flushPending() error {
+func (state *lspWatchState) flushPending(ctx context.Context) (flushErr error) {
 	if len(state.pending) == 0 {
-		return nil
+		return state.contextError(ctx)
 	}
 	pending := state.pending
 	state.pending = make(map[string]struct{})
+	knownBefore := maps.Clone(state.known)
+	suppressedBefore := maps.Clone(state.suppressed)
+	defer func() {
+		if flushErr == nil {
+			return
+		}
+		maps.Copy(state.pending, pending)
+		state.known = knownBefore
+		state.suppressed = suppressedBefore
+	}()
 
 	oldPending := make(map[string]lspWatchedPathState, len(pending))
 	newPending := make(map[string]lspWatchedPathState, len(pending))
 	for name := range pending {
+		if err := state.contextError(ctx); err != nil {
+			return err
+		}
 		oldState, existed := state.known[name]
 		if existed {
 			oldPending[name] = oldState
@@ -489,12 +516,12 @@ func (state *lspWatchState) flushPending() error {
 		switch {
 		case err == nil:
 			if info.IsDir() || existed && oldState.mode.IsDir() {
-				return state.flushReconciledFrom(maps.Clone(state.known), pending)
+				return state.flushReconciledFrom(ctx, maps.Clone(state.known), pending)
 			}
 			newPending[name] = lspPathState(info)
 		case errors.Is(err, os.ErrNotExist):
 			if existed && oldState.mode.IsDir() {
-				return state.flushReconciledFrom(maps.Clone(state.known), pending)
+				return state.flushReconciledFrom(ctx, maps.Clone(state.known), pending)
 			}
 		default:
 			return err
@@ -507,24 +534,35 @@ func (state *lspWatchState) flushPending() error {
 			delete(state.known, name)
 		}
 	}
-	return state.notifyChanges(oldPending, newPending, pending)
+	return state.notifyChanges(ctx, oldPending, newPending, pending)
 }
 
-func (state *lspWatchState) flushReconciled() error {
+func (state *lspWatchState) flushReconciled(ctx context.Context) (flushErr error) {
 	oldKnown := maps.Clone(state.known)
 	pending := state.pending
 	state.pending = make(map[string]struct{})
-	return state.flushReconciledFrom(oldKnown, pending)
+	suppressedBefore := maps.Clone(state.suppressed)
+	defer func() {
+		if flushErr == nil {
+			return
+		}
+		maps.Copy(state.pending, pending)
+		state.known = oldKnown
+		state.suppressed = suppressedBefore
+	}()
+	return state.flushReconciledFrom(ctx, oldKnown, pending)
 }
 
-func (state *lspWatchState) flushReconciledFrom(oldKnown map[string]lspWatchedPathState, pending map[string]struct{}) error {
-	if err := state.reconcile(); err != nil {
-		return err
+func (state *lspWatchState) flushReconciledFrom(ctx context.Context, oldKnown map[string]lspWatchedPathState, pending map[string]struct{}) error {
+	if err := state.reconcile(ctx); err != nil {
+		rollbackErr := state.reconcile(state.manager.ctx)
+		state.fail(rollbackErr)
+		return errors.Join(err, rollbackErr)
 	}
-	return state.notifyChanges(oldKnown, state.known, pending)
+	return state.notifyChanges(ctx, oldKnown, state.known, pending)
 }
 
-func (state *lspWatchState) notifyChanges(oldKnown, newKnown map[string]lspWatchedPathState, pending map[string]struct{}) error {
+func (state *lspWatchState) notifyChanges(ctx context.Context, oldKnown, newKnown map[string]lspWatchedPathState, pending map[string]struct{}) error {
 	eventsByPath := make(map[string]protocol.FileChangeType)
 	for name, oldState := range oldKnown {
 		newState, exists := newKnown[name]
@@ -568,14 +606,21 @@ func (state *lspWatchState) notifyChanges(oldKnown, newKnown map[string]lspWatch
 			events = append(events, protocol.FileEvent{URI: uri.File(name), Type: changeType})
 		}
 	}
-	return state.notify(events)
+	return state.notify(ctx, events)
 }
 
-func (state *lspWatchState) reconcile() error {
+func (state *lspWatchState) reconcile(ctx context.Context) error {
+	if err := state.contextError(ctx); err != nil {
+		return err
+	}
+
 	roots := state.roots()
 	directories := make(map[string]struct{})
 	known := make(map[string]lspWatchedPathState)
 	for _, root := range roots {
+		if err := state.contextError(ctx); err != nil {
+			return err
+		}
 		watchRoot, recursive, err := existingLSPWatchRoot(root)
 		if err != nil {
 			return err
@@ -590,7 +635,7 @@ func (state *lspWatchState) reconcile() error {
 			continue
 		}
 		err = filepath.WalkDir(watchRoot, func(name string, entry fs.DirEntry, walkErr error) error {
-			if err := state.manager.ctx.Err(); err != nil {
+			if err := state.contextError(ctx); err != nil {
 				return err
 			}
 			if walkErr != nil {
@@ -620,9 +665,18 @@ func (state *lspWatchState) reconcile() error {
 
 	active := maps.Clone(state.watchedDirs)
 	added := make([]string, 0)
+	directoryNames := make([]string, 0, len(directories))
 	for directory := range directories {
+		directoryNames = append(directoryNames, directory)
+	}
+	sort.Strings(directoryNames)
+	for _, directory := range directoryNames {
 		if _, exists := active[directory]; exists {
 			continue
+		}
+		if err := state.contextError(ctx); err != nil {
+			state.watchedDirs = active
+			return err
 		}
 		if err := state.manager.native.Add(directory); err != nil {
 			for _, addedDirectory := range added {
@@ -635,9 +689,18 @@ func (state *lspWatchState) reconcile() error {
 		active[directory] = struct{}{}
 		added = append(added, directory)
 	}
+	activeNames := make([]string, 0, len(active))
 	for directory := range active {
+		activeNames = append(activeNames, directory)
+	}
+	sort.Strings(activeNames)
+	for _, directory := range activeNames {
 		if _, needed := directories[directory]; needed {
 			continue
+		}
+		if err := state.contextError(ctx); err != nil {
+			state.watchedDirs = active
+			return err
 		}
 		if err := state.manager.native.Remove(directory); err != nil && !errors.Is(err, fsnotify.ErrNonExistentWatch) && !errors.Is(err, fsnotify.ErrClosed) {
 			state.watchedDirs = active
@@ -645,7 +708,7 @@ func (state *lspWatchState) reconcile() error {
 		}
 		delete(active, directory)
 	}
-	state.watchedDirs = directories
+	state.watchedDirs = active
 	state.known = known
 	return nil
 }
@@ -696,9 +759,9 @@ func (state *lspWatchState) matches(name string, changeType protocol.FileChangeT
 	return false
 }
 
-func (state *lspWatchState) notify(events []protocol.FileEvent) error {
+func (state *lspWatchState) notify(ctx context.Context, events []protocol.FileEvent) error {
 	if len(events) == 0 {
-		return nil
+		return state.contextError(ctx)
 	}
 	sort.Slice(events, func(left, right int) bool {
 		if events[left].URI != events[right].URI {
@@ -706,12 +769,27 @@ func (state *lspWatchState) notify(events []protocol.FileEvent) error {
 		}
 		return events[left].Type < events[right].Type
 	})
-	ctx, cancel := context.WithTimeout(state.manager.ctx, lspWatchNotifyTimeout)
-	defer cancel()
-	if err := state.manager.notify(ctx, &protocol.DidChangeWatchedFilesParams{Changes: events}); err != nil {
+	notifyCtx, cancel := context.WithTimeout(ctx, lspWatchNotifyTimeout)
+	stop := context.AfterFunc(state.manager.ctx, cancel)
+	defer func() {
+		stop()
+		cancel()
+	}()
+	if err := state.manager.notify(notifyCtx, &protocol.DidChangeWatchedFilesParams{Changes: events}); err != nil {
 		return fmt.Errorf("notify language server of watched files: %w", err)
 	}
 	return nil
+}
+
+func (state *lspWatchState) contextError(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return state.manager.ctx.Err()
+}
+
+func lspWatchContextError(ctx context.Context, err error) bool {
+	return ctx.Err() != nil && errors.Is(err, ctx.Err())
 }
 
 func (state *lspWatchState) fail(err error) {

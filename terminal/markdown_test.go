@@ -20,6 +20,46 @@ func TestParseInlineMarkdown(t *testing.T) {
 	}
 }
 
+func TestParseInlineMarkdownLinks(t *testing.T) {
+	got := parseInlineMarkdown("Read [the **docs**](https://example.com/docs) or visit https://example.com.")
+	want := []inlineSpan{
+		{text: "Read ", style: inlineStyle{}},
+		{text: "the ", style: inlineStyle{link: "https://example.com/docs"}},
+		{text: "docs", style: inlineStyle{bold: true, link: "https://example.com/docs"}},
+		{text: " or visit ", style: inlineStyle{}},
+		{text: "https://example.com", style: inlineStyle{link: "https://example.com"}},
+		{text: ".", style: inlineStyle{}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("spans = %+v, want %+v", got, want)
+	}
+}
+
+func TestParseInlineMarkdownLinkDestinations(t *testing.T) {
+	tests := []struct {
+		input string
+		want  []inlineSpan
+	}{
+		{
+			input: "[https://inner.example](https://outer.example)",
+			want:  []inlineSpan{{text: "https://inner.example", style: inlineStyle{link: "https://outer.example"}}},
+		},
+		{
+			input: "https://example.com/foo(bar)",
+			want:  []inlineSpan{{text: "https://example.com/foo(bar)", style: inlineStyle{link: "https://example.com/foo(bar)"}}},
+		},
+		{
+			input: "<mailto:user@example.com>",
+			want:  []inlineSpan{{text: "mailto:user@example.com", style: inlineStyle{link: "mailto:user@example.com"}}},
+		},
+	}
+	for _, test := range tests {
+		if got := parseInlineMarkdown(test.input); !reflect.DeepEqual(got, test.want) {
+			t.Errorf("parseInlineMarkdown(%q) = %+v, want %+v", test.input, got, test.want)
+		}
+	}
+}
+
 func TestParseInlineMarkdownCodeSpans(t *testing.T) {
 	got := parseInlineMarkdown("Use `**name**` and ``a`b``")
 	want := []inlineSpan{

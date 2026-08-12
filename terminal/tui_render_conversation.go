@@ -41,40 +41,47 @@ func modelConversationLines(model *tuiModel, width int) []styledLine {
 func conversationLines(blocks []conversationBlock, width int) []styledLine {
 	var lines []styledLine
 	for index, block := range blocks {
-		style := blockPresentation(block.kind)
-		text := block.text
-		if block.kind == blockReasoning {
-			text = strings.Trim(text, "\n")
-		}
-		if block.kind == blockUser && block.imageCount > 0 {
-			label := "[image attached]"
-			if block.imageCount > 1 {
-				label = fmt.Sprintf("[%d images attached]", block.imageCount)
-			}
-			text = label + "\n" + text
-		}
-
-		padding := conversationPadding
-		contentWidth := width - padding*2
-		if contentWidth < 1 {
-			contentWidth = 1
-		}
-		switch {
-		case isToolBlock(block.kind):
-			lines = append(lines, styledLine{style: style, padding: padding})
-			lines = append(lines, toolConversationLines(block, contentWidth, style, padding)...)
-			lines = append(lines, styledLine{style: style, padding: padding})
-		case isInlineMarkdownBlock(block.kind):
-			for _, line := range wrapInlineMarkdown(text, contentWidth) {
-				lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding})
-			}
-		default:
-			for _, line := range wrapText(text, contentWidth) {
-				lines = append(lines, styledLine{text: line, style: style, padding: padding})
-			}
-		}
+		lines = append(lines, conversationBlockLines(block, width)...)
 		if index < len(blocks)-1 {
 			lines = append(lines, styledLine{})
+		}
+	}
+	return lines
+}
+
+func conversationBlockLines(block conversationBlock, width int) []styledLine {
+	style := blockPresentation(block.kind)
+	text := block.text
+	if block.kind == blockReasoning {
+		text = strings.Trim(text, "\n")
+	}
+	if block.kind == blockUser && block.imageCount > 0 {
+		label := "[image attached]"
+		if block.imageCount > 1 {
+			label = fmt.Sprintf("[%d images attached]", block.imageCount)
+		}
+		text = label + "\n" + text
+	}
+
+	padding := conversationPadding
+	contentWidth := width - padding*2
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+
+	var lines []styledLine
+	switch {
+	case isToolBlock(block.kind):
+		lines = append(lines, styledLine{style: style, padding: padding})
+		lines = append(lines, toolConversationLines(block, contentWidth, style, padding)...)
+		lines = append(lines, styledLine{style: style, padding: padding})
+	case isInlineMarkdownBlock(block.kind):
+		for _, line := range wrapInlineMarkdown(text, contentWidth) {
+			lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding})
+		}
+	default:
+		for _, line := range wrapText(text, contentWidth) {
+			lines = append(lines, styledLine{text: line, style: style, padding: padding})
 		}
 	}
 	return lines

@@ -85,6 +85,9 @@ func (checkpoint Checkpoint) Description() string {
 			continue
 		}
 		prompt := strings.TrimSpace(block.Text)
+		if prompt == "" && block.ImageCount > 0 {
+			return "Image attachment"
+		}
 		if prompt == "" {
 			continue
 		}

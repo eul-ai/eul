@@ -41,14 +41,13 @@ type RunResult struct {
 
 type Engine struct {
 	mu            sync.Mutex
+	thinkingMu    sync.RWMutex
 	provider      Provider
 	tools         Toolbox
 	model         string
 	thinkingLevel ThinkingLevel
 	instructions  string
-	state         []byte
-	contextUsage  Usage
-	pendingInputs []Input
+	conversation  conversationState
 	continuations continuationArbiter
 	skills        map[string]Skill
 	checkpointing bool
@@ -105,11 +104,7 @@ func (e *Engine) run(ctx context.Context, userText string, images []Image, sink 
 	e.beginContinuations()
 	defer e.endContinuations()
 
-	current := continuation{
-		state:  e.state,
-		usage:  e.contextUsage,
-		inputs: append([]Input(nil), e.pendingInputs...),
-	}
+	current := e.conversation.clone()
 	current.inputs = append(current.inputs, Input{Kind: InputUser, Text: userText, Images: cloneImages(images)})
 	var result RunResult
 	started := time.Now()
@@ -122,42 +117,21 @@ func (e *Engine) run(ctx context.Context, userText string, images []Image, sink 
 			return RunResult{}, err
 		}
 
-		finalizationReason, finalizing := policy.shouldBegin(started, normalGenerations)
-		if finalizing && policy.OnBegin != nil {
-			policy.OnBegin(finalizationReason)
-		}
-
-		request := e.request(current)
-		if finalizing {
-			request.Tools = nil
-			request.Instructions = appendFinalizationPrompt(request.Instructions, policy.Prompt)
-		}
-		var compactedUsage Usage
-		var err error
-		request, current, compactedUsage, err = e.compact(ctx, sink, request, current)
-		addUsage(&result.Usage, compactedUsage)
-		if err != nil {
+		prepared := e.prepareGeneration(ctx, sink, current, policy, started, normalGenerations)
+		current = prepared.current
+		addUsage(&result.Usage, prepared.compactedUsage)
+		if prepared.err != nil {
 			current.checkpoint(e)
-			if finalizing {
+			if prepared.finalizing {
 				result.Text = latestText
-				return result, err
+				return result, prepared.err
 			}
-			return RunResult{}, err
-		}
-		if !finalizing {
-			finalizationReason, finalizing = policy.shouldBegin(started, normalGenerations)
-			if finalizing {
-				if policy.OnBegin != nil {
-					policy.OnBegin(finalizationReason)
-				}
-				request.Tools = nil
-				request.Instructions = appendFinalizationPrompt(request.Instructions, policy.Prompt)
-			}
+			return RunResult{}, prepared.err
 		}
 
 		generationSink := sink
 		var finalText strings.Builder
-		if finalizing {
+		if prepared.finalizing {
 			generationSink = func(event Event) error {
 				if event.Kind == EventAssistantText {
 					finalText.WriteString(event.Text)
@@ -166,50 +140,56 @@ func (e *Engine) run(ctx context.Context, userText string, images []Image, sink 
 			}
 		}
 
-		response, toolEvents, err := e.generateResponse(ctx, request, generationSink)
-		if err != nil {
-			var compacted bool
-			request, current, compactedUsage, compacted, err = e.compactAfterError(ctx, sink, request, current, err)
-			addUsage(&result.Usage, compactedUsage)
-			if err == nil && compacted {
-				response, toolEvents, err = e.generateResponse(ctx, request, generationSink)
-			}
-		}
-		if err != nil {
+		generated := e.generateWithRecovery(ctx, sink, generationSink, prepared.request, current)
+		current = generated.current
+		addUsage(&result.Usage, generated.compactedUsage)
+		if generated.err != nil {
 			current.checkpoint(e)
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return RunResult{}, ctxErr
 			}
-			if finalizing {
+			if prepared.finalizing {
 				result.Text = bestFinalizationText(finalText.String(), latestText)
-				return result, err
+				return result, generated.err
 			}
-			return RunResult{}, err
+			return RunResult{}, generated.err
 		}
 
-		responseContinuation := continuation{state: response.State, usage: response.Usage}
+		response := generated.response
+		toolEvents := generated.toolEvents
+		responseContinuation := conversationState{state: response.State, usage: response.Usage}
 		addUsage(&result.Usage, response.Usage)
-		if !finalizing {
+		if !prepared.finalizing {
 			normalGenerations++
 			if strings.TrimSpace(response.Text) != "" {
 				latestText = response.Text
 			}
+		}
+
+		if prepared.finalizing && len(response.ToolCalls) > 0 {
+			result.Text = bestFinalizationText(response.Text, finalText.String(), latestText)
+			protocolErr := errors.New("agent: provider returned tool calls during finalization")
+			if err := toolEvents.closeRemaining(protocolErr); err != nil {
+				current.checkpoint(e)
+				return result, err
+			}
+			current.checkpoint(e)
+			return result, protocolErr
 		}
 		if err := emit(sink, Event{Kind: EventContextUsage, Usage: response.Usage}); err != nil {
 			responseContinuation.inputs = unexecutedToolInputs(response.ToolCalls, err)
 			responseContinuation.checkpoint(e)
 			return RunResult{}, err
 		}
-		if finalizing {
-			if err := toolEvents.closeRemaining(errors.New("tools are disabled during finalization")); err != nil {
-				return RunResult{}, err
-			}
-			if len(response.ToolCalls) == 0 {
-				if err := e.commitCheckpoint(responseContinuation, sink); err != nil {
-					return RunResult{}, err
-				}
-			}
+		if prepared.finalizing {
 			result.Text = bestFinalizationText(response.Text, finalText.String(), latestText)
+			if err := toolEvents.closeRemaining(errors.New("tools are disabled during finalization")); err != nil {
+				current.checkpoint(e)
+				return result, err
+			}
+			if err := e.commitCheckpoint(responseContinuation, sink); err != nil {
+				return result, err
+			}
 			return result, nil
 		}
 		if err := toolEvents.reconcileFinal(response.ToolCalls); err != nil {
@@ -257,6 +237,89 @@ func (e *Engine) run(ctx context.Context, userText string, images []Image, sink 
 	}
 }
 
+type generationPreparation struct {
+	request        Request
+	current        conversationState
+	compactedUsage Usage
+	finalizing     bool
+	err            error
+}
+
+func (e *Engine) prepareGeneration(
+	ctx context.Context,
+	sink EventSink,
+	current conversationState,
+	policy FinalizationPolicy,
+	started time.Time,
+	normalGenerations int,
+) generationPreparation {
+	finalizationReason, finalizing := policy.shouldBegin(started, normalGenerations)
+	if finalizing && policy.OnBegin != nil {
+		policy.OnBegin(finalizationReason)
+	}
+
+	request := e.request(current)
+	if finalizing {
+		request.Tools = nil
+		request.Instructions = appendFinalizationPrompt(request.Instructions, policy.Prompt)
+	}
+	request, current, compactedUsage, err := e.compact(ctx, sink, request, current)
+	prepared := generationPreparation{
+		request:        request,
+		current:        current,
+		compactedUsage: compactedUsage,
+		finalizing:     finalizing,
+		err:            err,
+	}
+	if err != nil || finalizing {
+		return prepared
+	}
+
+	finalizationReason, prepared.finalizing = policy.shouldBegin(started, normalGenerations)
+	if !prepared.finalizing {
+		return prepared
+	}
+	if policy.OnBegin != nil {
+		policy.OnBegin(finalizationReason)
+	}
+	prepared.request.Tools = nil
+	prepared.request.Instructions = appendFinalizationPrompt(prepared.request.Instructions, policy.Prompt)
+	return prepared
+}
+
+type generationOutcome struct {
+	response       Response
+	toolEvents     *toolEventTracker
+	current        conversationState
+	compactedUsage Usage
+	err            error
+}
+
+func (e *Engine) generateWithRecovery(
+	ctx context.Context,
+	sink EventSink,
+	generationSink EventSink,
+	request Request,
+	current conversationState,
+) generationOutcome {
+	response, toolEvents, observed, err := e.generateResponse(ctx, request, generationSink)
+	outcome := generationOutcome{response: response, toolEvents: toolEvents, current: current, err: err}
+
+	var generationErr *providerGenerationError
+	if err == nil || observed || ctx.Err() != nil || !errors.As(err, &generationErr) {
+		return outcome
+	}
+
+	request, current, compactedUsage, compacted, err := e.compactAfterError(ctx, sink, request, current, err)
+	outcome.current = current
+	outcome.compactedUsage = compactedUsage
+	outcome.err = err
+	if err == nil && compacted {
+		outcome.response, outcome.toolEvents, _, outcome.err = e.generateResponse(ctx, request, generationSink)
+	}
+	return outcome
+}
+
 func (policy FinalizationPolicy) shouldBegin(started time.Time, generations int) (FinalizationReason, bool) {
 	if policy.AfterDuration > 0 && time.Since(started) >= policy.AfterDuration {
 		return FinalizationReasonDuration, true
@@ -284,10 +347,10 @@ func bestFinalizationText(values ...string) string {
 	return ""
 }
 
-func (e *Engine) request(current continuation) Request {
+func (e *Engine) request(current conversationState) Request {
 	return Request{
 		Model:         e.model,
-		ThinkingLevel: e.thinkingLevel,
+		ThinkingLevel: e.currentThinkingLevel(),
 		Instructions:  e.instructions,
 		Inputs:        current.inputs,
 		Tools:         e.tools.Definitions(),
@@ -295,7 +358,14 @@ func (e *Engine) request(current continuation) Request {
 	}
 }
 
-func (e *Engine) generateResponse(ctx context.Context, request Request, sink EventSink) (Response, *toolEventTracker, error) {
+type providerGenerationError struct {
+	err error
+}
+
+func (e *providerGenerationError) Error() string { return e.err.Error() }
+func (e *providerGenerationError) Unwrap() error { return e.err }
+
+func (e *Engine) generateResponse(ctx context.Context, request Request, sink EventSink) (Response, *toolEventTracker, bool, error) {
 	retryPolicy, canRetry := e.provider.(GenerationRetryPolicy)
 	for failedAttempts := 1; ; failedAttempts++ {
 		toolEvents := newToolEventTracker(e.tools, sink)
@@ -309,31 +379,36 @@ func (e *Engine) generateResponse(ctx context.Context, request Request, sink Eve
 			ToolCall: toolEvents.observeSnapshot,
 		})
 		if err == nil {
-			return response, toolEvents, nil
+			return response, toolEvents, toolEvents.sawObserverEvent(), nil
 		}
 
+		observed := toolEvents.sawObserverEvent()
 		closeErr := toolEvents.closeRemaining(err)
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return Response{}, nil, ctxErr
+			return Response{}, nil, observed, ctxErr
 		}
 		if closeErr != nil {
-			return Response{}, nil, closeErr
+			return Response{}, nil, observed, closeErr
 		}
 		if !canRetry {
-			return Response{}, nil, fmt.Errorf("agent: generate response: %w", err)
+			return Response{}, nil, observed, newProviderGenerationError(err)
 		}
 
 		delay, retry := retryPolicy.RetryGeneration(err, failedAttempts)
 		if !retry {
-			return Response{}, nil, fmt.Errorf("agent: generate response: %w", err)
+			return Response{}, nil, false, newProviderGenerationError(err)
 		}
 		if err := emit(sink, Event{Kind: EventGenerationRetry, Attempt: failedAttempts + 1}); err != nil {
-			return Response{}, nil, err
+			return Response{}, nil, false, err
 		}
 		if err := waitForRetry(ctx, delay); err != nil {
-			return Response{}, nil, err
+			return Response{}, nil, false, err
 		}
 	}
+}
+
+func newProviderGenerationError(err error) error {
+	return &providerGenerationError{err: fmt.Errorf("agent: generate response: %w", err)}
 }
 
 func waitForRetry(ctx context.Context, delay time.Duration) error {
@@ -354,7 +429,7 @@ func waitForRetry(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-func (e *Engine) compact(ctx context.Context, sink EventSink, request Request, current continuation) (Request, continuation, Usage, error) {
+func (e *Engine) compact(ctx context.Context, sink EventSink, request Request, current conversationState) (Request, conversationState, Usage, error) {
 	compactor, canCompact := e.provider.(Compactor)
 	if !canCompact || !compactor.ShouldCompact(request, current.usage) {
 		return request, current, Usage{}, nil
@@ -363,7 +438,7 @@ func (e *Engine) compact(ctx context.Context, sink EventSink, request Request, c
 	return e.compactRequest(ctx, sink, compactor, request, current)
 }
 
-func (e *Engine) compactAfterError(ctx context.Context, sink EventSink, request Request, current continuation, generationErr error) (Request, continuation, Usage, bool, error) {
+func (e *Engine) compactAfterError(ctx context.Context, sink EventSink, request Request, current conversationState, generationErr error) (Request, conversationState, Usage, bool, error) {
 	compactor, canCompact := e.provider.(Compactor)
 	policy, hasPolicy := e.provider.(CompactionErrorPolicy)
 	if !canCompact || !hasPolicy || !policy.ShouldCompactAfterError(request, generationErr) {
@@ -374,7 +449,7 @@ func (e *Engine) compactAfterError(ctx context.Context, sink EventSink, request 
 	return request, current, usage, true, err
 }
 
-func (e *Engine) compactRequest(ctx context.Context, sink EventSink, compactor Compactor, request Request, current continuation) (Request, continuation, Usage, error) {
+func (e *Engine) compactRequest(ctx context.Context, sink EventSink, compactor Compactor, request Request, current conversationState) (Request, conversationState, Usage, error) {
 	if err := emit(sink, Event{Kind: EventCompactionStart}); err != nil {
 		return request, current, Usage{}, err
 	}
@@ -390,7 +465,7 @@ func (e *Engine) compactRequest(ctx context.Context, sink EventSink, compactor C
 		return request, current, Usage{}, errors.New("agent: compact context: provider returned empty state")
 	}
 
-	current = continuation{state: compacted.State}
+	current = conversationState{state: compacted.State}
 	request.State = current.state
 	request.Inputs = nil
 	if err := emit(sink, Event{Kind: EventCompactionEnd, Usage: compacted.Usage}); err != nil {
@@ -475,16 +550,25 @@ func (e *Engine) executeToolRound(ctx context.Context, calls []ToolCall, toolEve
 	return inputs, roundErr
 }
 
-type continuation struct {
+type conversationState struct {
 	state  []byte
 	usage  Usage
 	inputs []Input
 }
 
-func (current continuation) checkpoint(engine *Engine) {
-	engine.state = append([]byte(nil), current.state...)
-	engine.contextUsage = current.usage
-	engine.pendingInputs = append([]Input(nil), current.inputs...)
+func (current conversationState) clone() conversationState {
+	current.state = append([]byte(nil), current.state...)
+	current.inputs = append([]Input(nil), current.inputs...)
+	for index := range current.inputs {
+		if current.inputs[index].Images != nil {
+			current.inputs[index].Images = cloneImages(current.inputs[index].Images.Items)
+		}
+	}
+	return current
+}
+
+func (current conversationState) checkpoint(engine *Engine) {
+	engine.conversation = current.clone()
 }
 
 func (e *Engine) Compact(ctx context.Context, sink EventSink) error {
@@ -502,11 +586,7 @@ func (e *Engine) Compact(ctx context.Context, sink EventSink) error {
 		return errors.New("agent: context compaction is unavailable")
 	}
 
-	current := continuation{
-		state:  e.state,
-		usage:  e.contextUsage,
-		inputs: append([]Input(nil), e.pendingInputs...),
-	}
+	current := e.conversation.clone()
 	if len(current.state) == 0 && len(current.inputs) == 0 {
 		return errors.New("agent: no context to compact")
 	}
@@ -517,16 +597,22 @@ func (e *Engine) Compact(ctx context.Context, sink EventSink) error {
 }
 
 func (e *Engine) SetThinkingLevel(level ThinkingLevel) error {
-	if !e.mu.TryLock() {
-		return errEngineBusy
-	}
-	defer e.mu.Unlock()
-
 	if !level.Valid() {
 		return errors.New("agent: invalid thinking level")
 	}
+
+	e.thinkingMu.Lock()
+	defer e.thinkingMu.Unlock()
+
 	e.thinkingLevel = level
 	return nil
+}
+
+func (e *Engine) currentThinkingLevel() ThinkingLevel {
+	e.thinkingMu.RLock()
+	defer e.thinkingMu.RUnlock()
+
+	return e.thinkingLevel
 }
 
 func (e *Engine) Reset() error {
@@ -535,9 +621,7 @@ func (e *Engine) Reset() error {
 	}
 	defer e.mu.Unlock()
 
-	e.state = nil
-	e.contextUsage = Usage{}
-	e.pendingInputs = nil
+	e.conversation = conversationState{}
 	e.continuations.reset()
 	return nil
 }
@@ -574,7 +658,7 @@ func (e *Engine) endContinuations() {
 	e.continuations.endRun()
 }
 
-func deliverContinuation(current *continuation, next pendingContinuation, sink EventSink) error {
+func deliverContinuation(current *conversationState, next pendingContinuation, sink EventSink) error {
 	current.inputs = append(current.inputs, Input{Kind: InputUser, Text: next.text})
 	eventKind := EventSteering
 	if next.kind == continuationGoal {

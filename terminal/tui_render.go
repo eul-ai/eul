@@ -16,8 +16,15 @@ const (
 	ansiResetScrollRegion       = "\x1b[r"
 )
 
+type renderedConversationBlock struct {
+	block conversationBlock
+	lines []styledLine
+	plain []string
+}
+
 type tuiRenderer struct {
 	frame               terminalFrame
+	conversationBlocks  []renderedConversationBlock
 	conversationLines   []styledLine
 	conversationPlain   []string
 	conversationWidth   int

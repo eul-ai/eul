@@ -36,7 +36,7 @@ func cloneImages(images []Image) *ImageAttachments {
 type Input struct {
 	Kind    InputKind
 	Text    string
-	Images  *ImageAttachments
+	Images  *ImageAttachments `json:",omitempty"`
 	CallID  string
 	Tool    string
 	IsError bool

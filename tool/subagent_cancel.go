@@ -13,7 +13,7 @@ const subagentCancelToolName = "subagent_cancel"
 
 var subagentCancelToolDefinition = agent.ToolDefinition{
 	Name:        subagentCancelToolName,
-	Description: "Cancel selected background subagents. Use this when their work is no longer needed; canceled results remain available to subagent_wait until collected.",
+	Description: "Cancel selected background subagents. Use this when their work is no longer needed; canceled subagents are removed when they stop.",
 	Parameters: strictObject(map[string]agent.JSONSchema{
 		"ids": {
 			Type:        "array",

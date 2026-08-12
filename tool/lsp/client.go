@@ -51,13 +51,15 @@ type lspClient struct {
 }
 
 type lspSession struct {
-	connection      jsonrpc2.Conn
-	server          protocol.Server
-	client          *lspProtocolClient
-	command         *exec.Cmd
-	done            <-chan error
-	pullDiagnostics bool
-	stopSession     func()
+	connection           jsonrpc2.Conn
+	server               protocol.Server
+	client               *lspProtocolClient
+	command              *exec.Cmd
+	done                 <-chan error
+	pullDiagnostics      bool
+	renameSupported      bool
+	prepareRenameSupport bool
+	stopSession          func()
 }
 
 type lspTransport struct {
@@ -250,6 +252,7 @@ func startLSPSession(ctx context.Context, cwd string, config lspServerConfig) (*
 		return nil, err
 	}
 	session.pullDiagnostics = initializeResult.Capabilities.DiagnosticProvider != nil
+	session.renameSupported, session.prepareRenameSupport = lspRenameCapabilities(initializeResult.Capabilities.RenameProvider)
 	if err := server.Initialized(ctx, &protocol.InitializedParams{}); err != nil {
 		session.abort()
 		return nil, err
@@ -257,6 +260,17 @@ func startLSPSession(ctx context.Context, cwd string, config lspServerConfig) (*
 
 	watcherOwned = false
 	return session, nil
+}
+
+func lspRenameCapabilities(provider protocol.RenameProvider) (bool, bool) {
+	switch provider := provider.(type) {
+	case protocol.Boolean:
+		return bool(provider), false
+	case *protocol.RenameOptions:
+		return provider != nil, provider != nil && provider.PrepareProvider != nil && *provider.PrepareProvider
+	default:
+		return false, false
+	}
 }
 
 func (c *lspClient) stop() {

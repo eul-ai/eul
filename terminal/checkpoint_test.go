@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +52,88 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	}
 	if len(restored.history) != 1 || restored.history[0] != "older prompt" {
 		t.Fatalf("history = %q", restored.history)
+	}
+}
+
+func TestImageOnlyCheckpointDescription(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.beginTurnWithImages("", 1)
+	if description := checkpointModel(model).Description(); description != "Image attachment" {
+		t.Fatalf("description = %q", description)
+	}
+}
+
+func TestVersionOneTerminalCheckpointFixture(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/checkpoint-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint Checkpoint
+	if err := json.Unmarshal(fixture, &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+
+	wantKinds := []blockKind{
+		blockUser,
+		blockAssistant,
+		blockReasoning,
+		blockToolPending,
+		blockTool,
+		blockToolError,
+		blockContext,
+		blockError,
+		blockInfo,
+	}
+	if len(checkpoint.data.Blocks) != len(wantKinds) {
+		t.Fatalf("blocks = %d, want %d", len(checkpoint.data.Blocks), len(wantKinds))
+	}
+	for index, kind := range wantKinds {
+		if checkpoint.data.Blocks[index].Kind != kind {
+			t.Fatalf("block %d kind = %d, want %d", index, checkpoint.data.Blocks[index].Kind, kind)
+		}
+	}
+	diff := checkpoint.data.Blocks[3].Tool.Diff
+	wantDiffKinds := []agent.ToolDiffLineKind{
+		agent.ToolDiffLineContext,
+		agent.ToolDiffLineAdded,
+		agent.ToolDiffLineRemoved,
+		agent.ToolDiffLineOmitted,
+	}
+	if len(diff) != len(wantDiffKinds) {
+		t.Fatalf("diff = %+v", diff)
+	}
+	for index, kind := range wantDiffKinds {
+		if diff[index].Kind != kind {
+			t.Fatalf("diff line %d kind = %d, want %d", index, diff[index].Kind, kind)
+		}
+	}
+
+	model := newTUIModel(80, 24, Options{InitialCheckpoint: &checkpoint})
+	if len(model.blocks) != len(wantKinds) || model.blocks[3].kind != blockToolError || model.blocks[3].toolOutcome != "interrupted" {
+		t.Fatalf("restored blocks = %+v", model.blocks)
+	}
+	if string(model.input) != "queued\n\ndraft" || model.contextTokens != 42 || len(model.history) != 2 {
+		t.Fatalf("input=%q context=%d history=%q", model.input, model.contextTokens, model.history)
+	}
+
+	encoded, err := json.Marshal(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTerminalCheckpointSemanticJSON(t, encoded, fixture)
+}
+
+func assertTerminalCheckpointSemanticJSON(t *testing.T, got, want []byte) {
+	t.Helper()
+	var gotValue, wantValue any
+	if err := json.Unmarshal(got, &gotValue); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(want, &wantValue); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gotValue, wantValue) {
+		t.Fatalf("JSON mismatch:\ngot:  %s\nwant: %s", got, want)
 	}
 }
 

@@ -22,6 +22,7 @@ const (
 	enterScreen          = "\x1b[?1049h\x1b[?2004h\x1b[>1u" + enableMouse + "\x1b[2J\x1b[H"
 	leaveScreen          = ansiEndSynchronizedOutput + disableMouse + "\x1b[<u\x1b[?2004l\x1b[?25h\x1b[?1049l"
 	providerUsageTimeout = 10 * time.Second
+	renderDelay          = time.Second / 60
 )
 
 type engineMessage struct {
@@ -81,6 +82,10 @@ func NewRunner(input io.Reader, output io.Writer) (*Runner, error) {
 }
 
 func (runner *Runner) Run(ctx context.Context, engine Engine, options Options) error {
+	if err := validateCheckpointCapability(engine, options.SaveCheckpoint != nil); err != nil {
+		return err
+	}
+
 	width, height, err := term.GetSize(runner.outputFD)
 	if err != nil {
 		return fmt.Errorf("terminal: get size: %w", err)
@@ -101,7 +106,7 @@ func setTerminalTitle(output io.Writer, workingDirectory string) error {
 		return character
 	}, filepath.Base(workingDirectory))
 
-	return writeOutput(output, "\x1b]2;ℇ - %s\x07", directory)
+	return writeOutput(output, "\x1b]2;ℯ - %s\x07", directory)
 }
 
 func (runner *Runner) Close() error {
@@ -118,6 +123,10 @@ func (runner *Runner) Close() error {
 }
 
 func Run(ctx context.Context, engine Engine, options Options) error {
+	if err := validateCheckpointCapability(engine, options.SaveCheckpoint != nil); err != nil {
+		return err
+	}
+
 	runner, err := NewRunner(options.Input, options.Output)
 	if err != nil {
 		return err
@@ -155,25 +164,40 @@ func runTUIWithKeys(
 	defer fileSearch.close()
 	fileSearchMessages := make(chan fileSearchResult, 64)
 	engineMessages := make(chan engineMessage, 256)
+	clipboardImages := make(chan tuiEvent, 1)
 
 	usageContext, cancelUsage := context.WithCancel(ctx)
-	defer cancelUsage()
+	var usageDone <-chan struct{}
+	defer func() {
+		cancelUsage()
+		if usageDone != nil {
+			<-usageDone
+		}
+	}()
 	var usageRequests chan struct{}
 	var usageMessages <-chan providerUsageMessage
 	if options.LoadUsage != nil {
 		requests := make(chan struct{}, 1)
 		messages := make(chan providerUsageMessage, 1)
+		done := make(chan struct{})
 		usageRequests = requests
 		usageMessages = messages
-		go loadProviderUsage(usageContext, options.LoadUsage, requests, messages)
+		usageDone = done
+		go func() {
+			defer close(done)
+			loadProviderUsage(usageContext, options.LoadUsage, requests, messages)
+		}()
 		requestProviderUsage(usageRequests)
 	}
 
 	resizes, stopResizes := watchResize()
 	defer stopResizes()
 
-	renderTicker := time.NewTicker(time.Second / 60)
-	defer renderTicker.Stop()
+	renderTimer := time.NewTimer(renderDelay)
+	renderTimer.Stop()
+	defer renderTimer.Stop()
+	var renderClock <-chan time.Time
+
 	spinnerTicker := time.NewTicker(80 * time.Millisecond)
 	defer spinnerTicker.Stop()
 	var usageClock <-chan time.Time
@@ -202,6 +226,7 @@ func runTUIWithKeys(
 		saveCheckpoint:     options.SaveCheckpoint,
 		listSessions:       options.ListSessions,
 		readClipboardImage: clipboardImageReader,
+		clipboardImages:    clipboardImages,
 		dirty:              true,
 	}
 	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventRender}); err != nil {
@@ -210,6 +235,7 @@ func runTUIWithKeys(
 
 	interrupts := options.Interrupts
 	subagentUpdates := options.SubagentUpdates
+	permissionRequests := options.PermissionRequests
 	parentDone := ctx.Done()
 	for {
 		var event tuiEvent
@@ -237,13 +263,21 @@ func runTUIWithKeys(
 				continue
 			}
 			event = tuiEvent{kind: tuiEventSubagentStatus, subagentStatus: status}
+		case request, ok := <-permissionRequests:
+			if !ok {
+				permissionRequests = nil
+				continue
+			}
+			event = tuiEvent{kind: tuiEventPermission, permission: request}
+		case event = <-clipboardImages:
 		case result := <-fileSearchMessages:
 			event = tuiEvent{kind: tuiEventFileSearch, fileSearch: result}
 		case <-spinnerTicker.C:
 			event = tuiEvent{kind: tuiEventSpinner}
 		case <-usageClock:
 			event = tuiEvent{kind: tuiEventUsageClock}
-		case <-renderTicker.C:
+		case <-renderClock:
+			renderClock = nil
 			event = tuiEvent{kind: tuiEventRender}
 		}
 
@@ -257,6 +291,10 @@ func runTUIWithKeys(
 		}
 		if done {
 			return err
+		}
+		if controller.dirty && renderClock == nil {
+			renderTimer.Reset(renderDelay)
+			renderClock = renderTimer.C
 		}
 	}
 }
@@ -311,6 +349,8 @@ func renderIfDirty(renderer *tuiRenderer, model *tuiModel, output io.Writer, dir
 	if !*dirty {
 		return nil
 	}
+
+	renderer.normalizeViewport(model)
 	outputFrame, next := renderer.renderPending(model, forceRedraw)
 	if outputFrame != "" {
 		if err := writeOutput(output, "%s", outputFrame); err != nil {
@@ -328,13 +368,7 @@ func runEngineTurn(ctx context.Context, engine Engine, prompt string, images []a
 			_, err := engine.Run(ctx, prompt, sink)
 			return err
 		}
-		imageEngine, ok := engine.(interface {
-			RunWithImages(context.Context, string, []agent.Image, agent.EventSink) (agent.RunResult, error)
-		})
-		if !ok {
-			return errors.New("engine does not support image attachments")
-		}
-		_, err := imageEngine.RunWithImages(ctx, prompt, images, sink)
+		_, err := engine.RunWithImages(ctx, prompt, images, sink)
 		return err
 	})
 }

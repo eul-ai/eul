@@ -2,28 +2,23 @@ package terminal
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 )
 
-func TestSearchProjectFilesWithFDIsFreshAndRespectsIgnores(t *testing.T) {
-	fdPath := findFD()
-	if fdPath == "" {
-		t.Skip("fd is not available")
-	}
-
+func TestSearchProjectFilesIsFreshAndAppliesPolicy(t *testing.T) {
 	cwd := t.TempDir()
-	if err := os.Mkdir(filepath.Join(cwd, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writePickerFile(t, filepath.Join(cwd, ".git", "config"), "metadata")
 	writePickerFile(t, filepath.Join(cwd, ".gitignore"), "ignored.go\n")
-	writePickerFile(t, filepath.Join(cwd, "terminal", "tui.go"), "package terminal")
-	writePickerFile(t, filepath.Join(cwd, "ignored.go"), "package ignored")
 	writePickerFile(t, filepath.Join(cwd, ".hidden", "config"), "hidden")
+	writePickerFile(t, filepath.Join(cwd, "ignored.go"), "package ignored")
+	writePickerFile(t, filepath.Join(cwd, "terminal", "tui.go"), "package terminal")
 
-	paths, err := searchProjectFiles(context.Background(), cwd, fdPath, "tui")
+	paths, err := searchProjectFiles(context.Background(), cwd, "tui")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +26,7 @@ func TestSearchProjectFilesWithFDIsFreshAndRespectsIgnores(t *testing.T) {
 		t.Fatalf("paths = %q, want %q", paths, want)
 	}
 
-	paths, err = searchProjectFiles(context.Background(), cwd, fdPath, "terminal")
+	paths, err = searchProjectFiles(context.Background(), cwd, "terminal")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +34,7 @@ func TestSearchProjectFilesWithFDIsFreshAndRespectsIgnores(t *testing.T) {
 		t.Fatalf("directory paths = %q, want %q", paths, want)
 	}
 
-	paths, err = searchProjectFiles(context.Background(), cwd, fdPath, "TERMINAL/TUI")
+	paths, err = searchProjectFiles(context.Background(), cwd, "TERMINAL/TUI")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,16 +42,16 @@ func TestSearchProjectFilesWithFDIsFreshAndRespectsIgnores(t *testing.T) {
 		t.Fatalf("full-path results = %q, want %q", paths, want)
 	}
 
-	all, err := searchProjectFiles(context.Background(), cwd, fdPath, "")
+	all, err := searchProjectFiles(context.Background(), cwd, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(all, ".gitignore") || !slices.Contains(all, ".hidden/config") || slices.Contains(all, "ignored.go") {
-		t.Fatalf("all paths = %q", all)
+	if want := []string{"ignored.go", "terminal/", "terminal/tui.go"}; !slices.Equal(all, want) {
+		t.Fatalf("all paths = %q, want %q", all, want)
 	}
 
 	writePickerFile(t, filepath.Join(cwd, "new-file.go"), "package sample")
-	fresh, err := searchProjectFiles(context.Background(), cwd, fdPath, "new-file")
+	fresh, err := searchProjectFiles(context.Background(), cwd, "new-file")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,43 +60,31 @@ func TestSearchProjectFilesWithFDIsFreshAndRespectsIgnores(t *testing.T) {
 	}
 }
 
-func TestSearchProjectFilesWithWalkFiltersAndExcludesGit(t *testing.T) {
+func TestSearchProjectFilesReturnsLexicalResultLimit(t *testing.T) {
 	cwd := t.TempDir()
-	writePickerFile(t, filepath.Join(cwd, ".git", "config"), "metadata")
-	writePickerFile(t, filepath.Join(cwd, "terminal", "tui.go"), "package terminal")
-	writePickerFile(t, filepath.Join(cwd, "terminal", "model.go"), "package terminal")
+	for index := 119; index >= 0; index-- {
+		writePickerFile(t, filepath.Join(cwd, fmt.Sprintf("file-%03d.go", index)), "package sample")
+	}
 
-	paths, err := searchProjectFiles(context.Background(), cwd, "", "tui")
+	paths, err := searchProjectFiles(context.Background(), cwd, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"terminal/tui.go"}; !slices.Equal(paths, want) {
+	want := make([]string, filePickerMaxResults)
+	for index := range want {
+		want[index] = fmt.Sprintf("file-%03d.go", index)
+	}
+	if !slices.Equal(paths, want) {
 		t.Fatalf("paths = %q, want %q", paths, want)
-	}
-
-	paths, err = searchProjectFiles(context.Background(), cwd, "", "terminal")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"terminal/"}; !slices.Equal(paths, want) {
-		t.Fatalf("directory paths = %q, want %q", paths, want)
-	}
-
-	paths, err = searchProjectFiles(context.Background(), cwd, "", "terminal/model")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"terminal/model.go"}; !slices.Equal(paths, want) {
-		t.Fatalf("full-path results = %q, want %q", paths, want)
 	}
 }
 
-func TestSearchProjectFilesWithWalkExcludesGitPointerFile(t *testing.T) {
+func TestSearchProjectFilesExcludesGitPointerFile(t *testing.T) {
 	cwd := t.TempDir()
 	writePickerFile(t, filepath.Join(cwd, ".git"), "gitdir: ../metadata")
 	writePickerFile(t, filepath.Join(cwd, "file.go"), "package sample")
 
-	paths, err := searchProjectFiles(context.Background(), cwd, "", "")
+	paths, err := searchProjectFiles(context.Background(), cwd, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,26 +114,162 @@ func TestSearchProjectFilesStaysWithinWorkingDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fdPaths := []string{""}
-	if fdPath := findFD(); fdPath != "" {
-		fdPaths = append(fdPaths, fdPath)
+	paths, err := searchProjectFiles(context.Background(), cwd, "outside")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, fdPath := range fdPaths {
-		paths, err := searchProjectFiles(context.Background(), cwd, fdPath, "outside")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(paths) != 0 {
-			t.Fatalf("paths with fd %q = %q, want no files outside working directory", fdPath, paths)
-		}
+	if len(paths) != 0 {
+		t.Fatalf("paths = %q, want no files outside working directory", paths)
 	}
 }
 
-func TestSearchProjectFilesWithWalkHonorsCancellation(t *testing.T) {
+func TestSearchProjectFilesHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := searchProjectFiles(ctx, t.TempDir(), "", ""); err != context.Canceled {
+	if _, err := searchProjectFiles(ctx, t.TempDir(), ""); err != context.Canceled {
 		t.Fatalf("error = %v, want context canceled", err)
+	}
+}
+
+func TestFileSearchRunnerDebouncesSupersededRequests(t *testing.T) {
+	queries := make(chan string, 2)
+	runner := &fileSearchRunner{
+		debounce: 25 * time.Millisecond,
+		search: func(_ context.Context, _, query string) ([]string, error) {
+			queries <- query
+			return []string{query + ".go"}, nil
+		},
+	}
+	defer runner.close()
+	output := make(chan fileSearchResult, 2)
+
+	runner.update(context.Background(), fileSearchCommand{request: &fileSearchRequest{id: 1, query: "first"}}, output)
+	runner.update(context.Background(), fileSearchCommand{request: &fileSearchRequest{id: 2, query: "second"}}, output)
+
+	select {
+	case result := <-output:
+		if result.id != 2 || !slices.Equal(result.paths, []string{"second.go"}) {
+			t.Fatalf("result = %+v", result)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("debounced search did not finish")
+	}
+	select {
+	case query := <-queries:
+		if query != "second" {
+			t.Fatalf("search query = %q, want second", query)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("search did not run")
+	}
+	select {
+	case query := <-queries:
+		t.Fatalf("superseded search ran with query %q", query)
+	case <-time.After(75 * time.Millisecond):
+	}
+}
+
+func TestFileSearchRunnerCancelsSupersededSearch(t *testing.T) {
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	runner := &fileSearchRunner{
+		search: func(ctx context.Context, _, query string) ([]string, error) {
+			if query == "first" {
+				close(started)
+				<-ctx.Done()
+				close(canceled)
+				return nil, ctx.Err()
+			}
+			return []string{"second.go"}, nil
+		},
+	}
+	defer runner.close()
+	output := make(chan fileSearchResult, 2)
+
+	runner.update(context.Background(), fileSearchCommand{request: &fileSearchRequest{id: 1, query: "first"}}, output)
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first search did not start")
+	}
+	runner.update(context.Background(), fileSearchCommand{request: &fileSearchRequest{id: 2, query: "second"}}, output)
+	select {
+	case <-canceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first search was not canceled")
+	}
+	select {
+	case result := <-output:
+		if result.id != 2 || !slices.Equal(result.paths, []string{"second.go"}) {
+			t.Fatalf("result = %+v", result)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second search did not finish")
+	}
+}
+
+func TestFileSearchRunnerCloseJoinsPreviouslyCanceledSearch(t *testing.T) {
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	release := make(chan struct{})
+	runner := &fileSearchRunner{
+		search: func(ctx context.Context, _, query string) ([]string, error) {
+			if query != "first" {
+				return []string{"second.go"}, nil
+			}
+			close(started)
+			<-ctx.Done()
+			close(canceled)
+			<-release
+			return nil, ctx.Err()
+		},
+	}
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		runner.close()
+	})
+	output := make(chan fileSearchResult, 2)
+
+	runner.update(context.Background(), fileSearchCommand{request: &fileSearchRequest{id: 1, query: "first"}}, output)
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first search did not start")
+	}
+	runner.update(context.Background(), fileSearchCommand{request: &fileSearchRequest{id: 2, query: "second"}}, output)
+	select {
+	case <-canceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first search was not canceled")
+	}
+	select {
+	case result := <-output:
+		if result.id != 2 {
+			t.Fatalf("result = %+v", result)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second search did not finish")
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		runner.close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+		t.Fatal("close returned before the canceled search exited")
+	case <-time.After(75 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("close did not join the canceled search")
 	}
 }
 

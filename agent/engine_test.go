@@ -77,6 +77,22 @@ func (p *compactingProvider) Compact(ctx context.Context, request Request) (Comp
 	return p.compact(ctx, request)
 }
 
+type retryingCompactingProvider struct {
+	*retryingProvider
+	shouldCompactAfterError func(Request, error) bool
+	compact                 func(context.Context, Request) (CompactResponse, error)
+}
+
+func (p *retryingCompactingProvider) ShouldCompact(Request, Usage) bool { return false }
+
+func (p *retryingCompactingProvider) ShouldCompactAfterError(request Request, err error) bool {
+	return p.shouldCompactAfterError(request, err)
+}
+
+func (p *retryingCompactingProvider) Compact(ctx context.Context, request Request) (CompactResponse, error) {
+	return p.compact(ctx, request)
+}
+
 type fakeToolbox struct {
 	definitions        []ToolDefinition
 	presentation       func(ToolCallSnapshot) ToolPresentation
@@ -117,8 +133,8 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 			if got := toolNames(request.Tools); !slices.Equal(got, []string{"read", "write"}) {
 				t.Fatalf("tool order = %v, want [read write]", got)
 			}
-			if !strings.Contains(request.Instructions, "- read:") || !strings.Contains(request.Instructions, "- write:") {
-				t.Fatalf("instructions omit active tools:\n%s", request.Instructions)
+			if strings.Contains(request.Instructions, "Read file contents") || strings.Contains(request.Instructions, "Create or overwrite files") {
+				t.Fatalf("instructions duplicate tool descriptions:\n%s", request.Instructions)
 			}
 			if err := onText("Checking"); err != nil {
 				return Response{}, err
@@ -382,6 +398,78 @@ func TestEngineFinalizationFailurePreservesPartialOutput(t *testing.T) {
 	}
 }
 
+func TestEngineRejectsToolCallsDuringFinalization(t *testing.T) {
+	calls := 0
+	provider := streamingProviderFunc(func(_ context.Context, request Request, onText TextSink, _ TextSink, onToolCall ToolCallSink) (Response, error) {
+		calls++
+		switch calls {
+		case 1:
+			return Response{
+				Text:      "working",
+				ToolCalls: []ToolCall{{ID: "read-1", Name: "read"}},
+				State:     []byte("safe-state"),
+				Usage:     Usage{TotalTokens: 10},
+			}, nil
+		case 2:
+			if len(request.Tools) != 0 {
+				t.Fatalf("finalization tools = %v", toolNames(request.Tools))
+			}
+			if err := onText("final response"); err != nil {
+				return Response{}, err
+			}
+			if err := onToolCall(ToolCallSnapshot{ID: "invalid-1", Name: "write", RawArguments: `{}`}); err != nil {
+				return Response{}, err
+			}
+			return Response{
+				Text:      "final response",
+				ToolCalls: []ToolCall{{ID: "invalid-1", Name: "write"}},
+				State:     []byte("invalid-state"),
+				Usage:     Usage{TotalTokens: 7},
+			}, nil
+		default:
+			t.Fatalf("unexpected provider call %d", calls)
+			return Response{}, nil
+		}
+	})
+	executions := 0
+	toolbox := &fakeToolbox{
+		definitions: []ToolDefinition{{Name: "read"}, {Name: "write"}},
+		execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
+			executions++
+			if call.ID != "read-1" {
+				t.Fatalf("executed finalization call: %+v", call)
+			}
+			return ToolResult{Output: "contents"}, nil
+		},
+	}
+	var events []Event
+	engine := newTestEngine(t, provider, toolbox, Options{})
+	result, err := engine.RunWithFinalization(context.Background(), "inspect", func(event Event) error {
+		events = append(events, event)
+		return nil
+	}, FinalizationPolicy{AfterGenerations: 1, Prompt: "Finalize."})
+	if err == nil || !strings.Contains(err.Error(), "tool calls during finalization") {
+		t.Fatalf("RunWithFinalization() error = %v", err)
+	}
+	if result.Text != "final response" || result.Usage.TotalTokens != 17 || calls != 2 || executions != 1 {
+		t.Fatalf("result = %+v, provider calls = %d, executions = %d", result, calls, executions)
+	}
+	if string(engine.conversation.state) != "safe-state" || engine.conversation.usage.TotalTokens != 10 || len(engine.conversation.inputs) != 1 || engine.conversation.inputs[0].CallID != "read-1" {
+		t.Fatalf("checkpoint state=%q usage=%+v inputs=%+v", engine.conversation.state, engine.conversation.usage, engine.conversation.inputs)
+	}
+	if got := eventKinds(events); !slices.Equal(got, []EventKind{
+		EventContextUsage,
+		EventToolStart, EventToolExecute, EventToolEnd,
+		EventAssistantText, EventToolStart, EventToolEnd,
+	}) {
+		t.Fatalf("events = %v", got)
+	}
+	last := events[len(events)-1]
+	if last.Call.ID != "invalid-1" || !last.Result.IsError || !strings.Contains(last.Result.Output, "tool calls during finalization") {
+		t.Fatalf("closed finalization tool = %+v", last)
+	}
+}
+
 func TestCompleteToolCallSnapshotPreservesRawJSON(t *testing.T) {
 	call := ToolCall{ID: "call-1", Name: "write", Arguments: json.RawMessage(`{"path":"demo.go"}`)}
 	snapshot := completeToolCallSnapshot(call)
@@ -618,18 +706,15 @@ func TestEngineClosesStreamedToolsInStartOrderOnProviderFailure(t *testing.T) {
 	}
 }
 
-func TestEngineRetriesGenerationWithoutExecutingPartialToolCalls(t *testing.T) {
+func TestEngineRetriesGenerationBeforeObservableEvents(t *testing.T) {
 	transient := errors.New("temporary provider failure")
 	generateCalls := 0
 	provider := &retryingProvider{
-		generate: func(_ context.Context, request Request, _ TextSink, _ TextSink, onToolCall ToolCallSink) (Response, error) {
+		generate: func(_ context.Context, request Request, _ TextSink, _ TextSink, _ ToolCallSink) (Response, error) {
 			generateCalls++
 			switch generateCalls {
 			case 1:
 				assertUserInput(t, request, "write the file")
-				if err := onToolCall(ToolCallSnapshot{ID: "abandoned", Name: "write", RawArguments: `{"path":"old.txt"}`}); err != nil {
-					return Response{}, err
-				}
 				return Response{}, transient
 			case 2:
 				assertUserInput(t, request, "write the file")
@@ -658,7 +743,7 @@ func TestEngineRetriesGenerationWithoutExecutingPartialToolCalls(t *testing.T) {
 	toolbox := &fakeToolbox{execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
 		executions++
 		if call.ID != "completed" {
-			t.Fatalf("executed abandoned call: %+v", call)
+			t.Fatalf("unexpected call: %+v", call)
 		}
 		return ToolResult{Output: "written"}, nil
 	}}
@@ -675,17 +760,171 @@ func TestEngineRetriesGenerationWithoutExecutingPartialToolCalls(t *testing.T) {
 		t.Fatalf("generate calls = %d, executions = %d", generateCalls, executions)
 	}
 	if got := eventKinds(events); !slices.Equal(got, []EventKind{
-		EventToolStart, EventToolEnd, EventGenerationRetry,
+		EventGenerationRetry,
 		EventContextUsage, EventToolStart, EventToolExecute, EventToolEnd,
 		EventContextUsage,
 	}) {
 		t.Fatalf("events = %v", got)
 	}
-	if events[2].Attempt != 2 {
-		t.Fatalf("retry event = %+v", events[2])
+	if events[0].Attempt != 2 {
+		t.Fatalf("retry event = %+v", events[0])
 	}
-	if !events[1].Result.IsError || !strings.Contains(events[1].Result.Output, transient.Error()) {
-		t.Fatalf("abandoned tool result = %+v", events[1].Result)
+}
+
+func TestEngineRetriesGenerationAfterObservableEvent(t *testing.T) {
+	transient := errors.New("temporary provider failure")
+	tests := []struct {
+		name string
+		emit func(TextSink, TextSink, ToolCallSink) error
+		want []EventKind
+	}{
+		{
+			name: "text",
+			emit: func(onText TextSink, _ TextSink, _ ToolCallSink) error { return onText("partial") },
+			want: []EventKind{EventAssistantText, EventGenerationRetry, EventContextUsage},
+		},
+		{
+			name: "reasoning",
+			emit: func(_ TextSink, onReasoning TextSink, _ ToolCallSink) error { return onReasoning("thinking") },
+			want: []EventKind{EventAssistantReasoning, EventGenerationRetry, EventContextUsage},
+		},
+		{
+			name: "tool presentation",
+			emit: func(_ TextSink, _ TextSink, onToolCall ToolCallSink) error {
+				return onToolCall(ToolCallSnapshot{ID: "call-1", Name: "write", RawArguments: `{"path":"demo.txt"}`})
+			},
+			want: []EventKind{EventToolStart, EventToolEnd, EventGenerationRetry, EventContextUsage},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			generateCalls := 0
+			retryCalls := 0
+			provider := &retryingProvider{
+				generate: func(_ context.Context, _ Request, onText TextSink, onReasoning TextSink, onToolCall ToolCallSink) (Response, error) {
+					generateCalls++
+					if generateCalls == 2 {
+						return Response{Text: "done"}, nil
+					}
+					if err := test.emit(onText, onReasoning, onToolCall); err != nil {
+						return Response{}, err
+					}
+					return Response{}, transient
+				},
+				retry: func(error, int) (time.Duration, bool) {
+					retryCalls++
+					return 0, true
+				},
+			}
+			var events []Event
+			engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+			result, err := engine.Run(context.Background(), "start", func(event Event) error {
+				events = append(events, event)
+				return nil
+			})
+			if err != nil || result.Text != "done" || generateCalls != 2 || retryCalls != 1 {
+				t.Fatalf("result = %+v, generate calls = %d, retry calls = %d, error = %v", result, generateCalls, retryCalls, err)
+			}
+			if got := eventKinds(events); !slices.Equal(got, test.want) {
+				t.Fatalf("events = %v, want %v", got, test.want)
+			}
+			if test.name == "tool presentation" && (!events[1].Result.IsError || !strings.Contains(events[1].Result.Output, transient.Error())) {
+				t.Fatalf("closed tool result = %+v", events[1].Result)
+			}
+		})
+	}
+}
+
+func TestEngineDoesNotRetryAfterVisibleSinkFailure(t *testing.T) {
+	sinkErr := errors.New("sink failed")
+	generateCalls := 0
+	retryCalls := 0
+	provider := &retryingProvider{
+		generate: func(_ context.Context, _ Request, onText TextSink, _ TextSink, _ ToolCallSink) (Response, error) {
+			generateCalls++
+			if err := onText("partial"); err != nil {
+				return Response{}, err
+			}
+			return Response{}, errors.New("provider ignored sink failure")
+		},
+		retry: func(error, int) (time.Duration, bool) {
+			retryCalls++
+			return 0, true
+		},
+	}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+	_, err := engine.Run(context.Background(), "start", func(event Event) error {
+		if event.Kind == EventAssistantText {
+			return sinkErr
+		}
+		return nil
+	})
+	if !errors.Is(err, sinkErr) || generateCalls != 1 || retryCalls != 0 {
+		t.Fatalf("generate calls = %d, retry calls = %d, error = %v", generateCalls, retryCalls, err)
+	}
+}
+
+func TestEngineDoesNotCompactAfterRetryEventSinkFailure(t *testing.T) {
+	transient := errors.New("temporary provider failure")
+	sinkErr := errors.New("sink failed")
+	policyCalls := 0
+	compactCalls := 0
+	provider := &retryingCompactingProvider{
+		retryingProvider: &retryingProvider{
+			generate: func(context.Context, Request, TextSink, TextSink, ToolCallSink) (Response, error) {
+				return Response{}, transient
+			},
+			retry: func(error, int) (time.Duration, bool) { return 0, true },
+		},
+		shouldCompactAfterError: func(Request, error) bool {
+			policyCalls++
+			return true
+		},
+		compact: func(context.Context, Request) (CompactResponse, error) {
+			compactCalls++
+			return CompactResponse{State: []byte("compacted")}, nil
+		},
+	}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+	_, err := engine.Run(context.Background(), "start", func(event Event) error {
+		if event.Kind == EventGenerationRetry {
+			return sinkErr
+		}
+		return nil
+	})
+	if !errors.Is(err, sinkErr) || policyCalls != 0 || compactCalls != 0 {
+		t.Fatalf("policy calls = %d, compact calls = %d, error = %v", policyCalls, compactCalls, err)
+	}
+}
+
+func TestEngineDoesNotCompactAfterObservableGenerationError(t *testing.T) {
+	contextLimit := errors.New("context limit exceeded")
+	generateCalls := 0
+	provider := streamingProviderFunc(func(_ context.Context, _ Request, _ TextSink, onReasoning TextSink, _ ToolCallSink) (Response, error) {
+		generateCalls++
+		if err := onReasoning("partial reasoning"); err != nil {
+			return Response{}, err
+		}
+		return Response{}, contextLimit
+	})
+	policyCalls := 0
+	compactCalls := 0
+	compacting := &compactingProvider{
+		Provider: provider,
+		shouldCompactAfterError: func(Request, error) bool {
+			policyCalls++
+			return true
+		},
+		compact: func(context.Context, Request) (CompactResponse, error) {
+			compactCalls++
+			return CompactResponse{State: []byte("compacted")}, nil
+		},
+	}
+	engine := newTestEngine(t, compacting, &fakeToolbox{}, Options{})
+	_, err := engine.Run(context.Background(), "start", discardEvents)
+	if !errors.Is(err, contextLimit) || generateCalls != 1 || policyCalls != 0 || compactCalls != 0 {
+		t.Fatalf("generate calls = %d, policy calls = %d, compact calls = %d, error = %v", generateCalls, policyCalls, compactCalls, err)
 	}
 }
 
@@ -743,7 +982,7 @@ func TestEngineGenerationFailurePreservesPriorContextAndUserInput(t *testing.T) 
 		}
 	})
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
-	engine.state = []byte("stable")
+	engine.conversation.state = []byte("stable")
 
 	if _, err := engine.Run(context.Background(), "first question", discardEvents); !errors.Is(err, failure) {
 		t.Fatalf("first Run() error = %v", err)
@@ -806,8 +1045,8 @@ func TestEngineCompactionSinkFailuresPreservePhaseContinuation(t *testing.T) {
 				},
 			}
 			engine := newTestEngine(t, compacting, &fakeToolbox{}, Options{})
-			engine.state = []byte("stable")
-			engine.contextUsage = Usage{TotalTokens: 100}
+			engine.conversation.state = []byte("stable")
+			engine.conversation.usage = Usage{TotalTokens: 100}
 
 			failed := false
 			_, err := engine.Run(context.Background(), "first", func(event Event) error {
@@ -1209,8 +1448,8 @@ func TestEngineAttemptsErrorCompactionOnce(t *testing.T) {
 	if !errors.Is(err, contextLimit) {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if generateCalls != 2 || compactCalls != 1 || string(engine.state) != "compact state" || len(engine.pendingInputs) != 0 {
-		t.Fatalf("generate calls = %d, compact calls = %d, state = %q, pending = %+v", generateCalls, compactCalls, engine.state, engine.pendingInputs)
+	if generateCalls != 2 || compactCalls != 1 || string(engine.conversation.state) != "compact state" || len(engine.conversation.inputs) != 0 {
+		t.Fatalf("generate calls = %d, compact calls = %d, state = %q, pending = %+v", generateCalls, compactCalls, engine.conversation.state, engine.conversation.inputs)
 	}
 }
 
@@ -1230,15 +1469,15 @@ func TestEngineErrorCompactionFailurePreservesContinuation(t *testing.T) {
 		},
 	}
 	engine := newTestEngine(t, compacting, &fakeToolbox{}, Options{})
-	engine.state = []byte("stable")
-	engine.contextUsage = Usage{TotalTokens: 100}
+	engine.conversation.state = []byte("stable")
+	engine.conversation.usage = Usage{TotalTokens: 100}
 
 	_, err := engine.Run(context.Background(), "hello", discardEvents)
 	if !errors.Is(err, compactFailure) || !strings.Contains(err.Error(), "agent: compact context") {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if string(engine.state) != "stable" || engine.contextUsage.TotalTokens != 100 || len(engine.pendingInputs) != 1 || engine.pendingInputs[0].Text != "hello" {
-		t.Fatalf("checkpoint = state %q, usage %+v, pending %+v", engine.state, engine.contextUsage, engine.pendingInputs)
+	if string(engine.conversation.state) != "stable" || engine.conversation.usage.TotalTokens != 100 || len(engine.conversation.inputs) != 1 || engine.conversation.inputs[0].Text != "hello" {
+		t.Fatalf("checkpoint = state %q, usage %+v, pending %+v", engine.conversation.state, engine.conversation.usage, engine.conversation.inputs)
 	}
 }
 
@@ -1277,8 +1516,8 @@ func TestEngineCompactionFailureAfterToolPreservesContinuation(t *testing.T) {
 		return ToolResult{Output: "changed file"}, nil
 	}}
 	engine := newTestEngine(t, provider, toolbox, Options{})
-	engine.state = []byte("stable")
-	engine.contextUsage = Usage{TotalTokens: 50}
+	engine.conversation.state = []byte("stable")
+	engine.conversation.usage = Usage{TotalTokens: 50}
 
 	_, err := engine.Run(context.Background(), "change", discardEvents)
 	if !errors.Is(err, compactError) || !strings.Contains(err.Error(), "agent: compact context") {
@@ -1305,9 +1544,9 @@ func TestEngineCompactsOnDemand(t *testing.T) {
 		},
 	}
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
-	engine.state = []byte("stable")
-	engine.contextUsage = Usage{TotalTokens: 90}
-	engine.pendingInputs = []Input{{Kind: InputToolResult, Text: "large output", CallID: "call-1", Tool: "read"}}
+	engine.conversation.state = []byte("stable")
+	engine.conversation.usage = Usage{TotalTokens: 90}
+	engine.conversation.inputs = []Input{{Kind: InputToolResult, Text: "large output", CallID: "call-1", Tool: "read"}}
 	var events []Event
 
 	err := engine.Compact(context.Background(), func(event Event) error {
@@ -1317,8 +1556,8 @@ func TestEngineCompactsOnDemand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compact() error = %v", err)
 	}
-	if compactCalls != 1 || string(engine.state) != "compact state" || engine.contextUsage != (Usage{}) || len(engine.pendingInputs) != 0 {
-		t.Fatalf("compact calls = %d, state = %q, usage = %+v, pending = %+v", compactCalls, engine.state, engine.contextUsage, engine.pendingInputs)
+	if compactCalls != 1 || string(engine.conversation.state) != "compact state" || engine.conversation.usage != (Usage{}) || len(engine.conversation.inputs) != 0 {
+		t.Fatalf("compact calls = %d, state = %q, usage = %+v, pending = %+v", compactCalls, engine.conversation.state, engine.conversation.usage, engine.conversation.inputs)
 	}
 	if got := eventKinds(events); !slices.Equal(got, []EventKind{EventCompactionStart, EventCompactionEnd}) {
 		t.Fatalf("events = %v", got)
@@ -1707,7 +1946,7 @@ func TestEngineResetDiscardsProviderState(t *testing.T) {
 	if _, err := engine.Run(context.Background(), "first", discardEvents); err != nil {
 		t.Fatalf("first Run() error = %v", err)
 	}
-	engine.pendingInputs = []Input{{Kind: InputToolResult, CallID: "pending", Tool: "write", Text: "pending"}}
+	engine.conversation.inputs = []Input{{Kind: InputToolResult, CallID: "pending", Tool: "write", Text: "pending"}}
 	engine.Reset()
 	if _, err := engine.Run(context.Background(), "second", discardEvents); err != nil {
 		t.Fatalf("second Run() error = %v", err)
@@ -2079,8 +2318,11 @@ func TestEngineRejectsConcurrentOperations(t *testing.T) {
 	if err := engine.Compact(context.Background(), discardEvents); !errors.Is(err, errEngineBusy) {
 		t.Fatalf("concurrent Compact() error = %v", err)
 	}
-	if err := engine.SetThinkingLevel(ThinkingHigh); !errors.Is(err, errEngineBusy) {
+	if err := engine.SetThinkingLevel(ThinkingHigh); err != nil {
 		t.Fatalf("concurrent SetThinkingLevel() error = %v", err)
+	}
+	if got := engine.currentThinkingLevel(); got != ThinkingHigh {
+		t.Fatalf("concurrent thinking level = %q", got)
 	}
 
 	close(release)
@@ -2089,6 +2331,42 @@ func TestEngineRejectsConcurrentOperations(t *testing.T) {
 	}
 	if err := engine.Reset(); err != nil {
 		t.Fatalf("Reset() after Run = %v", err)
+	}
+}
+
+func TestEngineUsesThinkingLevelChangedDuringRunForNextGeneration(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if request.ThinkingLevel != DefaultThinkingLevel {
+				t.Fatalf("first thinking level = %q", request.ThinkingLevel)
+			}
+			close(started)
+			<-release
+			return Response{ToolCalls: []ToolCall{{ID: "tool", Name: "tool"}}}, nil
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if request.ThinkingLevel != ThinkingHigh {
+				t.Fatalf("second thinking level = %q", request.ThinkingLevel)
+			}
+			return Response{Text: "done"}, nil
+		},
+	}}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := engine.Run(context.Background(), "first", discardEvents)
+		done <- err
+	}()
+	<-started
+	if err := engine.SetThinkingLevel(ThinkingHigh); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 

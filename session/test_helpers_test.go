@@ -83,10 +83,14 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer) runtime {
 		getwd:       func() (string, error) { return cwd, nil },
 		userHomeDir: func() (string, error) { return filepath.Join(cwd, ".test-home"), nil },
 		backends:    backends,
-		newToolset: func(cwd string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
+		newToolset: func(cwd string, access toolAccess, noSandbox bool, authorizeNetwork tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
 			tools := []tool.Tool{tool.NewRead(cwd)}
 			if access == fullToolAccess {
-				tools = append(tools, tool.NewWrite(cwd), tool.NewEdit(cwd), tool.NewBash(cwd))
+				bash := tool.NewBashWithNetworkAuthorizer(cwd, authorizeNetwork)
+				if noSandbox {
+					bash = tool.NewBashWithoutSandbox(cwd)
+				}
+				tools = append(tools, tool.NewWrite(cwd), tool.NewEdit(cwd), bash)
 			}
 			tools = append(tools, additional...)
 			return tool.NewRegistry(tools)
@@ -107,10 +111,11 @@ func testBackendDriver(t *testing.T, runtime runtime) *fakeBackendDriver {
 	return fake
 }
 
-func resolveTestConfig(options Options, runtime runtime) (config, error) {
+func resolveTestConfig(options Options, runtime runtime) (resolvedConfig, error) {
+	options.NoSandbox = true
 	driver, err := runtime.backends.Lookup(options.Provider)
 	if err != nil {
-		return config{}, err
+		return resolvedConfig{}, err
 	}
 	return resolveConfig(options, runtime, driver.Descriptor(), driver.ModelDefaults())
 }

@@ -42,7 +42,7 @@ func TestCoreToolDefinitionsUseStrictSchemas(t *testing.T) {
 		{tool: readTool, required: []string{"path", "offset", "limit"}, properties: map[string][]string{"path": {"string"}, "offset": {"integer", "null"}, "limit": {"integer", "null"}}},
 		{tool: writeTool, required: []string{"path", "content"}, properties: map[string][]string{"path": {"string"}, "content": {"string"}}},
 		{tool: editTool, required: []string{"path", "oldText", "newText"}, properties: map[string][]string{"path": {"string"}, "oldText": {"string"}, "newText": {"string"}}},
-		{tool: bashTool, required: []string{"command", "timeout"}, properties: map[string][]string{"command": {"string"}, "timeout": {"integer", "null"}}},
+		{tool: bashTool, required: []string{"command", "timeout", "network"}, properties: map[string][]string{"command": {"string"}, "timeout": {"integer", "null"}, "network": {"boolean"}}},
 	}
 	for _, test := range tests {
 		definition := test.tool.Definition()
@@ -533,6 +533,7 @@ func TestFailedEditsNeverModifyFile(t *testing.T) {
 		{name: "zero", args: map[string]any{"path": "sample.txt", "oldText": "missing", "newText": "new"}, want: "not found"},
 		{name: "multiple", args: map[string]any{"path": "sample.txt", "oldText": "same", "newText": "new"}, want: "2 times"},
 		{name: "empty old", args: map[string]any{"path": "sample.txt", "oldText": "", "newText": "new"}, want: "nonempty"},
+		{name: "binary replacement", args: map[string]any{"path": "sample.txt", "oldText": original, "newText": "new\x00"}, want: "binary file"},
 		{name: "missing new", args: map[string]any{"path": "sample.txt", "oldText": "same"}, want: "newText"},
 		{name: "unknown field", args: map[string]any{"path": "sample.txt", "oldText": "same", "newText": "new", "extra": true}, want: "unknown field"},
 	} {
@@ -564,6 +565,10 @@ func TestFailedEditsNeverModifyFile(t *testing.T) {
 				t.Fatalf("failed edit modified file: content=%q mode=%o", mustReadFile(t, path), afterInfo.Mode().Perm())
 			}
 		})
+	}
+	matches, err := filepath.Glob(filepath.Join(cwd, ".eul-replace-*"))
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("temporary files=%v error=%v", matches, err)
 	}
 }
 

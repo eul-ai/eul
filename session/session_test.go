@@ -23,13 +23,17 @@ type closeRecordingTool struct {
 
 type usageCapableProvider struct {
 	providerFunction
+	usage func(context.Context) (agent.ProviderUsage, error)
 }
 
-func (usageCapableProvider) Usage(context.Context) (agent.ProviderUsage, error) {
-	return agent.ProviderUsage{}, nil
+func (provider *usageCapableProvider) Usage(ctx context.Context) (agent.ProviderUsage, error) {
+	if provider.usage == nil {
+		return agent.ProviderUsage{}, nil
+	}
+	return provider.usage(ctx)
 }
 
-func (usageCapableProvider) ModelMetadata(string) agent.ModelMetadata {
+func (*usageCapableProvider) ModelMetadata(string) agent.ModelMetadata {
 	return agent.ModelMetadata{
 		ContextWindow:  123_000,
 		ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh},
@@ -66,11 +70,11 @@ func (current *closeRecordingTool) Close() error {
 	return current.closeErr
 }
 
-func TestAgentConfigSelectsSubagentModelProfiles(t *testing.T) {
-	config := config{
-		model:                 "powerful-model",
-		subagentBalancedModel: "balanced-model",
-		subagentFastModel:     "fast-model",
+func TestModelSelectionSelectsSubagentProfiles(t *testing.T) {
+	models := modelSelection{
+		main:     "powerful-model",
+		balanced: "balanced-model",
+		fast:     "fast-model",
 	}
 	for _, test := range []struct {
 		profile tool.SubagentModelProfile
@@ -80,7 +84,7 @@ func TestAgentConfigSelectsSubagentModelProfiles(t *testing.T) {
 		{profile: tool.SubagentModelBalanced, want: "balanced-model"},
 		{profile: tool.SubagentModelPowerful, want: "powerful-model"},
 	} {
-		if got := config.subagentModel(test.profile); got != test.want {
+		if got := models.subagent(test.profile); got != test.want {
 			t.Fatalf("profile %q selected %q, want %q", test.profile, got, test.want)
 		}
 	}
@@ -93,25 +97,54 @@ func TestProviderModelMetadataDefaultsToThinkingOff(t *testing.T) {
 	}
 }
 
-func TestNewAgentSessionWiresOptionalProviderUsage(t *testing.T) {
-	provider := usageCapableProvider{providerFunction: func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-		return agent.Response{}, nil
-	}}
+func TestNewAgentSessionWiresDedicatedProviderUsage(t *testing.T) {
+	mainUsageCalls := 0
+	dedicatedUsageCalls := 0
+	mainProvider := &usageCapableProvider{
+		providerFunction: func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+			return agent.Response{}, nil
+		},
+		usage: func(context.Context) (agent.ProviderUsage, error) {
+			mainUsageCalls++
+			return agent.ProviderUsage{}, nil
+		},
+	}
+	dedicatedProvider := &usageCapableProvider{
+		providerFunction: func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+			return agent.Response{}, nil
+		},
+		usage: func(context.Context) (agent.ProviderUsage, error) {
+			dedicatedUsageCalls++
+			return agent.ProviderUsage{Windows: []agent.UsageWindow{{UsedPercent: 25}}}, nil
+		},
+	}
+	providerCalls := 0
 	runtime := runtime{}
 	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-		return provider, nil
+		providerCalls++
+		if providerCalls == 1 {
+			return mainProvider, nil
+		}
+		return dedicatedProvider, nil
 	}}
 	cwd := t.TempDir()
 	writeTestLSPConfig(t, cwd)
 	skills := []agent.Skill{{Name: "review", Description: "Review code"}}
 	warnings := []string{"Skipped skill invalid: malformed"}
-	session, err := newAgentSession(config{model: "model", thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills, warnings: warnings}, runtime, backendRuntime)
+	session, err := newAgentSession(resolvedConfig{models: modelSelection{main: "model"}, thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills, warnings: warnings}, runtime, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer session.finish(nil)
 	if session.terminalOptions.LoadUsage == nil {
 		t.Fatal("provider usage was not wired to the terminal")
+	}
+	usage, err := session.terminalOptions.LoadUsage(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if providerCalls != 2 || mainUsageCalls != 0 || dedicatedUsageCalls != 1 || len(usage.Windows) != 1 {
+		t.Fatalf("providers=%d main usage=%d dedicated usage=%d result=%+v", providerCalls, mainUsageCalls, dedicatedUsageCalls, usage)
 	}
 	if session.terminalOptions.SubagentUpdates == nil {
 		t.Fatal("subagent status was not wired to the terminal")
@@ -130,6 +163,59 @@ func TestNewAgentSessionWiresOptionalProviderUsage(t *testing.T) {
 	}
 }
 
+func TestNewAgentSessionWarnsWhenDedicatedUsageProviderIsUnavailable(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		dedicated func() (agent.Provider, error)
+		want      string
+	}{
+		{
+			name: "creation failure",
+			dedicated: func() (agent.Provider, error) {
+				return nil, errors.New("usage client failed")
+			},
+			want: "Account usage is unavailable: usage client failed",
+		},
+		{
+			name: "missing capability",
+			dedicated: func() (agent.Provider, error) {
+				return metadataFreeProvider{}, nil
+			},
+			want: "Account usage is unavailable: dedicated provider does not support usage",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			providerCalls := 0
+			backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
+				providerCalls++
+				if providerCalls == 1 {
+					return &usageCapableProvider{providerFunction: func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+						return agent.Response{}, nil
+					}}, nil
+				}
+				return test.dedicated()
+			}}
+			session, err := newAgentSession(resolvedConfig{
+				models:   modelSelection{main: "model"},
+				cwd:      t.TempDir(),
+				warnings: []string{"existing warning"},
+			}, runtime{newToolset: func(_ string, _ toolAccess, _ bool, _ tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
+				return tool.NewRegistry(additional)
+			}}, backendRuntime)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer session.finish(nil)
+			if session.terminalOptions.LoadUsage != nil {
+				t.Fatal("provider usage was enabled")
+			}
+			if providerCalls != 2 || !slices.Equal(session.terminalOptions.Warnings, []string{"existing warning", test.want}) {
+				t.Fatalf("providers=%d warnings=%q", providerCalls, session.terminalOptions.Warnings)
+			}
+		})
+	}
+}
+
 func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 	provider := &profileMetadataProvider{
 		providerFunction: func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
@@ -144,15 +230,13 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return provider, nil
 	}}
-	runtime := runtime{newToolset: func(_ string, _ toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
+	runtime := runtime{newToolset: func(_ string, _ toolAccess, _ bool, _ tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
 		return tool.NewRegistry(additional)
 	}}
-	session, err := newAgentSession(config{
-		model:                 "main",
-		subagentFastModel:     "fast",
-		subagentBalancedModel: "balanced",
-		thinkingLevel:         agent.ThinkingHigh,
-		cwd:                   t.TempDir(),
+	session, err := newAgentSession(resolvedConfig{
+		models:        modelSelection{main: "main", fast: "fast", balanced: "balanced"},
+		thinkingLevel: agent.ThinkingHigh,
+		cwd:           t.TempDir(),
 	}, runtime, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
@@ -162,13 +246,13 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 	}
 
 	result, err := session.tools.Execute(context.Background(), agent.ToolCall{
-		ID: "fast", Name: "subagent", Arguments: json.RawMessage(`{"tasks":["inspect"],"model_profile":"fast","thinking_level":"high"}`),
+		ID: "fast", Name: "subagent", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}],"model_profile":"fast","thinking_level":"high"}`),
 	}, nil)
 	if err != nil || !result.IsError || !strings.Contains(result.Output, "fast model") {
 		t.Fatalf("fast result = %+v, error = %v", result, err)
 	}
 	result, err = session.tools.Execute(context.Background(), agent.ToolCall{
-		ID: "balanced", Name: "subagent", Arguments: json.RawMessage(`{"tasks":["inspect"],"model_profile":"balanced","thinking_level":"high"}`),
+		ID: "balanced", Name: "subagent", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}],"model_profile":"balanced","thinking_level":"high"}`),
 	}, nil)
 	if err != nil || result.IsError {
 		t.Fatalf("balanced result = %+v, error = %v", result, err)
@@ -190,7 +274,7 @@ func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 	}}
 	cwd := t.TempDir()
 	writeTestLSPConfig(t, cwd)
-	session, err := newAgentSession(config{model: "model", cwd: cwd}, runtime, backendRuntime)
+	session, err := newAgentSession(resolvedConfig{models: modelSelection{main: "model"}, cwd: cwd}, runtime, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +301,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	runtime := runtime{
 		stdin:  strings.NewReader(""),
 		stdout: io.Discard,
-		newToolset: func(string, toolAccess, ...tool.Tool) (*tool.Registry, error) {
+		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error) {
 			return tool.NewRegistry(nil)
 		},
 	}
@@ -232,7 +316,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 			}), nil
 		}}
 	}
-	config := config{provider: "test", model: "model", thinkingLevel: agent.ThinkingHigh, cwd: cwd}
+	config := resolvedConfig{provider: "test", models: modelSelection{main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
 	store := newSessionStore(t.TempDir())
 
 	first, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, nil)
@@ -354,7 +438,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer handle.Close()
-	if restored.provider != "alternate" || restored.model != "selected-model" || restored.subagentFastModel != "selected-fast-model" || restored.subagentBalancedModel != "selected-balanced-model" || selected.Descriptor().ID != "alternate" {
+	if restored.provider != "alternate" || restored.models != (modelSelection{main: "selected-model", fast: "selected-fast-model", balanced: "selected-balanced-model"}) || selected.Descriptor().ID != "alternate" {
 		t.Fatalf("restored=%+v provider=%q", restored, selected.Descriptor().ID)
 	}
 }
@@ -362,7 +446,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	cwd := t.TempDir()
 	store := newSessionStore(t.TempDir())
-	corrupt, err := store.Create("test", cwd, "model", "fast-model", "balanced-model", agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "corrupt"))
+	corrupt, err := store.Create("test", cwd, modelSelection{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "corrupt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +457,7 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	if err := os.WriteFile(corruptPath, []byte(`{"version":99}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	valid, err := store.Create("test", cwd, "model", "", "", agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "valid"))
+	valid, err := store.Create("test", cwd, modelSelection{main: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "valid"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +476,7 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	if len(config.warnings) != 1 || !strings.Contains(config.warnings[0], "Skipped session") || !strings.Contains(config.warnings[0], "unsupported session version") {
 		t.Fatalf("warnings = %v", config.warnings)
 	}
-	if config.subagentFastModel != "gpt-5.6-luna" || config.subagentBalancedModel != "gpt-5.6-terra" {
+	if config.models != (modelSelection{main: "model", fast: "gpt-5.6-luna", balanced: "gpt-5.6-terra"}) {
 		t.Fatalf("restored default models = %+v", config)
 	}
 }
@@ -400,7 +484,7 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 func TestNewAgentSessionReportsToolsetConfigurationFailure(t *testing.T) {
 	configureErr := errors.New("toolset failed")
 	runtime := runtime{
-		newToolset: func(string, toolAccess, ...tool.Tool) (*tool.Registry, error) {
+		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error) {
 			return nil, configureErr
 		},
 	}
@@ -410,7 +494,7 @@ func TestNewAgentSessionReportsToolsetConfigurationFailure(t *testing.T) {
 			return agent.Response{}, nil
 		}), nil
 	}}
-	_, err := newAgentSession(config{model: "model", cwd: t.TempDir()}, runtime, backendRuntime)
+	_, err := newAgentSession(resolvedConfig{models: modelSelection{main: "model"}, cwd: t.TempDir()}, runtime, backendRuntime)
 	if !errors.Is(err, configureErr) || !strings.Contains(err.Error(), "configure tools") {
 		t.Fatalf("newAgentSession error = %v", err)
 	}

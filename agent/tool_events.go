@@ -3,13 +3,14 @@ package agent
 import "sync"
 
 type toolEventTracker struct {
-	mu         sync.Mutex
-	tools      Toolbox
-	sink       EventSink
-	streamed   map[string]streamedTool
-	order      []string
-	sinkErr    error
-	updateErrs map[string]error
+	mu            sync.Mutex
+	tools         Toolbox
+	sink          EventSink
+	streamed      map[string]streamedTool
+	order         []string
+	observerEvent bool
+	sinkErr       error
+	updateErrs    map[string]error
 }
 
 type streamedTool struct {
@@ -43,7 +44,15 @@ func newToolEventTracker(tools Toolbox, sink EventSink) *toolEventTracker {
 func (tracker *toolEventTracker) emitProvider(event Event) error {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
+
+	tracker.observerEvent = true
 	return tracker.emitLocked(event)
+}
+
+func (tracker *toolEventTracker) sawObserverEvent() bool {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	return tracker.observerEvent
 }
 
 func (tracker *toolEventTracker) emitLocked(event Event) error {
@@ -78,6 +87,7 @@ func (tracker *toolEventTracker) observeSnapshot(snapshot ToolCallSnapshot) erro
 		kind = EventToolStart
 		tracker.order = append(tracker.order, snapshot.ID)
 	}
+	tracker.observerEvent = true
 	if err := tracker.emitLocked(Event{Kind: kind, Call: call, Presentation: presentation}); err != nil {
 		return err
 	}
@@ -191,6 +201,10 @@ func (tracker *toolEventTracker) end(call ToolCall, result ToolResult) error {
 func (tracker *toolEventTracker) closeRemaining(cause error) error {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
+
+	if tracker.sinkErr != nil {
+		return tracker.sinkErr
+	}
 
 	for _, callID := range tracker.order {
 		streamed, exists := tracker.streamed[callID]

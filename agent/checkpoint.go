@@ -89,13 +89,9 @@ func validateCheckpointData(data checkpointData) error {
 }
 
 func cloneCheckpointData(data checkpointData) checkpointData {
-	data.State = append([]byte(nil), data.State...)
-	data.PendingInputs = append([]Input(nil), data.PendingInputs...)
-	for index := range data.PendingInputs {
-		if data.PendingInputs[index].Images != nil {
-			data.PendingInputs[index].Images = cloneImages(data.PendingInputs[index].Images.Items)
-		}
-	}
+	conversation := conversationState{state: data.State, inputs: data.PendingInputs}.clone()
+	data.State = conversation.state
+	data.PendingInputs = conversation.inputs
 	if data.Goal != nil {
 		goal := *data.Goal
 		data.Goal = &goal
@@ -126,9 +122,11 @@ func (e *Engine) RestoreCheckpoint(checkpoint Checkpoint) error {
 		return err
 	}
 
-	e.state = data.State
-	e.contextUsage = data.ContextUsage
-	e.pendingInputs = data.PendingInputs
+	e.conversation = conversationState{
+		state:  data.State,
+		usage:  data.ContextUsage,
+		inputs: data.PendingInputs,
+	}
 	e.continuations.restoreGoal(data.Goal)
 	return nil
 }
@@ -140,16 +138,17 @@ func (e *Engine) checkpointLocked() Checkpoint {
 		storedGoal = &goal
 	}
 
+	conversation := e.conversation.clone()
 	return Checkpoint{data: checkpointData{
 		Version:       checkpointVersion,
-		State:         append([]byte(nil), e.state...),
-		ContextUsage:  e.contextUsage,
-		PendingInputs: append([]Input(nil), e.pendingInputs...),
+		State:         conversation.state,
+		ContextUsage:  conversation.usage,
+		PendingInputs: conversation.inputs,
 		Goal:          storedGoal,
 	}}
 }
 
-func (e *Engine) commitCheckpoint(current continuation, sink EventSink) error {
+func (e *Engine) commitCheckpoint(current conversationState, sink EventSink) error {
 	current.checkpoint(e)
 	if !e.checkpointing {
 		return nil

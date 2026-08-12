@@ -23,6 +23,7 @@ type Options struct {
 	BalancedModelSet bool
 	ThinkingLevel    agent.ThinkingLevel
 	WorkingDirectory string
+	NoSandbox        bool
 	Resume           bool
 	SessionID        string
 }
@@ -47,44 +48,41 @@ type runtime struct {
 	newToolset  toolsetFactory
 }
 
-type config struct {
-	provider              string
-	model                 string
-	subagentFastModel     string
-	subagentBalancedModel string
-	thinkingLevel         agent.ThinkingLevel
-	cwd                   string
-	projectInstructions   string
-	skills                []agent.Skill
-	warnings              []string
+type modelSelection struct {
+	main     string
+	fast     string
+	balanced string
 }
 
-func resolveConfig(options Options, runtime runtime, descriptor backend.Descriptor, defaults backend.ModelDefaults) (config, error) {
+type resolvedConfig struct {
+	provider            string
+	models              modelSelection
+	thinkingLevel       agent.ThinkingLevel
+	cwd                 string
+	projectInstructions string
+	skills              []agent.Skill
+	warnings            []string
+	noSandbox           bool
+}
+
+func resolveConfig(options Options, runtime runtime, descriptor backend.Descriptor, defaults backend.ModelDefaults) (resolvedConfig, error) {
 	thinkingLevel := options.ThinkingLevel
 	if thinkingLevel == "" {
 		thinkingLevel = agent.DefaultThinkingLevel
 	}
 
-	model, err := resolveConfiguredModel(options.Model, options.ModelSet, defaults.Main, "", "")
+	models, err := resolveModelSelection(options, defaults)
 	if err != nil {
-		return config{}, err
-	}
-	subagentFastModel, err := resolveConfiguredModel(options.FastModel, options.FastModelSet, defaults.Fast, model, "fast model")
-	if err != nil {
-		return config{}, err
-	}
-	subagentBalancedModel, err := resolveConfiguredModel(options.BalancedModel, options.BalancedModelSet, defaults.Balanced, model, "balanced model")
-	if err != nil {
-		return config{}, err
+		return resolvedConfig{}, err
 	}
 
 	cwd, err := resolveCWD(options.WorkingDirectory, runtime.getwd)
 	if err != nil {
-		return config{}, err
+		return resolvedConfig{}, err
 	}
 	projectInstructions, err := readProjectInstructions(cwd)
 	if err != nil {
-		return config{}, err
+		return resolvedConfig{}, err
 	}
 	skillDirectories := []string{filepath.Join(cwd, ".agents", "skills")}
 	if home := resolveUserHome(runtime.userHomeDir); home != "" {
@@ -92,17 +90,32 @@ func resolveConfig(options Options, runtime runtime, descriptor backend.Descript
 	}
 	skills, warnings := agent.LoadSkills(skillDirectories...)
 
-	return config{
-		provider:              descriptor.ID,
-		model:                 model,
-		subagentFastModel:     subagentFastModel,
-		subagentBalancedModel: subagentBalancedModel,
-		thinkingLevel:         thinkingLevel,
-		cwd:                   cwd,
-		projectInstructions:   projectInstructions,
-		skills:                skills,
-		warnings:              warnings,
+	return resolvedConfig{
+		provider:            descriptor.ID,
+		models:              models,
+		thinkingLevel:       thinkingLevel,
+		cwd:                 cwd,
+		projectInstructions: projectInstructions,
+		skills:              skills,
+		warnings:            warnings,
+		noSandbox:           options.NoSandbox,
 	}, nil
+}
+
+func resolveModelSelection(options Options, defaults backend.ModelDefaults) (modelSelection, error) {
+	main, err := resolveConfiguredModel(options.Model, options.ModelSet, defaults.Main, "", "")
+	if err != nil {
+		return modelSelection{}, err
+	}
+	fast, err := resolveConfiguredModel(options.FastModel, options.FastModelSet, defaults.Fast, main, "fast model")
+	if err != nil {
+		return modelSelection{}, err
+	}
+	balanced, err := resolveConfiguredModel(options.BalancedModel, options.BalancedModelSet, defaults.Balanced, main, "balanced model")
+	if err != nil {
+		return modelSelection{}, err
+	}
+	return modelSelection{main: main, fast: fast, balanced: balanced}, nil
 }
 
 func resolveConfiguredModel(value string, set bool, providerDefault, fallback, name string) (string, error) {

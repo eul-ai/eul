@@ -32,31 +32,41 @@ const (
 	defaultSubagentModelProfile                      = SubagentModelBalanced
 )
 
+var subagentTaskSchema = strictObject(map[string]agent.JSONSchema{
+	"description": {
+		Type:        "string",
+		Description: "A short description of the task for progress display.",
+	},
+	"prompt": {
+		Type:        "string",
+		Description: "The complete task prompt. Include all context the subagent needs.",
+	},
+}, "description", "prompt")
+
 var subagentToolDefinition = agent.ToolDefinition{
 	Name:        subagentToolName,
-	Description: "Start one to four independent read-only research tasks in the background. At most four may be outstanding. Use selectively for substantial parallel investigation that benefits from separate context; do not use for trivial work, tightly coupled steps, or tasks the main context can handle directly. Choose the lowest model profile and thinking level sufficient for the tasks. Do not delegate follow-up work for findings already available in context.",
+	Description: "Launch one to four independent read-only research tasks, with at most four outstanding. Use only for worthwhile parallel investigation; choose the lowest sufficient profile and thinking level. Do not delegate follow-up work for findings already in context.",
 	Parameters: strictObject(map[string]agent.JSONSchema{
 		"tasks": {
 			Type:        "array",
-			Description: "One to four independent tasks. Include all context each subagent needs.",
-			Items:       &agent.JSONSchema{Type: "string"},
+			Description: "One to four independent tasks.",
+			Items:       &subagentTaskSchema,
 		},
 		"model_profile": {
 			Type:        "string",
-			Description: "Model profile for every task: fast, balanced, or powerful. Defaults to balanced. Choose fast for simple lookups, balanced for most research, and powerful only for difficult analysis.",
+			Description: "fast, balanced (default), or powerful.",
 		},
 		"thinking_level": {
 			Type:        "string",
-			Description: "Thinking level for every task: off, minimal, low, medium, or high. Defaults to low or the closest level supported by the selected model. Choose the lowest sufficient level.",
+			Description: "off, minimal, low (default), medium, or high.",
 		},
 	}, "tasks"),
 }
 
 type SubagentProgress struct {
-	Usage              agent.Usage
-	Generations        int
-	Finalizing         bool
-	FinalizationReason agent.FinalizationReason
+	Usage       agent.Usage
+	Generations int
+	Finalizing  bool
 }
 
 type SubagentRun func(context.Context, string, SubagentModelProfile, agent.ThinkingLevel, func(SubagentProgress)) (agent.RunResult, error)
@@ -78,26 +88,32 @@ type Subagent struct {
 }
 
 type subagentArguments struct {
-	Tasks         []string `json:"tasks"`
-	ModelProfile  *string  `json:"model_profile"`
-	ThinkingLevel *string  `json:"thinking_level"`
+	Tasks         []subagentTask `json:"tasks"`
+	ModelProfile  *string        `json:"model_profile"`
+	ThinkingLevel *string        `json:"thinking_level"`
+}
+
+type subagentTask struct {
+	Description string `json:"description"`
+	Prompt      string `json:"prompt"`
 }
 
 type subagentJob struct {
-	id                 string
-	order              uint64
-	task               string
-	modelProfile       SubagentModelProfile
-	thinkingLevel      agent.ThinkingLevel
-	ctx                context.Context
-	cancel             context.CancelCauseFunc
-	state              agent.SubagentState
-	started            time.Time
-	usage              agent.Usage
-	generations        int
-	finalizationReason agent.FinalizationReason
-	result             agent.RunResult
-	err                error
+	id            string
+	order         uint64
+	description   string
+	task          string
+	modelProfile  SubagentModelProfile
+	thinkingLevel agent.ThinkingLevel
+	ctx           context.Context
+	cancel        context.CancelCauseFunc
+	state         agent.SubagentState
+	started       time.Time
+	finished      time.Time
+	usage         agent.Usage
+	generations   int
+	result        agent.RunResult
+	err           error
 }
 
 type subagentResult struct {
@@ -140,7 +156,7 @@ func NewSubagentWithThinkingLevels(run SubagentRun, supportedThinkingLevels func
 		cancel:                  cancel,
 		jobs:                    make(map[string]*subagentJob),
 		status:                  make(chan agent.SubagentStatus, 1),
-		changes:                 make(chan struct{}, 1),
+		changes:                 make(chan struct{}),
 	}
 }
 
@@ -150,11 +166,15 @@ func (*Subagent) Definition() agent.ToolDefinition {
 
 func (s *Subagent) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
 	values, _ := snapshot.Arguments["tasks"].([]any)
-	tasks := make([]string, 0, len(values))
+	tasks := make([]subagentTask, 0, len(values))
 	for _, value := range values {
-		if task, ok := value.(string); ok {
-			tasks = append(tasks, task)
+		task, ok := value.(map[string]any)
+		if !ok {
+			continue
 		}
+		description, _ := task["description"].(string)
+		prompt, _ := task["prompt"].(string)
+		tasks = append(tasks, subagentTask{Description: description, Prompt: prompt})
 	}
 	modelProfile := defaultSubagentModelProfile
 	if value, ok := snapshot.Arguments["model_profile"].(string); ok {
@@ -218,6 +238,7 @@ func (s *Subagent) Close() error {
 		s.mu.Lock()
 		s.closed = true
 		s.cancel(errSubagentSessionClosed)
+		s.signalChangeLocked()
 		s.mu.Unlock()
 
 		s.workers.Wait()
@@ -225,7 +246,7 @@ func (s *Subagent) Close() error {
 	return nil
 }
 
-func validateSubagentTasks(tasks []string) error {
+func validateSubagentTasks(tasks []subagentTask) error {
 	if len(tasks) == 0 {
 		return fmt.Errorf("at least one task is required")
 	}
@@ -233,8 +254,11 @@ func validateSubagentTasks(tasks []string) error {
 		return fmt.Errorf("tasks must not exceed %d", maxSubagents)
 	}
 	for _, task := range tasks {
-		if strings.TrimSpace(task) == "" {
-			return fmt.Errorf("tasks must be nonempty")
+		if strings.TrimSpace(task.Description) == "" {
+			return fmt.Errorf("task descriptions must be nonempty")
+		}
+		if strings.TrimSpace(task.Prompt) == "" {
+			return fmt.Errorf("task prompts must be nonempty")
 		}
 	}
 	return nil
@@ -276,7 +300,7 @@ func (s *Subagent) resolveThinkingLevel(profile SubagentModelProfile, value *str
 	return level, nil
 }
 
-func (s *Subagent) start(tasks []string, modelProfile SubagentModelProfile, thinkingLevel agent.ThinkingLevel) ([]*subagentJob, error) {
+func (s *Subagent) start(tasks []subagentTask, modelProfile SubagentModelProfile, thinkingLevel agent.ThinkingLevel) ([]*subagentJob, error) {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -295,7 +319,8 @@ func (s *Subagent) start(tasks []string, modelProfile SubagentModelProfile, thin
 		job := &subagentJob{
 			id:            fmt.Sprintf("subagent-%d", s.nextID),
 			order:         s.nextID,
-			task:          task,
+			description:   task.Description,
+			task:          task.Prompt,
 			modelProfile:  modelProfile,
 			thinkingLevel: thinkingLevel,
 			ctx:           jobCtx,
@@ -309,9 +334,9 @@ func (s *Subagent) start(tasks []string, modelProfile SubagentModelProfile, thin
 
 	s.workers.Add(len(jobs))
 	s.publishStatusLocked()
+	s.signalChangeLocked()
 	s.mu.Unlock()
 
-	s.signalChange()
 	for _, job := range jobs {
 		go s.runJob(job)
 	}
@@ -332,12 +357,11 @@ func (s *Subagent) runJob(job *subagentJob) {
 			}
 			if progress.Finalizing && job.state == agent.SubagentRunning {
 				job.state = agent.SubagentFinalizing
-				job.finalizationReason = progress.FinalizationReason
 			}
 			s.publishStatusLocked()
+			s.signalChangeLocked()
 		}
 		s.mu.Unlock()
-		s.signalChange()
 	})
 	cause := context.Cause(job.ctx)
 	job.cancel(nil)
@@ -346,13 +370,19 @@ func (s *Subagent) runJob(job *subagentJob) {
 	}
 
 	s.mu.Lock()
+	job.finished = time.Now()
 	job.result = result
 	job.err = runErr
 	if result.Usage.TotalTokens > 0 {
 		job.usage = result.Usage
 	}
 	switch {
-	case errors.Is(runErr, errSubagentCanceled), errors.Is(runErr, errSubagentSessionClosed):
+	case errors.Is(runErr, errSubagentCanceled):
+		job.state = agent.SubagentCanceled
+		if s.jobs[job.id] == job {
+			delete(s.jobs, job.id)
+		}
+	case errors.Is(runErr, errSubagentSessionClosed):
 		job.state = agent.SubagentCanceled
 	case runErr != nil:
 		job.state = agent.SubagentFailed
@@ -360,8 +390,8 @@ func (s *Subagent) runJob(job *subagentJob) {
 		job.state = agent.SubagentComplete
 	}
 	s.publishStatusLocked()
+	s.signalChangeLocked()
 	s.mu.Unlock()
-	s.signalChange()
 }
 
 func (s *Subagent) jobsForIDs(ids []string) ([]*subagentJob, error) {
@@ -396,15 +426,13 @@ func (s *Subagent) cancelJobs(jobs []*subagentJob, cause error) []string {
 	}
 	if len(canceled) > 0 {
 		s.publishStatusLocked()
+		s.signalChangeLocked()
 	}
 	s.mu.Unlock()
-	if len(canceled) > 0 {
-		s.signalChange()
-	}
 	return canceled
 }
 
-func (s *Subagent) snapshotJobs(jobs []*subagentJob) ([]subagentJobSnapshot, bool) {
+func (s *Subagent) snapshotJobs(jobs []*subagentJob) ([]subagentJobSnapshot, bool, <-chan struct{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -421,7 +449,7 @@ func (s *Subagent) snapshotJobs(jobs []*subagentJob) ([]subagentJobSnapshot, boo
 			complete = false
 		}
 	}
-	return snapshots, complete
+	return snapshots, complete, s.changes
 }
 
 func (s *Subagent) consume(jobs []*subagentJob) {
@@ -432,26 +460,25 @@ func (s *Subagent) consume(jobs []*subagentJob) {
 		}
 	}
 	s.publishStatusLocked()
+	s.signalChangeLocked()
 	s.mu.Unlock()
-	s.signalChange()
 }
 
 func (s *Subagent) publishStatusLocked() {
 	status := agent.SubagentStatus{}
-	active := make([]*subagentJob, 0, len(s.jobs))
+	jobs := make([]*subagentJob, 0, len(s.jobs))
 	for _, job := range s.jobs {
+		jobs = append(jobs, job)
 		switch job.state {
 		case agent.SubagentFinalizing:
 			status.Finalizing++
-			active = append(active, job)
 		case agent.SubagentRunning, agent.SubagentCanceling:
 			status.Running++
-			active = append(active, job)
 		default:
 			status.Completed++
 		}
 	}
-	slices.SortFunc(active, func(left, right *subagentJob) int {
+	slices.SortFunc(jobs, func(left, right *subagentJob) int {
 		switch {
 		case left.order < right.order:
 			return -1
@@ -461,17 +488,19 @@ func (s *Subagent) publishStatusLocked() {
 			return 0
 		}
 	})
-	status.Jobs = make([]agent.SubagentJobStatus, len(active))
-	for index, job := range active {
+	status.Jobs = make([]agent.SubagentJobStatus, len(jobs))
+	for index, job := range jobs {
 		status.Jobs[index] = agent.SubagentJobStatus{
-			ID:                 job.id,
-			Task:               job.task,
-			State:              job.state,
-			Started:            job.started,
-			Usage:              job.usage,
-			Generations:        job.generations,
-			GenerationLimit:    subagentFinalizeAfterGenerations,
-			FinalizationReason: job.finalizationReason,
+			ID:              job.id,
+			Task:            job.description,
+			ModelProfile:    string(job.modelProfile),
+			ThinkingLevel:   job.thinkingLevel,
+			State:           job.state,
+			Started:         job.started,
+			Finished:        job.finished,
+			Usage:           job.usage,
+			Generations:     job.generations,
+			GenerationLimit: subagentFinalizeAfterGenerations,
 		}
 	}
 
@@ -490,11 +519,9 @@ func (s *Subagent) publishStatusLocked() {
 	}
 }
 
-func (s *Subagent) signalChange() {
-	select {
-	case s.changes <- struct{}{}:
-	default:
-	}
+func (s *Subagent) signalChangeLocked() {
+	close(s.changes)
+	s.changes = make(chan struct{})
 }
 
 func subagentStateTerminal(state agent.SubagentState) bool {
@@ -510,28 +537,25 @@ func formatSubagentLaunches(jobs []*subagentJob, modelProfile SubagentModelProfi
 	var output strings.Builder
 	fmt.Fprintf(&output, "Started subagents (model: %s, thinking: %s):", modelProfile, thinkingLevel)
 	for _, job := range jobs {
-		label := boundPresentationLabel(strings.TrimSpace(strings.SplitN(job.task, "\n", 2)[0]), 120)
-		fmt.Fprintf(&output, "\n- %s: %s", job.id, label)
+		fmt.Fprintf(&output, "\n- %s: %s", job.id, strings.TrimSpace(job.description))
 	}
 	return output.String()
 }
 
-func subagentLaunchPresentation(tasks, _ []string, modelProfile SubagentModelProfile, thinkingLevel agent.ThinkingLevel) agent.ToolPresentation {
+func subagentLaunchPresentation(tasks []subagentTask, ids []string, modelProfile SubagentModelProfile, thinkingLevel agent.ThinkingLevel) agent.ToolPresentation {
 	presentation := agent.ToolPresentation{
 		Title:     subagentToolName,
 		Arguments: fmt.Sprintf("(%s, %s)", modelProfile, thinkingLevel),
 		Markdown:  true,
 	}
-	if len(tasks) > 0 {
-		presentation.Lines = []string{fmt.Sprintf("Starting %d subagent(s).", len(tasks))}
+	if len(tasks) == 0 {
+		return presentation
 	}
-	return presentation
-}
 
-func boundPresentationLabel(label string, maximum int) string {
-	if len(label) <= maximum {
-		return label
+	state := "Starting"
+	if len(ids) > 0 {
+		state = "Started"
 	}
-	bounded, _ := truncateLine(label, maximum-3)
-	return bounded + "..."
+	presentation.Lines = []string{fmt.Sprintf("%s %d subagent(s).", state, len(tasks))}
+	return presentation
 }

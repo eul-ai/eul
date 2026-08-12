@@ -12,16 +12,17 @@ import (
 
 type blockKind uint8
 
+// Values are persisted in terminal checkpoints and must remain stable.
 const (
-	blockUser blockKind = iota
-	blockAssistant
-	blockReasoning
-	blockToolPending
-	blockTool
-	blockToolError
-	blockContext
-	blockError
-	blockInfo
+	blockUser        blockKind = 0
+	blockAssistant   blockKind = 1
+	blockReasoning   blockKind = 2
+	blockToolPending blockKind = 3
+	blockTool        blockKind = 4
+	blockToolError   blockKind = 5
+	blockContext     blockKind = 6
+	blockError       blockKind = 7
+	blockInfo        blockKind = 8
 )
 
 type conversationBlock struct {
@@ -42,6 +43,7 @@ const (
 	activityRetrying
 	activityCompacting
 	activityTool
+	activityPermission
 	activityCanceling
 	activityError
 )
@@ -51,7 +53,55 @@ type activity struct {
 	detail string
 }
 
-type tuiModel struct {
+type conversationModel struct {
+	blocks              []conversationBlock
+	conversationVersion uint64
+	streamKind          blockKind
+	streamOpen          bool
+	scrollTop           int
+	following           bool
+	selection           textSelection
+}
+
+type editorModel struct {
+	input              []rune
+	cursor             int
+	images             []agent.Image
+	commandCompletions []commandCompletion
+	commandPicker      commandPickerState
+	filePicker         filePickerState
+	resumePicker       resumePickerState
+	history            []string
+	historyIndex       int
+	historyDraft       string
+}
+
+type permissionModel struct {
+	title         string
+	subject       string
+	description   string
+	detail        string
+	detailPrefix  string
+	notice        string
+	allowSelected bool
+	scroll        int
+	index         int
+	total         int
+}
+
+func (permission permissionModel) active() bool {
+	return permission.title != ""
+}
+
+type operationModel struct {
+	steering         []string
+	permission       permissionModel
+	turnExecutedTool bool
+	running          bool
+	interrupted      bool
+}
+
+type statusModel struct {
 	width                      int
 	height                     int
 	model                      string
@@ -63,29 +113,15 @@ type tuiModel struct {
 	contextTokens              int64
 	providerUsage              agent.ProviderUsage
 	subagentStatus             agent.SubagentStatus
-	turnExecutedTool           bool
-	blocks                     []conversationBlock
-	conversationVersion        uint64
-	streamKind                 blockKind
-	streamOpen                 bool
-	input                      []rune
-	cursor                     int
-	images                     []agent.Image
-	steering                   []string
-	commandCompletions         []commandCompletion
-	commandPicker              commandPickerState
-	filePicker                 filePickerState
-	resumePicker               resumePickerState
-	history                    []string
-	historyIndex               int
-	historyDraft               string
-	scrollTop                  int
-	following                  bool
-	selection                  textSelection
-	running                    bool
-	interrupted                bool
 	activity                   activity
 	spinner                    int
+}
+
+type tuiModel struct {
+	conversationModel
+	editorModel
+	operationModel
+	statusModel
 }
 
 func newTUIModel(width, height int, options Options) *tuiModel {
@@ -99,19 +135,25 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 	}
 
 	model := &tuiModel{
-		width:                      width,
-		height:                     height,
-		model:                      singleLine(options.Model, 120),
-		sessionID:                  singleLine(options.SessionID, 120),
-		thinkingLevel:              agent.ThinkingLevel(singleLine(string(thinkingLevel), 40)),
-		thinkingLevels:             thinkingLevels,
-		thinkingSelectionAvailable: options.SetThinkingLevel != nil,
-		contextWindow:              options.ContextWindow,
-		commandCompletions:         commandCompletions(options.Skills),
-		filePicker:                 filePickerState{enabled: options.WorkingDirectory != ""},
-		historyIndex:               -1,
-		following:                  true,
-		activity:                   activity{kind: activityReady},
+		conversationModel: conversationModel{
+			following: true,
+		},
+		editorModel: editorModel{
+			commandCompletions: commandCompletions(options.Skills),
+			filePicker:         filePickerState{enabled: options.WorkingDirectory != ""},
+			historyIndex:       -1,
+		},
+		statusModel: statusModel{
+			width:                      width,
+			height:                     height,
+			model:                      singleLine(options.Model, 120),
+			sessionID:                  singleLine(options.SessionID, 120),
+			thinkingLevel:              agent.ThinkingLevel(singleLine(string(thinkingLevel), 40)),
+			thinkingLevels:             thinkingLevels,
+			thinkingSelectionAvailable: options.SetThinkingLevel != nil,
+			contextWindow:              options.ContextWindow,
+			activity:                   activity{kind: activityReady},
+		},
 	}
 	if options.InitialCheckpoint != nil {
 		restoreModelCheckpoint(model, *options.InitialCheckpoint)
@@ -502,11 +544,23 @@ func (m *tuiModel) takeSubmission() (string, []agent.Image, bool) {
 	return prompt, images, true
 }
 
-func (m *tuiModel) attachImage(image agent.Image) {
+func (m *tuiModel) attachImage(image agent.Image) error {
+	if len(m.images) >= maxAttachedImages {
+		return errTooManyImages
+	}
+	totalBytes := len(image.Data)
+	for _, attached := range m.images {
+		totalBytes += len(attached.Data)
+	}
+	if totalBytes > maxAttachedImagesTotalBytes {
+		return errImagesTooLarge
+	}
+
 	image.Data = append([]byte(nil), image.Data...)
 	m.images = append(m.images, image)
 	m.clearInputPickers()
 	m.activity = activity{kind: activityReady, detail: "image attached"}
+	return nil
 }
 
 func (m *tuiModel) queueSteering(prompt string) {
@@ -551,12 +605,41 @@ func (m *tuiModel) restoreAllSteering() {
 	m.restoreSteering(messages)
 }
 
+func (m *tuiModel) showPermission(request PermissionRequest, index, total int) {
+	title := singleLine(request.Title, 200)
+	if strings.TrimSpace(title) == "" {
+		title = "Permission requested"
+	}
+	detailPrefix := strings.Map(func(character rune) rune {
+		if unicode.IsControl(character) {
+			return ' '
+		}
+		return character
+	}, request.DetailPrefix)
+	m.permission = permissionModel{
+		title:        title,
+		subject:      singleLine(request.Subject, 120),
+		description:  singleLine(request.Description, 500),
+		detail:       sanitizeAssistantText(request.Detail),
+		detailPrefix: truncateCells(detailPrefix, 20, false),
+		notice:       singleLine(request.Notice, 500),
+		index:        index,
+		total:        total,
+	}
+	m.activity = activity{kind: activityPermission}
+}
+
+func (m *tuiModel) clearPermission() {
+	m.permission = permissionModel{}
+}
+
 func (m *tuiModel) clearConversation() {
 	m.blocks = nil
 	m.steering = nil
 	m.conversationVersion++
 	m.closeStream()
 	m.contextTokens = 0
+	m.clearPermission()
 	m.turnExecutedTool = false
 	m.scrollTop = 0
 	m.following = true
@@ -600,6 +683,7 @@ func (m *tuiModel) beginCompaction() {
 
 func (m *tuiModel) finishTurn(runErr error) {
 	m.running = false
+	m.clearPermission()
 	m.refreshCommandPickerAvailability()
 	m.closeStream()
 	executedTool := m.turnExecutedTool

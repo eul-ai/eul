@@ -3,7 +3,6 @@ package codex
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -14,7 +13,7 @@ import (
 
 func TestClientUsageGetsSubscriptionWindows(t *testing.T) {
 	const token = "secret-test-token"
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet || request.URL.Path != "/api/codex/usage" {
 			t.Errorf("request = %s %s", request.Method, request.URL.Path)
 		}
@@ -73,7 +72,7 @@ func TestClientUsageHandlesOptionalAndInvalidWindows(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 				_, _ = writer.Write([]byte(test.body))
 			}))
 			defer server.Close()

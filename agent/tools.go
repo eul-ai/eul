@@ -24,11 +24,12 @@ type ToolDefinition struct {
 
 type ToolDiffLineKind uint8
 
+// Values are persisted in terminal checkpoints and must remain stable.
 const (
-	ToolDiffLineContext ToolDiffLineKind = iota
-	ToolDiffLineAdded
-	ToolDiffLineRemoved
-	ToolDiffLineOmitted
+	ToolDiffLineContext ToolDiffLineKind = 0
+	ToolDiffLineAdded   ToolDiffLineKind = 1
+	ToolDiffLineRemoved ToolDiffLineKind = 2
+	ToolDiffLineOmitted ToolDiffLineKind = 3
 )
 
 type ToolDiffLine struct {
@@ -97,14 +98,16 @@ const (
 )
 
 type SubagentJobStatus struct {
-	ID                 string
-	Task               string
-	State              SubagentState
-	Started            time.Time
-	Usage              Usage
-	Generations        int
-	GenerationLimit    int
-	FinalizationReason FinalizationReason
+	ID              string
+	Task            string
+	ModelProfile    string
+	ThinkingLevel   ThinkingLevel
+	State           SubagentState
+	Started         time.Time
+	Finished        time.Time
+	Usage           Usage
+	Generations     int
+	GenerationLimit int
 }
 
 type SubagentStatus struct {

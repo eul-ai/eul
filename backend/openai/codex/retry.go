@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	maximumGenerationAttempts = 3
+	maximumGenerationAttempts = 20
 	generationRetryBaseDelay  = 500 * time.Millisecond
-	generationRetryMaxDelay   = 8 * time.Second
+	generationRetryMaxDelay   = 5 * time.Minute
 )
 
 type retryableOperationError struct {
@@ -119,10 +119,9 @@ func retryableResponseError(detail responseError) bool {
 
 func generationRetryDelay(failedAttempts int) time.Duration {
 	delay := generationRetryBaseDelay
-	for attempt := 1; attempt < failedAttempts && delay < generationRetryMaxDelay/2; attempt++ {
-		delay *= 2
+	for attempt := 1; attempt < failedAttempts && delay < generationRetryMaxDelay; attempt++ {
+		delay = min(delay*2, generationRetryMaxDelay)
 	}
-	delay = min(delay, generationRetryMaxDelay)
 
 	quarter := delay / 4
 	if quarter == 0 {

@@ -4,16 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"reflect"
 	"slices"
 	"testing"
 )
 
 func TestEngineCheckpointRoundTrip(t *testing.T) {
 	engine := newTestEngine(t, &scriptedProvider{t: t}, &fakeToolbox{}, Options{})
-	engine.state = []byte("provider-state")
-	engine.contextUsage = Usage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}
-	engine.pendingInputs = []Input{
-		{Kind: InputUser, Text: "pending user"},
+	engine.conversation.state = []byte("provider-state")
+	engine.conversation.usage = Usage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}
+	engine.conversation.inputs = []Input{
+		{Kind: InputUser, Text: "pending user", Images: &ImageAttachments{Items: []Image{{MediaType: "image/png", Data: []byte("png")}}}},
 		{Kind: InputToolResult, Text: "result", CallID: "call", Tool: "read"},
 	}
 	if err := engine.SetGoal("finish migration"); err != nil {
@@ -27,8 +29,9 @@ func TestEngineCheckpointRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine.state[0] = 'X'
-	engine.pendingInputs[0].Text = "changed"
+	engine.conversation.state[0] = 'X'
+	engine.conversation.inputs[0].Text = "changed"
+	engine.conversation.inputs[0].Images.Items[0].Data[0] = 'X'
 
 	encoded, err := json.Marshal(checkpoint)
 	if err != nil {
@@ -43,19 +46,65 @@ func TestEngineCheckpointRoundTrip(t *testing.T) {
 	if err := restored.RestoreCheckpoint(decoded); err != nil {
 		t.Fatal(err)
 	}
-	if string(restored.state) != "provider-state" {
-		t.Fatalf("state = %q", restored.state)
+	if string(restored.conversation.state) != "provider-state" {
+		t.Fatalf("state = %q", restored.conversation.state)
 	}
 	wantInputs := []Input{
-		{Kind: InputUser, Text: "pending user"},
+		{Kind: InputUser, Text: "pending user", Images: &ImageAttachments{Items: []Image{{MediaType: "image/png", Data: []byte("png")}}}},
 		{Kind: InputToolResult, Text: "result", CallID: "call", Tool: "read"},
 	}
-	if !slices.Equal(restored.pendingInputs, wantInputs) || restored.contextUsage.TotalTokens != 12 {
-		t.Fatalf("inputs=%+v usage=%+v", restored.pendingInputs, restored.contextUsage)
+	if !reflect.DeepEqual(restored.conversation.inputs, wantInputs) || restored.conversation.usage.TotalTokens != 12 {
+		t.Fatalf("inputs=%+v usage=%+v", restored.conversation.inputs, restored.conversation.usage)
 	}
 	goal, ok := restored.Goal()
 	if !ok || goal.Objective != "finish migration" || !goal.Complete {
 		t.Fatalf("goal=%+v exists=%v", goal, ok)
+	}
+}
+
+func TestVersionOneCheckpointFixture(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/checkpoint-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint Checkpoint
+	if err := json.Unmarshal(fixture, &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := newTestEngine(t, &scriptedProvider{t: t}, &fakeToolbox{}, Options{})
+	if err := engine.RestoreCheckpoint(checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	if string(engine.conversation.state) != "provider-state-v1" || engine.conversation.usage != (Usage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}) {
+		t.Fatalf("conversation = %+v", engine.conversation)
+	}
+	if len(engine.conversation.inputs) != 2 || engine.conversation.inputs[0].Kind != InputUser || engine.conversation.inputs[1].Kind != InputToolResult || engine.conversation.inputs[1].CallID != "call-1" {
+		t.Fatalf("inputs = %+v", engine.conversation.inputs)
+	}
+	goal, ok := engine.Goal()
+	if !ok || goal.Objective != "finish migration" || goal.Complete {
+		t.Fatalf("goal = %+v, exists = %t", goal, ok)
+	}
+
+	encoded, err := json.Marshal(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCheckpointSemanticJSON(t, encoded, fixture)
+}
+
+func assertCheckpointSemanticJSON(t *testing.T, got, want []byte) {
+	t.Helper()
+	var gotValue, wantValue any
+	if err := json.Unmarshal(got, &gotValue); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(want, &wantValue); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gotValue, wantValue) {
+		t.Fatalf("JSON mismatch:\ngot:  %s\nwant: %s", got, want)
 	}
 }
 
