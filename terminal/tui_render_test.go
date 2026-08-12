@@ -342,6 +342,23 @@ func TestUserMessagesRenderInlineMarkdown(t *testing.T) {
 	}
 }
 
+func TestAssistantLinksAreClickable(t *testing.T) {
+	lines := conversationLines([]conversationBlock{{
+		kind: blockAssistant,
+		text: "Read [the docs](https://example.com/docs)",
+	}}, 80)
+	if len(lines) != 1 || lines[0].text != "Read the docs" {
+		t.Fatalf("lines = %+v", lines)
+	}
+
+	var rendered strings.Builder
+	renderLine(&rendered, 1, 80, lines[0])
+	open := "\x1b]8;;https://example.com/docs\x1b\\"
+	if !strings.Contains(rendered.String(), open+"the docs"+ansiLinkClose) {
+		t.Fatalf("rendered line = %q", rendered.String())
+	}
+}
+
 func TestAssistantReasoningAndToolDetailsRenderInlineMarkdown(t *testing.T) {
 	lines := conversationLines([]conversationBlock{
 		{kind: blockReasoning, text: "**Planning**"},
