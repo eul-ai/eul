@@ -22,7 +22,7 @@ func TestEngineContinuesActiveGoalBeforeSettling(t *testing.T) {
 				t.Fatalf("goal continuation request = %+v", request)
 			}
 			prompt := request.Inputs[0].Text
-			if !strings.Contains(prompt, "finish the migration") || !strings.Contains(prompt, "update_goal") {
+			if prompt != goalContinuationPrompt+"\n\nGoal: finish the migration" {
 				t.Fatalf("goal continuation prompt = %q", prompt)
 			}
 			engine.ClearGoal()
@@ -114,7 +114,7 @@ func TestEngineDrainsSteeringBeforeGoalContinuation(t *testing.T) {
 			return Response{Text: "second steering", State: []byte("steer-two")}, nil
 		},
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if string(request.State) != "steer-two" || len(request.Inputs) != 1 || !strings.Contains(request.Inputs[0].Text, "keep going") {
+			if string(request.State) != "steer-two" || len(request.Inputs) != 1 || request.Inputs[0].Text != goalContinuationPrompt+"\n\nGoal: keep going" {
 				t.Fatalf("goal request = %+v", request)
 			}
 			engine.ClearGoal()

@@ -116,7 +116,7 @@ func TestFormatSkillsForPromptUsesMetadataOnly(t *testing.T) {
 	}
 
 	prompt := formatSkillsForPrompt(skills)
-	for _, want := range []string{"<available_skills>", "<name>review</name>", "&lt;code&gt;", "&amp;", "/skills/review/SKILL.md"} {
+	for _, want := range []string{"Resolve skill-relative paths from the skill's SKILL.md directory.", "<available_skills>", "<name>review</name>", "&lt;code&gt;", "&amp;", "/skills/review/SKILL.md"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt omits %q:\n%s", want, prompt)
 		}

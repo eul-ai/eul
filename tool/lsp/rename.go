@@ -55,7 +55,7 @@ func (t *lspTool) executeRename(ctx context.Context, arguments json.RawMessage) 
 	response, err := t.client.documentSnapshotRequest(ctx, document, func(ctx context.Context, session *lspSession, document protocol.TextDocumentIdentifier) (any, error) {
 		watcher = session.client.watcher
 		params := protocol.TextDocumentPositionParams{TextDocument: document, Position: position}
-		return prepareAndRename(ctx, session.server, params, args.NewName)
+		return renameSymbol(ctx, session, params, args.NewName)
 	})
 	if err != nil {
 		return agent.ToolResult{}, err
@@ -72,15 +72,20 @@ func (t *lspTool) executeRename(ctx context.Context, arguments json.RawMessage) 
 	return successResult(fmt.Sprintf("renamed symbol in %d files", changed)), nil
 }
 
-func prepareAndRename(ctx context.Context, server protocol.Server, params protocol.TextDocumentPositionParams, newName string) (*protocol.WorkspaceEdit, error) {
-	prepared, err := server.PrepareRename(ctx, &protocol.PrepareRenameParams{TextDocumentPositionParams: params})
-	if err != nil {
-		return nil, err
+func renameSymbol(ctx context.Context, session *lspSession, params protocol.TextDocumentPositionParams, newName string) (*protocol.WorkspaceEdit, error) {
+	if !session.renameSupported {
+		return nil, errors.New("language server does not support rename")
 	}
-	if prepared == nil {
-		return nil, errors.New("symbol is not renameable")
+	if session.prepareRenameSupport {
+		prepared, err := session.server.PrepareRename(ctx, &protocol.PrepareRenameParams{TextDocumentPositionParams: params})
+		if err != nil {
+			return nil, err
+		}
+		if prepared == nil {
+			return nil, errors.New("symbol is not renameable")
+		}
 	}
-	return server.Rename(ctx, &protocol.RenameParams{
+	return session.server.Rename(ctx, &protocol.RenameParams{
 		TextDocumentPositionParams: params,
 		NewName:                    newName,
 	})

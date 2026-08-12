@@ -56,6 +56,7 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (session.Option
 	balancedModel := flags.String("balanced-model", "", "balanced subagent model (defaults to the provider configuration)")
 	thinking := flags.String("thinking", string(agent.DefaultThinkingLevel), "thinking level")
 	cwd := flags.String("cwd", "", "fixed working directory")
+	noSandbox := flags.Bool("no-sandbox", false, "disable Bash network sandboxing and permission prompts")
 	resume := &resumeValue{}
 	flags.Var(resume, "resume", "resume the most recent session or a session selected with --resume=<id>")
 
@@ -91,6 +92,7 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (session.Option
 		BalancedModelSet: explicit["balanced-model"],
 		ThinkingLevel:    thinkingLevel,
 		WorkingDirectory: *cwd,
+		NoSandbox:        *noSandbox,
 		Resume:           resume.enabled,
 		SessionID:        resume.sessionID,
 	}, nil

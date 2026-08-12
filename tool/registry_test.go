@@ -165,7 +165,7 @@ func TestRegistryCloseIsReverseOrderedIdempotentAndConcurrentSafe(t *testing.T) 
 	}
 }
 
-func TestRegistryCorrelatesErrorsAndRejectsUnknownTools(t *testing.T) {
+func TestRegistryCorrelatesErrorsAndReturnsUnknownToolsAsResults(t *testing.T) {
 	toolErr := errors.New("failed")
 	registry := mustRegistry(t, fakeTool{
 		definition: agent.ToolDefinition{Name: "read"},
@@ -178,8 +178,10 @@ func TestRegistryCorrelatesErrorsAndRejectsUnknownTools(t *testing.T) {
 	if !errors.Is(err, toolErr) || result.CallID != "call-1" || result.Tool != "read" {
 		t.Fatalf("result=%+v error=%v", result, err)
 	}
-	if _, err := registry.Execute(context.Background(), agent.ToolCall{Name: "missing"}, nil); !errors.Is(err, errUnknownTool) {
-		t.Fatalf("unknown tool error = %v", err)
+	missing := "missing-" + strings.Repeat("x", defaultMaxBytes)
+	unknown, err := registry.Execute(context.Background(), agent.ToolCall{ID: "call-2", Name: missing}, nil)
+	if err != nil || unknown.CallID != "call-2" || unknown.Tool != missing || !unknown.IsError || !strings.Contains(unknown.Output, errUnknownTool.Error()) || len(unknown.Output) > defaultMaxBytes {
+		t.Fatalf("unknown tool result=%+v error=%v", unknown, err)
 	}
 }
 

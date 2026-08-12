@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "state": "cHJvdmlkZXItc3RhdGUtdjE=",
+  "context_usage": {
+    "InputTokens": 10,
+    "OutputTokens": 2,
+    "TotalTokens": 12
+  },
+  "pending_inputs": [
+    {
+      "Kind": "user",
+      "Text": "continue",
+      "CallID": "",
+      "Tool": "",
+      "IsError": false
+    },
+    {
+      "Kind": "tool_result",
+      "Text": "contents",
+      "CallID": "call-1",
+      "Tool": "read",
+      "IsError": false
+    }
+  ],
+  "goal": {
+    "Objective": "finish migration",
+    "Complete": false
+  }
+}

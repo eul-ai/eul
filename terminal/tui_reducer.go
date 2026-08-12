@@ -25,6 +25,8 @@ const (
 	tuiActionClearGoal
 	tuiActionDequeue
 	tuiActionSetThinking
+	tuiActionAllowPermission
+	tuiActionDenyPermission
 	tuiActionCopy
 	tuiActionRedraw
 )
@@ -37,6 +39,9 @@ type tuiAction struct {
 }
 
 func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tuiAction, error) {
+	if model.permission.active() {
+		return reducePermissionKey(model, key), nil
+	}
 	if key.code == keyMouse {
 		return reduceMouse(model, key.mouse, frame), nil
 	}
@@ -96,9 +101,6 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 			setInputError(model, err)
 		}
 	case keyShiftTab:
-		if model.running {
-			return tuiAction{}, nil
-		}
 		level, err := model.nextThinkingLevel()
 		if err != nil {
 			setInputError(model, err)
@@ -136,6 +138,50 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 		return reducePrompt(model), nil
 	}
 	return tuiAction{}, nil
+}
+
+func reducePermissionKey(model *tuiModel, key keyEvent) tuiAction {
+	switch key.code {
+	case keyText:
+		switch strings.ToLower(strings.TrimSpace(key.text)) {
+		case "y", "yes":
+			return tuiAction{kind: tuiActionAllowPermission}
+		case "n", "no":
+			return tuiAction{kind: tuiActionDenyPermission}
+		}
+	case keyLeft:
+		model.permission.allowSelected = false
+	case keyRight:
+		model.permission.allowSelected = true
+	case keyTab, keyShiftTab:
+		model.permission.allowSelected = !model.permission.allowSelected
+	case keyUp:
+		scrollPermission(model, -1)
+	case keyDown:
+		scrollPermission(model, 1)
+	case keyPageUp:
+		scrollPermission(model, -permissionDetailCapacityForModel(model))
+	case keyPageDown:
+		scrollPermission(model, permissionDetailCapacityForModel(model))
+	case keyEnter:
+		if model.permission.allowSelected {
+			return tuiAction{kind: tuiActionAllowPermission}
+		}
+		return tuiAction{kind: tuiActionDenyPermission}
+	case keyEscape:
+		return tuiAction{kind: tuiActionDenyPermission}
+	case keyCtrlC:
+		return tuiAction{kind: tuiActionCancel}
+	case keyEOF, keyCtrlD:
+		return tuiAction{kind: tuiActionExit}
+	}
+	return tuiAction{}
+}
+
+func scrollPermission(model *tuiModel, delta int) {
+	lines := wrappedPermissionDetail(model.permission, model.width)
+	maximum := max(0, len(lines)-permissionDetailCapacityForModel(model))
+	model.permission.scroll = max(0, min(maximum, model.permission.scroll+delta))
 }
 
 func reduceResumePickerKey(model *tuiModel, key keyEvent) (tuiAction, bool) {
@@ -234,9 +280,6 @@ func reduceInterrupt(model *tuiModel) (tuiAction, error) {
 	if model.interrupted {
 		return tuiAction{}, nil
 	}
-
-	model.interrupted = true
-	model.activity = activity{kind: activityCanceling}
 	return tuiAction{kind: tuiActionCancel}, nil
 }
 
@@ -268,9 +311,6 @@ func reducePrompt(model *tuiModel) tuiAction {
 
 	trimmed := strings.TrimSpace(prompt)
 	if action, _, matched := matchSlashCommand(prompt, trimmed); matched {
-		if action.kind == tuiActionSubmit {
-			model.beginTurn(prompt)
-		}
 		return action
 	}
 	if strings.HasPrefix(trimmed, "/") {
@@ -279,7 +319,6 @@ func reducePrompt(model *tuiModel) tuiAction {
 		return tuiAction{}
 	}
 
-	model.beginTurn(prompt)
 	return tuiAction{kind: tuiActionSubmit, prompt: prompt}
 }
 

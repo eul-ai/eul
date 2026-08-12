@@ -94,6 +94,9 @@ func Prepare(snapshot Snapshot, data []byte) (*Replacement, error) {
 	if int64(len(data)) > maxTextFileBytes {
 		return nil, textFileTooLargeError()
 	}
+	if err := Validate(data); err != nil {
+		return nil, err
+	}
 
 	temporary, err := os.CreateTemp(filepath.Dir(snapshot.Path), ".eul-replace-*")
 	if err != nil {

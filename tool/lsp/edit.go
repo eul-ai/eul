@@ -142,8 +142,11 @@ func planLSPWorkspaceEdit(workspaceEdit *protocol.WorkspaceEdit, documents ...te
 	changes := make([]lspFileChange, 0, len(resolvedPaths))
 	for _, resolvedPath := range resolvedPaths {
 		pathEdits := editsByPath[resolvedPath]
-		snapshot, exists := knownDocuments[resolvedPath]
-		if !exists {
+		snapshot, opened := knownDocuments[resolvedPath]
+		if err := validateLSPDocumentVersion(pathEdits.requestedPath, pathEdits.version, opened); err != nil {
+			return nil, err
+		}
+		if !opened {
 			var err error
 			snapshot, err = textfile.Load(pathEdits.requestedPath)
 			if err != nil {
@@ -157,6 +160,22 @@ func planLSPWorkspaceEdit(workspaceEdit *protocol.WorkspaceEdit, documents ...te
 		changes = append(changes, lspFileChange{snapshot: snapshot, data: updated})
 	}
 	return changes, nil
+}
+
+func validateLSPDocumentVersion(path string, version *int32, opened bool) error {
+	if version == nil {
+		return nil
+	}
+	want := int32(0)
+	kind := "unopened"
+	if opened {
+		want = lspDocumentVersion
+		kind = "opened"
+	}
+	if *version != want {
+		return fmt.Errorf("document %q has version %d; %s document requires version %d", filepath.ToSlash(path), *version, kind, want)
+	}
+	return nil
 }
 
 func commitLSPFileChanges(ctx context.Context, changes []lspFileChange) (int, error) {

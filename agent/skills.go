@@ -301,7 +301,7 @@ func formatSkillsForPrompt(skills []Skill) string {
 	var prompt strings.Builder
 	prompt.WriteString("The following skills provide specialized instructions for specific tasks.\n")
 	prompt.WriteString("Use the read tool to load a skill's file when the task matches its description.\n")
-	prompt.WriteString("When a skill file references a relative path, resolve it against the skill directory containing SKILL.md and use that absolute path in tool commands.\n\n")
+	prompt.WriteString("Resolve skill-relative paths from the skill's SKILL.md directory.\n\n")
 	prompt.WriteString("<available_skills>")
 	for _, skill := range visible {
 		prompt.WriteString("<skill>")

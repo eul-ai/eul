@@ -20,12 +20,22 @@ func TestScreenModesRestoreEnhancedKeyboardReporting(t *testing.T) {
 	}
 }
 
+func TestRunnerRunValidatesCheckpointCapabilityAtEntry(t *testing.T) {
+	runner := &Runner{}
+	err := runner.Run(context.Background(), &fakeEngine{}, Options{
+		SaveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error { return nil },
+	})
+	if !errors.Is(err, errCheckpointUnavailable) {
+		t.Fatalf("Runner.Run() error = %v", err)
+	}
+}
+
 func TestSetTerminalTitleUsesWorkingDirectoryName(t *testing.T) {
 	var output bytes.Buffer
 	if err := setTerminalTitle(&output, filepath.Join("home", "daniel", "Code", "eul")); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := output.String(), "\x1b]2;ℇ - eul\x07"; got != want {
+	if got, want := output.String(), "\x1b]2;ℯ - eul\x07"; got != want {
 		t.Fatalf("terminal title = %q, want %q", got, want)
 	}
 }
@@ -121,7 +131,7 @@ func TestRunTUILoadsProviderUsageAtStartupAndAfterTurn(t *testing.T) {
 	reader, writer := io.Pipe()
 	defer reader.Close()
 	calls := make(chan struct{}, 3)
-	output := newSignalingWriter("limit 75%")
+	output := newSignalingWriter("usage 25%")
 	options := Options{
 		Input:  reader,
 		Output: output,
@@ -164,6 +174,64 @@ func TestRunTUILoadsProviderUsageAtStartupAndAfterTurn(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("runTUI did not stop")
+	}
+}
+
+func TestRunTUIWaitsForProviderUsageCleanup(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runTUI(context.Background(), &fakeEngine{}, Options{
+			Input:  reader,
+			Output: io.Discard,
+			LoadUsage: func(ctx context.Context) (agent.ProviderUsage, error) {
+				close(started)
+				<-ctx.Done()
+				close(canceled)
+				<-release
+				return agent.ProviderUsage{}, ctx.Err()
+			},
+		}, -1, 80, 24)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("provider usage request did not start")
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-canceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("provider usage request was not canceled")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("runTUI returned before usage cleanup: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runTUI did not return after usage cleanup")
 	}
 }
 

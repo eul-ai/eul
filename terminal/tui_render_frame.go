@@ -1,6 +1,9 @@
 package terminal
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 type terminalFrame struct {
 	width               int
@@ -27,13 +30,7 @@ type renderPreparation struct {
 func (r *tuiRenderer) prepare(model *tuiModel) renderPreparation {
 	input, layout := modelInputLayout(model)
 	if r.conversationWidth != model.width || r.conversationVersion != model.conversationVersion {
-		r.conversationLines = modelConversationLines(model, model.width)
-		r.conversationPlain = make([]string, len(r.conversationLines))
-		for index, line := range r.conversationLines {
-			r.conversationPlain[index] = renderedLineText(line, model.width)
-		}
-		r.conversationWidth = model.width
-		r.conversationVersion = model.conversationVersion
+		r.prepareConversation(model)
 	}
 
 	return renderPreparation{
@@ -43,6 +40,81 @@ func (r *tuiRenderer) prepare(model *tuiModel) renderPreparation {
 		conversationPlain: r.conversationPlain,
 		scrollTop:         model.scrollTop,
 	}
+}
+
+func (r *tuiRenderer) prepareConversation(model *tuiModel) {
+	if r.conversationWidth != model.width {
+		r.conversationBlocks = nil
+	}
+	if len(r.conversationBlocks) > len(model.blocks) {
+		clear(r.conversationBlocks[len(model.blocks):])
+		r.conversationBlocks = r.conversationBlocks[:len(model.blocks)]
+	}
+	for index, block := range model.blocks {
+		if index == len(r.conversationBlocks) {
+			r.conversationBlocks = append(r.conversationBlocks, renderConversationBlock(block, model.width))
+			continue
+		}
+		if !conversationBlocksEqual(r.conversationBlocks[index].block, block) {
+			r.conversationBlocks[index] = renderConversationBlock(block, model.width)
+		}
+	}
+
+	lineCapacity := len(r.conversationLines)
+	plainCapacity := len(r.conversationPlain)
+	lines := make([]styledLine, 0, lineCapacity)
+	plain := make([]string, 0, plainCapacity)
+	blankPlain := renderedLineText(styledLine{}, model.width)
+	appendBlank := func() {
+		lines = append(lines, styledLine{})
+		plain = append(plain, blankPlain)
+	}
+	for range conversationVerticalPadding {
+		appendBlank()
+	}
+
+	totalBlocks := len(model.blocks) + len(model.steering)
+	appendedBlocks := 0
+	appendBlock := func(rendered renderedConversationBlock) {
+		lines = append(lines, rendered.lines...)
+		plain = append(plain, rendered.plain...)
+		appendedBlocks++
+		if appendedBlocks < totalBlocks {
+			appendBlank()
+		}
+	}
+	for _, rendered := range r.conversationBlocks {
+		appendBlock(rendered)
+	}
+	for _, message := range model.steering {
+		appendBlock(renderConversationBlock(conversationBlock{kind: blockInfo, text: "Queued: " + message}, model.width))
+	}
+	for range conversationVerticalPadding {
+		appendBlank()
+	}
+
+	r.conversationLines = lines
+	r.conversationPlain = plain
+	r.conversationWidth = model.width
+	r.conversationVersion = model.conversationVersion
+}
+
+func renderConversationBlock(block conversationBlock, width int) renderedConversationBlock {
+	lines := conversationBlockLines(block, width)
+	plain := make([]string, len(lines))
+	for index, line := range lines {
+		plain[index] = renderedLineText(line, width)
+	}
+	block.tool = block.tool.Clone()
+	return renderedConversationBlock{block: block, lines: lines, plain: plain}
+}
+
+func conversationBlocksEqual(left, right conversationBlock) bool {
+	return left.kind == right.kind &&
+		left.text == right.text &&
+		left.toolCallID == right.toolCallID &&
+		left.toolOutcome == right.toolOutcome &&
+		left.tool.Equal(right.tool)
 }
 
 func (r *tuiRenderer) normalizeViewport(model *tuiModel) {
@@ -77,7 +149,7 @@ func projectTerminalFrame(model *tuiModel, prepared renderPreparation) terminalF
 		plainRows:           plainRows,
 		cursorRow:           prepared.layout.inputRow + prepared.input.cursorRow,
 		cursorColumn:        prepared.input.cursorColumn,
-		cursorVisible:       prepared.layout.inputRow > 0,
+		cursorVisible:       prepared.layout.inputRow > 0 && !model.permission.active(),
 		layout:              prepared.layout,
 		conversationTop:     prepared.scrollTop,
 		conversationLines:   prepared.conversationPlain,
@@ -99,14 +171,21 @@ func composeFrameRows(model *tuiModel, prepared renderPreparation) []styledLine 
 
 	rule := strings.Repeat("─", width)
 	ruleStyle := lineStyle{foreground: currentTheme.thinkingColor(model.thinkingLevel)}
+	if model.permission.active() {
+		ruleStyle.foreground = currentTheme.orange
+	}
 	if layout.topRuleRow > 0 {
 		topRule := styledLine{text: rule, style: ruleStyle}
-		bottom := max(0, len(prepared.conversationLines)-layout.conversationHeight)
-		if prepared.scrollTop < bottom {
-			indicator := truncateCells("↓ more", width, false)
-			remaining := width - cellWidth(indicator)
-			left := remaining / 2
-			topRule.text = strings.Repeat("─", left) + indicator + strings.Repeat("─", remaining-left)
+		if model.permission.active() {
+			topRule.text = permissionRule(model.permission, width)
+		} else {
+			bottom := max(0, len(prepared.conversationLines)-layout.conversationHeight)
+			if prepared.scrollTop < bottom {
+				indicator := truncateCells("↓ more", width, false)
+				remaining := width - cellWidth(indicator)
+				left := remaining / 2
+				topRule.text = strings.Repeat("─", left) + indicator + strings.Repeat("─", remaining-left)
+			}
 		}
 		rows[layout.topRuleRow-1] = topRule
 	}
@@ -116,7 +195,11 @@ func composeFrameRows(model *tuiModel, prepared renderPreparation) []styledLine 
 		paintBackground: true,
 	}
 	for index, line := range prepared.input.lines {
-		rows[layout.inputRow-1+index] = styledLine{text: line, style: inputStyle}
+		row := styledLine{text: line, style: inputStyle}
+		if len(prepared.input.styledLines) > index {
+			row = prepared.input.styledLines[index]
+		}
+		rows[layout.inputRow-1+index] = row
 	}
 	if layout.bottomRuleRow > 0 {
 		rows[layout.bottomRuleRow-1] = styledLine{text: rule, style: ruleStyle}
@@ -138,6 +221,16 @@ func composeFrameRows(model *tuiModel, prepared renderPreparation) []styledLine 
 		}
 	}
 	return rows
+}
+
+func permissionRule(permission permissionModel, width int) string {
+	label := permission.title
+	if permission.total > 1 {
+		label += fmt.Sprintf(" (%d of %d)", permission.index, permission.total)
+	}
+	prefix := "── " + label + " "
+	prefix = truncateCells(prefix, width, true)
+	return prefix + strings.Repeat("─", max(0, width-cellWidth(prefix)))
 }
 
 func encodeFrameRows(model *tuiModel, layout tuiLayout, rows []styledLine) ([]string, []string) {

@@ -73,13 +73,13 @@ func providerUsageText(usage agent.ProviderUsage, now time.Time) (string, string
 		if window.Duration <= 0 {
 			continue
 		}
-		remaining := 100 - min(100, max(0, window.UsedPercent))
-		longText := fmt.Sprintf("limit %d%%", remaining)
+		used := min(100, max(0, window.UsedPercent))
+		longText := fmt.Sprintf("usage %d%%", used)
 		shortText := longText
 		if validWindows > 1 {
 			label := usageWindowLabel(window.Duration)
-			longText = fmt.Sprintf("%s limit %d%%", label, remaining)
-			shortText = fmt.Sprintf("%s %d%%", label, remaining)
+			longText = fmt.Sprintf("%s usage %d%%", label, used)
+			shortText = fmt.Sprintf("%s %d%%", label, used)
 		}
 		if !window.ResetsAt.IsZero() {
 			reset := resetCountdown(window.ResetsAt, now)
@@ -140,7 +140,7 @@ func usageWindowLabel(duration time.Duration) string {
 }
 
 func splitActivitySpinner(model *tuiModel, text string) (string, string) {
-	if model.activity.kind == activityReady || model.activity.kind == activityError || text == "" {
+	if model.activity.kind == activityReady || model.activity.kind == activityPermission || model.activity.kind == activityError || text == "" {
 		return "", text
 	}
 
@@ -164,12 +164,14 @@ func activityText(model *tuiModel) string {
 		label = "compacting context"
 	case activityTool:
 		label = model.activity.detail
+	case activityPermission:
+		label = "waiting for permission"
 	case activityCanceling:
 		label = "canceling"
 	case activityError:
 		label = "error: " + model.activity.detail
 	}
-	if model.activity.kind == activityReady || model.activity.kind == activityError {
+	if model.activity.kind == activityReady || model.activity.kind == activityPermission || model.activity.kind == activityError {
 		return label
 	}
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}

@@ -20,11 +20,12 @@ const (
 )
 
 var (
-	ErrInterrupted  = errors.New("terminal: interrupted")
-	ErrNotTerminal  = errors.New("terminal: interactive mode requires terminal input and output")
-	errInputTooLong = errors.New("terminal: input is too long")
-	errInvalidInput = errors.New("terminal: input must be valid UTF-8 text without NUL")
-	errOutput       = errors.New("terminal: write output")
+	ErrInterrupted           = errors.New("terminal: interrupted")
+	ErrNotTerminal           = errors.New("terminal: interactive mode requires terminal input and output")
+	errInputTooLong          = errors.New("terminal: input is too long")
+	errInvalidInput          = errors.New("terminal: input must be valid UTF-8 text without NUL")
+	errOutput                = errors.New("terminal: write output")
+	errCheckpointUnavailable = errors.New("terminal: engine checkpointing is unavailable")
 )
 
 type Engine interface {
@@ -35,6 +36,20 @@ type Engine interface {
 	SetGoal(string) error
 	Goal() (agent.GoalState, bool)
 	ClearGoal()
+}
+
+type checkpointEngine interface {
+	Checkpoint() (agent.Checkpoint, error)
+}
+
+func validateCheckpointCapability(engine Engine, required bool) error {
+	if !required {
+		return nil
+	}
+	if _, ok := engine.(checkpointEngine); !ok {
+		return errCheckpointUnavailable
+	}
+	return nil
 }
 
 type SessionSummary struct {
@@ -58,6 +73,16 @@ func (*NewSessionRequest) Error() string {
 	return "terminal: start new session"
 }
 
+type PermissionRequest struct {
+	Title        string
+	Subject      string
+	Description  string
+	Detail       string
+	DetailPrefix string
+	Notice       string
+	Response     chan<- bool
+}
+
 type Options struct {
 	Input              io.Reader
 	Output             io.Writer
@@ -72,6 +97,7 @@ type Options struct {
 	SetThinkingLevel   func(agent.ThinkingLevel) error
 	LoadUsage          func(context.Context) (agent.ProviderUsage, error)
 	SubagentUpdates    <-chan agent.SubagentStatus
+	PermissionRequests <-chan PermissionRequest
 	InitialCheckpoint  *Checkpoint
 	SessionID          string
 	PreviousTurnActive bool

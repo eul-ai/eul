@@ -1,10 +1,64 @@
 package terminal
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
 )
+
+func TestPermissionKeysTakePriority(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		key  keyEvent
+		want tuiActionKind
+	}{
+		{name: "allow", key: keyEvent{code: keyText, text: "y"}, want: tuiActionAllowPermission},
+		{name: "deny", key: keyEvent{code: keyText, text: "n"}, want: tuiActionDenyPermission},
+		{name: "enter denies", key: keyEvent{code: keyEnter}, want: tuiActionDenyPermission},
+		{name: "escape denies", key: keyEvent{code: keyEscape}, want: tuiActionDenyPermission},
+		{name: "cancel", key: keyEvent{code: keyCtrlC}, want: tuiActionCancel},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			model := newTUIModel(80, 24, Options{})
+			model.running = true
+			model.showPermission(PermissionRequest{Title: "Network access", Detail: "git push"}, 1, 1)
+			if err := model.insertInput("queued steering"); err != nil {
+				t.Fatal(err)
+			}
+
+			action, err := reduceKey(model, test.key)
+			if err != nil || action.kind != test.want {
+				t.Fatalf("action = %+v, error = %v", action, err)
+			}
+			if string(model.input) != "queued steering" {
+				t.Fatalf("permission key changed input to %q", model.input)
+			}
+		})
+	}
+}
+
+func TestPermissionSelectionAndScrolling(t *testing.T) {
+	model := newTUIModel(40, 12, Options{})
+	model.running = true
+	model.showPermission(PermissionRequest{
+		Title:  "Permission requested",
+		Detail: strings.Repeat("long command ", 30),
+	}, 1, 1)
+
+	if action, err := reduceKey(model, keyEvent{code: keyRight}); err != nil || action.kind != tuiActionNone || !model.permission.allowSelected {
+		t.Fatalf("right action=%+v err=%v permission=%+v", action, err, model.permission)
+	}
+	if action, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil || action.kind != tuiActionAllowPermission {
+		t.Fatalf("enter action=%+v err=%v", action, err)
+	}
+	if action, err := reduceKey(model, keyEvent{code: keyLeft}); err != nil || action.kind != tuiActionNone || model.permission.allowSelected {
+		t.Fatalf("left action=%+v err=%v permission=%+v", action, err, model.permission)
+	}
+	if action, err := reduceKey(model, keyEvent{code: keyDown}); err != nil || action.kind != tuiActionNone || model.permission.scroll == 0 {
+		t.Fatalf("down action=%+v err=%v scroll=%d", action, err, model.permission.scroll)
+	}
+}
 
 func TestFilePickerKeysTakePriorityOverEditorActions(t *testing.T) {
 	model := newTUIModel(80, 24, Options{WorkingDirectory: t.TempDir()})
@@ -132,7 +186,7 @@ func TestReduceKeyActions(t *testing.T) {
 			key:      keyEvent{code: keyCtrlC},
 			wantKind: tuiActionCancel,
 			check: func(t *testing.T, model *tuiModel) {
-				if !model.interrupted || model.activity.kind != activityCanceling {
+				if model.interrupted || model.activity.kind != activityThinking {
 					t.Fatalf("interrupted=%v activity=%+v", model.interrupted, model.activity)
 				}
 			},
@@ -146,7 +200,7 @@ func TestReduceKeyActions(t *testing.T) {
 			key:      keyEvent{code: keyEscape},
 			wantKind: tuiActionCancel,
 			check: func(t *testing.T, model *tuiModel) {
-				if !model.interrupted || model.activity.kind != activityCanceling {
+				if model.interrupted || model.activity.kind != activityThinking {
 					t.Fatalf("interrupted=%v activity=%+v", model.interrupted, model.activity)
 				}
 			},
@@ -234,7 +288,7 @@ func TestReduceKeyActions(t *testing.T) {
 			wantKind:   tuiActionSubmit,
 			wantPrompt: " hello ",
 			check: func(t *testing.T, model *tuiModel) {
-				if !model.running || len(model.history) != 1 || len(model.blocks) != 1 || model.blocks[0].kind != blockUser {
+				if model.running || len(model.history) != 1 || len(model.blocks) != 0 {
 					t.Fatalf("running=%v history=%q blocks=%+v", model.running, model.history, model.blocks)
 				}
 			},
@@ -267,7 +321,7 @@ func TestReduceKeyActions(t *testing.T) {
 			wantKind:   tuiActionSubmit,
 			wantPrompt: "/skill:review check tests",
 			check: func(t *testing.T, model *tuiModel) {
-				if !model.running || len(model.blocks) != 1 || model.blocks[0].kind != blockUser {
+				if model.running || len(model.blocks) != 0 {
 					t.Fatalf("running=%v blocks=%+v", model.running, model.blocks)
 				}
 			},
@@ -316,6 +370,55 @@ func TestReduceKeyActions(t *testing.T) {
 			},
 		},
 		{
+			name: "running shows help",
+			setup: func(t *testing.T, model *tuiModel) {
+				model.running = true
+				if err := model.insertInput("/help"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			key:      keyEvent{code: keyEnter},
+			wantKind: tuiActionHelp,
+			check: func(t *testing.T, model *tuiModel) {
+				if len(model.input) != 0 || len(model.history) != 1 {
+					t.Fatalf("input=%q history=%q", model.input, model.history)
+				}
+			},
+		},
+		{
+			name: "running shows goal",
+			setup: func(t *testing.T, model *tuiModel) {
+				model.running = true
+				if err := model.insertInput("/goal"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			key:      keyEvent{code: keyEnter},
+			wantKind: tuiActionShowGoal,
+			check: func(t *testing.T, model *tuiModel) {
+				if len(model.input) != 0 || len(model.history) != 1 {
+					t.Fatalf("input=%q history=%q", model.input, model.history)
+				}
+			},
+		},
+		{
+			name: "running sets goal",
+			setup: func(t *testing.T, model *tuiModel) {
+				model.running = true
+				if err := model.insertInput("/goal finish migration"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			key:        keyEvent{code: keyEnter},
+			wantKind:   tuiActionSetGoal,
+			wantPrompt: "finish migration",
+			check: func(t *testing.T, model *tuiModel) {
+				if len(model.input) != 0 || len(model.history) != 1 {
+					t.Fatalf("input=%q history=%q", model.input, model.history)
+				}
+			},
+		},
+		{
 			name: "running clears goal",
 			setup: func(t *testing.T, model *tuiModel) {
 				model.running = true
@@ -347,7 +450,7 @@ func TestReduceKeyActions(t *testing.T) {
 			},
 		},
 		{
-			name: "running ignores thinking change",
+			name: "running changes thinking",
 			options: Options{
 				ThinkingLevel: agent.ThinkingMedium,
 				SetThinkingLevel: func(agent.ThinkingLevel) error {
@@ -358,7 +461,9 @@ func TestReduceKeyActions(t *testing.T) {
 				model.running = true
 				model.activity = activity{kind: activityThinking}
 			},
-			key: keyEvent{code: keyShiftTab},
+			key:       keyEvent{code: keyShiftTab},
+			wantKind:  tuiActionSetThinking,
+			wantLevel: agent.ThinkingHigh,
 			check: func(t *testing.T, model *tuiModel) {
 				if model.thinkingLevel != agent.ThinkingMedium || model.activity.kind != activityThinking {
 					t.Fatalf("thinking=%q activity=%+v", model.thinkingLevel, model.activity)

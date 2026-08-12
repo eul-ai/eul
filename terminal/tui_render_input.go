@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
 )
@@ -20,6 +21,7 @@ type tuiLayout struct {
 
 type renderedInput struct {
 	lines        []string
+	styledLines  []styledLine
 	cursorRow    int
 	cursorColumn int
 }
@@ -84,6 +86,9 @@ func maximumPickerHeight(height int) int {
 }
 
 func (m *tuiModel) pickerHeight() int {
+	if m.permission.active() {
+		return 0
+	}
 	if m.resumePickerVisible() {
 		return m.resumePickerHeight()
 	}
@@ -96,13 +101,153 @@ func (m *tuiModel) pickerHeight() int {
 func modelInputLayout(model *tuiModel) (renderedInput, tuiLayout) {
 	subagentHeight := min(len(model.subagentStatus.Jobs), max(0, model.height-5))
 	pickerHeight := min(model.pickerHeight(), max(0, maximumPickerHeight(model.height)-subagentHeight))
-	input := renderInput(model, model.width, maximumInputHeight(model.height-subagentHeight, pickerHeight))
+	availableHeight := model.height - subagentHeight
+	maximumHeight := maximumInputHeight(availableHeight, pickerHeight)
+	if model.permission.active() {
+		maximumHeight = maximumPermissionInputHeight(availableHeight)
+	}
+	input := renderInput(model, model.width, maximumHeight)
 	return input, calculateLayout(model.height, len(input.lines), pickerHeight, subagentHeight)
+}
+
+const maximumPermissionHeight = 12
+
+func maximumPermissionInputHeight(height int) int {
+	maximumHeight := maximumInputHeight(height, 0)
+	if height >= 5 {
+		maximumHeight = min(maximumHeight+1, height-3)
+	}
+	return maximumHeight
+}
+
+func permissionDetailCapacityForModel(model *tuiModel) int {
+	subagentHeight := min(len(model.subagentStatus.Jobs), max(0, model.height-5))
+	maximumHeight := maximumPermissionInputHeight(model.height - subagentHeight)
+	return permissionDetailCapacity(min(maximumPermissionHeight, maximumHeight))
+}
+
+func permissionDetailCapacity(height int) int {
+	switch {
+	case height <= 1:
+		return 0
+	case height <= 3:
+		return 1
+	case height <= 5:
+		return 0
+	case height <= 7:
+		return height - 6
+	default:
+		return height - 8
+	}
+}
+
+func wrappedPermissionDetail(permission permissionModel, width int) []string {
+	if permission.detail == "" {
+		return nil
+	}
+	contentWidth := max(1, width-4-cellWidth(permission.detailPrefix))
+	return wrapText(permission.detail, contentWidth)
+}
+
+func renderPermission(model *tuiModel, width, maximumHeight int) renderedInput {
+	height := min(maximumPermissionHeight, maximumHeight)
+	panelStyle := lineStyle{
+		foreground:      currentTheme.foreground,
+		background:      currentTheme.editorLine,
+		paintBackground: true,
+	}
+	mutedStyle := panelStyle
+	mutedStyle.foreground = currentTheme.muted
+	commandStyle := panelStyle
+	commandStyle.foreground = currentTheme.markdownCode
+	commandStyle.background = currentTheme.toolPendingBackground
+
+	var descriptionSpans []inlineSpan
+	if model.permission.subject != "" {
+		descriptionSpans = append(descriptionSpans, inlineSpan{text: model.permission.subject, style: inlineStyle{bold: true, foreground: inlineForegroundAccent}})
+	}
+	if model.permission.subject != "" && model.permission.description != "" {
+		descriptionSpans = append(descriptionSpans, inlineSpan{text: " "})
+	}
+	if model.permission.description != "" {
+		descriptionSpans = append(descriptionSpans, inlineSpan{text: model.permission.description})
+	}
+	description := styledLine{spans: descriptionSpans, style: panelStyle, padding: 2}
+	blank := styledLine{style: panelStyle}
+	buttons := permissionButtons(model.permission.allowSelected, panelStyle)
+
+	detailLines := wrappedPermissionDetail(model.permission, width)
+	capacity := permissionDetailCapacity(height)
+	start := min(model.permission.scroll, max(0, len(detailLines)-capacity))
+	end := min(len(detailLines), start+capacity)
+	details := make([]styledLine, 0, end-start)
+	for index, detail := range detailLines[start:end] {
+		prefix := strings.Repeat(" ", cellWidth(model.permission.detailPrefix))
+		if index == 0 && start == 0 {
+			prefix = model.permission.detailPrefix
+		}
+		details = append(details, styledLine{
+			prefixText: prefix, prefixForeground: &currentTheme.accent,
+			text: detail, style: commandStyle, padding: 2,
+		})
+	}
+	notice := styledLine{text: model.permission.notice, style: mutedStyle, padding: 2}
+	if len(detailLines) > capacity && capacity > 0 {
+		notice.rightText = fmt.Sprintf("lines %d–%d of %d", start+1, end, len(detailLines))
+	}
+
+	var styled []styledLine
+	switch {
+	case height == 1:
+		styled = []styledLine{buttons}
+	case height == 2:
+		styled = append(details, buttons)
+	case height == 3:
+		styled = append([]styledLine{description}, details...)
+		styled = append(styled, buttons)
+	case height == 4:
+		styled = append(styled, notice, blank, buttons, blank)
+	case height == 5:
+		styled = append(styled, blank, notice, blank, buttons, blank)
+	case height <= 7:
+		styled = append(styled, description)
+		styled = append(styled, details...)
+		styled = append(styled, blank, notice, blank, buttons, blank)
+	default:
+		styled = append(styled, blank, description, blank)
+		styled = append(styled, details...)
+		styled = append(styled, blank, notice, blank, buttons, blank)
+	}
+	styled = styled[:min(len(styled), height)]
+
+	lines := make([]string, len(styled))
+	for index, line := range styled {
+		lines[index] = renderedLineText(line, width)
+	}
+	return renderedInput{lines: lines, styledLines: styled}
+}
+
+func permissionButtons(allowSelected bool, style lineStyle) styledLine {
+	spans := []inlineSpan{
+		{text: "› [n] Deny", style: inlineStyle{bold: true, foreground: inlineForegroundError}},
+		{text: "     [y] Allow once"},
+	}
+	if allowSelected {
+		spans = []inlineSpan{
+			{text: "  [n] Deny"},
+			{text: "   › [y] Allow once", style: inlineStyle{bold: true, foreground: inlineForegroundSuccess}},
+		}
+	}
+	style.foreground = currentTheme.muted
+	return styledLine{spans: spans, style: style}
 }
 
 func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {
 	if width < 1 || maximumHeight < 1 {
 		return renderedInput{}
+	}
+	if model.permission.active() {
+		return renderPermission(model, width, maximumHeight)
 	}
 	if width <= 2 {
 		return renderedInput{lines: []string{truncateCells("> ", width, false)}, cursorColumn: width}

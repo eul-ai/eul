@@ -105,6 +105,80 @@ func TestPlanLSPWorkspaceEditAcceptsGoplsVersionsForOpenedAndDiskFiles(t *testin
 	assertFileContent(t, diskPath, "new")
 }
 
+func TestPlanLSPWorkspaceEditAcceptsNilVersionsForOpenedAndDiskFiles(t *testing.T) {
+	directory := t.TempDir()
+	openedPath := filepath.Join(directory, "opened.go")
+	diskPath := filepath.Join(directory, "disk.go")
+	if err := os.WriteFile(openedPath, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(diskPath, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := textfile.Load(openedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceEdit := &protocol.WorkspaceEdit{Changes: map[uri.URI][]protocol.TextEdit{
+		uri.File(openedPath): {{Range: protocol.Range{End: protocol.Position{Character: 3}}, NewText: "open"}},
+		uri.File(diskPath):   {{Range: protocol.Range{End: protocol.Position{Character: 3}}, NewText: "disk"}},
+	}}
+
+	changes, err := planLSPWorkspaceEdit(workspaceEdit, opened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 2 {
+		t.Fatalf("changes = %d, want 2", len(changes))
+	}
+}
+
+func TestPlanLSPWorkspaceEditRejectsMismatchedVersionsWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name          string
+		openedVersion int32
+		diskVersion   int32
+		want          string
+	}{
+		{name: "opened", openedVersion: lspDocumentVersion + 1, diskVersion: 0, want: "opened document requires version 1"},
+		{name: "disk", openedVersion: lspDocumentVersion, diskVersion: 2, want: "unopened document requires version 0"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			openedPath := filepath.Join(directory, "opened.go")
+			diskPath := filepath.Join(directory, "disk.go")
+			if err := os.WriteFile(openedPath, []byte("old"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(diskPath, []byte("old"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			opened, err := textfile.Load(openedPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			workspaceEdit := &protocol.WorkspaceEdit{DocumentChanges: []protocol.DocumentChange{
+				&protocol.TextDocumentEdit{
+					TextDocument: protocol.OptionalVersionedTextDocumentIdentifier{TextDocumentIdentifier: protocol.TextDocumentIdentifier{URI: uri.File(openedPath)}, Version: lspVersion(test.openedVersion)},
+					Edits:        []protocol.TextDocumentEditElement{&protocol.TextEdit{Range: protocol.Range{End: protocol.Position{Character: 3}}, NewText: "new"}},
+				},
+				&protocol.TextDocumentEdit{
+					TextDocument: protocol.OptionalVersionedTextDocumentIdentifier{TextDocumentIdentifier: protocol.TextDocumentIdentifier{URI: uri.File(diskPath)}, Version: lspVersion(test.diskVersion)},
+					Edits:        []protocol.TextDocumentEditElement{&protocol.TextEdit{Range: protocol.Range{End: protocol.Position{Character: 3}}, NewText: "new"}},
+				},
+			}}
+
+			if _, err := planLSPWorkspaceEdit(workspaceEdit, opened); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want containing %q", err, test.want)
+			}
+			assertFileContent(t, openedPath, "old")
+			assertFileContent(t, diskPath, "old")
+		})
+	}
+}
+
 func TestPlanLSPWorkspaceEditRejectsUnsupportedInputWithoutMutation(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "sample.go")
@@ -255,6 +329,40 @@ func TestCommitLSPFileChangesRejectsChangedFileBeforeAnyCommit(t *testing.T) {
 	}
 	assertFileContent(t, firstPath, "first")
 	assertFileContent(t, secondPath, "external")
+}
+
+func TestCommitLSPFileChangesRejectsNonTextBeforeAnyCommit(t *testing.T) {
+	directory := t.TempDir()
+	firstPath := filepath.Join(directory, "first.go")
+	secondPath := filepath.Join(directory, "second.go")
+	if err := os.WriteFile(firstPath, []byte("first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secondPath, []byte("second"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first, err := textfile.Load(firstPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := textfile.Load(secondPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	committed, err := commitLSPFileChanges(context.Background(), []lspFileChange{
+		{snapshot: first, data: []byte("changed first")},
+		{snapshot: second, data: []byte{'b', 0, 'd'}},
+	})
+	if committed != 0 || err == nil || !strings.Contains(err.Error(), "binary file") {
+		t.Fatalf("committed = %d, commit error = %v", committed, err)
+	}
+	assertFileContent(t, firstPath, "first")
+	assertFileContent(t, secondPath, "second")
+	matches, globErr := filepath.Glob(filepath.Join(directory, ".eul-replace-*"))
+	if globErr != nil || len(matches) != 0 {
+		t.Fatalf("temporary files=%v error=%v", matches, globErr)
+	}
 }
 
 func TestCommitLSPFileChangesReportsPartialCommit(t *testing.T) {

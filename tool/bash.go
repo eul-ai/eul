@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -18,33 +19,53 @@ const (
 
 var bashToolDefinition = agent.ToolDefinition{
 	Name:        bashToolName,
-	Description: "Run unsandboxed, noninteractive Bash commands with the user's permissions, a timeout, and bounded output.",
+	Description: "Run noninteractive Bash commands with the user's filesystem permissions, optional network isolation, a timeout, and bounded output.",
 	Parameters: strictObject(map[string]agent.JSONSchema{
 		"command": {Type: "string", Description: "Command passed exactly to bash -c."},
 		"timeout": nullable("integer", "Optional timeout in seconds; null uses the configured default."),
-	}, "command", "timeout"),
+		"network": {Type: "boolean", Description: "Whether the command and its descendants may access the network. false uses OS network isolation on Linux and macOS; true requires user approval."},
+	}, "command", "timeout", "network"),
 }
 
+type NetworkAuthorizer func(context.Context, string) (bool, error)
+
 type Bash struct {
-	workspace      workspace
-	shell          string
-	defaultTimeout time.Duration
-	maxTimeout     time.Duration
-	waitDelay      time.Duration
+	workspace        workspace
+	shell            string
+	authorizeNetwork NetworkAuthorizer
+	noSandbox        bool
+	defaultTimeout   time.Duration
+	maxTimeout       time.Duration
+	waitDelay        time.Duration
 }
 
 type bashArguments struct {
 	Command string `json:"command"`
 	Timeout *int   `json:"timeout"`
+	Network bool   `json:"network"`
 }
 
 func NewBash(cwd string) *Bash {
+	return NewBashWithNetworkAuthorizer(cwd, nil)
+}
+
+func NewBashWithNetworkAuthorizer(cwd string, authorizeNetwork NetworkAuthorizer) *Bash {
+	return newBash(cwd, authorizeNetwork, false)
+}
+
+func NewBashWithoutSandbox(cwd string) *Bash {
+	return newBash(cwd, nil, true)
+}
+
+func newBash(cwd string, authorizeNetwork NetworkAuthorizer, noSandbox bool) *Bash {
 	return &Bash{
-		workspace:      newWorkspace(cwd),
-		shell:          bashToolName,
-		defaultTimeout: defaultBashTimeout,
-		maxTimeout:     maximumBashTimeout,
-		waitDelay:      defaultWaitDelay,
+		workspace:        newWorkspace(cwd),
+		shell:            bashToolName,
+		authorizeNetwork: authorizeNetwork,
+		noSandbox:        noSandbox,
+		defaultTimeout:   defaultBashTimeout,
+		maxTimeout:       maximumBashTimeout,
+		waitDelay:        defaultWaitDelay,
 	}
 }
 

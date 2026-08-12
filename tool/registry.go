@@ -107,7 +107,13 @@ func (r *Registry) Presentation(snapshot agent.ToolCallSnapshot) agent.ToolPrese
 func (r *Registry) Execute(ctx context.Context, call agent.ToolCall, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
 	registered, exists := r.tools[call.Name]
 	if !exists {
-		return agent.ToolResult{}, fmt.Errorf("%w %q", errUnknownTool, call.Name)
+		failure := fmt.Errorf("%w %q", errUnknownTool, call.Name)
+		return agent.ToolResult{
+			CallID:  call.ID,
+			Tool:    call.Name,
+			Output:  boundHead(failure.Error(), ""),
+			IsError: true,
+		}, nil
 	}
 
 	result, err := registered.Execute(ctx, call.Arguments, updates)

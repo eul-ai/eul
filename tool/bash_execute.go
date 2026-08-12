@@ -38,11 +38,30 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates a
 		timeout = time.Duration(*args.Timeout) * time.Second
 	}
 
+	if b.noSandbox {
+		args.Network = true
+	}
+
+	if args.Network && !b.noSandbox {
+		if b.authorizeNetwork == nil {
+			return errorResult(bashToolName, errors.New("network access requires approval, but authorization is unavailable")), nil
+		}
+		allowed, err := b.authorizeNetwork(ctx, args.Command)
+		if err != nil {
+			return errorResult(bashToolName, fmt.Errorf("authorize network access: %w", err)), err
+		}
+		if !allowed {
+			return errorResult(bashToolName, errors.New("network access denied")), nil
+		}
+	}
+
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	command := exec.CommandContext(runCtx, b.shell, "-c", args.Command)
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command, err := newBashProcess(runCtx, b.shell, args.Command, args.Network)
+	if err != nil {
+		return errorResult(bashToolName, err), nil
+	}
 	command.Cancel = func() error {
 		err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 		if errors.Is(err, syscall.ESRCH) {
@@ -76,7 +95,11 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates a
 			setFinalBashPresentation(updates, args.Command, "", "", time.Since(started), timeout)
 			return result, nil
 		}
-		result := errorResult(bashToolName, fmt.Errorf("failed to start shell: %w; exit status: unavailable", err))
+		operation := "shell"
+		if !args.Network {
+			operation = "network-isolated shell"
+		}
+		result := errorResult(bashToolName, fmt.Errorf("failed to start %s: %w; exit status: unavailable", operation, err))
 		setFinalBashPresentation(updates, args.Command, "", "", time.Since(started), timeout)
 		return result, nil
 	}

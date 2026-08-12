@@ -3,6 +3,8 @@ name: CI
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "17 4 * * 1"
 
 permissions:
   contents: read
@@ -33,9 +35,16 @@ jobs:
       - name: Install quality tools
         if: runner.os == 'Linux'
         run: |
+          go install golang.org/x/tools/gopls@v0.22.0
           go install mvdan.cc/gofumpt@v0.10.0
           go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
           go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+
+      - name: Verify module files
+        if: runner.os == 'Linux'
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
 
       - name: Check formatting
         if: runner.os == 'Linux'
@@ -55,6 +64,17 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      - name: Smoke test CLI composition
+        run: go run ./cmd/eul --help
+
+      - name: Fuzz parsers and decoders
+        if: github.event_name == 'schedule' && runner.os == 'Linux'
+        run: |
+          go test ./tool -run='^$' -fuzz='^FuzzParseStreamingJSONObject$' -fuzztime=10s
+          go test ./backend/openai/codex -run='^$' -fuzz='^FuzzResponsesSSE$' -fuzztime=10s
+          go test ./agent -run='^$' -fuzz='^FuzzParseSkillFrontmatter$' -fuzztime=10s
+          go test ./terminal -run='^$' -fuzz='^FuzzKeyDecoderChunking$' -fuzztime=10s
 
       - name: Test with race detector
         if: runner.os == 'Linux'

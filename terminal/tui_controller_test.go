@@ -12,6 +12,54 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
+type checkpointingFakeEngine struct {
+	*fakeEngine
+}
+
+func (*checkpointingFakeEngine) Checkpoint() (agent.Checkpoint, error) {
+	return agent.Checkpoint{}, nil
+}
+
+func TestTUIControllerSerializesPermissions(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.running = true
+	controller := tuiController{model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard}
+	first := make(chan bool, 1)
+	second := make(chan bool, 1)
+
+	for _, request := range []PermissionRequest{
+		{Title: "Network access", Detail: "git push", Response: first},
+		{Title: "Network access", Detail: "ssh host", Response: second},
+	} {
+		if _, err := controller.handlePermission(request); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if model.permission.detail != "git push" || model.permission.total != 2 || len(controller.queuedPermissions) != 1 {
+		t.Fatalf("permission=%+v queued=%d", model.permission, len(controller.queuedPermissions))
+	}
+
+	if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionAllowPermission}); err != nil {
+		t.Fatal(err)
+	}
+	if allowed := <-first; !allowed {
+		t.Fatal("first request was denied")
+	}
+	if model.permission.detail != "ssh host" || model.permission.index != 2 || model.permission.total != 2 {
+		t.Fatalf("next permission = %+v", model.permission)
+	}
+
+	if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionDenyPermission}); err != nil {
+		t.Fatal(err)
+	}
+	if allowed := <-second; allowed {
+		t.Fatal("second request was allowed")
+	}
+	if model.permission.active() || controller.permission != nil {
+		t.Fatalf("permission remains active: model=%+v request=%+v", model.permission, controller.permission)
+	}
+}
+
 func TestTUIControllerEOFWhileRunningDefersCheckpoint(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.running = true
@@ -33,6 +81,201 @@ func TestTUIControllerEOFWhileRunningDefersCheckpoint(t *testing.T) {
 	}
 	if !canceled || !errors.Is(controller.exitAfterTurn, io.EOF) || saveCalls != 0 {
 		t.Fatalf("canceled=%v exitAfterTurn=%v saveCalls=%d", canceled, controller.exitAfterTurn, saveCalls)
+	}
+}
+
+func TestTUIControllerStartsOperationsAfterActiveCheckpoint(t *testing.T) {
+	tests := []struct {
+		name          string
+		prompt        string
+		activity      activityKind
+		wantUserBlock bool
+		prepare       func(*tuiController)
+		start         func(context.Context, *tuiController) error
+	}{
+		{
+			name:          "submit",
+			prompt:        "ordinary prompt",
+			activity:      activityThinking,
+			wantUserBlock: true,
+			start: func(ctx context.Context, controller *tuiController) error {
+				_, err := controller.applyAction(ctx, tuiAction{kind: tuiActionSubmit, prompt: "ordinary prompt"})
+				return err
+			},
+		},
+		{
+			name:          "goal",
+			prompt:        "finish goal",
+			activity:      activityThinking,
+			wantUserBlock: true,
+			start: func(ctx context.Context, controller *tuiController) error {
+				_, err := controller.applyAction(ctx, tuiAction{kind: tuiActionSetGoal, prompt: "finish goal"})
+				return err
+			},
+		},
+		{
+			name:     "compaction",
+			activity: activityCompacting,
+			start: func(ctx context.Context, controller *tuiController) error {
+				_, err := controller.applyAction(ctx, tuiAction{kind: tuiActionCompact})
+				return err
+			},
+		},
+		{
+			name:          "deferred replay",
+			prompt:        "deferred prompt",
+			activity:      activityThinking,
+			wantUserBlock: true,
+			prepare: func(controller *tuiController) {
+				controller.deferredSteering = []string{"deferred prompt"}
+				controller.model.queueSteering("deferred prompt")
+			},
+			start: func(ctx context.Context, controller *tuiController) error {
+				return controller.startDeferredTurn(ctx)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			events := make(chan string, 2)
+			engine := &fakeEngine{
+				runFunction: func(context.Context, string, agent.EventSink) (agent.RunResult, error) {
+					events <- "launch"
+					return agent.RunResult{}, nil
+				},
+				compactFunction: func(context.Context, agent.EventSink) error {
+					events <- "launch"
+					return nil
+				},
+			}
+			model := newTUIModel(80, 24, Options{})
+			messages := make(chan engineMessage, 2)
+			stopped := make(chan struct{})
+			controller := tuiController{
+				model: model, renderer: &tuiRenderer{}, engine: &checkpointingFakeEngine{fakeEngine: engine}, output: io.Discard,
+				engineMessages: messages, stopped: stopped,
+				saveCheckpoint: func(_ agent.Checkpoint, _ Checkpoint, active bool) error {
+					if !active || !model.running || model.activity.kind != test.activity {
+						t.Fatalf("checkpoint active=%v running=%v activity=%+v", active, model.running, model.activity)
+					}
+					events <- "checkpoint"
+					return nil
+				},
+			}
+			if test.prepare != nil {
+				test.prepare(&controller)
+			}
+
+			if err := test.start(context.Background(), &controller); err != nil {
+				t.Fatal(err)
+			}
+			if first := <-events; first != "checkpoint" {
+				t.Fatalf("first operation = %q, want checkpoint", first)
+			}
+			if second := <-events; second != "launch" {
+				t.Fatalf("second operation = %q, want launch", second)
+			}
+			if test.wantUserBlock {
+				if len(model.blocks) != 1 || model.blocks[0].kind != blockUser || model.blocks[0].text != test.prompt {
+					t.Fatalf("blocks = %+v", model.blocks)
+				}
+			} else if len(model.blocks) != 0 {
+				t.Fatalf("blocks = %+v", model.blocks)
+			}
+			select {
+			case message := <-messages:
+				if !message.done || message.err != nil {
+					t.Fatalf("engine message = %+v", message)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("operation did not finish")
+			}
+			close(stopped)
+		})
+	}
+}
+
+func TestTUIControllerDoesNotLaunchAfterActiveCheckpointFailure(t *testing.T) {
+	checkpointErr := errors.New("checkpoint failed")
+	tests := []struct {
+		name     string
+		activity activityKind
+		prepare  func(*tuiController)
+		start    func(context.Context, *tuiController) error
+	}{
+		{
+			name:     "submit",
+			activity: activityThinking,
+			start: func(ctx context.Context, controller *tuiController) error {
+				_, err := controller.applyAction(ctx, tuiAction{kind: tuiActionSubmit, prompt: "ordinary prompt"})
+				return err
+			},
+		},
+		{
+			name:     "goal",
+			activity: activityThinking,
+			start: func(ctx context.Context, controller *tuiController) error {
+				_, err := controller.applyAction(ctx, tuiAction{kind: tuiActionSetGoal, prompt: "finish goal"})
+				return err
+			},
+		},
+		{
+			name:     "compaction",
+			activity: activityCompacting,
+			start: func(ctx context.Context, controller *tuiController) error {
+				_, err := controller.applyAction(ctx, tuiAction{kind: tuiActionCompact})
+				return err
+			},
+		},
+		{
+			name:     "deferred replay",
+			activity: activityThinking,
+			prepare: func(controller *tuiController) {
+				controller.deferredSteering = []string{"deferred prompt"}
+				controller.model.queueSteering("deferred prompt")
+			},
+			start: func(ctx context.Context, controller *tuiController) error {
+				return controller.startDeferredTurn(ctx)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			launched := make(chan struct{}, 1)
+			engine := &fakeEngine{
+				runFunction: func(context.Context, string, agent.EventSink) (agent.RunResult, error) {
+					launched <- struct{}{}
+					return agent.RunResult{}, nil
+				},
+				compactFunction: func(context.Context, agent.EventSink) error {
+					launched <- struct{}{}
+					return nil
+				},
+			}
+			model := newTUIModel(80, 24, Options{})
+			controller := tuiController{
+				model: model, renderer: &tuiRenderer{}, engine: &checkpointingFakeEngine{fakeEngine: engine}, output: io.Discard,
+				engineMessages: make(chan engineMessage, 2), stopped: make(chan struct{}),
+				saveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error { return checkpointErr },
+			}
+			if test.prepare != nil {
+				test.prepare(&controller)
+			}
+
+			if err := test.start(context.Background(), &controller); !errors.Is(err, checkpointErr) {
+				t.Fatalf("start error = %v", err)
+			}
+			select {
+			case <-launched:
+				t.Fatal("operation launched after checkpoint failure")
+			case <-time.After(25 * time.Millisecond):
+			}
+			if controller.turnCancel != nil || !model.running || model.activity.kind != test.activity {
+				t.Fatalf("cancel=%v running=%v activity=%+v", controller.turnCancel != nil, model.running, model.activity)
+			}
+		})
 	}
 }
 
@@ -155,6 +398,61 @@ func TestTUIControllerSetsShowsAndClearsGoal(t *testing.T) {
 	}
 }
 
+func TestTUIControllerShowsHelpAndGoalWhileRunning(t *testing.T) {
+	engine := &fakeEngine{goal: &agent.GoalState{Objective: "finish migration"}}
+	model := newTUIModel(80, 24, Options{})
+	model.running = true
+	checkpointCalls := 0
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+		saveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error {
+			checkpointCalls++
+			return nil
+		},
+	}
+
+	for _, command := range []string{"/help", "/goal"} {
+		if err := model.insertInput(command); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !model.running || checkpointCalls != 0 || len(model.blocks) != 2 {
+		t.Fatalf("running=%v checkpoints=%d blocks=%+v", model.running, checkpointCalls, model.blocks)
+	}
+	if !strings.Contains(model.blocks[0].text, "Commands:") || model.blocks[1].text != "Goal: finish migration" {
+		t.Fatalf("blocks=%+v", model.blocks)
+	}
+}
+
+func TestTUIControllerSetsGoalWhileRunning(t *testing.T) {
+	engine := &fakeEngine{}
+	model := newTUIModel(80, 24, Options{})
+	model.running = true
+	if err := model.insertInput("/goal finish migration"); err != nil {
+		t.Fatal(err)
+	}
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+	}
+
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
+		t.Fatal(err)
+	}
+	goal, ok := engine.Goal()
+	last := model.blocks[len(model.blocks)-1]
+	if !ok || goal.Objective != "finish migration" || !model.running || last.kind != blockInfo || last.text != "Goal set: finish migration" {
+		t.Fatalf("goal=%+v exists=%v running=%v block=%+v", goal, ok, model.running, last)
+	}
+	if calls := engine.snapshot(); len(calls) != 0 {
+		t.Fatalf("goal update started runs: %q", calls)
+	}
+}
+
 func TestTUIControllerClearsGoalWhileRunning(t *testing.T) {
 	engine := &fakeEngine{goal: &agent.GoalState{Objective: "finish migration"}}
 	model := newTUIModel(80, 24, Options{})
@@ -222,14 +520,19 @@ func TestTUIControllerAppliesSubagentStatus(t *testing.T) {
 	_, err := controller.transition(context.Background(), tuiEvent{
 		kind: tuiEventSubagentStatus,
 		subagentStatus: agent.SubagentStatus{
-			Running: 2, Finalizing: 1, Completed: 1,
-			Jobs: []agent.SubagentJobStatus{{ID: "subagent-1\nignored", Task: "inspect\nignored", State: agent.SubagentRunning, Generations: -1}},
+			Running: 2, Finalizing: 1, Completed: 2,
+			Jobs: []agent.SubagentJobStatus{
+				{ID: "subagent-1\nignored", Task: "inspect\nignored", State: agent.SubagentRunning, Generations: -1},
+				{ID: "subagent-2", Task: "finished", State: agent.SubagentComplete},
+				{ID: "subagent-3", Task: "failed", State: agent.SubagentFailed},
+				{ID: "subagent-invalid", State: agent.SubagentState("invalid")},
+			},
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if model.subagentStatus.Running != 2 || model.subagentStatus.Finalizing != 1 || model.subagentStatus.Completed != 1 || len(model.subagentStatus.Jobs) != 1 || model.subagentStatus.Jobs[0].ID != "subagent-1 ignored" || model.subagentStatus.Jobs[0].Task != "inspect ignored" || model.subagentStatus.Jobs[0].Generations != 0 || !controller.dirty {
+	if model.subagentStatus.Running != 2 || model.subagentStatus.Finalizing != 1 || model.subagentStatus.Completed != 2 || len(model.subagentStatus.Jobs) != 3 || model.subagentStatus.Jobs[0].ID != "subagent-1 ignored" || model.subagentStatus.Jobs[0].Task != "inspect ignored" || model.subagentStatus.Jobs[0].Generations != 0 || model.subagentStatus.Jobs[1].State != agent.SubagentComplete || model.subagentStatus.Jobs[2].State != agent.SubagentFailed || !controller.dirty {
 		t.Fatalf("status=%+v dirty=%v", model.subagentStatus, controller.dirty)
 	}
 
@@ -242,6 +545,83 @@ func TestTUIControllerAppliesSubagentStatus(t *testing.T) {
 	}
 }
 
+func TestTUIControllerEventDirtiness(t *testing.T) {
+	tests := []struct {
+		name      string
+		prepare   func(*tuiModel)
+		event     tuiEvent
+		wantDirty bool
+	}{
+		{
+			name:      "provider usage error still redraws",
+			event:     tuiEvent{kind: tuiEventProviderUsage, providerUsage: providerUsageMessage{err: errors.New("usage failed")}},
+			wantDirty: true,
+		},
+		{
+			name:      "stale file search is ignored",
+			event:     tuiEvent{kind: tuiEventFileSearch, fileSearch: fileSearchResult{id: 1, paths: []string{"ignored"}}},
+			wantDirty: false,
+		},
+		{
+			name:      "idle spinner is ignored",
+			event:     tuiEvent{kind: tuiEventSpinner},
+			wantDirty: false,
+		},
+		{
+			name: "active spinner redraws",
+			prepare: func(model *tuiModel) {
+				model.activity = activity{kind: activityThinking}
+			},
+			event:     tuiEvent{kind: tuiEventSpinner},
+			wantDirty: true,
+		},
+		{
+			name: "running subagent spinner redraws",
+			prepare: func(model *tuiModel) {
+				model.subagentStatus = agent.SubagentStatus{Running: 1, Jobs: []agent.SubagentJobStatus{{State: agent.SubagentRunning}}}
+			},
+			event:     tuiEvent{kind: tuiEventSpinner},
+			wantDirty: true,
+		},
+		{
+			name: "completed subagent spinner is ignored",
+			prepare: func(model *tuiModel) {
+				model.subagentStatus = agent.SubagentStatus{Completed: 1, Jobs: []agent.SubagentJobStatus{{State: agent.SubagentComplete}}}
+			},
+			event:     tuiEvent{kind: tuiEventSpinner},
+			wantDirty: false,
+		},
+		{
+			name:      "usage clock without reset is ignored",
+			event:     tuiEvent{kind: tuiEventUsageClock},
+			wantDirty: false,
+		},
+		{
+			name: "usage clock with reset redraws",
+			prepare: func(model *tuiModel) {
+				model.providerUsage.Windows = []agent.UsageWindow{{ResetsAt: time.Unix(1, 0)}}
+			},
+			event:     tuiEvent{kind: tuiEventUsageClock},
+			wantDirty: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			model := newTUIModel(80, 24, Options{})
+			if test.prepare != nil {
+				test.prepare(model)
+			}
+			controller := tuiController{model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard}
+
+			exit, err := controller.transition(context.Background(), test.event)
+			if err != nil || exit || controller.dirty != test.wantDirty {
+				t.Fatalf("exit=%v error=%v dirty=%v, want %v", exit, err, controller.dirty, test.wantDirty)
+			}
+		})
+	}
+}
+
 func TestRenderFailureDoesNotCommitUnseenFrame(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
 	renderer := &tuiRenderer{}
@@ -251,6 +631,22 @@ func TestRenderFailureDoesNotCommitUnseenFrame(t *testing.T) {
 	}
 	if renderer.frame.width != 0 || !dirty {
 		t.Fatalf("committed frame=%+v dirty=%v", renderer.frame, dirty)
+	}
+}
+
+func TestCleanRenderSkipsViewportPreparation(t *testing.T) {
+	model := newTUIModel(20, 8, Options{})
+	for range 10 {
+		model.appendBlock(blockInfo, "line")
+	}
+	renderer := &tuiRenderer{}
+	dirty := false
+
+	if err := renderIfDirty(renderer, model, failingWriter{}, &dirty, false); err != nil {
+		t.Fatal(err)
+	}
+	if renderer.conversationVersion != 0 || len(renderer.conversationLines) != 0 || model.scrollTop != 0 {
+		t.Fatalf("renderer version=%d lines=%d scroll=%d", renderer.conversationVersion, len(renderer.conversationLines), model.scrollTop)
 	}
 }
 
@@ -355,8 +751,8 @@ func TestTUIControllerCancelRestoresQueuedAndDeferredSteering(t *testing.T) {
 	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEscape}}); err != nil {
 		t.Fatal(err)
 	}
-	if !canceled || len(controller.deferredSteering) != 0 || len(model.steering) != 0 {
-		t.Fatalf("canceled=%v deferred=%q pending=%q", canceled, controller.deferredSteering, model.steering)
+	if !canceled || !model.interrupted || model.activity.kind != activityCanceling || len(controller.deferredSteering) != 0 || len(model.steering) != 0 {
+		t.Fatalf("canceled=%v interrupted=%v activity=%+v deferred=%q pending=%q", canceled, model.interrupted, model.activity, controller.deferredSteering, model.steering)
 	}
 	if string(model.input) != "accepted\n\ndeferred\n\ndraft" {
 		t.Fatalf("restored input = %q", model.input)
@@ -439,6 +835,32 @@ func TestTUIControllerRestoresSteeringAfterRunError(t *testing.T) {
 	}
 	if string(model.input) != "retry this" || len(model.steering) != 0 || model.activity.kind != activityError {
 		t.Fatalf("input=%q steering=%q activity=%+v", model.input, model.steering, model.activity)
+	}
+}
+
+func TestTUIControllerAppliesThinkingLevelWhileRunning(t *testing.T) {
+	var configured agent.ThinkingLevel
+	checkpointCalls := 0
+	model := newTUIModel(80, 24, Options{SetThinkingLevel: func(agent.ThinkingLevel) error { return nil }})
+	model.running = true
+	model.activity = activity{kind: activityThinking}
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+		setThinkingLevel: func(level agent.ThinkingLevel) error {
+			configured = level
+			return nil
+		},
+		saveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error {
+			checkpointCalls++
+			return nil
+		},
+	}
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyShiftTab}}); err != nil {
+		t.Fatal(err)
+	}
+	if configured != agent.ThinkingHigh || model.thinkingLevel != agent.ThinkingHigh || !model.running || model.activity.kind != activityThinking || checkpointCalls != 0 {
+		t.Fatalf("configured=%q model=%q running=%v activity=%+v checkpoints=%d", configured, model.thinkingLevel, model.running, model.activity, checkpointCalls)
 	}
 }
 

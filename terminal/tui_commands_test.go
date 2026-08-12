@@ -158,34 +158,33 @@ func TestHiddenCommandPickerDoesNotInterceptEscape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if action.kind != tuiActionCancel || !model.interrupted {
+	if action.kind != tuiActionCancel || model.interrupted {
 		t.Fatalf("action=%+v interrupted=%t", action, model.interrupted)
 	}
 }
 
-func TestCommandPickerOnlySuggestsRunnableCommandDuringTurn(t *testing.T) {
+func TestCommandPickerOnlySuggestsRunnableCommandsDuringTurn(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.running = true
 	if err := model.insertInput("/"); err != nil {
 		t.Fatal(err)
 	}
 
-	if len(model.commandPicker.matches) != 1 || model.commandPicker.matches[0].text != "/goal clear" {
-		t.Fatalf("matches = %+v", model.commandPicker.matches)
+	var matches []string
+	for _, match := range model.commandPicker.matches {
+		matches = append(matches, match.text)
+	}
+	if got, want := strings.Join(matches, ","), "/help,/goal,/goal clear"; got != want {
+		t.Fatalf("matches = %q, want %q", got, want)
 	}
 }
 
-func TestCommandPickerRefreshesWhenTurnFinishes(t *testing.T) {
+func TestCommandPickerSuggestsRunnableCommandDuringTurn(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.running = true
 	if err := model.insertInput("/he"); err != nil {
 		t.Fatal(err)
 	}
-	if model.commandPickerVisible() {
-		t.Fatal("unavailable command was suggested during the turn")
-	}
-
-	model.finishTurn(nil)
 	if !model.commandPickerVisible() || len(model.commandPicker.matches) != 1 || model.commandPicker.matches[0].text != "/help" {
 		t.Fatalf("picker = %+v", model.commandPicker)
 	}

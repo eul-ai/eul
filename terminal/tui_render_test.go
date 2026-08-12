@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"context"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -54,6 +55,61 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 	}
 }
 
+func TestRenderFrameShowsPermission(t *testing.T) {
+	model := newTUIModel(72, 12, Options{})
+	model.running = true
+	model.showPermission(PermissionRequest{
+		Title:        "Network access requested",
+		Subject:      "bash",
+		Description:  "needs access to the network",
+		Detail:       "git push origin main",
+		DetailPrefix: "$ ",
+		Notice:       "This command and its descendants will have network access.",
+	}, 1, 2)
+	if err := model.insertInput("queued steering"); err != nil {
+		t.Fatal(err)
+	}
+
+	frame := buildTerminalFrame(model)
+	joined := strings.Join(frame.plainRows, "\n")
+	for _, want := range []string{
+		"Network access requested (1 of 2)",
+		"bash needs access to the network",
+		"$ git push origin main",
+		"This command and its descendants will have network access.",
+		"[n] Deny",
+		"[y] Allow once",
+		"waiting for permission",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("frame omits %q: %q", want, frame.plainRows)
+		}
+	}
+	input, _ := modelInputLayout(model)
+	if len(input.lines) < 2 || strings.TrimSpace(input.lines[0]) != "" || strings.TrimSpace(input.lines[len(input.lines)-1]) != "" {
+		t.Fatalf("permission spacing = %q", input.lines)
+	}
+	descriptionIndex := slices.IndexFunc(input.styledLines, func(line styledLine) bool { return len(line.spans) > 0 && line.spans[0].text == "bash" })
+	if descriptionIndex < 0 {
+		t.Fatalf("permission description missing: %q", input.lines)
+	}
+	description := input.styledLines[descriptionIndex]
+	if len(description.spans) != 3 || description.spans[0].text != "bash" || description.spans[0].style.foreground != inlineForegroundAccent || description.spans[2].style.foreground != inlineForegroundDefault {
+		t.Fatalf("permission description = %+v", description.spans)
+	}
+	noticeIndex := slices.IndexFunc(input.styledLines, func(line styledLine) bool { return line.text == model.permission.notice })
+	if noticeIndex < 1 || noticeIndex+2 >= len(input.lines) || strings.TrimSpace(input.lines[noticeIndex-1]) != "" || strings.TrimSpace(input.lines[noticeIndex+1]) != "" {
+		t.Fatalf("permission notice spacing = %q", input.lines)
+	}
+	buttons := input.lines[noticeIndex+2]
+	if cellWidth(buttons[:strings.Index(buttons, "[n] Deny")]) != strings.Index(input.lines[descriptionIndex], "bash") {
+		t.Fatalf("permission button alignment = %q, description = %q", buttons, input.lines[descriptionIndex])
+	}
+	if frame.cursorVisible || string(model.input) != "queued steering" {
+		t.Fatalf("cursor=%v input=%q", frame.cursorVisible, model.input)
+	}
+}
+
 func TestStatusTruncatesSessionID(t *testing.T) {
 	model := newTUIModel(120, 12, Options{
 		Model: "model", SessionID: "0123456789abcdef0123456789abcdef",
@@ -68,25 +124,26 @@ func TestStatusTruncatesSessionID(t *testing.T) {
 
 func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 	started := time.Unix(100, 0)
-	model := newTUIModel(100, 10, Options{})
+	model := newTUIModel(140, 10, Options{})
 	model.subagentStatus = agent.SubagentStatus{Jobs: []agent.SubagentJobStatus{
 		{
-			ID: "subagent-1", Task: "inspect layout", State: agent.SubagentRunning, Started: started,
-			Usage: agent.Usage{InputTokens: 1_200, OutputTokens: 34}, Generations: 3, GenerationLimit: 20,
+			ID: "subagent-1", Task: "inspect layout", ModelProfile: "balanced", ThinkingLevel: agent.ThinkingLow,
+			State: agent.SubagentRunning, Started: started, Usage: agent.Usage{InputTokens: 1_200, OutputTokens: 34},
+			Generations: 3, GenerationLimit: 20,
 		},
 		{
 			ID: "subagent-2", Task: "review progress", State: agent.SubagentFinalizing, Started: started,
-			Generations: 20, GenerationLimit: 20, FinalizationReason: agent.FinalizationReasonGenerations,
+			Generations: 20, GenerationLimit: 20,
 		},
 	}}
 
 	lines := renderSubagentsAt(model, 2, started.Add(time.Minute+5*time.Second))
 	first := renderedLineText(lines[0], model.width)
 	second := renderedLineText(lines[1], model.width)
-	if !strings.Contains(first, "subagent-1  running (1m5s, 1.2k input, 34 output, 3/20 generations) — inspect layout") {
+	if !strings.Contains(first, "subagent-1  running (balanced, low thinking, 1m5s, 1.2k input, 34 output, 3/20 generations) — inspect layout") {
 		t.Fatalf("running line = %q", first)
 	}
-	if !strings.Contains(second, "subagent-2  finalizing — generation limit (1m5s, 20/20 generations) — review progress") {
+	if !strings.Contains(second, "subagent-2  finalizing (1m5s, 20/20 generations) — review progress") {
 		t.Fatalf("finalizing line = %q", second)
 	}
 
@@ -97,6 +154,45 @@ func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 	frame := buildTerminalFrame(model)
 	if !strings.Contains(frame.plainRows[layout.subagentRow-1], "subagent-1") || frame.cursorRow != layout.inputRow {
 		t.Fatalf("frame layout=%+v rows=%q", layout, frame.plainRows)
+	}
+}
+
+func TestSubagentStatusesUseStateColorsAndFreezeCompletedElapsed(t *testing.T) {
+	started := time.Unix(100, 0)
+	finished := started.Add(5 * time.Second)
+	model := newTUIModel(80, 10, Options{})
+	model.subagentStatus.Jobs = []agent.SubagentJobStatus{
+		{ID: "running", State: agent.SubagentRunning, Started: started},
+		{ID: "finalizing", State: agent.SubagentFinalizing, Started: started},
+		{ID: "complete", State: agent.SubagentComplete, Started: started, Finished: finished},
+		{ID: "failed", State: agent.SubagentFailed, Started: started, Finished: finished},
+	}
+
+	lines := renderSubagentsAt(model, 4, started.Add(time.Minute))
+	wantForegrounds := []inlineForeground{
+		inlineForegroundAccent,
+		inlineForegroundOrange,
+		inlineForegroundSuccess,
+		inlineForegroundError,
+	}
+	wantColors := []terminalColor{
+		currentTheme.accent,
+		currentTheme.orange,
+		currentTheme.green,
+		currentTheme.error,
+	}
+	for index, line := range lines {
+		if line.spans[2].style.foreground != wantForegrounds[index] {
+			t.Fatalf("line %d foreground = %v", index, line.spans[2].style.foreground)
+		}
+		var rendered strings.Builder
+		renderLine(&rendered, 1, model.width, line)
+		if !strings.Contains(rendered.String(), ansiForeground(wantColors[index])) {
+			t.Fatalf("line %d did not use color %+v: %q", index, wantColors[index], rendered.String())
+		}
+	}
+	if complete := renderedLineText(lines[2], model.width); !strings.Contains(complete, "complete (5s)") {
+		t.Fatalf("complete line = %q", complete)
 	}
 }
 
@@ -141,19 +237,19 @@ func TestStatusShowsProviderUsageWindows(t *testing.T) {
 	}}
 
 	_, wide := renderStatusAt(model, 180, now)
-	for _, want := range []string{"model (medium)", "context 0", "5h limit 58% (resets in 3h 5m) · 7d limit 80% (resets in 3d 5h)"} {
+	for _, want := range []string{"model (medium)", "context 0", "5h usage 42% (resets in 3h 5m) · 7d usage 20% (resets in 3d 5h)"} {
 		if !strings.Contains(wide, want) {
 			t.Fatalf("wide status %q omits %q", wide, want)
 		}
 	}
 
 	_, narrow := renderStatusAt(model, 70, now)
-	if narrow != "context 0 · 5h 58% (resets in 3h 5m) · 7d 80% (resets in 3d 5h)" {
+	if narrow != "context 0 · 5h 42% (resets in 3h 5m) · 7d 20% (resets in 3d 5h)" {
 		t.Fatalf("narrow status = %q", narrow)
 	}
 }
 
-func TestStatusUsesCompactContextAndSingleLimit(t *testing.T) {
+func TestStatusUsesCompactContextAndSingleUsage(t *testing.T) {
 	now := time.Date(2027, time.January, 2, 10, 0, 0, 0, time.UTC)
 	model := newTUIModel(120, 12, Options{
 		Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, ContextWindow: 272_000,
@@ -163,7 +259,7 @@ func TestStatusUsesCompactContextAndSingleLimit(t *testing.T) {
 	}}}
 
 	_, status := renderStatusAt(model, 120, now)
-	want := "gpt-5.6-sol (xhigh) · context 0% · limit 41% (resets in 9h 41m)"
+	want := "gpt-5.6-sol (xhigh) · context 0% · usage 59% (resets in 9h 41m)"
 	if status != want {
 		t.Fatalf("status = %q, want %q", status, want)
 	}
@@ -493,6 +589,90 @@ func TestConversationWindowHasVerticalPadding(t *testing.T) {
 
 	if len(lines) != 3 || lines[0].text != "" || lines[1].text != "message" || lines[2].text != "" {
 		t.Fatalf("lines = %+v", lines)
+	}
+}
+
+func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
+	model := newTUIModel(48, 12, Options{Model: "model"})
+	model.appendBlock(blockUser, "Use **bold** text")
+	model.startTool(agent.ToolCall{ID: "read-1", Name: "read"}, agent.ToolPresentation{
+		Title: "read", Arguments: "README.md", Lines: []string{"before"},
+		Diff: []agent.ToolDiffLine{{Kind: agent.ToolDiffLineAdded, NewLine: 1, Text: "old diff"}},
+	})
+	model.appendStream(blockAssistant, "Active `streaming` response")
+
+	renderer := &tuiRenderer{}
+	assertCachedConversationMatchesUncached(t, renderer, model)
+	firstBlockLine := &renderer.conversationBlocks[0].lines[0]
+	previousFrame := projectTerminalFrame(model, renderer.prepare(model))
+	previousPlain := append([]string(nil), previousFrame.conversationLines...)
+
+	model.appendStream(blockAssistant, " with another delta")
+	assertCachedConversationMatchesUncached(t, renderer, model)
+	if &renderer.conversationBlocks[0].lines[0] != firstBlockLine {
+		t.Fatal("unchanged historical block was rerendered after active stream update")
+	}
+	if !slices.Equal(previousFrame.conversationLines, previousPlain) {
+		t.Fatal("conversation update mutated the previous frame's plain lines")
+	}
+
+	model.blocks[1].kind = blockTool
+	model.blocks[1].tool.Lines[0] = "after"
+	model.blocks[1].tool.Diff[0].Text = "new diff"
+	model.blocks[1].toolOutcome = "ok"
+	model.conversationVersion++
+	if renderer.conversationBlocks[1].block.tool.Lines[0] != "before" || renderer.conversationBlocks[1].block.tool.Diff[0].Text != "old diff" {
+		t.Fatal("cached block shares tool presentation slices with the model")
+	}
+	assertCachedConversationMatchesUncached(t, renderer, model)
+
+	beforeWidthChange := &renderer.conversationBlocks[0].lines[0]
+	model.width = 31
+	assertCachedConversationMatchesUncached(t, renderer, model)
+	if &renderer.conversationBlocks[0].lines[0] == beforeWidthChange {
+		t.Fatal("width change did not invalidate cached blocks")
+	}
+
+	model.queueSteering("inspect another file")
+	assertCachedConversationMatchesUncached(t, renderer, model)
+	model.removeSteering([]string{"inspect another file"})
+	assertCachedConversationMatchesUncached(t, renderer, model)
+
+	model.selection = textSelection{
+		anchor: selectionPoint{row: 1, column: 1, conversation: true},
+		focus:  selectionPoint{row: 1, column: 8, conversation: true},
+		set:    true,
+	}
+	assertCachedConversationMatchesUncached(t, renderer, model)
+
+	checkpoint := checkpointModel(model)
+	model.clearConversation()
+	assertCachedConversationMatchesUncached(t, renderer, model)
+	if len(renderer.conversationBlocks) != 0 {
+		t.Fatalf("cached blocks after clear = %d", len(renderer.conversationBlocks))
+	}
+	restoreModelCheckpoint(model, checkpoint)
+	assertCachedConversationMatchesUncached(t, renderer, model)
+}
+
+func assertCachedConversationMatchesUncached(t *testing.T, renderer *tuiRenderer, model *tuiModel) {
+	t.Helper()
+
+	prepared := renderer.prepare(model)
+	wantLines := modelConversationLines(model, model.width)
+	if !reflect.DeepEqual(prepared.conversationLines, wantLines) {
+		t.Fatalf("cached conversation lines differ from uncached projection:\ngot:  %+v\nwant: %+v", prepared.conversationLines, wantLines)
+	}
+	wantPlain := make([]string, len(wantLines))
+	for index, line := range wantLines {
+		wantPlain[index] = renderedLineText(line, model.width)
+	}
+	if !slices.Equal(prepared.conversationPlain, wantPlain) {
+		t.Fatalf("cached plain lines differ from uncached projection:\ngot:  %q\nwant: %q", prepared.conversationPlain, wantPlain)
+	}
+	frame := projectTerminalFrame(model, prepared)
+	if !slices.Equal(frame.conversationLines, wantPlain) {
+		t.Fatalf("frame plain conversation lines = %q, want %q", frame.conversationLines, wantPlain)
 	}
 }
 

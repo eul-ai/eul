@@ -11,6 +11,10 @@ import (
 	"github.com/eul-ai/eul/tool"
 )
 
+type sessionRunner interface {
+	Run(context.Context, terminal.Engine, terminal.Options) error
+}
+
 type agentSession struct {
 	engine          *agent.Engine
 	tools           *tool.Registry
@@ -18,6 +22,28 @@ type agentSession struct {
 	terminalOptions terminal.Options
 	thinkingLevel   agent.ThinkingLevel
 	persistence     *sessionHandle
+}
+
+type sessionModelMetadata struct {
+	main          agent.ModelMetadata
+	subagent      map[tool.SubagentModelProfile]agent.ModelMetadata
+	thinkingLevel agent.ThinkingLevel
+}
+
+type sessionToolset struct {
+	registry        *tool.Registry
+	subagentUpdates <-chan agent.SubagentStatus
+}
+
+type terminalOptionSource struct {
+	config             resolvedConfig
+	runtime            runtime
+	metadata           sessionModelMetadata
+	warnings           []string
+	loadUsage          func(context.Context) (agent.ProviderUsage, error)
+	subagentUpdates    <-chan agent.SubagentStatus
+	permissionRequests <-chan terminal.PermissionRequest
+	setThinkingLevel   func(agent.ThinkingLevel) error
 }
 
 func providerModelMetadata(provider agent.Provider, model string) agent.ModelMetadata {
@@ -32,12 +58,89 @@ func providerModelMetadata(provider agent.Provider, model string) agent.ModelMet
 	return metadata
 }
 
-func newAgentSession(config config, runtime runtime, backendRuntime backend.Runtime) (*agentSession, error) {
+func resolveSessionModelMetadata(provider agent.Provider, config resolvedConfig) sessionModelMetadata {
+	metadataByModel := make(map[string]agent.ModelMetadata)
+	resolve := func(model string) agent.ModelMetadata {
+		metadata, ok := metadataByModel[model]
+		if !ok {
+			metadata = providerModelMetadata(provider, model)
+			metadataByModel[model] = metadata
+		}
+		return metadata
+	}
+
+	main := resolve(config.models.main)
+	return sessionModelMetadata{
+		main: main,
+		subagent: map[tool.SubagentModelProfile]agent.ModelMetadata{
+			tool.SubagentModelFast:     resolve(config.models.subagent(tool.SubagentModelFast)),
+			tool.SubagentModelBalanced: resolve(config.models.subagent(tool.SubagentModelBalanced)),
+			tool.SubagentModelPowerful: resolve(config.models.subagent(tool.SubagentModelPowerful)),
+		},
+		thinkingLevel: main.ClampThinkingLevel(config.thinkingLevel),
+	}
+}
+
+func newSessionToolset(
+	config resolvedConfig,
+	runtime runtime,
+	backendRuntime backend.Runtime,
+	metadata sessionModelMetadata,
+	authorizeNetwork tool.NetworkAuthorizer,
+	completeGoal func() error,
+) (sessionToolset, error) {
+	newToolset := runtime.newToolset
+	if newToolset == nil {
+		newToolset = func(cwd string, access toolAccess, noSandbox bool, authorizeNetwork tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
+			return buildToolsetWithHomeAndNetworkAuthorizer(cwd, "", access, noSandbox, authorizeNetwork, additional...)
+		}
+	}
+	subagent := tool.NewSubagentWithThinkingLevels(func(ctx context.Context, task string, modelProfile tool.SubagentModelProfile, thinkingLevel agent.ThinkingLevel, update func(tool.SubagentProgress)) (agent.RunResult, error) {
+		return runChildAgent(ctx, backendRuntime, newToolset, config, modelProfile, thinkingLevel, task, update)
+	}, func(profile tool.SubagentModelProfile) []agent.ThinkingLevel {
+		return metadata.subagent[profile].ThinkingLevels
+	})
+	registry, err := newToolset(
+		config.cwd,
+		fullToolAccess,
+		config.noSandbox,
+		authorizeNetwork,
+		subagent,
+		tool.NewSubagentWait(subagent),
+		tool.NewSubagentCancel(subagent),
+		tool.NewUpdateGoal(completeGoal),
+	)
+	if err != nil {
+		return sessionToolset{}, errors.Join(fmt.Errorf("configure tools: %w", err), subagent.Close())
+	}
+	return sessionToolset{registry: registry, subagentUpdates: subagent.StatusUpdates()}, nil
+}
+
+func (source terminalOptionSource) options() terminal.Options {
+	return terminal.Options{
+		Input:              source.runtime.stdin,
+		Output:             source.runtime.stdout,
+		Model:              source.config.models.main,
+		WorkingDirectory:   source.config.cwd,
+		ThinkingLevel:      source.metadata.thinkingLevel,
+		ThinkingLevels:     source.metadata.main.ThinkingLevels,
+		ContextWindow:      source.metadata.main.ContextWindow,
+		Skills:             source.config.skills,
+		Warnings:           source.warnings,
+		Interrupts:         source.runtime.interrupts,
+		SetThinkingLevel:   source.setThinkingLevel,
+		LoadUsage:          source.loadUsage,
+		SubagentUpdates:    source.subagentUpdates,
+		PermissionRequests: source.permissionRequests,
+	}
+}
+
+func newAgentSession(config resolvedConfig, runtime runtime, backendRuntime backend.Runtime) (*agentSession, error) {
 	return newAgentSessionWithCheckpointing(config, runtime, backendRuntime, false)
 }
 
 func newAgentSessionWithCheckpointing(
-	config config,
+	config resolvedConfig,
 	runtime runtime,
 	backendRuntime backend.Runtime,
 	checkpointing bool,
@@ -46,56 +149,27 @@ func newAgentSessionWithCheckpointing(
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("configure provider: %w", err), closeBackendRuntime(backendRuntime))
 	}
-	var loadUsage func(context.Context) (agent.ProviderUsage, error)
-	if usageProvider, ok := provider.(agent.UsageProvider); ok {
-		loadUsage = usageProvider.Usage
+	loadUsage, usageWarning := dedicatedUsageLoader(backendRuntime, provider)
+	warnings := append([]string(nil), config.warnings...)
+	if usageWarning != "" {
+		warnings = append(warnings, usageWarning)
 	}
+	metadata := resolveSessionModelMetadata(provider, config)
+	authorizeNetwork, permissionRequests := newNetworkPermissionBroker(config.noSandbox)
 
-	metadataByModel := make(map[string]agent.ModelMetadata)
-	resolveMetadata := func(model string) agent.ModelMetadata {
-		metadata, ok := metadataByModel[model]
-		if !ok {
-			metadata = providerModelMetadata(provider, model)
-			metadataByModel[model] = metadata
-		}
-		return metadata
-	}
-	metadata := resolveMetadata(config.model)
-	currentThinkingLevel := metadata.ClampThinkingLevel(config.thinkingLevel)
-	subagentMetadata := map[tool.SubagentModelProfile]agent.ModelMetadata{
-		tool.SubagentModelFast:     resolveMetadata(config.subagentModel(tool.SubagentModelFast)),
-		tool.SubagentModelBalanced: resolveMetadata(config.subagentModel(tool.SubagentModelBalanced)),
-		tool.SubagentModelPowerful: resolveMetadata(config.subagentModel(tool.SubagentModelPowerful)),
-	}
-	newToolset := runtime.newToolset
-	if newToolset == nil {
-		newToolset = buildToolset
-	}
-	subagent := tool.NewSubagentWithThinkingLevels(func(ctx context.Context, task string, modelProfile tool.SubagentModelProfile, thinkingLevel agent.ThinkingLevel, update func(tool.SubagentProgress)) (agent.RunResult, error) {
-		return runChildAgent(ctx, backendRuntime, newToolset, config, modelProfile, thinkingLevel, task, update)
-	}, func(profile tool.SubagentModelProfile) []agent.ThinkingLevel {
-		return subagentMetadata[profile].ThinkingLevels
-	})
-	subagentWait := tool.NewSubagentWait(subagent)
-	subagentCancel := tool.NewSubagentCancel(subagent)
 	var engine *agent.Engine
-	updateGoal := tool.NewUpdateGoal(func() error {
+	tools, err := newSessionToolset(config, runtime, backendRuntime, metadata, authorizeNetwork, func() error {
 		if engine == nil {
 			return errors.New("goal completion is unavailable")
 		}
 		return engine.CompleteGoal()
 	})
-	registry, err := newToolset(config.cwd, fullToolAccess, subagent, subagentWait, subagentCancel, updateGoal)
 	if err != nil {
-		return nil, errors.Join(
-			fmt.Errorf("configure tools: %w", err),
-			subagent.Close(),
-			closeBackendRuntime(backendRuntime),
-		)
+		return nil, errors.Join(err, closeBackendRuntime(backendRuntime))
 	}
-	engine = agent.New(provider, registry, agent.Options{
-		Model:               config.model,
-		ThinkingLevel:       currentThinkingLevel,
+	engine = agent.New(provider, tools.registry, agent.Options{
+		Model:               config.models.main,
+		ThinkingLevel:       metadata.thinkingLevel,
 		WorkingDirectory:    config.cwd,
 		ProjectInstructions: config.projectInstructions,
 		Skills:              config.skills,
@@ -103,9 +177,9 @@ func newAgentSessionWithCheckpointing(
 	})
 	session := &agentSession{
 		engine:         engine,
-		tools:          registry,
+		tools:          tools.registry,
 		backendRuntime: backendRuntime,
-		thinkingLevel:  currentThinkingLevel,
+		thinkingLevel:  metadata.thinkingLevel,
 	}
 	setThinkingLevel := func(level agent.ThinkingLevel) error {
 		if err := engine.SetThinkingLevel(level); err != nil {
@@ -114,27 +188,37 @@ func newAgentSessionWithCheckpointing(
 		session.thinkingLevel = level
 		return nil
 	}
-
-	session.terminalOptions = terminal.Options{
-		Input:            runtime.stdin,
-		Output:           runtime.stdout,
-		Model:            config.model,
-		WorkingDirectory: config.cwd,
-		ThinkingLevel:    currentThinkingLevel,
-		ThinkingLevels:   metadata.ThinkingLevels,
-		ContextWindow:    metadata.ContextWindow,
-		Skills:           config.skills,
-		Warnings:         config.warnings,
-		Interrupts:       runtime.interrupts,
-		SetThinkingLevel: setThinkingLevel,
-		LoadUsage:        loadUsage,
-		SubagentUpdates:  subagent.StatusUpdates(),
-	}
+	session.terminalOptions = terminalOptionSource{
+		config:             config,
+		runtime:            runtime,
+		metadata:           metadata,
+		warnings:           warnings,
+		loadUsage:          loadUsage,
+		subagentUpdates:    tools.subagentUpdates,
+		permissionRequests: permissionRequests,
+		setThinkingLevel:   setThinkingLevel,
+	}.options()
 	return session, nil
 }
 
+func dedicatedUsageLoader(backendRuntime backend.Runtime, provider agent.Provider) (func(context.Context) (agent.ProviderUsage, error), string) {
+	if _, ok := provider.(agent.UsageProvider); !ok {
+		return nil, ""
+	}
+
+	dedicated, err := backendRuntime.NewProvider()
+	if err != nil {
+		return nil, fmt.Sprintf("Account usage is unavailable: %v", err)
+	}
+	usageProvider, ok := dedicated.(agent.UsageProvider)
+	if !ok {
+		return nil, "Account usage is unavailable: dedicated provider does not support usage"
+	}
+	return usageProvider.Usage, ""
+}
+
 func newStoredAgentSession(
-	config config,
+	config resolvedConfig,
 	runtime runtime,
 	backendRuntime backend.Runtime,
 	store *sessionStore,
@@ -157,9 +241,7 @@ func newStoredAgentSession(
 		handle, err = store.Create(
 			config.provider,
 			config.cwd,
-			config.model,
-			config.subagentFastModel,
-			config.subagentBalancedModel,
+			config.models,
 			session.thinkingLevel,
 			agentCheckpoint,
 			terminal.EmptyCheckpoint(),
@@ -205,7 +287,7 @@ func (session *agentSession) attachPersistence(handle *sessionHandle, restore bo
 	return nil
 }
 
-func (session *agentSession) run(ctx context.Context, runner *terminal.Runner) error {
+func (session *agentSession) run(ctx context.Context, runner sessionRunner) error {
 	return session.finish(runner.Run(ctx, session.engine, session.terminalOptions))
 }
 

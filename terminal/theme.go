@@ -13,14 +13,21 @@ type terminalColor struct {
 }
 
 type theme struct {
+	background            terminalColor
 	foreground            terminalColor
 	accent                terminalColor
 	orange                terminalColor
-	yellow                terminalColor
 	blue                  terminalColor
-	markdownCode          terminalColor
+	cyan                  terminalColor
+	green                 terminalColor
+	red                   terminalColor
+	purple                terminalColor
+	yellow                terminalColor
+	operator              terminalColor
 	muted                 terminalColor
 	dimmed                terminalColor
+	panelBackground       terminalColor
+	markdownCode          terminalColor
 	error                 terminalColor
 	diffAdded             terminalColor
 	diffRemoved           terminalColor
@@ -33,27 +40,60 @@ type theme struct {
 }
 
 // Source: https://github.com/iodic/pi-ayu-themes/blob/main/themes/ayu-mirage.json
+const (
+	ayuMirageBackground      = 0x171b24
+	ayuMirageForeground      = 0xcccac2
+	ayuMirageAccent          = 0xffcc66
+	ayuMirageOrange          = 0xffa759
+	ayuMirageBlue            = 0x73d0ff
+	ayuMirageCyan            = 0x95e6cb
+	ayuMirageGreen           = 0xbae67e
+	ayuMirageRed             = 0xf28779
+	ayuMiragePurple          = 0xdfbfff
+	ayuMirageYellow          = 0xffe6b3
+	ayuMirageOperator        = 0xf29e74
+	ayuMirageMuted           = 0x8490a5
+	ayuMirageDimmed          = 0x6a7687
+	ayuMiragePanelBackground = 0x13161e
+	ayuMirageEditorLine      = 0x1e2430
+)
+
 var ayuMirageTheme = theme{
-	foreground:            terminalColor{red: 0xcc, green: 0xca, blue: 0xc2},
-	accent:                terminalColor{red: 0xff, green: 0xcc, blue: 0x66},
-	orange:                terminalColor{red: 0xff, green: 0xa7, blue: 0x59},
-	yellow:                terminalColor{red: 0xff, green: 0xe6, blue: 0xb3},
-	blue:                  terminalColor{red: 0x73, green: 0xd0, blue: 0xff},
-	markdownCode:          terminalColor{red: 0x95, green: 0xe6, blue: 0xcb},
-	muted:                 terminalColor{red: 0x84, green: 0x90, blue: 0xa5},
-	dimmed:                terminalColor{red: 0x6a, green: 0x76, blue: 0x87},
-	error:                 terminalColor{red: 0xf2, green: 0x87, blue: 0x79},
-	diffAdded:             terminalColor{red: 0xaa, green: 0xd9, blue: 0x4c},
-	diffRemoved:           terminalColor{red: 0xf2, green: 0x87, blue: 0x79},
-	diffContext:           terminalColor{red: 0x84, green: 0x90, blue: 0xa5},
-	toolPendingBackground: terminalColor{red: 0x1a, green: 0x20, blue: 0x30},
-	toolSuccessBackground: terminalColor{red: 0x1f, green: 0x28, blue: 0x2f},
-	toolErrorBackground:   terminalColor{red: 0x25, green: 0x20, blue: 0x29},
-	editorLine:            terminalColor{red: 0x1e, green: 0x24, blue: 0x30},
-	selectedBackground:    terminalColor{red: 0x16, green: 0x1a, blue: 0x24},
+	background:            rgb(ayuMirageBackground),
+	foreground:            rgb(ayuMirageForeground),
+	accent:                rgb(ayuMirageAccent),
+	orange:                rgb(ayuMirageOrange),
+	blue:                  rgb(ayuMirageBlue),
+	cyan:                  rgb(ayuMirageCyan),
+	green:                 rgb(ayuMirageGreen),
+	red:                   rgb(ayuMirageRed),
+	purple:                rgb(ayuMiragePurple),
+	yellow:                rgb(ayuMirageYellow),
+	operator:              rgb(ayuMirageOperator),
+	muted:                 rgb(ayuMirageMuted),
+	dimmed:                rgb(ayuMirageDimmed),
+	panelBackground:       rgb(ayuMiragePanelBackground),
+	markdownCode:          rgb(ayuMirageCyan),
+	error:                 rgb(ayuMirageRed),
+	diffAdded:             rgb(ayuMirageGreen),
+	diffRemoved:           rgb(ayuMirageRed),
+	diffContext:           rgb(ayuMirageMuted),
+	toolPendingBackground: rgb(0x1a2030),
+	toolSuccessBackground: rgb(0x1f282f),
+	toolErrorBackground:   rgb(0x252029),
+	editorLine:            rgb(ayuMirageEditorLine),
+	selectedBackground:    rgb(0x161a24),
 }
 
 var currentTheme = ayuMirageTheme
+
+func rgb(value uint32) terminalColor {
+	return terminalColor{
+		red:   uint8(value >> 16),
+		green: uint8(value >> 8),
+		blue:  uint8(value),
+	}
+}
 
 func (t theme) thinkingColor(level agent.ThinkingLevel) terminalColor {
 	switch level {

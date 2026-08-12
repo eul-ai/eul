@@ -783,7 +783,7 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 	t.Run("Retry-After is bounded", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			writer.Header().Set("Content-Type", "application/json")
-			writer.Header().Set("Retry-After", "60")
+			writer.Header().Set("Retry-After", "600")
 			writer.WriteHeader(http.StatusTooManyRequests)
 			fmt.Fprint(writer, `{"error":{"type":"rate_limit_error","message":"slow down"}}`)
 		}))
@@ -796,6 +796,16 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 			t.Fatalf("Generate() error = %v, delay = %s, retry = %t", err, delay, retry)
 		}
 	})
+}
+
+func TestGenerationRetryAllowsExtendedRecovery(t *testing.T) {
+	transient := &retryableOperationError{cause: errors.New("temporary")}
+	if _, retry := (&Client{}).RetryGeneration(transient, maximumGenerationAttempts-1); !retry {
+		t.Fatal("retry policy stopped before the final attempt")
+	}
+	if delay := generationRetryDelay(maximumGenerationAttempts - 1); delay < generationRetryMaxDelay*3/4 {
+		t.Fatalf("final retry delay = %s", delay)
+	}
 }
 
 func TestClientDoesNotRetryPermanentOrObserverErrors(t *testing.T) {

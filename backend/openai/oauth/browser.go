@@ -39,18 +39,13 @@ func (m *Manager) loginBrowser(ctx context.Context, interaction Interaction) (cr
 	redirectURI := "http://localhost:" + strconv.Itoa(port) + browserCallbackPath
 	result := make(chan callbackResult, 1)
 	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: callbackHandler(state, result)}
-	serveDone := make(chan error, 1)
-	go func() { serveDone <- server.Serve(listener) }()
-
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
-		select {
-		case <-serveDone:
-		default:
-		}
+	serveResult := make(chan error, 1)
+	serveDone := make(chan struct{})
+	go func() {
+		defer close(serveDone)
+		serveResult <- server.Serve(listener)
 	}()
+	defer stopBrowserCallbackServer(server, serveDone)
 
 	authURL := m.authorizationURL(redirectURI, challenge, state)
 	if interaction.AuthURL == nil {
@@ -66,7 +61,7 @@ func (m *Manager) loginBrowser(ctx context.Context, interaction Interaction) (cr
 			return credentials{}, ctx.Err()
 		}
 		return credentials{}, errors.New("oauth: browser authorization timed out")
-	case serveErr := <-serveDone:
+	case serveErr := <-serveResult:
 		if errors.Is(serveErr, http.ErrServerClosed) {
 			return credentials{}, errors.New("oauth: loopback callback stopped before authorization completed")
 		}
@@ -77,6 +72,15 @@ func (m *Manager) loginBrowser(ctx context.Context, interaction Interaction) (cr
 		}
 		return m.exchangeCode(loginCtx, callback.code, verifier, redirectURI)
 	}
+}
+
+func stopBrowserCallbackServer(server *http.Server, done <-chan struct{}) {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		_ = server.Close()
+	}
+	<-done
 }
 
 type callbackResult struct {

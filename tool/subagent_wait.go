@@ -9,14 +9,11 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-const (
-	subagentWaitToolName   = "subagent_wait"
-	subagentResultGuidance = "Use these results in the eventual user response and continue in the main context; do not launch follow-up subagents for the same objective unless the user asks."
-)
+const subagentWaitToolName = "subagent_wait"
 
 var subagentWaitToolDefinition = agent.ToolDefinition{
 	Name:        subagentWaitToolName,
-	Description: "Wait for selected background subagents and return their results, which are collected once returned. When possible, continue useful independent work before waiting. After waiting, synthesize the findings and continue directly instead of launching follow-up subagents.",
+	Description: "Wait for and collect selected subagent results. Continue other independent work first when useful.",
 	Parameters: strictObject(map[string]agent.JSONSchema{
 		"ids": {
 			Type:        "array",
@@ -44,15 +41,10 @@ func (*SubagentWait) Definition() agent.ToolDefinition {
 
 func (*SubagentWait) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
 	values, _ := snapshot.Arguments["ids"].([]any)
-	count := len(values)
-	presentation := agent.ToolPresentation{Title: subagentWaitToolName, Markdown: true}
-	if count > 0 {
-		presentation.Lines = []string{fmt.Sprintf("Waiting for %d subagent(s).", count)}
-	}
-	return presentation
+	return subagentWaitPresentation(len(values), false)
 }
 
-func (wait *SubagentWait) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
+func (wait *SubagentWait) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
@@ -83,7 +75,24 @@ func (wait *SubagentWait) Execute(ctx context.Context, arguments json.RawMessage
 	}
 	result := formatSubagentResults(snapshots)
 	wait.subagents.consume(jobs)
+	if updates != nil {
+		updates.SetFinal(subagentWaitPresentation(len(args.IDs), true))
+	}
 	return result, nil
+}
+
+func subagentWaitPresentation(count int, complete bool) agent.ToolPresentation {
+	presentation := agent.ToolPresentation{Title: subagentWaitToolName, Markdown: true}
+	if count == 0 {
+		return presentation
+	}
+
+	state := "Waiting for"
+	if complete {
+		state = "Waited for"
+	}
+	presentation.Lines = []string{fmt.Sprintf("%s %d subagent(s).", state, count)}
+	return presentation
 }
 
 func validateSubagentIDs(ids []string) error {
@@ -109,7 +118,7 @@ func validateSubagentIDs(ids []string) error {
 
 func (wait *SubagentWait) collect(ctx context.Context, jobs []*subagentJob) ([]subagentJobSnapshot, error) {
 	for {
-		snapshots, complete := wait.subagents.snapshotJobs(jobs)
+		snapshots, complete, changes := wait.subagents.snapshotJobs(jobs)
 		if complete {
 			return snapshots, nil
 		}
@@ -117,28 +126,36 @@ func (wait *SubagentWait) collect(ctx context.Context, jobs []*subagentJob) ([]s
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-wait.subagents.changes:
+		case <-changes:
 		}
 	}
 }
 
 func formatSubagentResults(snapshots []subagentJobSnapshot) agent.ToolResult {
+	if len(snapshots) == 0 {
+		return agent.ToolResult{}
+	}
+
 	var output strings.Builder
-	output.WriteString(subagentResultGuidance)
 	failed := false
+	sectionBytes := defaultMaxBytes / len(snapshots)
+	sectionLines := defaultMaxLines / len(snapshots)
 	for _, snapshot := range snapshots {
-		output.WriteString("\n\n")
-		fmt.Fprintf(&output, "Subagent %s (model: %s, thinking: %s):\n", snapshot.id, snapshot.modelProfile, snapshot.thinkingLevel)
-		if snapshot.result.text != "" {
-			output.WriteString(snapshot.result.text)
+		heading := fmt.Sprintf("Subagent %s (model: %s, thinking: %s):\n", snapshot.id, snapshot.modelProfile, snapshot.thinkingLevel)
+		if output.Len() > 0 {
+			heading = "\n\n" + heading
 		}
+		output.WriteString(heading)
+
+		body := snapshot.result.text
 		if snapshot.result.err != nil {
 			failed = true
-			if snapshot.result.text != "" {
-				output.WriteString("\n\n")
+			if body != "" {
+				body += "\n\n"
 			}
-			fmt.Fprintf(&output, "error: %v", snapshot.result.err)
+			body += fmt.Sprintf("error: %v", snapshot.result.err)
 		}
+		output.WriteString(boundSubagentResult(body, sectionLines-3, sectionBytes-len(heading)))
 	}
 
 	formatted := output.String()
@@ -146,4 +163,19 @@ func formatSubagentResults(snapshots []subagentJobSnapshot) agent.ToolResult {
 		formatted = boundHead(formatted, "subagent output truncated")
 	}
 	return agent.ToolResult{Output: formatted, IsError: failed}
+}
+
+func boundSubagentResult(body string, maxLines, maxBytes int) string {
+	bounded := truncateHead(body, maxLines, maxBytes)
+	if !bounded.truncated {
+		return bounded.text
+	}
+
+	const marker = "[subagent result truncated]"
+	content := truncateHead(body, maxLines-1, maxBytes-len(marker)-1).text
+	content = strings.TrimSuffix(content, "\n")
+	if content == "" {
+		return truncateHead(marker, maxLines, maxBytes).text
+	}
+	return content + "\n" + marker
 }

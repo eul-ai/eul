@@ -186,7 +186,7 @@ func TestDeviceLoginAndLogout(t *testing.T) {
 	server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/accounts/deviceauth/usercode":
-			writeTestJSON(t, writer, map[string]any{"device_auth_id": "device-id", "user_code": "ABCD-EFGH", "interval": "0"})
+			writeTestJSON(t, writer, map[string]any{"device_auth_id": "device-id", "user_code": "ABCD-EFGH", "interval": "1"})
 		case "/api/accounts/deviceauth/token":
 			polls++
 			if polls == 1 {
@@ -280,7 +280,7 @@ func TestDeviceExchangeUsesPollingDeadline(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/accounts/deviceauth/usercode":
-			writeTestJSON(t, writer, map[string]any{"device_auth_id": "device-id", "user_code": "code", "interval": 0})
+			writeTestJSON(t, writer, map[string]any{"device_auth_id": "device-id", "user_code": "code", "interval": 1})
 		case "/api/accounts/deviceauth/token":
 			writeTestJSON(t, writer, map[string]any{"authorization_code": "authorization", "code_verifier": "verifier"})
 		case "/oauth/token":
@@ -316,15 +316,23 @@ func TestDeviceExchangeUsesPollingDeadline(t *testing.T) {
 	}
 }
 
-func TestParseIntervalRejectsNonFiniteValues(t *testing.T) {
-	for _, raw := range []string{`"NaN"`, `"Inf"`, `"-Inf"`} {
+func TestParseIntervalValidation(t *testing.T) {
+	for _, raw := range []string{`"NaN"`, `"Inf"`, `"-Inf"`, `-1`, `0`, `0.999`, `"0.5"`, `301`} {
 		if _, err := parseInterval(json.RawMessage(raw)); err == nil {
 			t.Fatalf("parseInterval(%s) succeeded", raw)
 		}
 	}
-	for _, raw := range []string{`1.5`, `"1.5"`} {
-		if interval, err := parseInterval(json.RawMessage(raw)); err != nil || interval != 1500*time.Millisecond {
-			t.Fatalf("parseInterval(%s) = %s, %v", raw, interval, err)
+	for _, test := range []struct {
+		raw  string
+		want time.Duration
+	}{
+		{raw: `1`, want: time.Second},
+		{raw: `1.5`, want: 1500 * time.Millisecond},
+		{raw: `"1.5"`, want: 1500 * time.Millisecond},
+		{raw: `300`, want: 300 * time.Second},
+	} {
+		if interval, err := parseInterval(json.RawMessage(test.raw)); err != nil || interval != test.want {
+			t.Fatalf("parseInterval(%s) = %s, %v, want %s", test.raw, interval, err, test.want)
 		}
 	}
 }
@@ -377,7 +385,7 @@ func TestDeviceLoginStopsOnExplicitDenial(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/accounts/deviceauth/usercode":
-			writeTestJSON(t, writer, map[string]any{"device_auth_id": "device-id", "user_code": "ABCD-EFGH", "interval": "0"})
+			writeTestJSON(t, writer, map[string]any{"device_auth_id": "device-id", "user_code": "ABCD-EFGH", "interval": "1"})
 		case "/api/accounts/deviceauth/token":
 			polls++
 			writer.Header().Set("Content-Type", "application/json")

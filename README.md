@@ -25,12 +25,11 @@ persisted locally, and tools run directly on your machine with your permissions.
 - Global and project-specific [Agent Skills](https://agentskills.io)
 - Automatic context compaction and usage information for supported models
 - Durable sessions with direct and interactive resumption
-- Inline bold, italic, and code Markdown in the conversation
 - Browser and device-code sign-in with ChatGPT
 
 ## Getting started
 
-Build Eul from source:
+Building Eul from source requires Go 1.26.
 
 ```sh
 go build -o eul ./cmd/eul
@@ -55,7 +54,7 @@ Codex service. Its third-party API behavior may change.
 ## Usage
 
 ```text
-eul [--provider <provider>] [--model <model>] [--fast-model <model>] [--balanced-model <model>] [--thinking <level>] [--cwd <directory>]
+eul [--provider <provider>] [--model <model>] [--fast-model <model>] [--balanced-model <model>] [--thinking <level>] [--cwd <directory>] [--no-sandbox]
 eul --resume[=<session-id>]
 eul login [--provider <provider>] [--device-auth]
 eul logout [--provider <provider>]
@@ -67,11 +66,15 @@ Relative tool paths are resolved from that directory.
 
 Thinking levels are:
 
-```text
-off, minimal, low, medium, high, xhigh, max
-```
+- off
+- minimal
+- low
+- medium (default)
+- high
+- xhigh
+- max
 
-The default is `medium`. Availability depends on the selected model.
+Availability depends on the selected model.
 
 The main and powerful-subagent model defaults to `gpt-5.6-sol`. Balanced
 subagents default to `gpt-5.6-terra`, and fast subagents default to
@@ -89,18 +92,19 @@ diffs, errors, context usage, and model activity visible while you work.
 
 | Control | Action |
 | --- | --- |
-| Enter | Submit a prompt, queue steering, or apply a selected completion |
+| Enter | Submit a prompt, queue steering, or apply a selected completion or permission response |
 | Shift-Enter | Insert a newline |
 | Shift-Tab | Cycle supported thinking levels |
 | `/` | Show commands at the start of the editor |
 | `@` | Search for a file and insert its path |
-| Tab | Apply the selected command or file completion |
-| Up / Down | Navigate prompt history or completion results |
-| Page Up / Page Down | Scroll the conversation |
+| Tab | Apply a completion or switch the selected permission response |
+| Up / Down | Navigate prompt history or completion results, or scroll permission details |
+| Page Up / Page Down | Scroll the conversation or permission details |
 | Mouse wheel | Scroll the conversation |
 | Mouse drag | Select and copy conversation text |
 | Alt-Up | Restore queued steering messages to the editor |
-| Escape | Close the completion window or cancel the active turn |
+| Y / N | Allow once or deny an active permission request |
+| Escape | Close completions, deny a permission request, or cancel the active turn |
 | Ctrl-C | Clear the editor, cancel the active turn, or exit from an empty prompt |
 | Ctrl-D | Exit from an empty prompt |
 | Ctrl-L | Redraw the terminal |
@@ -121,56 +125,19 @@ Bracketed multiline paste preserves newlines and blank lines.
 | `/goal clear` | Clear the active goal |
 | `/skill:<name> [instructions]` | Load a skill explicitly |
 
-## Built-in tools
+## Tool access
 
-Eul can use the following capabilities as needed:
+Eul can read and edit files, run Bash commands, navigate code with configured
+language servers, and delegate research to read-only subagents.
 
-- Read UTF-8 text files
-- Create and overwrite files
-- Replace a specific matching section of a file
-- Run Bash commands
-- Inspect language-server diagnostics
-- Look up hover information, definitions, references, and document symbols
-- Rename symbols across a workspace
-- Launch independent read-only research in background subagents and wait for selected results
-
-Language-server configuration is loaded from `lsp.json` under `EUL_HOME`, or
-the platform user configuration directory when `EUL_HOME` is unset. For
-development, Eul falls back to `lsp.json` in the project root when the global
-file does not exist. If neither file exists, the session starts without
-language-server tools. Each entry defines a server command and the source
-extensions it handles:
-
-```json
-[
-  {
-    "name": "gopls",
-    "command": "gopls",
-    "languageID": "go",
-    "extensions": [".go"]
-  }
-]
-```
-
-Language-server features are available when a configured command is installed.
+Bash commands run without network access by default. Commands that need network
+access pause for one-time user approval. `--no-sandbox` disables Bash network
+isolation and automatically allows network access.
 
 ## Subagents
 
-Eul may launch up to four independent read-only subagents when separate context
-and parallel investigation are useful. Launches return immediately; completed
-results remain available until `subagent_wait` collects them, and uncollected
-results continue to occupy capacity. `subagent_cancel` stops selected work.
-Canceling a turn while `subagent_wait` is active also stops the selected agents;
-canceling unrelated main-context work does not.
-
-A launch may select one model profile for its batch from `fast`, `balanced`, or
-`powerful`; the default is `balanced`. The profile models are selected when the
-session starts, while powerful uses the main session model. A launch may also
-select a thinking level from `off`, `minimal`, `low`, `medium`, or `high`; the
-default is `low`. Subagents begin a tool-free final response after five minutes or
-20 normal provider generations. The final response
-is separate from the generation budget. While waiting, Eul shows cumulative input
-and output usage, normal-generation progress, and the reason finalization began.
+Eul may launch up to four independent read-only subagents for parallel research.
+They run in the background and can be canceled when no longer needed.
 
 ## Goals
 
@@ -210,14 +177,9 @@ run bundled scripts with your permissions.
 
 ## Safety and limitations
 
-- Tools are not sandboxed. Shell commands and file operations can make arbitrary
-  changes accessible to your user account.
+- Apart from Bash network isolation on Linux and macOS, tools are not sandboxed.
+  Shell commands and file operations can make arbitrary changes accessible to
+  your user account.
 - Saved sessions can contain prompts, source code, and tool output. They are
   protected with local filesystem permissions but are not encrypted at rest.
 - Canceling a turn does not undo tool side effects that already occurred.
-- Canceling a subagent wait cancels its selected background tasks; canceling
-  unrelated main-context work leaves background tasks running.
-- Subagents are read-only, session-local, canceled on session shutdown, and are
-  not restored after process restart.
-- Markdown rendering is limited to inline bold, italic, and code formatting.
-- Eul currently uses ChatGPT authentication for OpenAI Codex models.
