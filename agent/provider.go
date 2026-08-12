@@ -74,6 +74,7 @@ type UsageWindow struct {
 type Request struct {
 	Model         string
 	ThinkingLevel ThinkingLevel
+	FastMode      bool
 	Instructions  string
 	Inputs        []Input
 	Tools         []ToolDefinition
@@ -121,6 +122,7 @@ type UsageProvider interface {
 type ModelMetadata struct {
 	ContextWindow  int64
 	ThinkingLevels []ThinkingLevel
+	FastMode       bool
 }
 
 func (metadata ModelMetadata) ClampThinkingLevel(level ThinkingLevel) ThinkingLevel {

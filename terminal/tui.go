@@ -224,6 +224,7 @@ func runTUIWithKeys(
 		fileSearchMessages: fileSearchMessages,
 		usageRequests:      usageRequests,
 		setThinkingLevel:   options.SetThinkingLevel,
+		setFastMode:        options.SetFastMode,
 		saveCheckpoint:     options.SaveCheckpoint,
 		listSessions:       options.ListSessions,
 		readClipboardImage: clipboardImageReader,

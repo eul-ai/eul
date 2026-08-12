@@ -942,6 +942,58 @@ func TestTUIControllerRestoresSteeringAfterRunError(t *testing.T) {
 	}
 }
 
+func TestTUIControllerTogglesFastMode(t *testing.T) {
+	var configured []bool
+	model := newTUIModel(80, 24, Options{FastModeAvailable: true, SetFastMode: func(bool) error { return nil }})
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+		setFastMode: func(enabled bool) error {
+			configured = append(configured, enabled)
+			return nil
+		},
+		saveCheckpoint: nil,
+	}
+	for _, want := range []bool{true, false} {
+		if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionToggleFast}); err != nil {
+			t.Fatal(err)
+		}
+		if model.fastMode != want {
+			t.Fatalf("fast mode = %v, want %v", model.fastMode, want)
+		}
+	}
+	if !slices.Equal(configured, []bool{true, false}) {
+		t.Fatalf("configured=%v", configured)
+	}
+	if len(model.blocks) != 2 || model.blocks[0].text != "Fast mode on" || model.blocks[1].text != "Fast mode off" {
+		t.Fatalf("blocks = %+v", model.blocks)
+	}
+}
+
+func TestTUIControllerTogglesFastModeWhileRunning(t *testing.T) {
+	var configured bool
+	model := newTUIModel(80, 24, Options{FastModeAvailable: true, SetFastMode: func(bool) error { return nil }})
+	model.running = true
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+		setFastMode: func(enabled bool) error {
+			configured = enabled
+			return nil
+		},
+		saveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error {
+			t.Fatal("checkpoint saved while running")
+			return nil
+		},
+	}
+	if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionToggleFast}); err != nil {
+		t.Fatal(err)
+	}
+	if !configured || !model.fastMode || !model.running {
+		t.Fatalf("configured=%v fast=%v running=%v", configured, model.fastMode, model.running)
+	}
+}
+
 func TestTUIControllerAppliesThinkingLevelWhileRunning(t *testing.T) {
 	var configured agent.ThinkingLevel
 	checkpointCalls := 0

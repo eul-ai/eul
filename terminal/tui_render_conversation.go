@@ -49,6 +49,20 @@ func conversationLines(blocks []conversationBlock, width int) []styledLine {
 	return lines
 }
 
+func wrapConversationText(text string, width int) []formattedLine {
+	wrapped := wrapText(text, width)
+	lines := make([]formattedLine, len(wrapped))
+	line := 0
+	for _, paragraph := range strings.Split(strings.ReplaceAll(text, "\t", "    "), "\n") {
+		count := len(wrapText(paragraph, width))
+		for offset := range count {
+			lines[line+offset] = formattedLine{text: wrapped[line+offset], continuation: offset > 0}
+		}
+		line += count
+	}
+	return lines
+}
+
 func conversationBlockLines(block conversationBlock, width int) []styledLine {
 	style := blockPresentation(block.kind)
 	text := block.text
@@ -77,11 +91,11 @@ func conversationBlockLines(block conversationBlock, width int) []styledLine {
 		lines = append(lines, styledLine{style: style, padding: padding})
 	case isInlineMarkdownBlock(block.kind):
 		for _, line := range wrapInlineMarkdown(text, contentWidth) {
-			lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding})
+			lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding, continuation: line.continuation})
 		}
 	default:
-		for _, line := range wrapText(text, contentWidth) {
-			lines = append(lines, styledLine{text: line, style: style, padding: padding})
+		for _, line := range wrapConversationText(text, contentWidth) {
+			lines = append(lines, styledLine{text: line.text, style: style, padding: padding, continuation: line.continuation})
 		}
 	}
 	return lines
@@ -123,11 +137,11 @@ func toolConversationLines(block conversationBlock, width int, style lineStyle, 
 		body := strings.Join(block.tool.Lines, "\n")
 		if block.tool.Markdown {
 			for _, line := range wrapInlineMarkdown(body, width) {
-				bodyLines = append(bodyLines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding})
+				bodyLines = append(bodyLines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding, continuation: line.continuation})
 			}
 		} else {
-			for _, line := range wrapText(body, width) {
-				bodyLines = append(bodyLines, styledLine{text: line, style: style, padding: padding})
+			for _, line := range wrapConversationText(body, width) {
+				bodyLines = append(bodyLines, styledLine{text: line.text, style: style, padding: padding, continuation: line.continuation})
 			}
 		}
 		if block.tool.LinesTruncated {

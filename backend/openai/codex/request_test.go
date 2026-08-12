@@ -15,17 +15,22 @@ func TestBuildCreateRequest(t *testing.T) {
 	}
 
 	request, newItems, err := buildCreateRequest(agent.Request{
-		Model:  "model",
-		State:  state,
-		Inputs: []agent.Input{{Kind: agent.InputToolResult, CallID: "call_1", Text: "failed", IsError: true}},
-		Tools:  []agent.ToolDefinition{strictTestTool("read")},
+		Model:    "model",
+		FastMode: true,
+		State:    state,
+		Inputs:   []agent.Input{{Kind: agent.InputToolResult, CallID: "call_1", Text: "failed", IsError: true}},
+		Tools:    []agent.ToolDefinition{strictTestTool("read")},
 	}, defaultMaxStateBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if request.Model != "model" || len(request.Input) != 2 || len(newItems) != 1 || len(request.Tools) != 1 || request.Tools[0].Strict != nil {
+	if request.Model != "model" || request.ServiceTier != "priority" || len(request.Input) != 2 || len(newItems) != 1 || len(request.Tools) != 1 || request.Tools[0].Strict != nil {
 		t.Fatalf("request=%+v newItems=%s", request, newItems)
+	}
+	compact, err := buildCompactRequest(agent.Request{Model: "model", FastMode: true}, defaultMaxStateBytes)
+	if err != nil || compact.ServiceTier != "priority" {
+		t.Fatalf("compact request=%+v error=%v", compact, err)
 	}
 	if !strings.Contains(string(newItems[0]), `[tool error]\nfailed`) {
 		t.Fatalf("tool result = %s", newItems[0])
@@ -49,6 +54,41 @@ func TestEncodeInputImages(t *testing.T) {
 	if !strings.Contains(encoded, `"type":"input_text","text":"describe this"`) ||
 		!strings.Contains(encoded, `"type":"input_image","image_url":"data:image/png;base64,cG5n"`) {
 		t.Fatalf("input = %s", encoded)
+	}
+}
+
+func TestBuildCompactRequest(t *testing.T) {
+	request, err := buildCompactRequest(agent.Request{
+		Model:  "model",
+		Inputs: []agent.Input{{Kind: agent.InputUser, Text: "hello"}},
+	}, defaultMaxStateBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Input) != 2 {
+		t.Fatalf("compact input count = %d, want 2", len(request.Input))
+	}
+
+	var trigger struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(request.Input[1], &trigger); err != nil || trigger.Type != "compaction_trigger" {
+		t.Fatalf("compact trigger = %s, error = %v", request.Input[1], err)
+	}
+}
+
+func TestCompactedStateItems(t *testing.T) {
+	input := []json.RawMessage{
+		json.RawMessage(`{"type":"reasoning"}`),
+		json.RawMessage(`{"type":"message","role":"assistant"}`),
+		json.RawMessage(`{"type":"message","role":"user"}`),
+		json.RawMessage(`{"type":"agent_message"}`),
+	}
+	output := []json.RawMessage{json.RawMessage(`{"type":"compaction"}`)}
+
+	items := compactedStateItems(input, output)
+	if len(items) != 3 || !strings.Contains(string(items[0]), `"role":"user"`) || !strings.Contains(string(items[1]), `"type":"agent_message"`) || !strings.Contains(string(items[2]), `"type":"compaction"`) {
+		t.Fatalf("compacted items = %s", items)
 	}
 }
 

@@ -42,7 +42,6 @@ type TokenSource interface {
 type Client struct {
 	httpClient       *http.Client
 	endpoint         string
-	compactEndpoint  string
 	usageEndpoint    string
 	tokenSource      TokenSource
 	maxRequestBytes  int64
@@ -95,7 +94,6 @@ func New(source TokenSource, options Options) (*Client, error) {
 	return &Client{
 		httpClient:       httpClient,
 		endpoint:         endpoint,
-		compactEndpoint:  endpoint + "/compact",
 		usageEndpoint:    usageEndpoint,
 		tokenSource:      source,
 		maxRequestBytes:  defaultMaxRequestBytes,
@@ -110,6 +108,7 @@ func (*Client) ModelMetadata(model string) agent.ModelMetadata {
 	return agent.ModelMetadata{
 		ContextWindow:  contextWindow(model),
 		ThinkingLevels: supportedThinkingLevels(model),
+		FastMode:       models[model].fastMode,
 	}
 }
 
@@ -211,7 +210,9 @@ func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.Comp
 		return agent.CompactResponse{}, c.errorf("build compact request: %v", err)
 	}
 	wireRequest.Reasoning = reasoning
+	wireRequest.Stream = true
 	wireRequest.Text = &responseText{Verbosity: "low"}
+	wireRequest.ToolChoice = "auto"
 	wireRequest.ParallelToolCalls = true
 
 	requestBody, oversized, err := marshalBoundedJSON(wireRequest, c.maxRequestBytes)
@@ -227,32 +228,31 @@ func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.Comp
 		return agent.CompactResponse{}, err
 	}
 
-	httpResponse, err := c.post(ctx, c.compactEndpoint, "application/json", requestBody, credential, "compact request")
+	httpResponse, err := c.post(ctx, c.endpoint, "text/event-stream", requestBody, credential, "compact request")
 	if err != nil {
 		return agent.CompactResponse{}, err
 	}
 	defer httpResponse.Body.Close()
 
-	responseBody, truncated, err := readBounded(httpResponse.Body, c.maxResponseBytes)
+	wireResponse, err := readResponsesSSE(httpResponse.Body, c.maxResponseBytes, nil)
 	if err != nil {
 		if classified := c.contextError(ctx, err, "read compact response"); classified != nil {
 			return agent.CompactResponse{}, classified
 		}
 		return agent.CompactResponse{}, c.errorf("read compact response: %v", err)
 	}
-	if truncated {
-		return agent.CompactResponse{}, c.errorf("compact response exceeds %d bytes", c.maxResponseBytes)
-	}
-
-	wireResponse, err := decodeCompactResponse(responseBody)
-	if err != nil {
+	if err := validateCompletedResponse(wireResponse); err != nil {
 		return agent.CompactResponse{}, c.errorf("%v", err)
 	}
 	usage, err := normalizeUsage(wireResponse.Usage)
 	if err != nil {
 		return agent.CompactResponse{}, c.errorf("%v", err)
 	}
-	state, err := encodeState(nil, nil, wireResponse.Output, c.maxStateBytes)
+	if err := validateCompactOutput(wireResponse.Output); err != nil {
+		return agent.CompactResponse{}, c.errorf("%v", err)
+	}
+	input := wireRequest.Input[:len(wireRequest.Input)-1]
+	state, err := encodeState(nil, nil, compactedStateItems(input, wireResponse.Output), c.maxStateBytes)
 	if err != nil {
 		return agent.CompactResponse{}, c.errorf("%v", err)
 	}
@@ -333,6 +333,7 @@ func (c *Client) newRequest(ctx context.Context, method, endpoint, accept string
 	request.Header.Set("chatgpt-account-id", credential.AccountID)
 	request.Header.Set("originator", "eul")
 	request.Header.Set("User-Agent", "eul")
+	request.Header.Set("x-codex-beta-features", "remote_compaction_v2")
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("OpenAI-Beta", "responses=experimental")

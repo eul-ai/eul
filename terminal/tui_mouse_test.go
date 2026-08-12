@@ -90,14 +90,14 @@ func TestMouseDragSelectsAndCopiesRenderedText(t *testing.T) {
 	}
 }
 
-func TestMouseSelectionDoesNotHighlightTrailingPadding(t *testing.T) {
+func TestMouseSelectionDoesNotHighlightConversationPadding(t *testing.T) {
 	model := newTUIModel(20, 10, Options{})
 	model.appendBlock(blockAssistant, "alpha")
 	committed := buildTerminalFrame(model)
 
 	var output bytes.Buffer
 	for _, event := range []mouseEvent{
-		{kind: mousePress, column: 1, row: 1},
+		{kind: mousePress, column: 0, row: 1},
 		{kind: mouseDrag, column: 15, row: 1},
 	} {
 		if exit, err := handleModelMouse(model, &output, committed, event); err != nil || exit {
@@ -120,6 +120,34 @@ func TestMouseSelectionDoesNotHighlightTrailingPadding(t *testing.T) {
 	}
 	if got, want := output.String(), "\x1b]52;c;YWxwaGE=\x07"; got != want {
 		t.Fatalf("clipboard output = %q, want %q", got, want)
+	}
+}
+
+func TestMouseSelectionOmitsConversationPaddingAndWrappedNewlines(t *testing.T) {
+	model := newTUIModel(8, 10, Options{})
+	model.appendBlock(blockAssistant, "abcdefghij")
+	frame := buildTerminalFrame(model)
+	bounds := selectionBounds{
+		start: selectionPoint{row: 1, column: 0, conversation: true},
+		end:   selectionPoint{row: 2, column: 7, conversation: true},
+	}
+
+	if got := selectedConversationText(frame.conversationLines, frame.conversationContinuations, bounds); got != "abcdefghij" {
+		t.Fatalf("selected text = %q, want %q", got, "abcdefghij")
+	}
+}
+
+func TestMouseSelectionPreservesExplicitConversationNewlines(t *testing.T) {
+	model := newTUIModel(8, 10, Options{})
+	model.appendBlock(blockAssistant, "abc\ndef")
+	frame := buildTerminalFrame(model)
+	bounds := selectionBounds{
+		start: selectionPoint{row: 1, column: 0, conversation: true},
+		end:   selectionPoint{row: 2, column: 7, conversation: true},
+	}
+
+	if got := selectedConversationText(frame.conversationLines, frame.conversationContinuations, bounds); got != "abc\ndef" {
+		t.Fatalf("selected text = %q, want %q", got, "abc\\ndef")
 	}
 }
 

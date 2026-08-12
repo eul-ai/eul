@@ -120,6 +120,8 @@ type statusModel struct {
 	thinkingLevel              agent.ThinkingLevel
 	thinkingLevels             []agent.ThinkingLevel
 	thinkingSelectionAvailable bool
+	fastMode                   bool
+	fastModeAvailable          bool
 	contextWindow              int64
 	contextTokens              int64
 	providerUsage              agent.ProviderUsage
@@ -144,13 +146,14 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 	if len(thinkingLevels) == 0 {
 		thinkingLevels = agent.ThinkingLevels()
 	}
+	fastModeAvailable := options.FastModeAvailable && options.SetFastMode != nil
 
 	model := &tuiModel{
 		conversationModel: conversationModel{
 			following: true,
 		},
 		editorModel: editorModel{
-			commandCompletions: commandCompletions(options.Skills),
+			commandCompletions: commandCompletions(options.Skills, fastModeAvailable),
 			filePicker:         filePickerState{enabled: options.WorkingDirectory != ""},
 			historyIndex:       -1,
 		},
@@ -162,6 +165,8 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 			thinkingLevel:              agent.ThinkingLevel(singleLine(string(thinkingLevel), 40)),
 			thinkingLevels:             thinkingLevels,
 			thinkingSelectionAvailable: options.SetThinkingLevel != nil,
+			fastMode:                   options.FastMode,
+			fastModeAvailable:          fastModeAvailable,
 			contextWindow:              options.ContextWindow,
 			activity:                   activity{kind: activityReady},
 		},

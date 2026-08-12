@@ -38,6 +38,11 @@ func TestResolveConfigLoadsDefaultAndExplicitModels(t *testing.T) {
 	if explicit.models != (modelSelection{main: "primary-model", fast: "fast-model", balanced: "balanced-model"}) {
 		t.Fatalf("config = %+v", explicit)
 	}
+
+	fastMode, err := resolveTestConfig(Options{FastMode: true}, runtime)
+	if err != nil || !fastMode.fastMode {
+		t.Fatalf("fast mode config = %+v, error = %v", fastMode, err)
+	}
 }
 
 func TestResolveModelSelectionFallsBackToMain(t *testing.T) {

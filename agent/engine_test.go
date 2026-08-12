@@ -2370,6 +2370,40 @@ func TestEngineUsesThinkingLevelChangedDuringRunForNextGeneration(t *testing.T) 
 	}
 }
 
+func TestEngineUsesFastModeChangedDuringRunForNextGeneration(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if request.FastMode {
+				t.Fatal("first generation used fast mode")
+			}
+			close(started)
+			<-release
+			return Response{ToolCalls: []ToolCall{{ID: "tool", Name: "tool"}}}, nil
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if !request.FastMode {
+				t.Fatal("second generation did not use fast mode")
+			}
+			return Response{Text: "done"}, nil
+		},
+	}}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := engine.Run(context.Background(), "first", discardEvents)
+		done <- err
+	}()
+	<-started
+	engine.SetFastMode(true)
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestEngineSendsCurrentThinkingLevel(t *testing.T) {
 	provider := &scriptedProvider{t: t, steps: []providerStep{
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {

@@ -14,6 +14,7 @@ const continuationStateVersion = 1
 
 type createResponseRequest struct {
 	Model             string             `json:"model"`
+	ServiceTier       string             `json:"service_tier,omitempty"`
 	Instructions      string             `json:"instructions"`
 	Input             []json.RawMessage  `json:"input"`
 	Tools             []functionTool     `json:"tools"`
@@ -24,16 +25,6 @@ type createResponseRequest struct {
 	Reasoning         *responseReasoning `json:"reasoning,omitempty"`
 	ToolChoice        string             `json:"tool_choice,omitempty"`
 	ParallelToolCalls bool               `json:"parallel_tool_calls,omitempty"`
-}
-
-type compactRequest struct {
-	Model             string             `json:"model"`
-	Instructions      string             `json:"instructions,omitempty"`
-	Input             []json.RawMessage  `json:"input"`
-	Tools             []functionTool     `json:"tools"`
-	ParallelToolCalls bool               `json:"parallel_tool_calls"`
-	Reasoning         *responseReasoning `json:"reasoning,omitempty"`
-	Text              *responseText      `json:"text,omitempty"`
 }
 
 type responseText struct {
@@ -96,8 +87,14 @@ func buildCreateRequest(request agent.Request, maxStateBytes int) (createRespons
 		}
 	}
 
+	serviceTier := ""
+	if request.FastMode {
+		serviceTier = "priority"
+	}
+
 	return createResponseRequest{
 		Model:        request.Model,
+		ServiceTier:  serviceTier,
 		Instructions: request.Instructions,
 		Input:        input,
 		Tools:        tools,
@@ -107,18 +104,36 @@ func buildCreateRequest(request agent.Request, maxStateBytes int) (createRespons
 	}, newItems, nil
 }
 
-func buildCompactRequest(request agent.Request, maxStateBytes int) (compactRequest, error) {
-	createRequest, _, err := buildCreateRequest(request, maxStateBytes)
+func buildCompactRequest(request agent.Request, maxStateBytes int) (createResponseRequest, error) {
+	compactRequest, _, err := buildCreateRequest(request, maxStateBytes)
 	if err != nil {
-		return compactRequest{}, err
+		return createResponseRequest{}, err
 	}
 
-	return compactRequest{
-		Model:        createRequest.Model,
-		Instructions: createRequest.Instructions,
-		Input:        createRequest.Input,
-		Tools:        createRequest.Tools,
-	}, nil
+	trigger, _ := json.Marshal(struct {
+		Type string `json:"type"`
+	}{Type: "compaction_trigger"})
+	compactRequest.Input = append(compactRequest.Input, trigger)
+
+	return compactRequest, nil
+}
+
+func compactedStateItems(input, output []json.RawMessage) []json.RawMessage {
+	items := make([]json.RawMessage, 0, len(input)+len(output))
+	for _, raw := range input {
+		var item struct {
+			Type string `json:"type"`
+			Role string `json:"role"`
+		}
+		if json.Unmarshal(raw, &item) != nil {
+			continue
+		}
+		if item.Type == "agent_message" || item.Role == "user" || item.Role == "developer" || item.Role == "system" {
+			items = append(items, raw)
+		}
+	}
+
+	return append(items, output...)
 }
 
 func encodeInputs(inputs []agent.Input) []json.RawMessage {

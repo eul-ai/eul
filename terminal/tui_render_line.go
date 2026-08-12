@@ -33,6 +33,7 @@ type styledLine struct {
 	spans            []inlineSpan
 	style            lineStyle
 	padding          int
+	continuation     bool
 }
 
 type fittedLine struct {

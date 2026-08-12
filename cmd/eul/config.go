@@ -55,6 +55,7 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (session.Option
 	fastModel := flags.String("fast-model", "", "fast subagent model (defaults to the provider configuration)")
 	balancedModel := flags.String("balanced-model", "", "balanced subagent model (defaults to the provider configuration)")
 	thinking := flags.String("thinking", string(agent.DefaultThinkingLevel), "thinking level")
+	fast := flags.Bool("fast", false, "enable the provider's fast inference mode")
 	cwd := flags.String("cwd", "", "fixed working directory")
 	noSandbox := flags.Bool("no-sandbox", false, "disable Bash network sandboxing and permission prompts")
 	resume := &resumeValue{}
@@ -69,8 +70,8 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (session.Option
 
 	explicit := make(map[string]bool)
 	flags.Visit(func(current *flag.Flag) { explicit[current.Name] = true })
-	if resume.enabled && (explicit["provider"] || explicit["model"] || explicit["fast-model"] || explicit["balanced-model"] || explicit["thinking"] || explicit["cwd"]) {
-		return session.Options{}, errors.New("usage error: --resume cannot be combined with --provider, --model, --fast-model, --balanced-model, --thinking, or --cwd")
+	if resume.enabled && (explicit["provider"] || explicit["model"] || explicit["fast-model"] || explicit["balanced-model"] || explicit["thinking"] || explicit["fast"] || explicit["cwd"]) {
+		return session.Options{}, errors.New("usage error: --resume cannot be combined with --provider, --model, --fast-model, --balanced-model, --thinking, --fast, or --cwd")
 	}
 
 	thinkingLevel := agent.DefaultThinkingLevel
@@ -91,6 +92,7 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (session.Option
 		BalancedModel:    *balancedModel,
 		BalancedModelSet: explicit["balanced-model"],
 		ThinkingLevel:    thinkingLevel,
+		FastMode:         *fast,
 		WorkingDirectory: *cwd,
 		NoSandbox:        *noSandbox,
 		Resume:           resume.enabled,
