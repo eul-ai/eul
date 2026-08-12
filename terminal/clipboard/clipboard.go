@@ -17,7 +17,6 @@ const (
 
 var (
 	errImageUnavailable = errors.New("clipboard does not contain an image")
-	errImageUnsupported = errors.New("clipboard images are not supported on this platform")
 	errImageTooLarge    = fmt.Errorf("clipboard image exceeds %d MiB", maxImageBytes/(1024*1024))
 )
 
