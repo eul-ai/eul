@@ -202,6 +202,10 @@ func (tracker *toolEventTracker) closeRemaining(cause error) error {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
+	if tracker.sinkErr != nil {
+		return tracker.sinkErr
+	}
+
 	for _, callID := range tracker.order {
 		streamed, exists := tracker.streamed[callID]
 		if !exists {

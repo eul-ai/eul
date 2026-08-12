@@ -385,7 +385,7 @@ func (e *Engine) generateResponse(ctx context.Context, request Request, sink Eve
 		if closeErr != nil {
 			return Response{}, nil, observed, closeErr
 		}
-		if observed || !canRetry {
+		if !canRetry {
 			return Response{}, nil, observed, newProviderGenerationError(err)
 		}
 

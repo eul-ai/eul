@@ -66,7 +66,9 @@ func resolveInitialSession(
 	if err != nil {
 		return resolvedConfig{}, nil, nil, err
 	}
-	return resolveStoredSession(ctx, store, runtime, cwd, arguments.SessionID)
+	config, handle, driver, err := resolveStoredSession(ctx, store, runtime, cwd, arguments.SessionID)
+	config.skipPermissions = arguments.SkipPermissions
+	return config, handle, driver, err
 }
 
 func resolveStoredSession(

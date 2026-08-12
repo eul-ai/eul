@@ -154,7 +154,7 @@ func newAgentSessionWithCheckpointing(
 		warnings = append(warnings, usageWarning)
 	}
 	metadata := resolveSessionModelMetadata(provider, config)
-	authorizeNetwork, permissionRequests := newNetworkPermissionBroker()
+	authorizeNetwork, permissionRequests := newNetworkPermissionBroker(config.skipPermissions)
 
 	var engine *agent.Engine
 	tools, err := newSessionToolset(config, runtime, backendRuntime, metadata, authorizeNetwork, func() error {

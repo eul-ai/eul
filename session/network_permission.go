@@ -7,7 +7,11 @@ import (
 	"github.com/eul-ai/eul/tool"
 )
 
-func newNetworkPermissionBroker() (tool.NetworkAuthorizer, <-chan terminal.PermissionRequest) {
+func newNetworkPermissionBroker(skipPermissions bool) (tool.NetworkAuthorizer, <-chan terminal.PermissionRequest) {
+	if skipPermissions {
+		return func(context.Context, string) (bool, error) { return true, nil }, nil
+	}
+
 	requests := make(chan terminal.PermissionRequest)
 	authorize := func(ctx context.Context, command string) (bool, error) {
 		response := make(chan bool, 1)

@@ -108,6 +108,7 @@ func testBackendDriver(t *testing.T, runtime runtime) *fakeBackendDriver {
 }
 
 func resolveTestConfig(options Options, runtime runtime) (resolvedConfig, error) {
+	options.SkipPermissions = true
 	driver, err := runtime.backends.Lookup(options.Provider)
 	if err != nil {
 		return resolvedConfig{}, err

@@ -23,6 +23,7 @@ type Options struct {
 	BalancedModelSet bool
 	ThinkingLevel    agent.ThinkingLevel
 	WorkingDirectory string
+	SkipPermissions  bool
 	Resume           bool
 	SessionID        string
 }
@@ -61,6 +62,7 @@ type resolvedConfig struct {
 	projectInstructions string
 	skills              []agent.Skill
 	warnings            []string
+	skipPermissions     bool
 }
 
 func resolveConfig(options Options, runtime runtime, descriptor backend.Descriptor, defaults backend.ModelDefaults) (resolvedConfig, error) {
@@ -96,6 +98,7 @@ func resolveConfig(options Options, runtime runtime, descriptor backend.Descript
 		projectInstructions: projectInstructions,
 		skills:              skills,
 		warnings:            warnings,
+		skipPermissions:     options.SkipPermissions,
 	}, nil
 }
 

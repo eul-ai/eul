@@ -771,7 +771,7 @@ func TestEngineRetriesGenerationBeforeObservableEvents(t *testing.T) {
 	}
 }
 
-func TestEngineDoesNotRetryGenerationAfterObservableEvent(t *testing.T) {
+func TestEngineRetriesGenerationAfterObservableEvent(t *testing.T) {
 	transient := errors.New("temporary provider failure")
 	tests := []struct {
 		name string
@@ -781,19 +781,19 @@ func TestEngineDoesNotRetryGenerationAfterObservableEvent(t *testing.T) {
 		{
 			name: "text",
 			emit: func(onText TextSink, _ TextSink, _ ToolCallSink) error { return onText("partial") },
-			want: []EventKind{EventAssistantText},
+			want: []EventKind{EventAssistantText, EventGenerationRetry, EventContextUsage},
 		},
 		{
 			name: "reasoning",
 			emit: func(_ TextSink, onReasoning TextSink, _ ToolCallSink) error { return onReasoning("thinking") },
-			want: []EventKind{EventAssistantReasoning},
+			want: []EventKind{EventAssistantReasoning, EventGenerationRetry, EventContextUsage},
 		},
 		{
 			name: "tool presentation",
 			emit: func(_ TextSink, _ TextSink, onToolCall ToolCallSink) error {
 				return onToolCall(ToolCallSnapshot{ID: "call-1", Name: "write", RawArguments: `{"path":"demo.txt"}`})
 			},
-			want: []EventKind{EventToolStart, EventToolEnd},
+			want: []EventKind{EventToolStart, EventToolEnd, EventGenerationRetry, EventContextUsage},
 		},
 	}
 
@@ -804,6 +804,9 @@ func TestEngineDoesNotRetryGenerationAfterObservableEvent(t *testing.T) {
 			provider := &retryingProvider{
 				generate: func(_ context.Context, _ Request, onText TextSink, onReasoning TextSink, onToolCall ToolCallSink) (Response, error) {
 					generateCalls++
+					if generateCalls == 2 {
+						return Response{Text: "done"}, nil
+					}
 					if err := test.emit(onText, onReasoning, onToolCall); err != nil {
 						return Response{}, err
 					}
@@ -816,12 +819,12 @@ func TestEngineDoesNotRetryGenerationAfterObservableEvent(t *testing.T) {
 			}
 			var events []Event
 			engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
-			_, err := engine.Run(context.Background(), "start", func(event Event) error {
+			result, err := engine.Run(context.Background(), "start", func(event Event) error {
 				events = append(events, event)
 				return nil
 			})
-			if !errors.Is(err, transient) || generateCalls != 1 || retryCalls != 0 {
-				t.Fatalf("generate calls = %d, retry calls = %d, error = %v", generateCalls, retryCalls, err)
+			if err != nil || result.Text != "done" || generateCalls != 2 || retryCalls != 1 {
+				t.Fatalf("result = %+v, generate calls = %d, retry calls = %d, error = %v", result, generateCalls, retryCalls, err)
 			}
 			if got := eventKinds(events); !slices.Equal(got, test.want) {
 				t.Fatalf("events = %v, want %v", got, test.want)

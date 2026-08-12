@@ -56,8 +56,16 @@ func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
 	}
 }
 
+func TestNetworkPermissionBrokerSkipsPermissions(t *testing.T) {
+	authorize, requests := newNetworkPermissionBroker(true)
+	allowed, err := authorize(context.Background(), "git push")
+	if !allowed || err != nil || requests != nil {
+		t.Fatalf("allowed = %t, requests = %v, error = %v", allowed, requests, err)
+	}
+}
+
 func TestNetworkPermissionBrokerReturnsDecision(t *testing.T) {
-	authorize, requests := newNetworkPermissionBroker()
+	authorize, requests := newNetworkPermissionBroker(false)
 	type outcome struct {
 		allowed bool
 		err     error
@@ -80,7 +88,7 @@ func TestNetworkPermissionBrokerReturnsDecision(t *testing.T) {
 }
 
 func TestNetworkPermissionBrokerHonorsCancellation(t *testing.T) {
-	authorize, requests := newNetworkPermissionBroker()
+	authorize, requests := newNetworkPermissionBroker(false)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
