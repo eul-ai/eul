@@ -13,7 +13,7 @@ const updateGoalToolName = "update_goal"
 var updateGoalToolDefinition = agent.ToolDefinition{
 	Name:        updateGoalToolName,
 	Description: "Mark an active goal complete only when all requirements are verified.",
-	Parameters: strictObject(map[string]agent.JSONSchema{
+	Parameters: StrictObject(map[string]agent.JSONSchema{
 		"status": {Type: "string", Description: `Must be "complete".`},
 	}, "status"),
 }
@@ -44,7 +44,7 @@ func (tool *UpdateGoal) Execute(ctx context.Context, arguments json.RawMessage, 
 		return agent.ToolResult{}, err
 	}
 
-	args, err := decodeArguments[updateGoalArguments](arguments)
+	args, err := DecodeArguments[updateGoalArguments](arguments)
 	if err != nil {
 		return errorResult(updateGoalToolName, err), nil
 	}

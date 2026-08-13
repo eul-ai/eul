@@ -12,7 +12,7 @@ import (
 	"go.lsp.dev/uri"
 )
 
-func (state *lspWatchState) register(ctx context.Context, registrations []lspWatchRegistration) error {
+func (state *watchState) register(ctx context.Context, registrations []watchRegistration) error {
 	if state.failure != nil {
 		return state.failure
 	}
@@ -30,7 +30,7 @@ func (state *lspWatchState) register(ctx context.Context, registrations []lspWat
 			delete(state.registrations, registration.id)
 		}
 		rollbackErr := state.reconcile(state.manager.ctx)
-		if !lspWatchContextError(ctx, err) {
+		if !watchContextError(ctx, err) {
 			state.fail(err)
 		}
 		state.fail(rollbackErr)
@@ -39,8 +39,8 @@ func (state *lspWatchState) register(ctx context.Context, registrations []lspWat
 	return nil
 }
 
-func (state *lspWatchState) unregister(ctx context.Context, ids []string) error {
-	removed := make(map[string][]lspWatchPattern)
+func (state *watchState) unregister(ctx context.Context, ids []string) error {
+	removed := make(map[string][]watchPattern)
 	for _, id := range ids {
 		if patterns, exists := state.registrations[id]; exists {
 			removed[id] = patterns
@@ -50,7 +50,7 @@ func (state *lspWatchState) unregister(ctx context.Context, ids []string) error 
 	if err := state.reconcile(ctx); err != nil {
 		maps.Copy(state.registrations, removed)
 		rollbackErr := state.reconcile(state.manager.ctx)
-		if !lspWatchContextError(ctx, err) {
+		if !watchContextError(ctx, err) {
 			state.fail(err)
 		}
 		state.fail(rollbackErr)
@@ -59,12 +59,12 @@ func (state *lspWatchState) unregister(ctx context.Context, ids []string) error 
 	return nil
 }
 
-func (state *lspWatchState) reportCommitted(ctx context.Context, paths []string) error {
+func (state *watchState) reportCommitted(ctx context.Context, paths []string) error {
 	if state.failure != nil {
 		return state.failure
 	}
 
-	updates := make(map[string]lspWatchedPathState, len(paths))
+	updates := make(map[string]watchedPathState, len(paths))
 	notified := make(map[string]struct{}, len(paths))
 	events := make([]protocol.FileEvent, 0, len(paths))
 	for _, name := range paths {
@@ -86,18 +86,18 @@ func (state *lspWatchState) reportCommitted(ctx context.Context, paths []string)
 		}
 	}
 	if err := state.notify(ctx, events); err != nil {
-		if !lspWatchContextError(ctx, err) {
+		if !watchContextError(ctx, err) {
 			state.fail(err)
 		}
 		return err
 	}
 
-	until := time.Now().Add(lspWatchSuppressionWindow)
+	until := time.Now().Add(watchSuppressionWindow)
 	for name, current := range updates {
 		state.known[name] = current
 		delete(state.pending, name)
 		if _, exists := notified[name]; exists {
-			state.suppressed[name] = lspWatchSuppression{state: current, until: until}
+			state.suppressed[name] = watchSuppression{state: current, until: until}
 		} else {
 			delete(state.suppressed, name)
 		}

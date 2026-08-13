@@ -10,9 +10,9 @@ import (
 	"unicode"
 )
 
-const lspConfigFileName = "lsp.json"
+const configFileName = "lsp.json"
 
-type lspServerConfigFile struct {
+type serverConfigFile struct {
 	Name       string   `json:"name"`
 	Command    string   `json:"command"`
 	Arguments  []string `json:"arguments"`
@@ -20,23 +20,23 @@ type lspServerConfigFile struct {
 	Extensions []string `json:"extensions"`
 }
 
-func loadLSPServerConfigs(paths ...string) ([]lspServerConfig, error) {
+func loadServerConfigs(paths ...string) ([]serverConfig, error) {
 	for _, configPath := range paths {
 		content, err := os.ReadFile(configPath)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("read %s (%s): %w", lspConfigFileName, filepath.ToSlash(configPath), err)
+			return nil, fmt.Errorf("read %s (%s): %w", configFileName, filepath.ToSlash(configPath), err)
 		}
 
-		var fileConfigs []lspServerConfigFile
+		var fileConfigs []serverConfigFile
 		if err := json.Unmarshal(content, &fileConfigs); err != nil {
-			return nil, fmt.Errorf("decode %s (%s): %w", lspConfigFileName, filepath.ToSlash(configPath), err)
+			return nil, fmt.Errorf("decode %s (%s): %w", configFileName, filepath.ToSlash(configPath), err)
 		}
 		configs, err := validateLSPServerConfigs(fileConfigs)
 		if err != nil {
-			return nil, fmt.Errorf("validate %s (%s): %w", lspConfigFileName, filepath.ToSlash(configPath), err)
+			return nil, fmt.Errorf("validate %s (%s): %w", configFileName, filepath.ToSlash(configPath), err)
 		}
 		return configs, nil
 	}
@@ -44,8 +44,8 @@ func loadLSPServerConfigs(paths ...string) ([]lspServerConfig, error) {
 	return nil, nil
 }
 
-func validateLSPServerConfigs(fileConfigs []lspServerConfigFile) ([]lspServerConfig, error) {
-	configs := make([]lspServerConfig, len(fileConfigs))
+func validateLSPServerConfigs(fileConfigs []serverConfigFile) ([]serverConfig, error) {
+	configs := make([]serverConfig, len(fileConfigs))
 	names := make(map[string]struct{}, len(fileConfigs))
 	extensions := make(map[string]string)
 	for index, config := range fileConfigs {
@@ -77,7 +77,7 @@ func validateLSPServerConfigs(fileConfigs []lspServerConfigFile) ([]lspServerCon
 			normalizedExtensions[extensionIndex] = extension
 		}
 
-		configs[index] = lspServerConfig{
+		configs[index] = serverConfig{
 			name:       config.Name,
 			command:    config.Command,
 			arguments:  append([]string(nil), config.Arguments...),

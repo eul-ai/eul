@@ -7,8 +7,8 @@ type steeringCoordinator struct {
 	deferred []string
 }
 
-func (coordinator *steeringCoordinator) enqueue(engine Engine, prompt string) {
-	if len(coordinator.deferred) == 0 && engine.Steer(prompt) {
+func (coordinator *steeringCoordinator) enqueue(steer func(string) bool, prompt string) {
+	if len(coordinator.deferred) == 0 && steer != nil && steer(prompt) {
 		coordinator.accepted = append(coordinator.accepted, prompt)
 		return
 	}
@@ -41,8 +41,10 @@ func (coordinator *steeringCoordinator) restoreDeferred(prompt string) {
 	coordinator.deferred = append([]string{prompt}, coordinator.deferred...)
 }
 
-func (coordinator *steeringCoordinator) restore(engine Engine) []string {
-	engine.ClearSteering()
+func (coordinator *steeringCoordinator) restore(clear func() []string) []string {
+	if clear != nil {
+		clear()
+	}
 	pending := coordinator.pending()
 	coordinator.accepted = nil
 	coordinator.deferred = nil

@@ -11,7 +11,6 @@ import (
 
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/backend/codex"
-	"github.com/eul-ai/eul/backend/codex/api"
 	"github.com/eul-ai/eul/interactive"
 	"github.com/eul-ai/eul/terminal"
 )
@@ -24,17 +23,16 @@ const (
 )
 
 type appRuntime struct {
-	stdin           io.Reader
-	stdout          io.Writer
-	stderr          io.Writer
-	getenv          func(string) string
-	getwd           func() (string, error)
-	userHomeDir     func() (string, error)
-	userConfigDir   func() (string, error)
-	interrupts      <-chan os.Signal
-	backends        *backend.Registry
-	providerConfigs map[string]interactive.ProviderConfig
-	openURL         func(string) error
+	stdin         io.Reader
+	stdout        io.Writer
+	stderr        io.Writer
+	getenv        func(string) string
+	getwd         func() (string, error)
+	userHomeDir   func() (string, error)
+	userConfigDir func() (string, error)
+	interrupts    <-chan os.Signal
+	backends      *backend.Registry
+	openURL       func(string) error
 }
 
 func main() {
@@ -56,14 +54,7 @@ func main() {
 		userConfigDir: os.UserConfigDir,
 		interrupts:    interrupts,
 		backends:      backends,
-		providerConfigs: map[string]interactive.ProviderConfig{
-			codex.ID: {
-				MainModel:     api.ModelGPT56Sol,
-				FastModel:     api.ModelGPT56Luna,
-				BalancedModel: api.ModelGPT56Terra,
-			},
-		},
-		openURL: openBrowser,
+		openURL:       openBrowser,
 	})
 
 	signal.Stop(interrupts)
@@ -108,14 +99,13 @@ func runSession(arguments []string, runtime appRuntime) int {
 	}
 	ctx := context.Background()
 	runErr := interactive.Run(ctx, parsed, interactive.Dependencies{
-		Input:           runtime.stdin,
-		Output:          runtime.stdout,
-		Home:            home,
-		Getwd:           runtime.getwd,
-		UserHomeDir:     runtime.userHomeDir,
-		Interrupts:      runtime.interrupts,
-		Backends:        runtime.backends,
-		ProviderConfigs: runtime.providerConfigs,
+		Input:       runtime.stdin,
+		Output:      runtime.stdout,
+		Home:        home,
+		Getwd:       runtime.getwd,
+		UserHomeDir: runtime.userHomeDir,
+		Interrupts:  runtime.interrupts,
+		Backends:    runtime.backends,
 	})
 	return finishRun(runErr, runtime.stderr)
 }

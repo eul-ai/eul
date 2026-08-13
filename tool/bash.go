@@ -20,7 +20,7 @@ const (
 var bashToolDefinition = agent.ToolDefinition{
 	Name:        bashToolName,
 	Description: "Run noninteractive Bash commands with the user's filesystem permissions, optional network isolation, a timeout, and bounded output.",
-	Parameters: strictObject(map[string]agent.JSONSchema{
+	Parameters: StrictObject(map[string]agent.JSONSchema{
 		"command": {Type: "string", Description: "Command passed exactly to bash -c."},
 		"timeout": nullable("integer", "Optional timeout in seconds; null uses the configured default."),
 		"network": {Type: "boolean", Description: "Whether the command and its descendants may access the network. false uses OS network isolation on Linux and macOS; true requires user approval."},

@@ -1,4 +1,4 @@
-package api
+package client
 
 import (
 	"context"
@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/eul-ai/eul/backend"
 )
 
 func TestClientUsageGetsSubscriptionWindows(t *testing.T) {
@@ -46,7 +44,7 @@ func TestClientUsageGetsSubscriptionWindows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := backend.AccountUsage{Windows: []backend.UsageWindow{
+	want := AccountUsage{Windows: []UsageWindow{
 		{Duration: 5 * time.Hour, UsedPercent: 42, ResetsAt: time.Unix(1_760_000_000, 0)},
 		{Duration: 7 * 24 * time.Hour, UsedPercent: 84, ResetsAt: time.Unix(1_760_000_120, 0)},
 	}}
@@ -59,11 +57,11 @@ func TestClientUsageHandlesOptionalAndInvalidWindows(t *testing.T) {
 	tests := []struct {
 		name    string
 		body    string
-		want    backend.AccountUsage
+		want    AccountUsage
 		wantErr string
 	}{
 		{name: "no rate limit", body: `{"plan_type":"plus","rate_limit":null}`},
-		{name: "one window", body: `{"rate_limit":{"primary_window":{"used_percent":0,"limit_window_seconds":3600}}}`, want: backend.AccountUsage{Windows: []backend.UsageWindow{{Duration: time.Hour}}}},
+		{name: "one window", body: `{"rate_limit":{"primary_window":{"used_percent":0,"limit_window_seconds":3600}}}`, want: AccountUsage{Windows: []UsageWindow{{Duration: time.Hour}}}},
 		{name: "negative percent", body: `{"rate_limit":{"primary_window":{"used_percent":-1,"limit_window_seconds":3600}}}`, wantErr: "invalid used percentage"},
 		{name: "percent over one hundred", body: `{"rate_limit":{"primary_window":{"used_percent":101,"limit_window_seconds":3600}}}`, wantErr: "invalid used percentage"},
 		{name: "zero duration", body: `{"rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":0}}}`, wantErr: "invalid window duration"},

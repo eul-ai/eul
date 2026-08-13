@@ -15,7 +15,7 @@ import (
 	"go.lsp.dev/uri"
 )
 
-func (state *lspWatchState) flushPending(ctx context.Context) (flushErr error) {
+func (state *watchState) flushPending(ctx context.Context) (flushErr error) {
 	if len(state.pending) == 0 {
 		return state.contextError(ctx)
 	}
@@ -32,8 +32,8 @@ func (state *lspWatchState) flushPending(ctx context.Context) (flushErr error) {
 		state.suppressed = suppressedBefore
 	}()
 
-	oldPending := make(map[string]lspWatchedPathState, len(pending))
-	newPending := make(map[string]lspWatchedPathState, len(pending))
+	oldPending := make(map[string]watchedPathState, len(pending))
+	newPending := make(map[string]watchedPathState, len(pending))
 	for name := range pending {
 		if err := state.contextError(ctx); err != nil {
 			return err
@@ -67,7 +67,7 @@ func (state *lspWatchState) flushPending(ctx context.Context) (flushErr error) {
 	return state.notifyChanges(ctx, oldPending, newPending, pending)
 }
 
-func (state *lspWatchState) flushReconciled(ctx context.Context) (flushErr error) {
+func (state *watchState) flushReconciled(ctx context.Context) (flushErr error) {
 	oldKnown := maps.Clone(state.known)
 	pending := state.pending
 	state.pending = make(map[string]struct{})
@@ -83,7 +83,7 @@ func (state *lspWatchState) flushReconciled(ctx context.Context) (flushErr error
 	return state.flushReconciledFrom(ctx, oldKnown, pending)
 }
 
-func (state *lspWatchState) flushReconciledFrom(ctx context.Context, oldKnown map[string]lspWatchedPathState, pending map[string]struct{}) error {
+func (state *watchState) flushReconciledFrom(ctx context.Context, oldKnown map[string]watchedPathState, pending map[string]struct{}) error {
 	if err := state.reconcile(ctx); err != nil {
 		rollbackErr := state.reconcile(state.manager.ctx)
 		state.fail(rollbackErr)
@@ -92,7 +92,7 @@ func (state *lspWatchState) flushReconciledFrom(ctx context.Context, oldKnown ma
 	return state.notifyChanges(ctx, oldKnown, state.known, pending)
 }
 
-func (state *lspWatchState) notifyChanges(ctx context.Context, oldKnown, newKnown map[string]lspWatchedPathState, pending map[string]struct{}) error {
+func (state *watchState) notifyChanges(ctx context.Context, oldKnown, newKnown map[string]watchedPathState, pending map[string]struct{}) error {
 	eventsByPath := make(map[string]protocol.FileChangeType)
 	for name, oldState := range oldKnown {
 		newState, exists := newKnown[name]
@@ -139,7 +139,7 @@ func (state *lspWatchState) notifyChanges(ctx context.Context, oldKnown, newKnow
 	return state.notify(ctx, events)
 }
 
-func (state *lspWatchState) matches(name string, changeType protocol.FileChangeType) bool {
+func (state *watchState) matches(name string, changeType protocol.FileChangeType) bool {
 	kind := protocol.WatchKindChange
 	switch changeType {
 	case protocol.FileChangeTypeCreated:
@@ -161,7 +161,7 @@ func (state *lspWatchState) matches(name string, changeType protocol.FileChangeT
 	return false
 }
 
-func (state *lspWatchState) notify(ctx context.Context, events []protocol.FileEvent) error {
+func (state *watchState) notify(ctx context.Context, events []protocol.FileEvent) error {
 	if len(events) == 0 {
 		return state.contextError(ctx)
 	}
@@ -171,7 +171,7 @@ func (state *lspWatchState) notify(ctx context.Context, events []protocol.FileEv
 		}
 		return events[left].Type < events[right].Type
 	})
-	notifyCtx, cancel := context.WithTimeout(ctx, lspWatchNotifyTimeout)
+	notifyCtx, cancel := context.WithTimeout(ctx, watchNotifyTimeout)
 	stop := context.AfterFunc(state.manager.ctx, cancel)
 	defer func() {
 		stop()
@@ -183,18 +183,18 @@ func (state *lspWatchState) notify(ctx context.Context, events []protocol.FileEv
 	return nil
 }
 
-func (state *lspWatchState) contextError(ctx context.Context) error {
+func (state *watchState) contextError(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return state.manager.ctx.Err()
 }
 
-func lspWatchContextError(ctx context.Context, err error) bool {
+func watchContextError(ctx context.Context, err error) bool {
 	return ctx.Err() != nil && errors.Is(err, ctx.Err())
 }
 
-func (state *lspWatchState) fail(err error) {
+func (state *watchState) fail(err error) {
 	if err != nil && state.failure == nil {
 		state.failure = err
 	}

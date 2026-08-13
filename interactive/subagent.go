@@ -6,7 +6,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/tool/subagent"
+	"github.com/eul-ai/eul/subagent"
 )
 
 func (models modelSelection) subagent(profile subagent.Profile) string {
@@ -16,6 +16,8 @@ func (models modelSelection) subagent(profile subagent.Profile) string {
 		selected = models.fast
 	case subagent.ProfileBalanced:
 		selected = models.balanced
+	case subagent.ProfilePowerful:
+		selected = models.main
 	}
 	if selected == "" {
 		return models.main

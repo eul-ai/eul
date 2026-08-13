@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/eul-ai/eul/subagent"
 )
 
 func renderSubagents(model *tuiModel, height int) []styledLine {
@@ -11,13 +13,14 @@ func renderSubagents(model *tuiModel, height int) []styledLine {
 }
 
 func renderSubagentsAt(model *tuiModel, height int, now time.Time) []styledLine {
-	lines := make([]styledLine, 0, min(height, len(model.subagentStatus.Active)+len(model.subagentStatus.Awaiting)))
-	lines = appendSubagentSection(lines, "active", model.subagentStatus.Active, height, now)
-	awaiting := model.subagentStatus.jobs()[len(model.subagentStatus.Active):]
+	lines := make([]styledLine, 0, min(height, len(model.subagentStatus.Active)+len(model.subagentStatus.PendingCompletions)))
+	rows := subagentRows(model.subagentStatus)
+	lines = appendSubagentSection(lines, "active", rows[:len(model.subagentStatus.Active)], height, now)
+	awaiting := rows[len(model.subagentStatus.Active):]
 	return appendSubagentSection(lines, "awaiting delivery", awaiting, height, now)
 }
 
-func appendSubagentSection(lines []styledLine, category string, jobs []SubagentJobStatus, height int, now time.Time) []styledLine {
+func appendSubagentSection(lines []styledLine, category string, jobs []subagentRow, height int, now time.Time) []styledLine {
 	for _, job := range jobs {
 		if len(lines) >= height {
 			break
@@ -25,7 +28,7 @@ func appendSubagentSection(lines []styledLine, category string, jobs []SubagentJ
 		state := string(job.State)
 		details := make([]string, 0, 4)
 		if job.ModelProfile != "" {
-			details = append(details, job.ModelProfile)
+			details = append(details, string(job.ModelProfile))
 		}
 		if job.ThinkingLevel != "" {
 			details = append(details, string(job.ThinkingLevel)+" thinking")
@@ -60,15 +63,15 @@ func appendSubagentSection(lines []styledLine, category string, jobs []SubagentJ
 	return lines
 }
 
-func subagentStateForeground(state SubagentState) inlineForeground {
+func subagentStateForeground(state subagent.State) inlineForeground {
 	switch state {
-	case SubagentRunning:
+	case subagent.StateRunning:
 		return inlineForegroundAccent
-	case SubagentFinalizing, SubagentCanceling, SubagentCanceled:
+	case subagent.StateFinalizing, subagent.StateCanceling, subagent.StateCanceled:
 		return inlineForegroundOrange
-	case SubagentComplete:
+	case subagent.StateComplete:
 		return inlineForegroundSuccess
-	case SubagentFailed, SubagentInterrupted:
+	case subagent.StateFailed, subagent.StateInterrupted:
 		return inlineForegroundError
 	default:
 		return inlineForegroundDefault

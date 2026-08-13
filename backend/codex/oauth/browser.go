@@ -15,9 +15,11 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/eul-ai/eul/backend"
 )
 
-func (m *Manager) loginBrowser(ctx context.Context, interaction Interaction) (credentials, error) {
+func (m *Manager) loginBrowser(ctx context.Context, interaction backend.LoginInteraction) (credentials, error) {
 	loginCtx, cancelLogin := context.WithTimeout(ctx, deviceTimeout)
 	defer cancelLogin()
 

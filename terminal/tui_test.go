@@ -12,21 +12,12 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/subagent"
 )
 
 func TestScreenModesRestoreEnhancedKeyboardReporting(t *testing.T) {
 	if !strings.Contains(enterScreen, "\x1b[>1u") || !strings.Contains(leaveScreen, "\x1b[<u") {
 		t.Fatalf("enter=%q leave=%q", enterScreen, leaveScreen)
-	}
-}
-
-func TestRunnerRunValidatesCheckpointCapabilityAtEntry(t *testing.T) {
-	runner := &Runner{}
-	_, err := runner.Run(context.Background(), &fakeEngine{}, Options{
-		Persistence: testCommands{saveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error { return nil }},
-	})
-	if !errors.Is(err, errCheckpointUnavailable) {
-		t.Fatalf("Runner.Run() error = %v", err)
 	}
 }
 
@@ -44,7 +35,7 @@ func TestRunTUIParentCancellationWinsOverEOF(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var output bytes.Buffer
-	_, err := runTUI(ctx, &fakeEngine{}, Options{Input: strings.NewReader(""), Output: &output}, -1, 80, 24)
+	_, err := runTUI(ctx, optionsForEngine(&fakeEngine{}, Options{Input: strings.NewReader(""), Output: &output}), -1, 80, 24)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("runTUI() error = %v", err)
 	}
@@ -67,7 +58,7 @@ func TestRunTUIParentCancellationWinsAfterActiveEOF(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := runTUI(ctx, engine, Options{Input: reader, Output: &output}, -1, 80, 24)
+		_, err := runTUI(ctx, optionsForEngine(engine, Options{Input: reader, Output: &output}), -1, 80, 24)
 		done <- err
 	}()
 	if _, err := io.WriteString(writer, "wait\r"); err != nil {
@@ -94,21 +85,21 @@ func TestRunTUIParentCancellationWinsAfterActiveEOF(t *testing.T) {
 func TestRunTUIRendersSubagentUpdatesWhileIdle(t *testing.T) {
 	reader, writer := io.Pipe()
 	defer reader.Close()
-	updates := make(chan SubagentStatus, 1)
+	updates := make(chan subagent.Status, 1)
 	output := newSignalingWriter("subagent-1")
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := runTUI(context.Background(), &fakeEngine{}, Options{
+		_, err := runTUI(context.Background(), optionsForEngine(&fakeEngine{}, Options{
 			Input: reader, Output: output, Events: Events{SubagentUpdates: updates},
-		}, -1, 80, 24)
+		}), -1, 80, 24)
 		done <- err
 	}()
 
-	updates <- SubagentStatus{
+	updates <- subagent.Status{
 		Running: 1,
-		Active: []SubagentJobStatus{{
-			ID: "subagent-1", Task: "inspect", State: SubagentRunning, Started: time.Now(), GenerationLimit: 20,
+		Active: []subagent.JobStatus{{
+			ID: "subagent-1", Task: "inspect", State: subagent.StateRunning, Started: time.Now(), GenerationLimit: 20,
 		}},
 	}
 	select {
@@ -145,7 +136,7 @@ func TestRunTUILoadsProviderUsageAtStartupAndAfterTurn(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := runTUI(context.Background(), &fakeEngine{}, options, -1, 80, 24)
+		_, err := runTUI(context.Background(), optionsForEngine(&fakeEngine{}, options), -1, 80, 24)
 		done <- err
 	}()
 
@@ -196,7 +187,7 @@ func TestRunTUIWaitsForProviderUsageCleanup(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := runTUI(context.Background(), &fakeEngine{}, Options{
+		_, err := runTUI(context.Background(), optionsForEngine(&fakeEngine{}, Options{
 			Input:  reader,
 			Output: io.Discard,
 			Services: Services{LoadUsage: func(ctx context.Context) (ProviderUsage, error) {
@@ -206,7 +197,7 @@ func TestRunTUIWaitsForProviderUsageCleanup(t *testing.T) {
 				<-release
 				return ProviderUsage{}, ctx.Err()
 			}},
-		}, -1, 80, 24)
+		}), -1, 80, 24)
 		done <- err
 	}()
 
@@ -314,9 +305,9 @@ func TestLoadProviderUsageCancelsActiveRequest(t *testing.T) {
 func TestRunTUIReturnsInputReadFailure(t *testing.T) {
 	readErr := errors.New("read failed")
 	var output bytes.Buffer
-	_, err := runTUI(context.Background(), &fakeEngine{}, Options{
+	_, err := runTUI(context.Background(), optionsForEngine(&fakeEngine{}, Options{
 		Input: terminalErrorReader{err: readErr}, Output: &output,
-	}, -1, 80, 24)
+	}), -1, 80, 24)
 	if !errors.Is(err, readErr) {
 		t.Fatalf("runTUI() error = %v", err)
 	}
@@ -481,7 +472,7 @@ func TestHandleKeyShiftTabCyclesThinkingLevel(t *testing.T) {
 	var configured agent.ThinkingLevel
 	model := newTUIModel(80, 24, Options{
 		Config: Config{ThinkingLevel: agent.ThinkingMedium},
-		Commands: testCommands{setThinkingLevel: func(level agent.ThinkingLevel) error {
+		Controls: Controls{SetThinkingLevel: func(level agent.ThinkingLevel) error {
 			configured = level
 			return nil
 		}},

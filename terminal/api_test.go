@@ -114,28 +114,52 @@ func (e *fakeEngine) compactionCount() int {
 	return e.compactions
 }
 
-func TestRunRequiresTerminal(t *testing.T) {
-	var output bytes.Buffer
-	_, err := Run(context.Background(), &fakeEngine{}, Options{
-		Input: strings.NewReader("/exit\n"), Output: &output,
-	})
-	if !errors.Is(err, ErrNotTerminal) {
-		t.Fatalf("Run() error = %v", err)
+type fakeEngineAPI interface {
+	RunContent(context.Context, []agent.ContentPart, agent.EventSink) (agent.RunResult, error)
+	Compact(context.Context, agent.EventSink) error
+	Steer(string) bool
+	ClearSteering() []string
+	SetGoal(string) error
+	Goal() (agent.GoalState, bool)
+	ClearGoal()
+}
+
+func operationsFor(engine fakeEngineAPI) Operations {
+	return Operations{
+		RunTurn: func(ctx context.Context, content []agent.ContentPart, sink agent.EventSink) error {
+			_, err := engine.RunContent(ctx, content, sink)
+			return err
+		},
+		Compact: engine.Compact,
 	}
 }
 
-func TestRunValidatesCheckpointCapabilityBeforeTerminalSetup(t *testing.T) {
-	var output bytes.Buffer
-	_, err := Run(context.Background(), &fakeEngine{}, Options{
-		Input:       strings.NewReader(""),
-		Output:      &output,
-		Persistence: testCommands{saveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error { return nil }},
-	})
-	if !errors.Is(err, errCheckpointUnavailable) {
-		t.Fatalf("Run() error = %v", err)
+func controlsFor(engine fakeEngineAPI) Controls {
+	return Controls{
+		Steer:         engine.Steer,
+		ClearSteering: engine.ClearSteering,
+		SetGoal:       engine.SetGoal,
+		Goal:          engine.Goal,
+		ClearGoal:     engine.ClearGoal,
 	}
-	if output.Len() != 0 {
-		t.Fatalf("terminal output = %q", output.String())
+}
+
+func optionsForEngine(engine fakeEngineAPI, options Options) Options {
+	options.Operations = operationsFor(engine)
+	controls := controlsFor(engine)
+	controls.SetThinkingLevel = options.Controls.SetThinkingLevel
+	controls.SetFastMode = options.Controls.SetFastMode
+	options.Controls = controls
+	return options
+}
+
+func TestRunRequiresTerminal(t *testing.T) {
+	var output bytes.Buffer
+	_, err := Run(context.Background(), optionsForEngine(&fakeEngine{}, Options{
+		Input: strings.NewReader("/exit\n"), Output: &output,
+	}))
+	if !errors.Is(err, ErrNotTerminal) {
+		t.Fatalf("Run() error = %v", err)
 	}
 }
 

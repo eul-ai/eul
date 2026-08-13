@@ -14,14 +14,14 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-func (state *lspWatchState) reconcile(ctx context.Context) error {
+func (state *watchState) reconcile(ctx context.Context) error {
 	if err := state.contextError(ctx); err != nil {
 		return err
 	}
 
 	roots := state.roots()
 	directories := make(map[string]struct{})
-	known := make(map[string]lspWatchedPathState)
+	known := make(map[string]watchedPathState)
 	for _, root := range roots {
 		if err := state.contextError(ctx); err != nil {
 			return err
@@ -118,7 +118,7 @@ func (state *lspWatchState) reconcile(ctx context.Context) error {
 	return nil
 }
 
-func (state *lspWatchState) roots() []string {
+func (state *watchState) roots() []string {
 	rootSet := make(map[string]struct{})
 	for _, patterns := range state.registrations {
 		for _, pattern := range patterns {
@@ -164,8 +164,8 @@ func existingLSPWatchRoot(root string) (string, bool, error) {
 	}
 }
 
-func lspPathState(info fs.FileInfo) lspWatchedPathState {
-	return lspWatchedPathState{mode: info.Mode(), size: info.Size(), modTime: info.ModTime()}
+func lspPathState(info fs.FileInfo) watchedPathState {
+	return watchedPathState{mode: info.Mode(), size: info.Size(), modTime: info.ModTime()}
 }
 
 func lspPathWithin(name, root string) bool {

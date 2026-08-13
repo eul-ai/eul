@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/subagent"
 )
 
 func TestTUIControllerRejectsInvalidClipboardImage(t *testing.T) {
@@ -67,10 +68,6 @@ func TestTUIControllerPastesClipboardImage(t *testing.T) {
 
 type checkpointingFakeEngine struct {
 	*fakeEngine
-}
-
-func (*checkpointingFakeEngine) Checkpoint() (agent.Checkpoint, error) {
-	return agent.Checkpoint{}, nil
 }
 
 func TestTUIControllerSerializesPermissions(t *testing.T) {
@@ -387,7 +384,7 @@ func TestTUIControllerKeepsDraftWhenActiveCheckpointFails(t *testing.T) {
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, engine: &checkpointingFakeEngine{fakeEngine: &fakeEngine{}}, output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		saveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error { return checkpointErr },
+		saveCheckpoint: func(Checkpoint, bool) error { return checkpointErr },
 	}
 
 	action, err := reduceKey(model, keyEvent{code: keyEnter})
@@ -412,7 +409,7 @@ func TestTUIControllerActiveCheckpointOmitsUncommittedSubmission(t *testing.T) {
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, engine: &checkpointingFakeEngine{fakeEngine: &fakeEngine{}}, output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		saveCheckpoint: func(_ agent.Checkpoint, terminalCheckpoint Checkpoint, active bool) error {
+		saveCheckpoint: func(terminalCheckpoint Checkpoint, active bool) error {
 			if !active || len(terminalCheckpoint.data.Blocks) != 0 {
 				t.Fatalf("active=%v terminal=%+v", active, terminalCheckpoint.data)
 			}
@@ -442,7 +439,7 @@ func TestTUIControllerSubmitsClipboardImageAfterCheckpoint(t *testing.T) {
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, engine: &checkpointingFakeEngine{fakeEngine: engine}, output: io.Discard,
 		engineMessages: messages, stopped: make(chan struct{}),
-		saveCheckpoint: func(_ agent.Checkpoint, checkpoint Checkpoint, active bool) error {
+		saveCheckpoint: func(checkpoint Checkpoint, active bool) error {
 			if !active || len(checkpoint.data.Blocks) != 0 {
 				t.Fatalf("active=%v checkpoint=%+v", active, checkpoint.data)
 			}
@@ -483,7 +480,7 @@ func TestTUIControllerEOFWhileRunningDefersCheckpoint(t *testing.T) {
 		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 		turnCancel: func() { canceled = true },
-		saveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error {
+		saveCheckpoint: func(Checkpoint, bool) error {
 			saveCalls++
 			return nil
 		},
@@ -571,7 +568,7 @@ func TestTUIControllerStartsOperationsAfterActiveCheckpoint(t *testing.T) {
 			controller := tuiController{
 				model: model, renderer: &tuiRenderer{}, engine: &checkpointingFakeEngine{fakeEngine: engine}, output: io.Discard,
 				engineMessages: messages, stopped: stopped,
-				saveCheckpoint: func(_ agent.Checkpoint, _ Checkpoint, active bool) error {
+				saveCheckpoint: func(_ Checkpoint, active bool) error {
 					if !active || !model.running || model.activity.kind != test.activity {
 						t.Fatalf("checkpoint active=%v running=%v activity=%+v", active, model.running, model.activity)
 					}
@@ -676,7 +673,7 @@ func TestTUIControllerDoesNotLaunchAfterActiveCheckpointFailure(t *testing.T) {
 			controller := tuiController{
 				model: model, renderer: &tuiRenderer{}, engine: &checkpointingFakeEngine{fakeEngine: engine}, output: io.Discard,
 				engineMessages: make(chan engineMessage, 2), stopped: make(chan struct{}),
-				saveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error { return checkpointErr },
+				saveCheckpoint: func(Checkpoint, bool) error { return checkpointErr },
 			}
 			if test.prepare != nil {
 				test.prepare(&controller)
@@ -828,7 +825,7 @@ func TestTUIControllerShowsHelpAndGoalWhileRunning(t *testing.T) {
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		saveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error {
+		saveCheckpoint: func(Checkpoint, bool) error {
 			checkpointCalls++
 			return nil
 		},
@@ -940,30 +937,30 @@ func TestTUIControllerAppliesSubagentStatus(t *testing.T) {
 
 	_, err := controller.transition(context.Background(), tuiEvent{
 		kind: tuiEventSubagentStatus,
-		subagentStatus: SubagentStatus{
+		subagentStatus: subagent.Status{
 			Running: 2, Finalizing: 1,
-			Active: []SubagentJobStatus{
-				{ID: "subagent-1\nignored", Task: "inspect\nignored", State: SubagentRunning, Generations: -1},
-				{ID: "subagent-invalid", State: SubagentState("invalid")},
+			Active: []subagent.JobStatus{
+				{ID: "subagent-1\nignored", Task: "inspect\nignored", State: subagent.StateRunning, Generations: -1},
+				{ID: "subagent-invalid", State: subagent.State("invalid")},
 			},
-			Awaiting: []SubagentCompletionStatus{
-				{SubagentID: "subagent-2", Task: "finished", State: SubagentComplete},
-				{SubagentID: "subagent-3", Task: "failed", State: SubagentFailed},
+			PendingCompletions: []subagent.Completion{
+				{SubagentID: "subagent-2", Task: "finished", Status: subagent.StateComplete},
+				{SubagentID: "subagent-3", Task: "failed", Status: subagent.StateFailed},
 			},
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if model.subagentStatus.Running != 2 || model.subagentStatus.Finalizing != 1 || len(model.subagentStatus.Awaiting) != 2 || len(model.subagentStatus.Active) != 1 || model.subagentStatus.Active[0].ID != "subagent-1 ignored" || model.subagentStatus.Active[0].Task != "inspect ignored" || model.subagentStatus.Active[0].Generations != 0 || model.subagentStatus.Awaiting[0].State != SubagentComplete || model.subagentStatus.Awaiting[1].State != SubagentFailed || !controller.dirty {
+	if model.subagentStatus.Running != 2 || model.subagentStatus.Finalizing != 1 || len(model.subagentStatus.PendingCompletions) != 2 || len(model.subagentStatus.Active) != 1 || model.subagentStatus.Active[0].ID != "subagent-1 ignored" || model.subagentStatus.Active[0].Task != "inspect ignored" || model.subagentStatus.Active[0].Generations != 0 || model.subagentStatus.PendingCompletions[0].Status != subagent.StateComplete || model.subagentStatus.PendingCompletions[1].Status != subagent.StateFailed || !controller.dirty {
 		t.Fatalf("status=%+v dirty=%v", model.subagentStatus, controller.dirty)
 	}
 
 	_, err = controller.transition(context.Background(), tuiEvent{
 		kind:           tuiEventSubagentStatus,
-		subagentStatus: SubagentStatus{Running: -1, Finalizing: -1, Awaiting: nil},
+		subagentStatus: subagent.Status{Running: -1, Finalizing: -1, PendingCompletions: nil},
 	})
-	if err != nil || model.subagentStatus.Running != 0 || model.subagentStatus.Finalizing != 0 || len(model.subagentStatus.Awaiting) != 0 || len(model.subagentStatus.Active) != 0 {
+	if err != nil || model.subagentStatus.Running != 0 || model.subagentStatus.Finalizing != 0 || len(model.subagentStatus.PendingCompletions) != 0 || len(model.subagentStatus.Active) != 0 {
 		t.Fatalf("sanitized status=%+v error=%v", model.subagentStatus, err)
 	}
 }
@@ -1001,7 +998,7 @@ func TestTUIControllerEventDirtiness(t *testing.T) {
 		{
 			name: "running subagent spinner redraws",
 			prepare: func(model *tuiModel) {
-				model.subagentStatus = SubagentStatus{Running: 1, Active: []SubagentJobStatus{{State: SubagentRunning}}}
+				model.subagentStatus = subagent.Status{Running: 1, Active: []subagent.JobStatus{{State: subagent.StateRunning}}}
 			},
 			event:     tuiEvent{kind: tuiEventSpinner},
 			wantDirty: true,
@@ -1009,7 +1006,7 @@ func TestTUIControllerEventDirtiness(t *testing.T) {
 		{
 			name: "completed subagent spinner is ignored",
 			prepare: func(model *tuiModel) {
-				model.subagentStatus = SubagentStatus{Awaiting: []SubagentCompletionStatus{{State: SubagentComplete}}}
+				model.subagentStatus = subagent.Status{PendingCompletions: []subagent.Completion{{Status: subagent.StateComplete}}}
 			},
 			event:     tuiEvent{kind: tuiEventSpinner},
 			wantDirty: false,
@@ -1280,7 +1277,7 @@ func TestTUIControllerRestoresSteeringAfterRunError(t *testing.T) {
 
 func TestTUIControllerTogglesFastMode(t *testing.T) {
 	var configured []bool
-	model := newTUIModel(80, 24, Options{Config: Config{FastModeAvailable: true}, Commands: testCommands{setFastMode: func(bool) error { return nil }}})
+	model := newTUIModel(80, 24, Options{Config: Config{FastModeAvailable: true}, Controls: Controls{SetFastMode: func(bool) error { return nil }}})
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
@@ -1308,7 +1305,7 @@ func TestTUIControllerTogglesFastMode(t *testing.T) {
 
 func TestTUIControllerTogglesFastModeWhileRunning(t *testing.T) {
 	var configured bool
-	model := newTUIModel(80, 24, Options{Config: Config{FastModeAvailable: true}, Commands: testCommands{setFastMode: func(bool) error { return nil }}})
+	model := newTUIModel(80, 24, Options{Config: Config{FastModeAvailable: true}, Controls: Controls{SetFastMode: func(bool) error { return nil }}})
 	model.running = true
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
@@ -1317,7 +1314,7 @@ func TestTUIControllerTogglesFastModeWhileRunning(t *testing.T) {
 			configured = enabled
 			return nil
 		},
-		saveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error {
+		saveCheckpoint: func(Checkpoint, bool) error {
 			t.Fatal("checkpoint saved while running")
 			return nil
 		},
@@ -1333,7 +1330,7 @@ func TestTUIControllerTogglesFastModeWhileRunning(t *testing.T) {
 func TestTUIControllerAppliesThinkingLevelWhileRunning(t *testing.T) {
 	var configured agent.ThinkingLevel
 	checkpointCalls := 0
-	model := newTUIModel(80, 24, Options{Commands: testCommands{setThinkingLevel: func(agent.ThinkingLevel) error { return nil }}})
+	model := newTUIModel(80, 24, Options{Controls: Controls{SetThinkingLevel: func(agent.ThinkingLevel) error { return nil }}})
 	model.running = true
 	model.activity = activity{kind: activityThinking}
 	controller := tuiController{
@@ -1343,7 +1340,7 @@ func TestTUIControllerAppliesThinkingLevelWhileRunning(t *testing.T) {
 			configured = level
 			return nil
 		},
-		saveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error {
+		saveCheckpoint: func(Checkpoint, bool) error {
 			checkpointCalls++
 			return nil
 		},
@@ -1358,7 +1355,7 @@ func TestTUIControllerAppliesThinkingLevelWhileRunning(t *testing.T) {
 
 func TestTUIControllerAppliesThinkingLevelOutsideModel(t *testing.T) {
 	var configured agent.ThinkingLevel
-	model := newTUIModel(80, 24, Options{Commands: testCommands{setThinkingLevel: func(agent.ThinkingLevel) error { return nil }}})
+	model := newTUIModel(80, 24, Options{Controls: Controls{SetThinkingLevel: func(agent.ThinkingLevel) error { return nil }}})
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),

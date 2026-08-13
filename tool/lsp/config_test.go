@@ -28,18 +28,18 @@ func TestNewLSPLoadsProjectConfig(t *testing.T) {
 	]`
 	writeLSPConfig(t, cwd, content)
 
-	set, err := New(cwd, t.TempDir())
+	set, err := New(cwd, t.TempDir(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if set.client == nil || len(set.client.configs) != 1 {
-		t.Fatalf("client configs = %+v", set.client)
+	if set.service.client == nil || len(set.service.client.configs) != 1 {
+		t.Fatalf("client configs = %+v", set.service.client)
 	}
-	config := set.client.configs[0]
+	config := set.service.client.configs[0]
 	if config.name != "custom" || config.command != "custom-lsp" || len(config.arguments) != 1 || config.arguments[0] != "serve" || config.languageID != "custom" || len(config.extensions) != 1 || config.extensions[0] != ".custom" {
 		t.Fatalf("config = %+v", config)
 	}
-	if _, err := set.client.serverForPath("sample.custom"); err != nil {
+	if _, err := set.service.client.serverForPath("sample.custom"); err != nil {
 		t.Fatalf("configured extension was not loaded: %v", err)
 	}
 }
@@ -55,21 +55,21 @@ func TestNewLSPPrefersEULHomeConfig(t *testing.T) {
 	writeLSPConfig(t, home, `[{"name":"home","command":"home-lsp","languageID":"home","extensions":[".home"]}]`)
 	writeLSPConfig(t, cwd, `[{"name":"project","command":"project-lsp","languageID":"project","extensions":[".project"]}]`)
 
-	set, err := New(cwd, home)
+	set, err := New(cwd, home, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if set.client == nil || len(set.client.configs) != 1 || set.client.configs[0].name != "home" {
-		t.Fatalf("client configs = %+v", set.client)
+	if set.service.client == nil || len(set.service.client.configs) != 1 || set.service.client.configs[0].name != "home" {
+		t.Fatalf("client configs = %+v", set.service.client)
 	}
 }
 
 func TestNewLSPWithoutConfigReturnsEmptySet(t *testing.T) {
-	set, err := New(t.TempDir(), t.TempDir())
+	set, err := New(t.TempDir(), t.TempDir(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if set.client != nil || set.Available() {
+	if set.service.client != nil || set.service.available() {
 		t.Fatalf("service = %+v", set)
 	}
 }
@@ -78,7 +78,7 @@ func TestNewLSPReportsInvalidConfig(t *testing.T) {
 	cwd := t.TempDir()
 	writeLSPConfig(t, cwd, "{")
 
-	_, err := New(cwd, t.TempDir())
+	_, err := New(cwd, t.TempDir(), false)
 	if err == nil || !strings.Contains(err.Error(), "decode lsp.json") {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -104,9 +104,9 @@ func TestLSPConfigValidation(t *testing.T) {
 			directory := t.TempDir()
 			writeLSPConfig(t, directory, test.content)
 
-			_, err := loadLSPServerConfigs(filepath.Join(directory, lspConfigFileName))
+			_, err := loadServerConfigs(filepath.Join(directory, configFileName))
 			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("loadLSPServerConfigs() error = %v, want %q", err, test.want)
+				t.Fatalf("loadServerConfigs() error = %v, want %q", err, test.want)
 			}
 		})
 	}
@@ -119,7 +119,7 @@ func writeLSPTestConfig(t *testing.T, cwd string) {
 
 func writeLSPConfig(t *testing.T, directory, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(directory, lspConfigFileName), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, configFileName), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

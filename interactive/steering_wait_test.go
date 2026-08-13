@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/tool"
-	"github.com/eul-ai/eul/tool/subagent"
 )
 
 type steeringWaitProvider func(context.Context, agent.Request) (agent.Response, error)
@@ -21,7 +21,7 @@ func (provider steeringWaitProvider) Generate(ctx context.Context, request agent
 func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) {
 	release := make(chan struct{})
 	childDone := make(chan struct{})
-	manager := subagent.NewManager(func(ctx context.Context, _ string, _ subagent.Profile, _ agent.ThinkingLevel, _ func(subagent.Progress)) (agent.RunResult, error) {
+	manager := subagent.NewManager(subagent.Config{Runner: subagent.RunFunc(func(ctx context.Context, _ subagent.RunRequest, _ func(subagent.Progress)) (agent.RunResult, error) {
 		defer close(childDone)
 		select {
 		case <-ctx.Done():
@@ -29,10 +29,10 @@ func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) 
 		case <-release:
 			return agent.RunResult{Text: "done"}, nil
 		}
-	}, nil)
+	})})
 	defer manager.Close()
 
-	registry, err := tool.NewRegistry([]tool.Tool{subagent.NewLaunchTool(manager), subagent.NewWaitTool(manager)})
+	registry, err := tool.NewRegistry([]tool.Tool{tool.NewSubagent(manager), tool.NewSubagentWait(manager)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) 
 			return agent.Response{}, fmt.Errorf("unexpected provider call %d", calls)
 		}
 	})
-	engine := agent.New(provider, registry, agent.Options{Model: "model", Inbox: manager})
+	engine := agent.New(provider, registry, agent.Options{Model: "model", Inbox: manager, DecorateRequest: decorateSubagentRequest(manager)})
 
 	waitStarted := make(chan struct{})
 	done := make(chan error, 1)

@@ -19,7 +19,7 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates a
 		return agent.ToolResult{}, err
 	}
 
-	args, err := decodeArguments[bashArguments](arguments)
+	args, err := DecodeArguments[bashArguments](arguments)
 	if err != nil {
 		return errorResult(bashToolName, err), nil
 	}

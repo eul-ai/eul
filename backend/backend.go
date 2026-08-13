@@ -10,8 +10,15 @@ import (
 )
 
 type Descriptor struct {
-	ID   string
-	Name string
+	ID            string
+	Name          string
+	DefaultModels ModelDefaults
+}
+
+type ModelDefaults struct {
+	Main     string
+	Fast     string
+	Balanced string
 }
 
 type Options struct {
@@ -44,42 +51,42 @@ type Registry struct {
 
 func NewRegistry(defaultID string, drivers ...Driver) (*Registry, error) {
 	if !ValidID(defaultID) {
-		return nil, errors.New("backend: default provider ID is invalid")
+		return nil, errors.New("backend: default backend ID is invalid")
 	}
 
 	registry := &Registry{defaultID: defaultID, drivers: make(map[string]Driver, len(drivers))}
 	for _, driver := range drivers {
 		if driver == nil {
-			return nil, errors.New("backend: registered provider is nil")
+			return nil, errors.New("backend: registered backend is nil")
 		}
 		descriptor := driver.Descriptor()
 		if !ValidID(descriptor.ID) {
-			return nil, errors.New("backend: registered provider ID is invalid")
+			return nil, errors.New("backend: registered backend ID is invalid")
 		}
 		if strings.TrimSpace(descriptor.Name) == "" {
-			return nil, fmt.Errorf("backend: provider %q has no display name", descriptor.ID)
+			return nil, fmt.Errorf("backend: backend %q has no display name", descriptor.ID)
 		}
 		if _, exists := registry.drivers[descriptor.ID]; exists {
-			return nil, fmt.Errorf("backend: duplicate provider %q", descriptor.ID)
+			return nil, fmt.Errorf("backend: duplicate backend %q", descriptor.ID)
 		}
 		registry.drivers[descriptor.ID] = driver
 	}
 	if _, exists := registry.drivers[defaultID]; !exists {
-		return nil, fmt.Errorf("backend: default provider %q is not registered", defaultID)
+		return nil, fmt.Errorf("backend: default backend %q is not registered", defaultID)
 	}
 	return registry, nil
 }
 
 func (registry *Registry) Lookup(id string) (Driver, error) {
 	if registry == nil {
-		return nil, errors.New("backend: provider registry is unavailable")
+		return nil, errors.New("backend: backend registry is unavailable")
 	}
 	if id == "" {
 		id = registry.defaultID
 	}
 	driver, exists := registry.drivers[id]
 	if !exists {
-		return nil, fmt.Errorf("backend: provider %q is not available", id)
+		return nil, fmt.Errorf("backend: backend %q is not available", id)
 	}
 	return driver, nil
 }

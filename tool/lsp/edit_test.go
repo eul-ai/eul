@@ -320,7 +320,7 @@ func TestCommitLSPFileChangesRejectsChangedFileBeforeAnyCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = commitLSPFileChanges(context.Background(), []lspFileChange{
+	_, err = commitLSPFileChanges(context.Background(), []fileChange{
 		{snapshot: first, data: []byte("changed first")},
 		{snapshot: second, data: []byte("changed second")},
 	})
@@ -350,7 +350,7 @@ func TestCommitLSPFileChangesRejectsNonTextBeforeAnyCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	committed, err := commitLSPFileChanges(context.Background(), []lspFileChange{
+	committed, err := commitLSPFileChanges(context.Background(), []fileChange{
 		{snapshot: first, data: []byte("changed first")},
 		{snapshot: second, data: []byte{'b', 0, 'd'}},
 	})
@@ -375,7 +375,7 @@ func TestCommitLSPFileChangesReportsPartialCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	committed, err := commitLSPFileChanges(context.Background(), []lspFileChange{
+	committed, err := commitLSPFileChanges(context.Background(), []fileChange{
 		{snapshot: snapshot, data: []byte("first")},
 		{snapshot: snapshot, data: []byte("second")},
 	})
@@ -444,13 +444,13 @@ func TestCommitLSPFileChangesHonorsCancellationAndWriteErrors(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := commitLSPFileChanges(ctx, []lspFileChange{{snapshot: snapshot, data: []byte("after")}}); !errors.Is(err, context.Canceled) {
+	if _, err := commitLSPFileChanges(ctx, []fileChange{{snapshot: snapshot, data: []byte("after")}}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled commit error = %v", err)
 	}
 	assertFileContent(t, path, "before")
 
 	directory := t.TempDir()
-	if _, err := commitLSPFileChanges(context.Background(), []lspFileChange{{snapshot: textfile.Snapshot{RequestedPath: directory, Path: directory, Mode: 0o644}, data: []byte("after")}}); err == nil {
+	if _, err := commitLSPFileChanges(context.Background(), []fileChange{{snapshot: textfile.Snapshot{RequestedPath: directory, Path: directory, Mode: 0o644}, data: []byte("after")}}); err == nil {
 		t.Fatal("commit to directory succeeded")
 	}
 }

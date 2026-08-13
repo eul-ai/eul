@@ -82,11 +82,7 @@ func NewRunner(input io.Reader, output io.Writer) (*Runner, error) {
 	return runner, nil
 }
 
-func (runner *Runner) Run(ctx context.Context, engine Engine, options Options) (RunOutcome, error) {
-	if err := validateCheckpointCapability(engine, canSaveCheckpoint(options.Persistence)); err != nil {
-		return RunOutcome{}, err
-	}
-
+func (runner *Runner) Run(ctx context.Context, options Options) (RunOutcome, error) {
 	width, height, err := term.GetSize(runner.outputFD)
 	if err != nil {
 		return RunOutcome{}, fmt.Errorf("terminal: get size: %w", err)
@@ -96,7 +92,7 @@ func (runner *Runner) Run(ctx context.Context, engine Engine, options Options) (
 	}
 	options.Input = runner.input
 	options.Output = runner.output
-	return runTUIWithKeys(ctx, engine, options, runner.outputFD, width, height, runner.keys, runner.stopped)
+	return runTUIWithKeys(ctx, options, runner.outputFD, width, height, runner.keys, runner.stopped)
 }
 
 func setTerminalTitle(output io.Writer, workingDirectory string) error {
@@ -123,16 +119,12 @@ func (runner *Runner) Close() error {
 	return runner.closeErr
 }
 
-func Run(ctx context.Context, engine Engine, options Options) (RunOutcome, error) {
-	if err := validateCheckpointCapability(engine, canSaveCheckpoint(options.Persistence)); err != nil {
-		return RunOutcome{}, err
-	}
-
+func Run(ctx context.Context, options Options) (RunOutcome, error) {
 	runner, err := NewRunner(options.Input, options.Output)
 	if err != nil {
 		return RunOutcome{}, err
 	}
-	outcome, runErr := runner.Run(ctx, engine, options)
+	outcome, runErr := runner.Run(ctx, options)
 	if closeErr := runner.Close(); closeErr != nil {
 		return RunOutcome{}, closeErr
 	}
@@ -146,17 +138,16 @@ func wrapRestoreError(err error) error {
 	return fmt.Errorf("terminal: restore: %w", err)
 }
 
-func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width, height int) (RunOutcome, error) {
+func runTUI(ctx context.Context, options Options, outputFD, width, height int) (RunOutcome, error) {
 	keys := make(chan keyEvent, 64)
 	stopped := make(chan struct{})
 	defer close(stopped)
 	go readKeyEvents(options.Input, keys, stopped)
-	return runTUIWithKeys(ctx, engine, options, outputFD, width, height, keys, stopped)
+	return runTUIWithKeys(ctx, options, outputFD, width, height, keys, stopped)
 }
 
 func runTUIWithKeys(
 	ctx context.Context,
-	engine Engine,
 	options Options,
 	outputFD int,
 	width int,
@@ -217,25 +208,26 @@ func runTUIWithKeys(
 		clipboardImageReader = clipboard.ReadImage
 	}
 	var setThinkingLevel func(agent.ThinkingLevel) error
-	if canSetThinkingLevel(options.Commands) {
-		setThinkingLevel = options.Commands.SetThinkingLevel
+	if options.Controls.SetThinkingLevel != nil {
+		setThinkingLevel = options.Controls.SetThinkingLevel
 	}
 	var setFastMode func(bool) error
-	if canSetFastMode(options.Commands) {
-		setFastMode = options.Commands.SetFastMode
+	if options.Controls.SetFastMode != nil {
+		setFastMode = options.Controls.SetFastMode
 	}
-	var saveCheckpoint func(agent.Checkpoint, Checkpoint, bool) error
-	if canSaveCheckpoint(options.Persistence) {
-		saveCheckpoint = options.Persistence.SaveCheckpoint
+	var saveCheckpoint func(Checkpoint, bool) error
+	if options.Checkpoints.Save != nil {
+		saveCheckpoint = options.Checkpoints.Save
 	}
 	var listSessions func(context.Context) ([]SessionSummary, []string, error)
-	if canListSessions(options.Persistence) {
-		listSessions = options.Persistence.ListSessions
+	if options.Sessions.List != nil {
+		listSessions = options.Sessions.List
 	}
 	controller := &tuiController{
 		model:              model,
 		renderer:           &tuiRenderer{},
-		engine:             engine,
+		operations:         options.Operations,
+		controls:           options.Controls,
 		output:             options.Output,
 		outputFD:           outputFD,
 		engineMessages:     engineMessages,
@@ -387,16 +379,15 @@ func renderIfDirty(renderer *tuiRenderer, model *tuiModel, output io.Writer, dir
 	return nil
 }
 
-func runEngineTurn(ctx context.Context, engine Engine, content []agent.ContentPart, messages chan<- engineMessage, stopped <-chan struct{}) {
+func runEngineTurn(ctx context.Context, operation func(context.Context, []agent.ContentPart, agent.EventSink) error, content []agent.ContentPart, messages chan<- engineMessage, stopped <-chan struct{}) {
 	runEngineOperation(ctx, messages, stopped, func(sink agent.EventSink) error {
-		_, err := engine.RunContent(ctx, content, sink)
-		return err
+		return operation(ctx, content, sink)
 	})
 }
 
-func runEngineCompaction(ctx context.Context, engine Engine, messages chan<- engineMessage, stopped <-chan struct{}) {
+func runEngineCompaction(ctx context.Context, operation func(context.Context, agent.EventSink) error, messages chan<- engineMessage, stopped <-chan struct{}) {
 	runEngineOperation(ctx, messages, stopped, func(sink agent.EventSink) error {
-		return engine.Compact(ctx, sink)
+		return operation(ctx, sink)
 	})
 }
 

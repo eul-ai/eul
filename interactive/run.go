@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/eul-ai/eul/backend"
@@ -11,68 +12,79 @@ import (
 	"github.com/eul-ai/eul/tool"
 )
 
+type runnerFactory func(io.Reader, io.Writer) (sessionRunner, io.Closer, error)
+
 func Run(ctx context.Context, options Options, dependencies Dependencies) error {
-	runtime := runtime{
-		stdin:           dependencies.Input,
-		stdout:          dependencies.Output,
-		getwd:           dependencies.Getwd,
-		userHomeDir:     dependencies.UserHomeDir,
-		interrupts:      dependencies.Interrupts,
-		backends:        dependencies.Backends,
-		providerConfigs: dependencies.ProviderConfigs,
+	return run(ctx, options, dependencies, func(input io.Reader, output io.Writer) (sessionRunner, io.Closer, error) {
+		runner, err := terminal.NewRunner(input, output)
+		return runner, runner, err
+	})
+}
+
+func run(ctx context.Context, options Options, dependencies Dependencies, newRunner runnerFactory) error {
+	env := environment{
+		stdin:       dependencies.Input,
+		stdout:      dependencies.Output,
+		getwd:       dependencies.Getwd,
+		userHomeDir: dependencies.UserHomeDir,
+		interrupts:  dependencies.Interrupts,
+		backends:    dependencies.Backends,
 	}
 	home := dependencies.Home
-	runtime.newToolset = func(cwd string, access toolAccess, noSandbox bool, authorizeNetwork tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
+	env.newToolset = func(cwd string, access toolAccess, noSandbox bool, authorizeNetwork tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
 		return buildToolsetWithHomeAndNetworkAuthorizer(cwd, home, access, noSandbox, authorizeNetwork, additional...)
 	}
 	store := newSessionStore(home)
+	factory := sessionFactory{env: env, store: store, home: home}
 
-	config, handle, driver, err := resolveInitialSession(ctx, options, runtime, store)
+	config, handle, driver, err := resolveInitialSession(ctx, options, env, store)
 	if err != nil {
 		return err
 	}
-	backendRuntime, err := openBackendRuntime(ctx, driver, home, runtime.interrupts)
-	if err != nil {
-		_ = closeSessionHandle(handle)
-		return err
+	var session *agentSession
+	if handle == nil {
+		session, err = factory.create(ctx, config, driver)
+	} else {
+		backendRuntime, openErr := openBackendRuntime(ctx, driver, home, env.interrupts)
+		if openErr != nil {
+			_ = closeSessionHandle(handle)
+			return openErr
+		}
+		session, err = newStoredAgentSession(config, env, backendRuntime, store, handle)
 	}
-	session, err := newStoredAgentSession(config, runtime, backendRuntime, store, handle)
 	if err != nil {
 		return err
 	}
 
-	runner, err := terminal.NewRunner(runtime.stdin, runtime.stdout)
+	runner, runnerCloser, err := newRunner(env.stdin, env.stdout)
 	if err != nil {
 		return session.finish(err)
 	}
-	runErr := runSessions(ctx, runner, session, config, driver, runtime, store, home)
-	if closeErr := runner.Close(); closeErr != nil {
-		return closeErr
-	}
-	return runErr
+	runErr := runSessions(ctx, runner, session, config, driver, factory)
+	return errors.Join(runErr, runnerCloser.Close())
 }
 
 func resolveInitialSession(
 	ctx context.Context,
 	arguments Options,
-	runtime runtime,
+	env environment,
 	store *sessionStore,
 ) (resolvedConfig, *sessionHandle, backend.Driver, error) {
 	if !arguments.Resume {
-		driver, err := runtime.backends.Lookup(arguments.Provider)
+		driver, err := env.backends.Lookup(arguments.Provider)
 		if err != nil {
 			return resolvedConfig{}, nil, nil, err
 		}
 		descriptor := driver.Descriptor()
-		config, err := resolveConfig(arguments, runtime, descriptor, runtime.providerConfigs[descriptor.ID])
+		config, err := resolveConfig(arguments, env, descriptor)
 		return config, nil, driver, err
 	}
 
-	cwd, err := resolveCWD("", runtime.getwd)
+	cwd, err := resolveCWD("", env.getwd)
 	if err != nil {
 		return resolvedConfig{}, nil, nil, err
 	}
-	config, handle, driver, err := resolveStoredSession(ctx, store, runtime, cwd, arguments.SessionID)
+	config, handle, driver, err := resolveStoredSession(ctx, store, env, cwd, arguments.SessionID)
 	config.noSandbox = arguments.NoSandbox
 	return config, handle, driver, err
 }
@@ -80,7 +92,7 @@ func resolveInitialSession(
 func resolveStoredSession(
 	ctx context.Context,
 	store *sessionStore,
-	runtime runtime,
+	env environment,
 	lookupCWD string,
 	sessionID string,
 ) (resolvedConfig, *sessionHandle, backend.Driver, error) {
@@ -89,13 +101,13 @@ func resolveStoredSession(
 		return resolvedConfig{}, nil, nil, err
 	}
 	record := handle.Record()
-	driver, err := runtime.backends.Lookup(record.Provider)
+	driver, err := env.backends.Lookup(record.Provider)
 	if err != nil {
 		_ = handle.Close()
 		return resolvedConfig{}, nil, nil, err
 	}
 	descriptor := driver.Descriptor()
-	resolved, err := resolveConfig(optionsFromRecord(record), runtime, descriptor, runtime.providerConfigs[descriptor.ID])
+	resolved, err := resolveConfig(optionsFromRecord(record), env, descriptor)
 	if err != nil {
 		_ = handle.Close()
 		return resolvedConfig{}, nil, nil, err
@@ -110,9 +122,7 @@ func runSessions(
 	session *agentSession,
 	config resolvedConfig,
 	driver backend.Driver,
-	runtime runtime,
-	store *sessionStore,
-	home string,
+	factory sessionFactory,
 ) error {
 	for {
 		outcome, runErr := session.run(ctx, runner)
@@ -126,35 +136,20 @@ func runSessions(
 		case terminal.RunNewSession:
 			var err error
 			nextOptions := optionsFromConfig(config)
-			nextOptions.ThinkingLevel = session.thinkingLevel
-			nextOptions.FastMode = session.fastMode
+			nextOptions.ThinkingLevel, nextOptions.FastMode = session.settings.Snapshot()
 			descriptor := driver.Descriptor()
-			config, err = resolveConfig(nextOptions, runtime, descriptor, runtime.providerConfigs[descriptor.ID])
+			config, err = resolveConfig(nextOptions, factory.env, descriptor)
 			if err != nil {
 				return err
 			}
-			backendRuntime, err := openBackendRuntime(ctx, driver, home, runtime.interrupts)
-			if err != nil {
-				return err
-			}
-			session, err = newStoredAgentSession(config, runtime, backendRuntime, store, nil)
+			session, err = factory.create(ctx, config, driver)
 			if err != nil {
 				return err
 			}
 			continue
 		case terminal.RunResumeSession:
-			var handle *sessionHandle
 			var err error
-			config, handle, driver, err = resolveStoredSession(ctx, store, runtime, config.cwd, outcome.SessionID)
-			if err != nil {
-				return err
-			}
-			backendRuntime, err := openBackendRuntime(ctx, driver, home, runtime.interrupts)
-			if err != nil {
-				_ = handle.Close()
-				return err
-			}
-			session, err = newStoredAgentSession(config, runtime, backendRuntime, store, handle)
+			session, config, driver, err = factory.open(ctx, config.cwd, outcome.SessionID)
 			if err != nil {
 				return err
 			}

@@ -37,21 +37,27 @@ type presenter interface {
 	Presentation(PresentationSnapshot) agent.ToolPresentation
 }
 
+type ToolSet interface {
+	Tools() []Tool
+	Close() error
+}
+
 type Registry struct {
 	definitions []agent.ToolDefinition
 	tools       map[string]Tool
-	ordered     []Tool
-	resources   []io.Closer
+	resources   []ToolSet
 	closeOnce   sync.Once
 	closeErr    error
 }
 
-func NewRegistry(tools []Tool, resources ...io.Closer) (*Registry, error) {
+func NewRegistry(tools []Tool, sets ...ToolSet) (*Registry, error) {
+	for _, set := range sets {
+		tools = append(tools, set.Tools()...)
+	}
 	registry := &Registry{
 		definitions: make([]agent.ToolDefinition, 0, len(tools)),
 		tools:       make(map[string]Tool, len(tools)),
-		ordered:     append([]Tool(nil), tools...),
-		resources:   append([]io.Closer(nil), resources...),
+		resources:   append([]ToolSet(nil), sets...),
 	}
 
 	for _, registered := range tools {
@@ -125,15 +131,6 @@ func (r *Registry) Execute(ctx context.Context, call agent.ToolCall, updates age
 func (r *Registry) Close() error {
 	r.closeOnce.Do(func() {
 		var closeErrors []error
-		for index := len(r.ordered) - 1; index >= 0; index-- {
-			closer, ok := r.ordered[index].(io.Closer)
-			if !ok {
-				continue
-			}
-			if err := closer.Close(); err != nil {
-				closeErrors = append(closeErrors, err)
-			}
-		}
 		for index := len(r.resources) - 1; index >= 0; index-- {
 			if err := r.resources[index].Close(); err != nil {
 				closeErrors = append(closeErrors, err)
@@ -175,7 +172,7 @@ func cloneJSONSchema(schema agent.JSONSchema) agent.JSONSchema {
 	return schema
 }
 
-func decodeArguments[T any](arguments json.RawMessage) (T, error) {
+func DecodeArguments[T any](arguments json.RawMessage) (T, error) {
 	var value T
 	decoder := json.NewDecoder(bytes.NewReader(arguments))
 	decoder.DisallowUnknownFields()

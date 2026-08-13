@@ -12,8 +12,8 @@ import (
 	"go.lsp.dev/uri"
 )
 
-func (m *lspWatchManager) parseRegistrations(registrations []protocol.Registration) ([]lspWatchRegistration, error) {
-	parsed := make([]lspWatchRegistration, 0, len(registrations))
+func (m *watchManager) parseRegistrations(registrations []protocol.Registration) ([]watchRegistration, error) {
+	parsed := make([]watchRegistration, 0, len(registrations))
 	ids := make(map[string]struct{})
 	for _, registration := range registrations {
 		if registration.Method != protocol.MethodWorkspaceDidChangeWatchedFiles {
@@ -35,7 +35,7 @@ func (m *lspWatchManager) parseRegistrations(registrations []protocol.Registrati
 		if err := protocol.Unmarshal(data, &options); err != nil {
 			return nil, fmt.Errorf("decode watched-files registration %q: %w", registration.ID, err)
 		}
-		patterns := make([]lspWatchPattern, 0, len(options.Watchers))
+		patterns := make([]watchPattern, 0, len(options.Watchers))
 		for _, watcher := range options.Watchers {
 			pattern, err := m.parsePattern(watcher)
 			if err != nil {
@@ -43,12 +43,12 @@ func (m *lspWatchManager) parseRegistrations(registrations []protocol.Registrati
 			}
 			patterns = append(patterns, pattern)
 		}
-		parsed = append(parsed, lspWatchRegistration{id: registration.ID, patterns: patterns})
+		parsed = append(parsed, watchRegistration{id: registration.ID, patterns: patterns})
 	}
 	return parsed, nil
 }
 
-func (m *lspWatchManager) parsePattern(watcher protocol.FileSystemWatcher) (lspWatchPattern, error) {
+func (m *watchManager) parsePattern(watcher protocol.FileSystemWatcher) (watchPattern, error) {
 	var base string
 	var patternValue protocol.Pattern
 	switch pattern := watcher.GlobPattern.(type) {
@@ -63,18 +63,18 @@ func (m *lspWatchManager) parsePattern(watcher protocol.FileSystemWatcher) (lspW
 		case *protocol.WorkspaceFolder:
 			baseURI = value.URI
 		default:
-			return lspWatchPattern{}, fmt.Errorf("unsupported relative pattern base %T", pattern.BaseURI)
+			return watchPattern{}, fmt.Errorf("unsupported relative pattern base %T", pattern.BaseURI)
 		}
 		if baseURI.Scheme() != "file" {
-			return lspWatchPattern{}, fmt.Errorf("unsupported relative pattern base %q", baseURI)
+			return watchPattern{}, fmt.Errorf("unsupported relative pattern base %q", baseURI)
 		}
 		base = baseURI.FsPath()
 		patternValue = pattern.Pattern
 	default:
-		return lspWatchPattern{}, fmt.Errorf("unsupported glob pattern %T", watcher.GlobPattern)
+		return watchPattern{}, fmt.Errorf("unsupported glob pattern %T", watcher.GlobPattern)
 	}
 	if string(patternValue) == "" {
-		return lspWatchPattern{}, errors.New("glob pattern is empty")
+		return watchPattern{}, errors.New("glob pattern is empty")
 	}
 
 	glob := filepath.ToSlash(string(patternValue))
@@ -82,21 +82,21 @@ func (m *lspWatchManager) parsePattern(watcher protocol.FileSystemWatcher) (lspW
 		glob = path.Join(filepath.ToSlash(base), glob)
 	}
 	if !doublestar.ValidatePattern(glob) {
-		return lspWatchPattern{}, fmt.Errorf("invalid glob pattern %q", patternValue)
+		return watchPattern{}, fmt.Errorf("invalid glob pattern %q", patternValue)
 	}
 	root, err := lspGlobRoot(glob)
 	if err != nil {
-		return lspWatchPattern{}, err
+		return watchPattern{}, err
 	}
 	workspaceRoot := filepath.Clean(m.folder.URI.FsPath())
 	if !lspPathWithin(root, workspaceRoot) {
-		return lspWatchPattern{}, fmt.Errorf("glob root %s is outside workspace %s", filepath.ToSlash(root), filepath.ToSlash(workspaceRoot))
+		return watchPattern{}, fmt.Errorf("glob root %s is outside workspace %s", filepath.ToSlash(root), filepath.ToSlash(workspaceRoot))
 	}
 	kind := watcher.Kind
 	if kind == 0 {
 		kind = protocol.WatchKindCreate | protocol.WatchKindChange | protocol.WatchKindDelete
 	}
-	return lspWatchPattern{glob: glob, root: root, kind: kind}, nil
+	return watchPattern{glob: glob, root: root, kind: kind}, nil
 }
 
 func lspGlobRoot(glob string) (string, error) {

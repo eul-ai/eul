@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	MaxActive       = 4
-	GenerationLimit = 20
+	maxActive       = 4
+	generationLimit = 20
 )
 
 type Profile string
@@ -38,7 +38,44 @@ type Progress struct {
 	Finalizing  bool
 }
 
-type Run func(context.Context, string, Profile, agent.ThinkingLevel, func(Progress)) (agent.RunResult, error)
+type Task struct {
+	Description string
+	Prompt      string
+}
+
+type Job struct {
+	ID          string
+	Description string
+}
+
+type WaitOutcome uint8
+
+const (
+	WaitCompletion WaitOutcome = iota
+	WaitSteering
+	WaitTimeout
+)
+
+type RunRequest struct {
+	Task          string
+	Profile       Profile
+	ThinkingLevel agent.ThinkingLevel
+}
+
+type Runner interface {
+	Run(context.Context, RunRequest, func(Progress)) (agent.RunResult, error)
+}
+
+type RunFunc func(context.Context, RunRequest, func(Progress)) (agent.RunResult, error)
+
+func (run RunFunc) Run(ctx context.Context, request RunRequest, update func(Progress)) (agent.RunResult, error) {
+	return run(ctx, request, update)
+}
+
+type Config struct {
+	Runner                  Runner
+	SupportedThinkingLevels func(Profile) []agent.ThinkingLevel
+}
 
 type JobStatus struct {
 	ID              string
@@ -63,8 +100,8 @@ type Completion struct {
 }
 
 type Status struct {
-	Running    int
-	Finalizing int
-	Active     []JobStatus
-	Awaiting   []Completion
+	Running            int
+	Finalizing         int
+	Active             []JobStatus
+	PendingCompletions []Completion
 }

@@ -10,13 +10,12 @@ import (
 	"runtime"
 
 	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/backend/codex/oauth"
 )
 
 func runLogin(arguments []string, runtime appRuntime) int {
 	flags := flag.NewFlagSet("eul login", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
-	providerID := flags.String("provider", "", "provider backend")
+	providerID := flags.String("provider", "", "backend")
 	device := flags.Bool("device-auth", false, "use device authorization for headless environments")
 
 	if err := flags.Parse(arguments); err != nil {
@@ -49,11 +48,11 @@ func runLogin(arguments []string, runtime appRuntime) int {
 	ctx, cancel := contextWithInterrupt(runtime.interrupts)
 	defer cancel()
 	descriptor := driver.Descriptor()
-	method := oauth.LoginBrowser
+	method := backend.LoginBrowser
 	if *device {
-		method = oauth.LoginDevice
+		method = backend.LoginDevice
 	}
-	err = authenticator.Login(ctx, method, oauth.Interaction{
+	err = authenticator.Login(ctx, method, backend.LoginInteraction{
 		AuthURL: func(url string) error {
 			fmt.Fprintf(runtime.stderr, "Open this URL to sign in with %s:\n%s\n", descriptor.Name, url)
 			if runtime.openURL != nil {
@@ -64,7 +63,7 @@ func runLogin(arguments []string, runtime appRuntime) int {
 			fmt.Fprintln(runtime.stderr, "Browser could not be opened automatically; open the URL manually.")
 			return nil
 		},
-		DeviceCode: func(code oauth.DeviceCode) error {
+		DeviceCode: func(code backend.DeviceCode) error {
 			fmt.Fprintf(runtime.stderr, "Open %s and enter code: %s\n", code.VerificationURL, code.UserCode)
 			return nil
 		},
@@ -85,7 +84,7 @@ func runLogin(arguments []string, runtime appRuntime) int {
 func runLogout(arguments []string, runtime appRuntime) int {
 	flags := flag.NewFlagSet("eul logout", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
-	providerID := flags.String("provider", "", "provider backend")
+	providerID := flags.String("provider", "", "backend")
 
 	if err := flags.Parse(arguments); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -130,14 +129,14 @@ func runLogout(arguments []string, runtime appRuntime) int {
 	return exitSuccess
 }
 
-func openAuthenticator(driver backend.Driver, home string) (oauth.Authenticator, backend.Runtime, error) {
+func openAuthenticator(driver backend.Driver, home string) (backend.Authenticator, backend.Runtime, error) {
 	backendRuntime, err := driver.Open(backend.Options{Home: home})
 	if err != nil {
 		return nil, nil, err
 	}
-	authenticator, ok := backendRuntime.(oauth.Authenticator)
+	authenticator, ok := backendRuntime.(backend.Authenticator)
 	if !ok {
-		return nil, nil, errors.Join(fmt.Errorf("provider %q does not support login or logout", driver.Descriptor().ID), backendRuntime.Close())
+		return nil, nil, errors.Join(fmt.Errorf("backend %q does not support login or logout", driver.Descriptor().ID), backendRuntime.Close())
 	}
 	return authenticator, backendRuntime, nil
 }

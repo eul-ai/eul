@@ -27,32 +27,24 @@ type Options struct {
 	SessionID        string
 }
 
-type ProviderConfig struct {
-	MainModel     string
-	FastModel     string
-	BalancedModel string
-}
-
 type Dependencies struct {
-	Input           io.Reader
-	Output          io.Writer
-	Home            string
-	Getwd           func() (string, error)
-	UserHomeDir     func() (string, error)
-	Interrupts      <-chan os.Signal
-	Backends        *backend.Registry
-	ProviderConfigs map[string]ProviderConfig
+	Input       io.Reader
+	Output      io.Writer
+	Home        string
+	Getwd       func() (string, error)
+	UserHomeDir func() (string, error)
+	Interrupts  <-chan os.Signal
+	Backends    *backend.Registry
 }
 
-type runtime struct {
-	stdin           io.Reader
-	stdout          io.Writer
-	getwd           func() (string, error)
-	userHomeDir     func() (string, error)
-	interrupts      <-chan os.Signal
-	backends        *backend.Registry
-	providerConfigs map[string]ProviderConfig
-	newToolset      toolsetFactory
+type environment struct {
+	stdin       io.Reader
+	stdout      io.Writer
+	getwd       func() (string, error)
+	userHomeDir func() (string, error)
+	interrupts  <-chan os.Signal
+	backends    *backend.Registry
+	newToolset  toolsetFactory
 }
 
 type modelSelection struct {
@@ -73,18 +65,18 @@ type resolvedConfig struct {
 	noSandbox           bool
 }
 
-func resolveConfig(options Options, runtime runtime, descriptor backend.Descriptor, providerConfig ProviderConfig) (resolvedConfig, error) {
+func resolveConfig(options Options, env environment, descriptor backend.Descriptor) (resolvedConfig, error) {
 	thinkingLevel := options.ThinkingLevel
 	if thinkingLevel == "" {
 		thinkingLevel = agent.DefaultThinkingLevel
 	}
 
-	models, err := resolveModelSelection(options, providerConfig)
+	models, err := resolveModelSelection(options, descriptor.DefaultModels)
 	if err != nil {
 		return resolvedConfig{}, err
 	}
 
-	cwd, err := resolveCWD(options.WorkingDirectory, runtime.getwd)
+	cwd, err := resolveCWD(options.WorkingDirectory, env.getwd)
 	if err != nil {
 		return resolvedConfig{}, err
 	}
@@ -93,7 +85,7 @@ func resolveConfig(options Options, runtime runtime, descriptor backend.Descript
 		return resolvedConfig{}, err
 	}
 	skillDirectories := []string{filepath.Join(cwd, ".agents", "skills")}
-	if home := resolveUserHome(runtime.userHomeDir); home != "" {
+	if home := resolveUserHome(env.userHomeDir); home != "" {
 		skillDirectories = append(skillDirectories, filepath.Join(home, ".agents", "skills"))
 	}
 	skills, warnings := skill.Load(skillDirectories...)
@@ -111,16 +103,16 @@ func resolveConfig(options Options, runtime runtime, descriptor backend.Descript
 	}, nil
 }
 
-func resolveModelSelection(options Options, providerConfig ProviderConfig) (modelSelection, error) {
-	main, err := resolveConfiguredModel(options.Model, providerConfig.MainModel, "", "")
+func resolveModelSelection(options Options, defaults backend.ModelDefaults) (modelSelection, error) {
+	main, err := resolveConfiguredModel(options.Model, defaults.Main, "", "")
 	if err != nil {
 		return modelSelection{}, err
 	}
-	fast, err := resolveConfiguredModel(options.FastModel, providerConfig.FastModel, main, "fast model")
+	fast, err := resolveConfiguredModel(options.FastModel, defaults.Fast, main, "fast model")
 	if err != nil {
 		return modelSelection{}, err
 	}
-	balanced, err := resolveConfiguredModel(options.BalancedModel, providerConfig.BalancedModel, main, "balanced model")
+	balanced, err := resolveConfiguredModel(options.BalancedModel, defaults.Balanced, main, "balanced model")
 	if err != nil {
 		return modelSelection{}, err
 	}

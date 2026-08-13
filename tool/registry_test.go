@@ -35,14 +35,13 @@ func (t presentingTool) Presentation(snapshot PresentationSnapshot) agent.ToolPr
 	return t.present(snapshot)
 }
 
-type closeTool struct {
-	fakeTool
+type testToolSet struct {
+	tools []Tool
 	close func() error
 }
 
-func (t closeTool) Close() error {
-	return t.close()
-}
+func (set testToolSet) Tools() []Tool { return set.tools }
+func (set testToolSet) Close() error  { return set.close() }
 
 func mustRegistry(t *testing.T, tools ...Tool) *Registry {
 	t.Helper()
@@ -134,15 +133,18 @@ func TestRegistryCloseIsReverseOrderedIdempotentAndConcurrentSafe(t *testing.T) 
 	closeErr := errors.New("close failed")
 	var mu sync.Mutex
 	var closed []string
-	newCloser := func(name string, err error) closeTool {
-		return closeTool{fakeTool: fakeTool{definition: agent.ToolDefinition{Name: name}}, close: func() error {
+	newSet := func(name string, err error) testToolSet {
+		return testToolSet{close: func() error {
 			mu.Lock()
 			defer mu.Unlock()
 			closed = append(closed, name)
 			return err
 		}}
 	}
-	registry := mustRegistry(t, newCloser("one", nil), newCloser("two", closeErr))
+	registry, err := NewRegistry(nil, newSet("one", nil), newSet("two", closeErr))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	var wait sync.WaitGroup
 	errorsSeen := make(chan error, 4)
@@ -207,7 +209,7 @@ func TestDecodeArguments(t *testing.T) {
 		{name: "trailing", input: `{"path":"README.md"} {}`, wantErr: "multiple JSON values"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := decodeArguments[arguments](json.RawMessage(test.input))
+			got, err := DecodeArguments[arguments](json.RawMessage(test.input))
 			if test.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 					t.Fatalf("error = %v, want %q", err, test.wantErr)

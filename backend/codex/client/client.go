@@ -1,4 +1,4 @@
-package api
+package client
 
 import (
 	"bytes"
@@ -13,7 +13,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend"
 )
 
 const (
@@ -55,11 +54,9 @@ type Client struct {
 }
 
 var (
-	_ agent.Provider                = (*Client)(nil)
-	_ agent.Compactor               = (*Client)(nil)
-	_ agent.CompactionErrorPolicy   = (*Client)(nil)
-	_ backend.UsageProvider         = (*Client)(nil)
-	_ backend.ModelMetadataProvider = (*Client)(nil)
+	_ agent.Provider              = (*Client)(nil)
+	_ agent.Compactor             = (*Client)(nil)
+	_ agent.CompactionErrorPolicy = (*Client)(nil)
 )
 
 func New(source TokenSource, options Options) (*Client, error) {
@@ -106,14 +103,6 @@ func New(source TokenSource, options Options) (*Client, error) {
 		stateOutputHeadroom: defaultStateOutputHeadroom,
 		reasoningSummary:    reasoningSummary,
 	}, nil
-}
-
-func (*Client) ModelMetadata(model string) backend.ModelMetadata {
-	return backend.ModelMetadata{
-		ContextWindow:  contextWindow(model),
-		ThinkingLevels: supportedThinkingLevels(model),
-		FastMode:       models[model].fastMode,
-	}
 }
 
 func (c *Client) stateOutputBudget() int {

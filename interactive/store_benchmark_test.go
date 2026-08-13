@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
-	"github.com/eul-ai/eul/tool/subagent"
 )
 
 func BenchmarkSessionStoreSave(b *testing.B) {

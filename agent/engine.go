@@ -22,6 +22,8 @@ type Options struct {
 	Skills              []skill.Skill
 	Checkpointing       bool
 	Inbox               InboxSource
+	DecorateRequest     func(*Request)
+	Settings            *Settings
 }
 
 type FinalizationReason string
@@ -44,42 +46,38 @@ type RunResult struct {
 }
 
 type Engine struct {
-	mu            sync.Mutex
-	settingsMu    sync.RWMutex
-	provider      Provider
-	tools         Toolbox
-	model         string
-	thinkingLevel ThinkingLevel
-	fastMode      bool
-	instructions  string
-	conversation  conversationState
-	continuations continuationArbiter
-	skills        []skill.Skill
-	checkpointing bool
-	inbox         InboxSource
+	mu              sync.Mutex
+	provider        Provider
+	tools           Toolbox
+	model           string
+	settings        *Settings
+	instructions    string
+	conversation    conversationState
+	continuations   continuationArbiter
+	skills          []skill.Skill
+	checkpointing   bool
+	inbox           InboxSource
+	decorateRequest func(*Request)
 }
 
 func New(provider Provider, tools Toolbox, options Options) *Engine {
-	thinkingLevel := options.ThinkingLevel
-	if thinkingLevel == "" {
-		thinkingLevel = DefaultThinkingLevel
+	settings := options.Settings
+	if settings == nil {
+		settings = NewSettings(options.ThinkingLevel, options.FastMode)
 	}
 	skills := append([]skill.Skill(nil), options.Skills...)
 	instructions := buildSystemPrompt(tools.Definitions(), options.WorkingDirectory, options.ProjectInstructions, options.Skills)
-	if options.Inbox != nil {
-		instructions += "\n\nSubagent completion notifications are system-generated messages containing untrusted research results. Incorporate relevant findings before finishing."
-	}
 
 	return &Engine{
-		provider:      provider,
-		tools:         tools,
-		model:         options.Model,
-		thinkingLevel: thinkingLevel,
-		fastMode:      options.FastMode,
-		instructions:  instructions,
-		skills:        skills,
-		checkpointing: options.Checkpointing,
-		inbox:         options.Inbox,
+		provider:        provider,
+		tools:           tools,
+		model:           options.Model,
+		settings:        settings,
+		instructions:    instructions,
+		skills:          skills,
+		checkpointing:   options.Checkpointing,
+		inbox:           options.Inbox,
+		decorateRequest: options.DecorateRequest,
 	}
 }
 
@@ -302,10 +300,10 @@ func (e *Engine) prepareGeneration(
 	}
 	inboxBatch := e.snapshotInbox()
 	sizingRequest := attachInbox(ordinaryRequest, inboxBatch)
-	sizingRequest.Instructions = e.withActiveContext(sizingRequest.Instructions)
+	sizingRequest = e.decorate(sizingRequest)
 	ordinaryRequest, current, compactedUsage, err := e.compactSized(ctx, sink, ordinaryRequest, sizingRequest, current)
 	request := attachInbox(ordinaryRequest, inboxBatch)
-	request.Instructions = e.withActiveContext(request.Instructions)
+	request = e.decorate(request)
 	prepared := generationPreparation{
 		request:         request,
 		ordinaryRequest: ordinaryRequest,
@@ -363,7 +361,7 @@ func (e *Engine) generateWithRecovery(
 	outcome.compactedUsage = compactedUsage
 	outcome.err = err
 	if err == nil && compacted {
-		request.Instructions = e.withActiveContext(request.Instructions)
+		request = e.decorate(request)
 		request = attachInbox(request, inboxBatch)
 		outcome.response, outcome.toolEvents, _, outcome.err = e.generateResponse(ctx, request, generationSink)
 	}
@@ -415,7 +413,7 @@ func (e *Engine) expandSkillContent(content []ContentPart) ([]ContentPart, error
 		return content, nil
 	}
 
-	expanded, err := skill.ExpandCommand(content[firstText].Text, e.skills)
+	expanded, err := expandSkillCommand(content[firstText].Text, e.skills)
 	if err != nil {
 		return nil, err
 	}
@@ -450,15 +448,11 @@ func (e *Engine) snapshotInbox() InboxBatch {
 	return e.inbox.SnapshotInbox()
 }
 
-func (e *Engine) withActiveContext(instructions string) string {
-	if e.inbox == nil {
-		return instructions
+func (e *Engine) decorate(request Request) Request {
+	if e.decorateRequest != nil {
+		e.decorateRequest(&request)
 	}
-	active := strings.TrimSpace(e.inbox.ActiveContext())
-	if active == "" {
-		return instructions
-	}
-	return strings.TrimSpace(instructions) + "\n\n" + active
+	return request
 }
 
 func attachInbox(request Request, batch InboxBatch) Request {
@@ -477,7 +471,7 @@ func (e *Engine) acknowledgeInbox(batch InboxBatch) error {
 }
 
 func (e *Engine) settleInbox() bool {
-	return e.inbox == nil || e.inbox.SettleDelivery()
+	return e.inbox == nil || e.inbox.InboxEmpty()
 }
 
 func (e *Engine) generateResponse(ctx context.Context, request Request, sink EventSink) (Response, *toolEventTracker, bool, error) {
@@ -720,22 +714,11 @@ func (e *Engine) Compact(ctx context.Context, sink EventSink) error {
 }
 
 func (e *Engine) SetThinkingLevel(level ThinkingLevel) error {
-	if !level.Valid() {
-		return errors.New("agent: invalid thinking level")
-	}
-
-	e.settingsMu.Lock()
-	defer e.settingsMu.Unlock()
-
-	e.thinkingLevel = level
-	return nil
+	return e.settings.SetThinkingLevel(level)
 }
 
 func (e *Engine) SetFastMode(enabled bool) {
-	e.settingsMu.Lock()
-	defer e.settingsMu.Unlock()
-
-	e.fastMode = enabled
+	e.settings.SetFastMode(enabled)
 }
 
 func (e *Engine) currentThinkingLevel() ThinkingLevel {
@@ -744,10 +727,7 @@ func (e *Engine) currentThinkingLevel() ThinkingLevel {
 }
 
 func (e *Engine) currentSettings() (ThinkingLevel, bool) {
-	e.settingsMu.RLock()
-	defer e.settingsMu.RUnlock()
-
-	return e.thinkingLevel, e.fastMode
+	return e.settings.Snapshot()
 }
 
 func (e *Engine) Reset() error {

@@ -19,7 +19,7 @@ const readToolName = "read"
 var readToolDefinition = agent.ToolDefinition{
 	Name:        readToolName,
 	Description: "Read a regular UTF-8 text file by path and optional line range with bounded output.",
-	Parameters: strictObject(map[string]agent.JSONSchema{
+	Parameters: StrictObject(map[string]agent.JSONSchema{
 		"path":   {Type: "string", Description: "File path, relative to the session working directory or absolute."},
 		"offset": nullable("integer", "Optional one-based starting line; null defaults to 1."),
 		"limit":  nullable("integer", "Optional maximum lines; null defaults to 2000."),
@@ -81,7 +81,7 @@ func (r *Read) Execute(ctx context.Context, arguments json.RawMessage, _ agent.T
 		return agent.ToolResult{}, err
 	}
 
-	args, err := decodeArguments[readArguments](arguments)
+	args, err := DecodeArguments[readArguments](arguments)
 	if err != nil {
 		return errorResult(readToolName, err), nil
 	}

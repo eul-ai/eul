@@ -297,7 +297,7 @@ func TestReduceKeyActions(t *testing.T) {
 			name: "set thinking",
 			options: Options{
 				Config: Config{ThinkingLevel: agent.ThinkingMedium},
-				Commands: testCommands{setThinkingLevel: func(agent.ThinkingLevel) error {
+				Controls: Controls{SetThinkingLevel: func(agent.ThinkingLevel) error {
 					panic("reducer invoked external thinking setter")
 				}},
 			},
@@ -453,7 +453,7 @@ func TestReduceKeyActions(t *testing.T) {
 			name: "running changes thinking",
 			options: Options{
 				Config: Config{ThinkingLevel: agent.ThinkingMedium},
-				Commands: testCommands{setThinkingLevel: func(agent.ThinkingLevel) error {
+				Controls: Controls{SetThinkingLevel: func(agent.ThinkingLevel) error {
 					panic("reducer invoked external thinking setter")
 				}},
 			},

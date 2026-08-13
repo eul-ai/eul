@@ -4,26 +4,15 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/subagent"
 )
 
-type SubagentState string
-
-const (
-	SubagentRunning     SubagentState = "running"
-	SubagentFinalizing  SubagentState = "finalizing"
-	SubagentCanceling   SubagentState = "canceling"
-	SubagentComplete    SubagentState = "complete"
-	SubagentFailed      SubagentState = "failed"
-	SubagentCanceled    SubagentState = "canceled"
-	SubagentInterrupted SubagentState = "interrupted"
-)
-
-type SubagentJobStatus struct {
+type subagentRow struct {
 	ID              string
 	Task            string
-	ModelProfile    string
+	ModelProfile    subagent.Profile
 	ThinkingLevel   agent.ThinkingLevel
-	State           SubagentState
+	State           subagent.State
 	Started         time.Time
 	Finished        time.Time
 	Usage           agent.Usage
@@ -31,32 +20,29 @@ type SubagentJobStatus struct {
 	GenerationLimit int
 }
 
-type SubagentCompletionStatus struct {
-	MessageID  uint64
-	SubagentID string
-	Task       string
-	State      SubagentState
-	Started    time.Time
-	Finished   time.Time
-}
-
-type SubagentStatus struct {
-	Running    int
-	Finalizing int
-	Active     []SubagentJobStatus
-	Awaiting   []SubagentCompletionStatus
-}
-
-func (status SubagentStatus) jobs() []SubagentJobStatus {
-	jobs := append([]SubagentJobStatus(nil), status.Active...)
-	for _, completion := range status.Awaiting {
-		jobs = append(jobs, SubagentJobStatus{
+func subagentRows(status subagent.Status) []subagentRow {
+	rows := make([]subagentRow, 0, len(status.Active)+len(status.PendingCompletions))
+	for _, job := range status.Active {
+		rows = append(rows, subagentRow{
+			ID:              job.ID,
+			Task:            job.Task,
+			ModelProfile:    job.ModelProfile,
+			ThinkingLevel:   job.ThinkingLevel,
+			State:           job.State,
+			Started:         job.Started,
+			Usage:           job.Usage,
+			Generations:     job.Generations,
+			GenerationLimit: job.GenerationLimit,
+		})
+	}
+	for _, completion := range status.PendingCompletions {
+		rows = append(rows, subagentRow{
 			ID:       completion.SubagentID,
 			Task:     completion.Task,
-			State:    completion.State,
+			State:    completion.Status,
 			Started:  completion.Started,
 			Finished: completion.Finished,
 		})
 	}
-	return jobs
+	return rows
 }

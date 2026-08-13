@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/eul-ai/eul/backend"
 )
 
 const (
@@ -23,23 +25,6 @@ const (
 	deviceTimeout        = 15 * time.Minute
 	defaultHTTPTimeout   = 30 * time.Second
 )
-
-type LoginMethod string
-
-const (
-	LoginBrowser LoginMethod = "browser"
-	LoginDevice  LoginMethod = "device"
-)
-
-type DeviceCode struct {
-	VerificationURL string
-	UserCode        string
-}
-
-type Interaction struct {
-	AuthURL    func(string) error
-	DeviceCode func(DeviceCode) error
-}
 
 type AccessCredential struct {
 	AccessToken string
@@ -127,7 +112,7 @@ func NewManager(path string, options Options) *Manager {
 	}
 }
 
-func (m *Manager) Login(ctx context.Context, method LoginMethod, interaction Interaction) error {
+func (m *Manager) Login(ctx context.Context, method backend.LoginMethod, interaction backend.LoginInteraction) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -137,9 +122,9 @@ func (m *Manager) Login(ctx context.Context, method LoginMethod, interaction Int
 		err        error
 	)
 	switch method {
-	case LoginBrowser:
+	case backend.LoginBrowser:
 		credential, err = m.loginBrowser(ctx, interaction)
-	case LoginDevice:
+	case backend.LoginDevice:
 		credential, err = m.loginDevice(ctx, interaction)
 	default:
 		return errors.New("oauth: unsupported login method")

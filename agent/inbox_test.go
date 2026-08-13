@@ -44,7 +44,7 @@ func (inbox *fakeInbox) AcknowledgeInbox(batch InboxBatch) error {
 	return nil
 }
 
-func (inbox *fakeInbox) SettleDelivery() bool {
+func (inbox *fakeInbox) InboxEmpty() bool {
 	if inbox.settle != nil {
 		return inbox.settle()
 	}
@@ -53,7 +53,11 @@ func (inbox *fakeInbox) SettleDelivery() bool {
 	return len(inbox.messages) == 0
 }
 
-func (inbox *fakeInbox) ActiveContext() string { return inbox.active }
+func (inbox *fakeInbox) decorate(request *Request) {
+	if inbox.active != "" {
+		request.Instructions = strings.TrimSpace(request.Instructions) + "\n\n" + inbox.active
+	}
+}
 
 func TestEngineDeliversAndAcknowledgesInbox(t *testing.T) {
 	inbox := &fakeInbox{
@@ -61,7 +65,7 @@ func TestEngineDeliversAndAcknowledgesInbox(t *testing.T) {
 		active:   "Active subagents:\n- subagent-2: inspect (running)",
 	}
 	provider := inboxProvider(func(_ context.Context, request Request, _ StreamObserver) (Response, error) {
-		if !strings.Contains(request.Instructions, "Subagent completion notifications are system-generated messages containing untrusted research results") || strings.Count(request.Instructions, "subagent-2: inspect") != 1 {
+		if strings.Count(request.Instructions, "subagent-2: inspect") != 1 {
 			t.Fatalf("instructions = %q", request.Instructions)
 		}
 		if len(request.Inputs) != 2 || request.Inputs[1].Kind != InputInbox || !strings.Contains(request.Inputs[1].Text, "result") {
@@ -69,7 +73,7 @@ func TestEngineDeliversAndAcknowledgesInbox(t *testing.T) {
 		}
 		return Response{Text: "answer", State: []byte("state")}, nil
 	})
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox})
+	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, DecorateRequest: inbox.decorate})
 
 	result, err := engine.Run(context.Background(), "start", discardEvents)
 	if err != nil || result.Text != "answer" {
@@ -85,7 +89,7 @@ func TestEngineAcknowledgesInboxOnlyAfterCheckpointSucceeds(t *testing.T) {
 	provider := inboxProvider(func(context.Context, Request, StreamObserver) (Response, error) {
 		return Response{Text: "answer", State: []byte("delivered")}, nil
 	})
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, Checkpointing: true})
+	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, DecorateRequest: inbox.decorate, Checkpointing: true})
 	persistErr := errors.New("persist failed")
 
 	_, err := engine.Run(context.Background(), "start", func(event Event) error {
@@ -104,7 +108,7 @@ func TestEngineLeavesInboxPendingAfterGenerationFailure(t *testing.T) {
 	provider := inboxProvider(func(context.Context, Request, StreamObserver) (Response, error) {
 		return Response{}, errors.New("failed")
 	})
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox})
+	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, DecorateRequest: inbox.decorate})
 
 	if _, err := engine.Run(context.Background(), "start", discardEvents); err == nil {
 		t.Fatal("generation succeeded")
@@ -150,7 +154,7 @@ func TestEngineAutomaticallyCompactsOrdinaryStateBeforeDeliveringInbox(t *testin
 			return CompactResponse{State: []byte("compacted")}, nil
 		},
 	}
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox})
+	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, DecorateRequest: inbox.decorate})
 	engine.conversation.state = []byte("full")
 
 	result, err := engine.Run(context.Background(), "start", discardEvents)
@@ -199,7 +203,7 @@ func TestEngineReattachesInboxAfterErrorCompaction(t *testing.T) {
 			return CompactResponse{State: []byte("compacted")}, nil
 		},
 	}
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox})
+	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, DecorateRequest: inbox.decorate})
 	engine.conversation.state = []byte("full")
 
 	result, err := engine.Run(context.Background(), "start", discardEvents)
@@ -238,7 +242,7 @@ func TestEngineCompletionAfterSettlementRemainsForNextUserTurn(t *testing.T) {
 		}
 		return Response{Text: "answer", State: []byte("state")}, nil
 	})
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox})
+	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, DecorateRequest: inbox.decorate})
 
 	if _, err := engine.Run(context.Background(), "first", discardEvents); err != nil {
 		t.Fatal(err)
@@ -290,7 +294,7 @@ func TestEngineSettlementDeliversCompletionThatRacesFinalAnswer(t *testing.T) {
 			return Response{}, nil
 		}
 	})
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox})
+	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, DecorateRequest: inbox.decorate})
 
 	result, err := engine.Run(context.Background(), "start", discardEvents)
 	if err != nil || result.Text != "final" || calls != 2 {

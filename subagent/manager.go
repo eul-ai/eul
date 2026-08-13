@@ -28,7 +28,7 @@ var (
 )
 
 type Manager struct {
-	run                     Run
+	runner                  Runner
 	supportedThinkingLevels func(Profile) []agent.ThinkingLevel
 
 	ctx           context.Context
@@ -61,7 +61,8 @@ type job struct {
 	generations   int
 }
 
-func NewManager(run Run, supportedThinkingLevels func(Profile) []agent.ThinkingLevel) *Manager {
+func NewManager(config Config) *Manager {
+	supportedThinkingLevels := config.SupportedThinkingLevels
 	if supportedThinkingLevels == nil {
 		supportedThinkingLevels = func(Profile) []agent.ThinkingLevel {
 			return []agent.ThinkingLevel{
@@ -76,7 +77,7 @@ func NewManager(run Run, supportedThinkingLevels func(Profile) []agent.ThinkingL
 
 	ctx, cancel := context.WithCancelCause(context.Background())
 	return &Manager{
-		run:                     run,
+		runner:                  config.Runner,
 		supportedThinkingLevels: supportedThinkingLevels,
 		ctx:                     ctx,
 		cancel:                  cancel,
@@ -87,11 +88,13 @@ func NewManager(run Run, supportedThinkingLevels func(Profile) []agent.ThinkingL
 	}
 }
 
-func (m *Manager) StatusUpdates() <-chan Status {
+// StatusChanges coalesces status changes when the receiver falls behind.
+func (m *Manager) StatusChanges() <-chan Status {
 	return m.status
 }
 
-func (m *Manager) CheckpointUpdates() <-chan struct{} {
+// CheckpointChanges coalesces checkpoint changes when the receiver falls behind.
+func (m *Manager) CheckpointChanges() <-chan struct{} {
 	return m.dirty
 }
 
@@ -113,15 +116,15 @@ func (m *Manager) Close() error {
 	return nil
 }
 
-func (m *Manager) start(tasks []task, profile Profile, thinkingLevel agent.ThinkingLevel) ([]*job, error) {
+func (m *Manager) Start(tasks []Task, profile Profile, thinkingLevel agent.ThinkingLevel) ([]Job, error) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
 		return nil, errors.New("subagent manager is closed")
 	}
-	if len(m.active)+len(tasks) > MaxActive {
+	if len(m.active)+len(tasks) > maxActive {
 		m.mu.Unlock()
-		return nil, fmt.Errorf("active subagents must not exceed %d", MaxActive)
+		return nil, fmt.Errorf("active subagents must not exceed %d", maxActive)
 	}
 
 	started := time.Now()
@@ -149,16 +152,19 @@ func (m *Manager) start(tasks []task, profile Profile, thinkingLevel agent.Think
 	m.publishLocked()
 	m.mu.Unlock()
 
-	for _, job := range jobs {
+	startedJobs := make([]Job, len(jobs))
+	for index, job := range jobs {
+		startedJobs[index] = Job{ID: job.id, Description: job.description}
 		go m.runJob(job)
 	}
-	return jobs, nil
+	return startedJobs, nil
 }
 
 func (m *Manager) runJob(job *job) {
 	defer m.workers.Done()
 
-	result, runErr := m.run(job.ctx, job.task, job.modelProfile, job.thinkingLevel, func(progress Progress) {
+	request := RunRequest{Task: job.task, Profile: job.modelProfile, ThinkingLevel: job.thinkingLevel}
+	result, runErr := m.runner.Run(job.ctx, request, func(progress Progress) {
 		m.mu.Lock()
 		if m.active[job.id] == job {
 			if progress.Usage != (agent.Usage{}) {
@@ -281,7 +287,7 @@ func lineEnd(text string, maxLines int) int {
 	return len(text)
 }
 
-func (m *Manager) cancelIDs(ids []string) ([]string, error) {
+func (m *Manager) Cancel(ids []string) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -312,15 +318,7 @@ func (m *Manager) cancelIDs(ids []string) ([]string, error) {
 	return canceled, nil
 }
 
-type waitOutcome uint8
-
-const (
-	waitCompletion waitOutcome = iota
-	waitSteering
-	waitTimeout
-)
-
-func (m *Manager) waitForCompletion(ctx context.Context) (waitOutcome, error) {
+func (m *Manager) Wait(ctx context.Context) (WaitOutcome, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -331,7 +329,7 @@ func (m *Manager) waitForCompletion(ctx context.Context) (waitOutcome, error) {
 		switch {
 		case len(m.inbox) > 0:
 			m.mu.Unlock()
-			return waitCompletion, nil
+			return WaitCompletion, nil
 		case len(m.active) == 0:
 			m.mu.Unlock()
 			return 0, errors.New("no active subagents or pending completions")
@@ -346,14 +344,14 @@ func (m *Manager) waitForCompletion(ctx context.Context) (waitOutcome, error) {
 				m.mu.Unlock()
 				switch {
 				case completion:
-					return waitCompletion, nil
+					return WaitCompletion, nil
 				case errors.Is(ctx.Err(), context.DeadlineExceeded):
-					return waitTimeout, nil
+					return WaitTimeout, nil
 				default:
 					return 0, ctx.Err()
 				}
 			case <-steering:
-				return waitSteering, nil
+				return WaitSteering, nil
 			case <-changes:
 			}
 		}
@@ -411,7 +409,11 @@ func (m *Manager) AcknowledgeInbox(batch agent.InboxBatch) error {
 	return nil
 }
 
-func (m *Manager) SettleDelivery() bool {
+func (m *Manager) SupportedThinkingLevels(profile Profile) []agent.ThinkingLevel {
+	return slices.Clone(m.supportedThinkingLevels(profile))
+}
+
+func (m *Manager) InboxEmpty() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.inbox) == 0
@@ -435,7 +437,7 @@ func (m *Manager) ActiveContext() string {
 }
 
 func (m *Manager) publishLocked() {
-	status := Status{Awaiting: append([]Completion(nil), m.inbox...)}
+	status := Status{PendingCompletions: append([]Completion(nil), m.inbox...)}
 	jobs := m.sortedJobsLocked()
 	status.Active = make([]JobStatus, len(jobs))
 	for index, job := range jobs {
@@ -454,7 +456,7 @@ func (m *Manager) publishLocked() {
 			Started:         job.started,
 			Usage:           job.usage,
 			Generations:     job.generations,
-			GenerationLimit: GenerationLimit,
+			GenerationLimit: generationLimit,
 		}
 	}
 

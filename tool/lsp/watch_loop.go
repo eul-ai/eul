@@ -11,41 +11,41 @@ import (
 	"go.lsp.dev/protocol"
 )
 
-func newLSPWatchManager(folder protocol.WorkspaceFolder, notify func(context.Context, *protocol.DidChangeWatchedFilesParams) error) (*lspWatchManager, error) {
-	native, err := newFSNotifyLSPWatcher()
+func newWatchManager(folder protocol.WorkspaceFolder, notify func(context.Context, *protocol.DidChangeWatchedFilesParams) error) (*watchManager, error) {
+	native, err := newFSNotifyWatcher()
 	if err != nil {
 		return nil, err
 	}
-	return newLSPWatchManagerWithNative(folder, native, notify), nil
+	return newWatchManagerWithNative(folder, native, notify), nil
 }
 
-func newLSPWatchManagerWithNative(folder protocol.WorkspaceFolder, native lspNativeWatcher, notify func(context.Context, *protocol.DidChangeWatchedFilesParams) error) *lspWatchManager {
+func newWatchManagerWithNative(folder protocol.WorkspaceFolder, native nativeWatcher, notify func(context.Context, *protocol.DidChangeWatchedFilesParams) error) *watchManager {
 	ctx, cancel := context.WithCancel(context.Background())
-	manager := &lspWatchManager{
+	manager := &watchManager{
 		folder:   folder,
 		native:   native,
 		notify:   notify,
 		ctx:      ctx,
 		cancel:   cancel,
-		commands: make(chan lspWatchCommand),
+		commands: make(chan watchCommand),
 		done:     make(chan struct{}),
 	}
 	go manager.run()
 	return manager
 }
 
-func (m *lspWatchManager) run() {
+func (m *watchManager) run() {
 	defer close(m.done)
 
-	state := &lspWatchState{
+	state := &watchState{
 		manager:       m,
-		registrations: make(map[string][]lspWatchPattern),
+		registrations: make(map[string][]watchPattern),
 		watchedDirs:   make(map[string]struct{}),
-		known:         make(map[string]lspWatchedPathState),
-		suppressed:    make(map[string]lspWatchSuppression),
+		known:         make(map[string]watchedPathState),
+		suppressed:    make(map[string]watchSuppression),
 		pending:       make(map[string]struct{}),
 	}
-	timer := time.NewTimer(lspWatchBatchDelay)
+	timer := time.NewTimer(watchBatchDelay)
 	timer.Stop()
 	defer timer.Stop()
 	var timerChannel <-chan time.Time
@@ -70,7 +70,7 @@ func (m *lspWatchManager) run() {
 			}
 			state.pending[filepath.Clean(name)] = struct{}{}
 			if timerChannel == nil {
-				timer.Reset(lspWatchBatchDelay)
+				timer.Reset(watchBatchDelay)
 				timerChannel = timer.C
 			}
 		case watchErr, ok := <-m.native.Errors():
@@ -93,7 +93,7 @@ func (m *lspWatchManager) run() {
 	}
 }
 
-func (m *lspWatchManager) register(ctx context.Context, registrations []protocol.Registration) error {
+func (m *watchManager) register(ctx context.Context, registrations []protocol.Registration) error {
 	parsed, err := m.parseRegistrations(registrations)
 	if err != nil {
 		return err
@@ -101,12 +101,12 @@ func (m *lspWatchManager) register(ctx context.Context, registrations []protocol
 	if len(parsed) == 0 {
 		return nil
 	}
-	return m.execute(ctx, func(ctx context.Context, state *lspWatchState) error {
+	return m.execute(ctx, func(ctx context.Context, state *watchState) error {
 		return state.register(ctx, parsed)
 	})
 }
 
-func (m *lspWatchManager) unregister(ctx context.Context, unregisterations []protocol.Unregistration) error {
+func (m *watchManager) unregister(ctx context.Context, unregisterations []protocol.Unregistration) error {
 	ids := make([]string, 0, len(unregisterations))
 	for _, unregistration := range unregisterations {
 		if unregistration.Method == protocol.MethodWorkspaceDidChangeWatchedFiles {
@@ -116,12 +116,12 @@ func (m *lspWatchManager) unregister(ctx context.Context, unregisterations []pro
 	if len(ids) == 0 {
 		return nil
 	}
-	return m.execute(ctx, func(ctx context.Context, state *lspWatchState) error {
+	return m.execute(ctx, func(ctx context.Context, state *watchState) error {
 		return state.unregister(ctx, ids)
 	})
 }
 
-func (m *lspWatchManager) reportCommitted(ctx context.Context, paths []string) error {
+func (m *watchManager) reportCommitted(ctx context.Context, paths []string) error {
 	if len(paths) == 0 {
 		return nil
 	}
@@ -133,18 +133,18 @@ func (m *lspWatchManager) reportCommitted(ctx context.Context, paths []string) e
 		}
 		resolved[index] = filepath.Clean(absolute)
 	}
-	return m.execute(ctx, func(ctx context.Context, state *lspWatchState) error {
+	return m.execute(ctx, func(ctx context.Context, state *watchState) error {
 		return state.reportCommitted(ctx, resolved)
 	})
 }
 
-func (m *lspWatchManager) check(ctx context.Context) error {
-	return m.execute(ctx, func(ctx context.Context, state *lspWatchState) error {
+func (m *watchManager) check(ctx context.Context) error {
+	return m.execute(ctx, func(ctx context.Context, state *watchState) error {
 		if state.failure != nil {
 			return state.failure
 		}
 		if err := state.flushPending(ctx); err != nil {
-			if !lspWatchContextError(ctx, err) {
+			if !watchContextError(ctx, err) {
 				state.fail(err)
 			}
 			return err
@@ -153,14 +153,14 @@ func (m *lspWatchManager) check(ctx context.Context) error {
 	})
 }
 
-func (m *lspWatchManager) registrationCount(ctx context.Context) (int, error) {
+func (m *watchManager) registrationCount(ctx context.Context) (int, error) {
 	result := make(chan int, 1)
 	select {
 	case <-ctx.Done():
 		return 0, ctx.Err()
 	case <-m.done:
 		return 0, errors.New("language server file watcher is closed")
-	case m.commands <- func(state *lspWatchState) { result <- len(state.registrations) }:
+	case m.commands <- func(state *watchState) { result <- len(state.registrations) }:
 	}
 
 	select {
@@ -173,9 +173,9 @@ func (m *lspWatchManager) registrationCount(ctx context.Context) (int, error) {
 	}
 }
 
-func (m *lspWatchManager) execute(ctx context.Context, operation func(context.Context, *lspWatchState) error) error {
+func (m *watchManager) execute(ctx context.Context, operation func(context.Context, *watchState) error) error {
 	result := make(chan error, 1)
-	command := func(state *lspWatchState) { result <- operation(ctx, state) }
+	command := func(state *watchState) { result <- operation(ctx, state) }
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -187,7 +187,7 @@ func (m *lspWatchManager) execute(ctx context.Context, operation func(context.Co
 	return <-result
 }
 
-func (m *lspWatchManager) close() error {
+func (m *watchManager) close() error {
 	m.closeOnce.Do(func() {
 		m.cancel()
 		m.closeErr = m.native.Close()

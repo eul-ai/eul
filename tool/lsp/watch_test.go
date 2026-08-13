@@ -135,12 +135,12 @@ func (n *lspWatchNotifications) notify(_ context.Context, params *protocol.DidCh
 	return nil
 }
 
-func newLSPWatchTestManager(t *testing.T, root string) (*lspWatchManager, *fakeLSPNativeWatcher, *lspWatchNotifications) {
+func newLSPWatchTestManager(t *testing.T, root string) (*watchManager, *fakeLSPNativeWatcher, *lspWatchNotifications) {
 	t.Helper()
 
 	native := newFakeLSPNativeWatcher()
 	notifications := newLSPWatchNotifications()
-	manager := newLSPWatchManagerWithNative(
+	manager := newWatchManagerWithNative(
 		protocol.WorkspaceFolder{URI: uri.File(root), Name: filepath.Base(root)},
 		native,
 		notifications.notify,
@@ -498,7 +498,7 @@ func TestLSPWatchManagerAcceptedCommandReturnsCommittedResult(t *testing.T) {
 	manager, _, _ := newLSPWatchTestManager(t, t.TempDir())
 	ctx, cancel := context.WithCancel(context.Background())
 
-	if err := manager.execute(ctx, func(_ context.Context, state *lspWatchState) error {
+	if err := manager.execute(ctx, func(_ context.Context, state *watchState) error {
 		state.registrations["committed"] = nil
 		cancel()
 		return nil
@@ -582,7 +582,7 @@ func TestLSPWatchManagerCanceledCheckRetainsPendingState(t *testing.T) {
 	if err := manager.register(context.Background(), []protocol.Registration{registration}); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.execute(context.Background(), func(_ context.Context, state *lspWatchState) error {
+	if err := manager.execute(context.Background(), func(_ context.Context, state *watchState) error {
 		state.pending[root] = struct{}{}
 		return nil
 	}); err != nil {
@@ -596,7 +596,7 @@ func TestLSPWatchManagerCanceledCheckRetainsPendingState(t *testing.T) {
 	if err := manager.check(context.Background()); err != nil {
 		t.Fatalf("watcher was poisoned by cancellation: %v", err)
 	}
-	if err := manager.execute(context.Background(), func(_ context.Context, state *lspWatchState) error {
+	if err := manager.execute(context.Background(), func(_ context.Context, state *watchState) error {
 		if len(state.pending) != 0 {
 			return fmt.Errorf("pending paths after retry = %d", len(state.pending))
 		}
@@ -666,6 +666,6 @@ func assertNoLSPWatchEvent(t *testing.T, changes <-chan []protocol.FileEvent) {
 	select {
 	case events := <-changes:
 		t.Fatalf("unexpected events: %+v", events)
-	case <-time.After(4 * lspWatchBatchDelay):
+	case <-time.After(4 * watchBatchDelay):
 	}
 }

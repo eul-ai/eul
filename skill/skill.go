@@ -3,12 +3,10 @@ package skill
 import (
 	"errors"
 	"fmt"
-	"html"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"unicode"
 )
 
 type Skill struct {
@@ -287,56 +285,14 @@ func canonicalSkillPath(path string) string {
 	return filepath.Clean(path)
 }
 
-func ExpandCommand(text string, skills []Skill) (string, error) {
-	trimmed := strings.TrimSpace(text)
-	if !strings.HasPrefix(trimmed, "/skill:") {
-		return text, nil
-	}
-
-	remainder := strings.TrimPrefix(trimmed, "/skill:")
-	separator := strings.IndexFunc(remainder, unicode.IsSpace)
-	name := remainder
-	arguments := ""
-	if separator >= 0 {
-		name = remainder[:separator]
-		arguments = strings.TrimSpace(remainder[separator:])
-	}
-
-	var selected Skill
-	found := false
-	for _, candidate := range skills {
-		if candidate.Name == name {
-			selected = candidate
-			found = true
-			break
-		}
-	}
-	if !found {
-		return text, nil
-	}
-
-	content, err := os.ReadFile(selected.FilePath)
+func ReadBody(loaded Skill) (string, error) {
+	content, err := os.ReadFile(loaded.FilePath)
 	if err != nil {
-		return "", fmt.Errorf("read skill %q: %w", name, err)
+		return "", fmt.Errorf("read skill %q: %w", loaded.Name, err)
 	}
 	_, body, err := parseSkillFrontmatter(string(content))
 	if err != nil {
-		return "", fmt.Errorf("parse skill %q: %w", name, err)
+		return "", fmt.Errorf("parse skill %q: %w", loaded.Name, err)
 	}
-
-	var expanded strings.Builder
-	expanded.WriteString(`<skill name="`)
-	expanded.WriteString(html.EscapeString(selected.Name))
-	expanded.WriteString(`" location="`)
-	expanded.WriteString(html.EscapeString(filepath.ToSlash(selected.FilePath)))
-	expanded.WriteString("\">\nReferences are relative to ")
-	expanded.WriteString(html.EscapeString(filepath.ToSlash(filepath.Dir(selected.FilePath))))
-	expanded.WriteString(".\n\n")
-	expanded.WriteString(strings.TrimSpace(body))
-	expanded.WriteString("\n</skill>")
-	if arguments != "" {
-		expanded.WriteString("\n\n")
-		expanded.WriteString(arguments)
-	}
-	return expanded.String(), nil
+	return body, nil
 }

@@ -10,9 +10,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/eul-ai/eul/backend"
 )
 
-func (m *Manager) loginDevice(ctx context.Context, interaction Interaction) (credentials, error) {
+func (m *Manager) loginDevice(ctx context.Context, interaction backend.LoginInteraction) (credentials, error) {
 	requestBody, _ := json.Marshal(map[string]string{"client_id": clientID})
 	response, err := m.doJSON(ctx, http.MethodPost, "/api/accounts/deviceauth/usercode", requestBody)
 	if err != nil {
@@ -42,7 +44,7 @@ func (m *Manager) loginDevice(ctx context.Context, interaction Interaction) (cre
 	if interaction.DeviceCode == nil {
 		return credentials{}, errors.New("oauth: device login interaction is unavailable")
 	}
-	if err := interaction.DeviceCode(DeviceCode{VerificationURL: m.authBaseURL + "/codex/device", UserCode: raw.UserCode}); err != nil {
+	if err := interaction.DeviceCode(backend.DeviceCode{VerificationURL: m.authBaseURL + "/codex/device", UserCode: raw.UserCode}); err != nil {
 		return credentials{}, fmt.Errorf("oauth: present device code: %w", err)
 	}
 

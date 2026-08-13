@@ -27,6 +27,34 @@ func TestFormatSkillsForPromptUsesMetadataOnly(t *testing.T) {
 	}
 }
 
+func TestExpandSkillCommandLoadsCurrentBodyAndArguments(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "review&tools", "SKILL.md")
+	writeTestSkill(t, path, "review", "Review code", false, "Original body")
+	skills, warnings := skill.Load(filepath.Dir(filepath.Dir(path)))
+	if len(skills) != 1 || len(warnings) != 0 {
+		t.Fatalf("skills = %+v, warnings = %v", skills, warnings)
+	}
+	writeTestSkill(t, path, "review", "Review code", false, "Updated body")
+
+	expanded, err := expandSkillCommand(" /skill:review focus on tests ", skills)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`<skill name="review" location="`, "References are relative to ", "Updated body", "</skill>\n\nfocus on tests"} {
+		if !strings.Contains(expanded, want) {
+			t.Fatalf("expanded prompt omits %q:\n%s", want, expanded)
+		}
+	}
+	if strings.Contains(expanded, "description:") {
+		t.Fatalf("expanded prompt includes frontmatter:\n%s", expanded)
+	}
+
+	unknown, err := expandSkillCommand("/skill:unknown", skills)
+	if err != nil || unknown != "/skill:unknown" {
+		t.Fatalf("unknown expansion = %q, %v", unknown, err)
+	}
+}
+
 func TestEngineExpandsSkillCommandWithoutMovingImage(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "review", "SKILL.md")
 	writeTestSkill(t, path, "review", "Review code", false, "Follow the review process.")

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 )
 
 func TestResolveConfigLoadsDefaultAndExplicitModels(t *testing.T) {
@@ -42,7 +43,7 @@ func TestResolveConfigLoadsDefaultAndExplicitModels(t *testing.T) {
 }
 
 func TestResolveModelSelectionFallsBackToMain(t *testing.T) {
-	models, err := resolveModelSelection(Options{}, ProviderConfig{MainModel: "main-model"})
+	models, err := resolveModelSelection(Options{}, backend.ModelDefaults{Main: "main-model"})
 	if err != nil {
 		t.Fatal(err)
 	}

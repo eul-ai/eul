@@ -39,7 +39,7 @@ func (w workspace) display(name string) string {
 	return filepath.ToSlash(name)
 }
 
-func strictObject(properties map[string]agent.JSONSchema, required ...string) agent.JSONSchema {
+func StrictObject(properties map[string]agent.JSONSchema, required ...string) agent.JSONSchema {
 	additionalProperties := false
 	return agent.JSONSchema{
 		Type:                 "object",

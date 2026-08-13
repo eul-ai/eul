@@ -51,7 +51,7 @@ func TestFastCommandOnlyAppearsWhenAvailable(t *testing.T) {
 
 	available := newTUIModel(80, 24, Options{
 		Config:   Config{FastModeAvailable: true},
-		Commands: testCommands{setFastMode: func(bool) error { return nil }},
+		Controls: Controls{SetFastMode: func(bool) error { return nil }},
 	})
 	if err := available.insertInput("/fast"); err != nil {
 		t.Fatal(err)

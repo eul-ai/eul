@@ -10,6 +10,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/skill"
+	"github.com/eul-ai/eul/subagent"
 )
 
 const (
@@ -17,37 +18,26 @@ const (
 )
 
 var (
-	ErrInterrupted           = errors.New("terminal: interrupted")
-	ErrNotTerminal           = errors.New("terminal: interactive mode requires terminal input and output")
-	errInputTooLong          = errors.New("terminal: input is too long")
-	errInvalidInput          = errors.New("terminal: input must be valid UTF-8 text without NUL")
-	errOutput                = errors.New("terminal: write output")
-	errCheckpointUnavailable = errors.New("terminal: engine checkpointing is unavailable")
+	ErrInterrupted  = errors.New("terminal: interrupted")
+	ErrNotTerminal  = errors.New("terminal: interactive mode requires terminal input and output")
+	errInputTooLong = errors.New("terminal: input is too long")
+	errInvalidInput = errors.New("terminal: input must be valid UTF-8 text without NUL")
+	errOutput       = errors.New("terminal: write output")
 )
 
-type Engine interface {
-	Run(context.Context, string, agent.EventSink) (agent.RunResult, error)
-	RunContent(context.Context, []agent.ContentPart, agent.EventSink) (agent.RunResult, error)
-	Compact(context.Context, agent.EventSink) error
-	Steer(string) bool
-	ClearSteering() []string
-	SetGoal(string) error
-	Goal() (agent.GoalState, bool)
-	ClearGoal()
+type Operations struct {
+	RunTurn func(context.Context, []agent.ContentPart, agent.EventSink) error
+	Compact func(context.Context, agent.EventSink) error
 }
 
-type checkpointEngine interface {
-	Checkpoint() (agent.Checkpoint, error)
-}
-
-func validateCheckpointCapability(engine Engine, required bool) error {
-	if !required {
-		return nil
-	}
-	if _, ok := engine.(checkpointEngine); !ok {
-		return errCheckpointUnavailable
-	}
-	return nil
+type Controls struct {
+	Steer            func(string) bool
+	ClearSteering    func() []string
+	SetGoal          func(string) error
+	Goal             func() (agent.GoalState, bool)
+	ClearGoal        func()
+	SetThinkingLevel func(agent.ThinkingLevel) error
+	SetFastMode      func(bool) error
 }
 
 type SessionSummary struct {
@@ -95,49 +85,17 @@ type Config struct {
 	PreviousTurnActive bool
 }
 
-type Commands interface {
-	SetThinkingLevel(agent.ThinkingLevel) error
-	SetFastMode(bool) error
+type Sessions struct {
+	List func(context.Context) ([]SessionSummary, []string, error)
 }
 
-type Persistence interface {
-	SaveCheckpoint(agent.Checkpoint, Checkpoint, bool) error
-	ListSessions(context.Context) ([]SessionSummary, []string, error)
-}
-
-type commandCapabilities interface {
-	CanSetThinkingLevel() bool
-	CanSetFastMode() bool
-}
-
-type persistenceCapabilities interface {
-	CanSaveCheckpoint() bool
-	CanListSessions() bool
-}
-
-func canSetThinkingLevel(commands Commands) bool {
-	capabilities, ok := commands.(commandCapabilities)
-	return commands != nil && (!ok || capabilities.CanSetThinkingLevel())
-}
-
-func canSetFastMode(commands Commands) bool {
-	capabilities, ok := commands.(commandCapabilities)
-	return commands != nil && (!ok || capabilities.CanSetFastMode())
-}
-
-func canSaveCheckpoint(persistence Persistence) bool {
-	capabilities, ok := persistence.(persistenceCapabilities)
-	return persistence != nil && (!ok || capabilities.CanSaveCheckpoint())
-}
-
-func canListSessions(persistence Persistence) bool {
-	capabilities, ok := persistence.(persistenceCapabilities)
-	return persistence != nil && (!ok || capabilities.CanListSessions())
+type Checkpoints struct {
+	Save func(Checkpoint, bool) error
 }
 
 type Events struct {
 	Interrupts         <-chan os.Signal
-	SubagentUpdates    <-chan SubagentStatus
+	SubagentUpdates    <-chan subagent.Status
 	PermissionRequests <-chan PermissionRequest
 }
 
@@ -150,8 +108,10 @@ type Options struct {
 	Input       io.Reader
 	Output      io.Writer
 	Config      Config
-	Commands    Commands
-	Persistence Persistence
+	Operations  Operations
+	Controls    Controls
+	Sessions    Sessions
+	Checkpoints Checkpoints
 	Events      Events
 	Services    Services
 }

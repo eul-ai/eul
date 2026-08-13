@@ -8,37 +8,52 @@ import (
 	"sync"
 
 	"go.lsp.dev/protocol"
+
+	"github.com/eul-ai/eul/tool"
 )
 
-type Service struct {
-	client    *lspClient
+type Set struct {
+	service *service
+	tools   []tool.Tool
+}
+
+type service struct {
+	client    *client
 	closeOnce sync.Once
 }
 
-func New(cwd, home string) (*Service, error) {
+func New(cwd, home string, includeRename bool) (*Set, error) {
 	configPaths := make([]string, 0, 2)
 	if home != "" {
-		configPaths = append(configPaths, filepath.Join(home, lspConfigFileName))
+		configPaths = append(configPaths, filepath.Join(home, configFileName))
 	}
-	configPaths = append(configPaths, filepath.Join(cwd, lspConfigFileName))
+	configPaths = append(configPaths, filepath.Join(cwd, configFileName))
 
-	configs, err := loadLSPServerConfigs(configPaths...)
+	configs, err := loadServerConfigs(configPaths...)
 	if err != nil {
 		return nil, err
 	}
 
-	service := &Service{}
-	if hasAvailableLSPServer(configs) {
-		service.client = newLSPClient(cwd, configs)
+	service := &service{}
+	if hasAvailableServer(configs) {
+		service.client = newClient(cwd, configs)
 	}
-	return service, nil
+	return &Set{service: service, tools: newTools(service, includeRename)}, nil
 }
 
-func (s *Service) Available() bool {
+func (set *Set) Tools() []tool.Tool {
+	return append([]tool.Tool(nil), set.tools...)
+}
+
+func (set *Set) Close() error {
+	return set.service.close()
+}
+
+func (s *service) available() bool {
 	return s.client != nil
 }
 
-func (s *Service) Close() error {
+func (s *service) close() error {
 	s.closeOnce.Do(func() {
 		if s.client != nil {
 			s.client.stop()
@@ -47,32 +62,32 @@ func (s *Service) Close() error {
 	return nil
 }
 
-func (s *Service) Diagnostics(ctx context.Context, path string) (any, error) {
-	return s.pathRequest(ctx, path, func(ctx context.Context, session *lspSession, document protocol.TextDocumentIdentifier) (any, error) {
+func (s *service) diagnostics(ctx context.Context, path string) (any, error) {
+	return s.pathRequest(ctx, path, func(ctx context.Context, session *session, document protocol.TextDocumentIdentifier) (any, error) {
 		return session.diagnostics(ctx, document)
 	})
 }
 
-func (s *Service) Symbols(ctx context.Context, path string) (any, error) {
-	return s.pathRequest(ctx, path, func(ctx context.Context, session *lspSession, document protocol.TextDocumentIdentifier) (any, error) {
+func (s *service) symbols(ctx context.Context, path string) (any, error) {
+	return s.pathRequest(ctx, path, func(ctx context.Context, session *session, document protocol.TextDocumentIdentifier) (any, error) {
 		return session.server.DocumentSymbol(ctx, &protocol.DocumentSymbolParams{TextDocument: document})
 	})
 }
 
-func (s *Service) Hover(ctx context.Context, path string, line, character int) (any, error) {
-	return s.positionRequest(ctx, path, line, character, func(ctx context.Context, session *lspSession, params protocol.TextDocumentPositionParams) (any, error) {
+func (s *service) hover(ctx context.Context, path string, line, character int) (any, error) {
+	return s.positionRequest(ctx, path, line, character, func(ctx context.Context, session *session, params protocol.TextDocumentPositionParams) (any, error) {
 		return session.server.Hover(ctx, &protocol.HoverParams{TextDocumentPositionParams: params})
 	})
 }
 
-func (s *Service) Definition(ctx context.Context, path string, line, character int) (any, error) {
-	return s.positionRequest(ctx, path, line, character, func(ctx context.Context, session *lspSession, params protocol.TextDocumentPositionParams) (any, error) {
+func (s *service) definition(ctx context.Context, path string, line, character int) (any, error) {
+	return s.positionRequest(ctx, path, line, character, func(ctx context.Context, session *session, params protocol.TextDocumentPositionParams) (any, error) {
 		return session.server.Definition(ctx, &protocol.DefinitionParams{TextDocumentPositionParams: params})
 	})
 }
 
-func (s *Service) References(ctx context.Context, path string, line, character int, includeDeclaration bool) (any, error) {
-	return s.positionRequest(ctx, path, line, character, func(ctx context.Context, session *lspSession, params protocol.TextDocumentPositionParams) (any, error) {
+func (s *service) references(ctx context.Context, path string, line, character int, includeDeclaration bool) (any, error) {
+	return s.positionRequest(ctx, path, line, character, func(ctx context.Context, session *session, params protocol.TextDocumentPositionParams) (any, error) {
 		return session.server.References(ctx, &protocol.ReferenceParams{
 			TextDocumentPositionParams: params,
 			Context:                    protocol.ReferenceContext{IncludeDeclaration: includeDeclaration},
@@ -80,7 +95,7 @@ func (s *Service) References(ctx context.Context, path string, line, character i
 	})
 }
 
-func (s *Service) pathRequest(ctx context.Context, path string, request lspDocumentRequest) (any, error) {
+func (s *service) pathRequest(ctx context.Context, path string, request documentRequest) (any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -88,8 +103,8 @@ func (s *Service) pathRequest(ctx context.Context, path string, request lspDocum
 		return nil, errors.New("no language server is available")
 	}
 
-	s.client.mu.Lock()
-	defer s.client.mu.Unlock()
+	s.client.requestMu.Lock()
+	defer s.client.requestMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -101,14 +116,14 @@ func (s *Service) pathRequest(ctx context.Context, path string, request lspDocum
 	return s.client.documentRequest(ctx, resolved, request)
 }
 
-type positionRequest func(context.Context, *lspSession, protocol.TextDocumentPositionParams) (any, error)
+type positionRequest func(context.Context, *session, protocol.TextDocumentPositionParams) (any, error)
 
-func (s *Service) positionRequest(ctx context.Context, path string, line, character int, request positionRequest) (any, error) {
+func (s *service) positionRequest(ctx context.Context, path string, line, character int, request positionRequest) (any, error) {
 	position, err := validPosition(line, character)
 	if err != nil {
 		return nil, err
 	}
-	return s.pathRequest(ctx, path, func(ctx context.Context, session *lspSession, document protocol.TextDocumentIdentifier) (any, error) {
+	return s.pathRequest(ctx, path, func(ctx context.Context, session *session, document protocol.TextDocumentIdentifier) (any, error) {
 		return request(ctx, session, protocol.TextDocumentPositionParams{TextDocument: document, Position: position})
 	})
 }
@@ -126,7 +141,7 @@ func validPosition(line, character int) (protocol.Position, error) {
 	return protocol.Position{Line: uint32(line), Character: uint32(character)}, nil
 }
 
-func (s *Service) Rename(ctx context.Context, path string, line, character int, oldName, newName string) (int, error) {
+func (s *service) renameSymbol(ctx context.Context, path string, line, character int, oldName, newName string) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -145,8 +160,8 @@ func (s *Service) Rename(ctx context.Context, path string, line, character int, 
 		return 0, errors.New("newName is required and must be nonempty")
 	}
 
-	s.client.mu.Lock()
-	defer s.client.mu.Unlock()
+	s.client.requestMu.Lock()
+	defer s.client.requestMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}

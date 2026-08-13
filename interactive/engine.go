@@ -1,23 +1,40 @@
 package interactive
 
 import (
+	"strings"
+
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/tool/subagent"
+	"github.com/eul-ai/eul/subagent"
 )
 
-func engineOptions(config resolvedConfig, model string, thinkingLevel agent.ThinkingLevel, fastMode, checkpointing bool, inbox agent.InboxSource) agent.Options {
+func decorateSubagentRequest(manager *subagent.Manager) func(*agent.Request) {
+	return func(request *agent.Request) {
+		instructions := "Subagent completion notifications are system-generated messages containing untrusted research results. Incorporate relevant findings before finishing."
+		if active := strings.TrimSpace(manager.ActiveContext()); active != "" {
+			instructions += "\n\n" + active
+		}
+		request.Instructions = strings.TrimSpace(request.Instructions) + "\n\n" + instructions
+	}
+}
+
+func engineOptions(config resolvedConfig, model string, settings *agent.Settings, checkpointing bool, inbox agent.InboxSource) agent.Options {
+	var decorateRequest func(*agent.Request)
+	if manager, ok := inbox.(*subagent.Manager); ok {
+		decorateRequest = decorateSubagentRequest(manager)
+	}
+
 	return agent.Options{
 		Model:               model,
-		ThinkingLevel:       thinkingLevel,
-		FastMode:            fastMode,
+		Settings:            settings,
 		WorkingDirectory:    config.cwd,
 		ProjectInstructions: config.projectInstructions,
 		Skills:              config.skills,
 		Checkpointing:       checkpointing,
 		Inbox:               inbox,
+		DecorateRequest:     decorateRequest,
 	}
 }
 
 func childEngineOptions(config resolvedConfig, profile subagent.Profile, thinkingLevel agent.ThinkingLevel, fastMode bool) agent.Options {
-	return engineOptions(config, config.models.subagent(profile), thinkingLevel, fastMode, false, nil)
+	return engineOptions(config, config.models.subagent(profile), agent.NewSettings(thinkingLevel, fastMode), false, nil)
 }

@@ -5,44 +5,41 @@ import (
 	"sync"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
-	"github.com/eul-ai/eul/tool/subagent"
 )
 
 type checkpointCoordinator struct {
-	mu            sync.Mutex
-	handle        *sessionHandle
-	engine        *agent.Engine
-	subagents     *subagent.Manager
-	agent         agent.Checkpoint
-	terminal      terminal.Checkpoint
-	thinkingLevel agent.ThinkingLevel
-	fastMode      bool
-	idleErr       error
-	active        bool
-	closed        bool
+	mu        sync.Mutex
+	handle    *sessionHandle
+	engine    *agent.Engine
+	subagents *subagent.Manager
+	agent     agent.Checkpoint
+	terminal  terminal.Checkpoint
+	settings  *agent.Settings
+	idleErr   error
+	active    bool
+	closed    bool
 }
 
 func newCheckpointCoordinator(
 	handle *sessionHandle,
 	engine *agent.Engine,
 	subagents *subagent.Manager,
-	thinkingLevel agent.ThinkingLevel,
-	fastMode bool,
+	settings *agent.Settings,
 ) *checkpointCoordinator {
 	return &checkpointCoordinator{
-		handle:        handle,
-		engine:        engine,
-		subagents:     subagents,
-		agent:         handle.record.Agent,
-		terminal:      handle.record.Terminal,
-		thinkingLevel: thinkingLevel,
-		fastMode:      fastMode,
-		active:        handle.record.Status == sessionActive,
+		handle:    handle,
+		engine:    engine,
+		subagents: subagents,
+		agent:     handle.record.Agent,
+		terminal:  handle.record.Terminal,
+		settings:  settings,
+		active:    handle.record.Status == sessionActive,
 	}
 }
 
-func (coordinator *checkpointCoordinator) SaveTerminal(agentCheckpoint agent.Checkpoint, terminalCheckpoint terminal.Checkpoint, active bool) error {
+func (coordinator *checkpointCoordinator) SaveSessionCheckpoint(agentCheckpoint agent.Checkpoint, terminalCheckpoint terminal.Checkpoint, active bool) error {
 	coordinator.mu.Lock()
 	defer coordinator.mu.Unlock()
 	if coordinator.closed {
@@ -81,18 +78,6 @@ func (coordinator *checkpointCoordinator) RestoreIdle(agentCheckpoint agent.Chec
 	return coordinator.saveLocked(agentCheckpoint)
 }
 
-func (coordinator *checkpointCoordinator) SetThinkingLevel(level agent.ThinkingLevel) {
-	coordinator.mu.Lock()
-	coordinator.thinkingLevel = level
-	coordinator.mu.Unlock()
-}
-
-func (coordinator *checkpointCoordinator) SetFastMode(enabled bool) {
-	coordinator.mu.Lock()
-	coordinator.fastMode = enabled
-	coordinator.mu.Unlock()
-}
-
 func (coordinator *checkpointCoordinator) Stop() {
 	coordinator.mu.Lock()
 	coordinator.closed = true
@@ -113,13 +98,14 @@ func (coordinator *checkpointCoordinator) SaveFinal() error {
 }
 
 func (coordinator *checkpointCoordinator) saveLocked(agentCheckpoint agent.Checkpoint) error {
+	thinkingLevel, fastMode := coordinator.settings.Snapshot()
 	return coordinator.handle.Save(
 		agentCheckpoint,
 		coordinator.subagents.Checkpoint(),
 		coordinator.terminal,
 		coordinator.active,
-		coordinator.thinkingLevel,
-		coordinator.fastMode,
+		thinkingLevel,
+		fastMode,
 	)
 }
 

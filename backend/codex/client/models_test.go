@@ -1,4 +1,4 @@
-package api
+package client
 
 import (
 	"encoding/json"
@@ -21,12 +21,11 @@ func TestClientReasoningSummaryAndModelMetadata(t *testing.T) {
 	if err != nil || defaultClient.reasoningSummary != ReasoningSummaryAuto {
 		t.Fatalf("default reasoning summary = %q, err = %v", defaultClient.reasoningSummary, err)
 	}
-	metadata := client.ModelMetadata("unknown")
-	if metadata.ContextWindow != 0 || metadata.FastMode || metadata.ClampThinkingLevel(agent.ThinkingXHigh) != agent.ThinkingHigh {
-		t.Fatalf("metadata = %+v", metadata)
+	if ContextWindow("unknown") != 0 || FastModeAvailable("unknown") || !slices.Equal(SupportedThinkingLevels("unknown"), []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingMinimal, agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh}) {
+		t.Fatal("unknown model metadata is invalid")
 	}
-	if metadata := client.ModelMetadata(ModelGPT56Sol); !metadata.FastMode {
-		t.Fatalf("%s metadata = %+v", ModelGPT56Sol, metadata)
+	if !FastModeAvailable(ModelGPT56Sol) {
+		t.Fatalf("%s does not support fast mode", ModelGPT56Sol)
 	}
 
 	if _, err := New(testTokenSource("token"), Options{ReasoningSummary: ReasoningSummary("verbose")}); err == nil {
@@ -53,7 +52,7 @@ func TestContextWindow(t *testing.T) {
 func TestThinkingLevelMappings(t *testing.T) {
 	allLevels := agent.ThinkingLevels()
 	for _, model := range []string{ModelGPT56Luna, ModelGPT56Terra, ModelGPT56Sol} {
-		if got := supportedThinkingLevels(model); !slices.Equal(got, allLevels) {
+		if got := SupportedThinkingLevels(model); !slices.Equal(got, allLevels) {
 			t.Fatalf("%s levels = %v, want %v", model, got, allLevels)
 		}
 	}
@@ -64,7 +63,7 @@ func TestThinkingLevelMappings(t *testing.T) {
 		agent.ThinkingMedium,
 		agent.ThinkingHigh,
 	}
-	if got := supportedThinkingLevels("unknown"); !slices.Equal(got, standardLevels) {
+	if got := SupportedThinkingLevels("unknown"); !slices.Equal(got, standardLevels) {
 		t.Fatalf("unknown model levels = %v, want %v", got, standardLevels)
 	}
 

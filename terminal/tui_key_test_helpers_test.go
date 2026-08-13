@@ -14,7 +14,7 @@ func reduceKey(model *tuiModel, key keyEvent) (tuiAction, error) {
 func handleKey(
 	ctx context.Context,
 	model *tuiModel,
-	engine Engine,
+	engine fakeEngineAPI,
 	key keyEvent,
 	messages chan<- engineMessage,
 	stopped <-chan struct{},
@@ -29,7 +29,8 @@ func handleKey(
 	controller := tuiController{
 		model:            model,
 		renderer:         renderer,
-		engine:           engine,
+		operations:       operationsFor(engine),
+		controls:         controlsFor(engine),
 		output:           io.Discard,
 		engineMessages:   messages,
 		stopped:          stopped,

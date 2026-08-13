@@ -12,8 +12,6 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/backend/codex/oauth"
-	"github.com/eul-ai/eul/interactive"
 )
 
 type providerFunction func(context.Context, agent.Request, agent.TextSink) (agent.Response, error)
@@ -45,13 +43,13 @@ func (runtime *fakeBackendRuntime) Close() error {
 	return runtime.closeErr
 }
 
-func (runtime *fakeBackendRuntime) Login(_ context.Context, method oauth.LoginMethod, interaction oauth.Interaction) error {
-	runtime.loginDevice = method == oauth.LoginDevice
-	if method == oauth.LoginDevice && interaction.DeviceCode != nil {
+func (runtime *fakeBackendRuntime) Login(_ context.Context, method backend.LoginMethod, interaction backend.LoginInteraction) error {
+	runtime.loginDevice = method == backend.LoginDevice
+	if method == backend.LoginDevice && interaction.DeviceCode != nil {
 		runtime.interactionCall = true
-		_ = interaction.DeviceCode(oauth.DeviceCode{VerificationURL: "https://example.test/device", UserCode: "ABCD-EFGH"})
+		_ = interaction.DeviceCode(backend.DeviceCode{VerificationURL: "https://example.test/device", UserCode: "ABCD-EFGH"})
 	}
-	if method == oauth.LoginBrowser && interaction.AuthURL != nil {
+	if method == backend.LoginBrowser && interaction.AuthURL != nil {
 		runtime.interactionCall = true
 		_ = interaction.AuthURL("https://example.test/authorize")
 	}
@@ -163,7 +161,7 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[strin
 		}), nil
 	}}
 	driver := &fakeBackendDriver{
-		descriptor: backend.Descriptor{ID: "test", Name: "Test Provider"},
+		descriptor: backend.Descriptor{ID: "test", Name: "Test Provider", DefaultModels: backend.ModelDefaults{Main: "gpt-5.6-sol", Fast: "gpt-5.6-luna", Balanced: "gpt-5.6-terra"}},
 		runtime:    backendRuntime,
 	}
 	backends, err := backend.NewRegistry("test", driver)
@@ -180,10 +178,7 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[strin
 		userHomeDir:   func() (string, error) { return filepath.Join(cwd, ".test-home"), nil },
 		userConfigDir: func() (string, error) { return filepath.Join(cwd, ".test-config"), nil },
 		backends:      backends,
-		providerConfigs: map[string]interactive.ProviderConfig{
-			"test": {MainModel: "gpt-5.6-sol", FastModel: "gpt-5.6-luna", BalancedModel: "gpt-5.6-terra"},
-		},
-		openURL: func(string) error { return nil },
+		openURL:       func(string) error { return nil },
 	}
 }
 

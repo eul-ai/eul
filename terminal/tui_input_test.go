@@ -391,7 +391,7 @@ func TestTUIModelCyclesSupportedThinkingLevels(t *testing.T) {
 			ThinkingLevel:  agent.ThinkingHigh,
 			ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh},
 		},
-		Commands: testCommands{setThinkingLevel: setThinkingLevel},
+		Controls: Controls{SetThinkingLevel: setThinkingLevel},
 	})
 	for _, want := range []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh} {
 		exit, err := handleModelKey(model, keyEvent{code: keyShiftTab}, setThinkingLevel)
@@ -412,7 +412,7 @@ func TestTUIModelKeepsThinkingLevelWhenUpdateFails(t *testing.T) {
 	setThinkingLevel := func(agent.ThinkingLevel) error { return errors.New("update failed") }
 	model := newTUIModel(80, 24, Options{
 		Config:   Config{ThinkingLevel: agent.ThinkingMedium},
-		Commands: testCommands{setThinkingLevel: setThinkingLevel},
+		Controls: Controls{SetThinkingLevel: setThinkingLevel},
 	})
 	exit, err := handleModelKey(model, keyEvent{code: keyShiftTab}, setThinkingLevel)
 	if err != nil || exit {

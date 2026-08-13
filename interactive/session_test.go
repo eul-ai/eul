@@ -15,8 +15,8 @@ import (
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/skill"
+	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/tool"
-	"github.com/eul-ai/eul/tool/subagent"
 )
 
 type closeRecordingTool struct {
@@ -24,24 +24,13 @@ type closeRecordingTool struct {
 	closed   int
 }
 
-type usageCapableProvider struct {
-	providerFunction
-	usage func(context.Context) (backend.AccountUsage, error)
+type closeRecordingToolSet struct {
+	tool *closeRecordingTool
 }
 
-func (provider *usageCapableProvider) Usage(ctx context.Context) (backend.AccountUsage, error) {
-	if provider.usage == nil {
-		return backend.AccountUsage{}, nil
-	}
-	return provider.usage(ctx)
-}
-
-func (*usageCapableProvider) ModelMetadata(string) backend.ModelMetadata {
-	return backend.ModelMetadata{
-		ContextWindow:  123_000,
-		ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh},
-		FastMode:       true,
-	}
+func (set closeRecordingToolSet) Tools() []tool.Tool { return []tool.Tool{set.tool} }
+func (set closeRecordingToolSet) Close() error {
+	return set.tool.Close()
 }
 
 type metadataFreeProvider struct{}
@@ -56,7 +45,7 @@ type profileMetadataProvider struct {
 	requested []string
 }
 
-func (provider *profileMetadataProvider) ModelMetadata(model string) backend.ModelMetadata {
+func (provider *profileMetadataProvider) metadataFor(model string) backend.ModelMetadata {
 	provider.requested = append(provider.requested, model)
 	return provider.metadata[model]
 }
@@ -94,61 +83,51 @@ func TestModelSelectionSelectsSubagentProfiles(t *testing.T) {
 	}
 }
 
-func TestProviderModelMetadataDefaultsToThinkingOff(t *testing.T) {
-	metadata := providerModelMetadata(metadataFreeProvider{}, "model")
+func TestRuntimeModelMetadataDefaultsToThinkingOff(t *testing.T) {
+	metadata := runtimeModelMetadata(metadataFreeBackendRuntime{}, "model")
 	if !slices.Equal(metadata.ThinkingLevels, []agent.ThinkingLevel{agent.ThinkingOff}) {
 		t.Fatalf("thinking levels = %v", metadata.ThinkingLevels)
 	}
 }
 
-func TestNewAgentSessionWiresDedicatedProviderUsage(t *testing.T) {
-	mainUsageCalls := 0
-	dedicatedUsageCalls := 0
-	mainProvider := &usageCapableProvider{
-		providerFunction: func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-			return agent.Response{}, nil
+func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
+	usageCalls := 0
+	backendRuntime := &fakeBackendRuntime{
+		newProvider: func() (agent.Provider, error) {
+			return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+				return agent.Response{}, nil
+			}), nil
+		},
+		metadata: func(string) backend.ModelMetadata {
+			return backend.ModelMetadata{
+				ContextWindow:  123_000,
+				ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh},
+				FastMode:       true,
+			}
 		},
 		usage: func(context.Context) (backend.AccountUsage, error) {
-			mainUsageCalls++
-			return backend.AccountUsage{}, nil
-		},
-	}
-	dedicatedProvider := &usageCapableProvider{
-		providerFunction: func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-			return agent.Response{}, nil
-		},
-		usage: func(context.Context) (backend.AccountUsage, error) {
-			dedicatedUsageCalls++
+			usageCalls++
 			return backend.AccountUsage{Windows: []backend.UsageWindow{{UsedPercent: 25}}}, nil
 		},
 	}
-	providerCalls := 0
-	runtime := runtime{}
-	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-		providerCalls++
-		if providerCalls == 1 {
-			return mainProvider, nil
-		}
-		return dedicatedProvider, nil
-	}}
 	cwd := t.TempDir()
 	writeTestLSPConfig(t, cwd)
 	skills := []skill.Skill{{Name: "review", Description: "Review code"}}
 	warnings := []string{"Skipped skill invalid: malformed"}
-	session, err := newAgentSession(resolvedConfig{models: modelSelection{main: "model"}, thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills, warnings: warnings}, runtime, backendRuntime)
+	session, err := newAgentSession(resolvedConfig{models: modelSelection{main: "model"}, thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills, warnings: warnings}, environment{}, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer session.finish(nil)
 	if session.terminalOptions.Services.LoadUsage == nil {
-		t.Fatal("provider usage was not wired to the terminal")
+		t.Fatal("backend usage was not wired to the terminal")
 	}
 	usage, err := session.terminalOptions.Services.LoadUsage(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if providerCalls != 2 || mainUsageCalls != 0 || dedicatedUsageCalls != 1 || len(usage.Windows) != 1 {
-		t.Fatalf("providers=%d main usage=%d dedicated usage=%d result=%+v", providerCalls, mainUsageCalls, dedicatedUsageCalls, usage)
+	if usageCalls != 1 || len(usage.Windows) != 1 {
+		t.Fatalf("usage calls=%d result=%+v", usageCalls, usage)
 	}
 	if session.terminalOptions.Events.SubagentUpdates == nil {
 		t.Fatal("subagent status was not wired to the terminal")
@@ -168,72 +147,20 @@ func TestNewAgentSessionWiresDedicatedProviderUsage(t *testing.T) {
 }
 
 func TestNewAgentSessionRejectsUnsupportedFastMode(t *testing.T) {
-	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
+	configured := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return metadataFreeProvider{}, nil
 	}}
+	backendRuntime := metadataFreeBackendRuntime{Runtime: configured}
 	session, err := newAgentSession(resolvedConfig{
 		models:   modelSelection{main: "model"},
 		fastMode: true,
 		cwd:      t.TempDir(),
-	}, runtime{}, backendRuntime)
+	}, environment{}, backendRuntime)
 	if session != nil || err == nil || !strings.Contains(err.Error(), "fast mode is unavailable") {
 		t.Fatalf("session=%v error=%v", session, err)
 	}
-	if backendRuntime.closeCalls != 1 {
-		t.Fatalf("backend close calls = %d", backendRuntime.closeCalls)
-	}
-}
-
-func TestNewAgentSessionWarnsWhenDedicatedUsageProviderIsUnavailable(t *testing.T) {
-	for _, test := range []struct {
-		name      string
-		dedicated func() (agent.Provider, error)
-		want      string
-	}{
-		{
-			name: "creation failure",
-			dedicated: func() (agent.Provider, error) {
-				return nil, errors.New("usage client failed")
-			},
-			want: "Account usage is unavailable: usage client failed",
-		},
-		{
-			name: "missing capability",
-			dedicated: func() (agent.Provider, error) {
-				return metadataFreeProvider{}, nil
-			},
-			want: "Account usage is unavailable: dedicated provider does not support usage",
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			providerCalls := 0
-			backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-				providerCalls++
-				if providerCalls == 1 {
-					return &usageCapableProvider{providerFunction: func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-						return agent.Response{}, nil
-					}}, nil
-				}
-				return test.dedicated()
-			}}
-			session, err := newAgentSession(resolvedConfig{
-				models:   modelSelection{main: "model"},
-				cwd:      t.TempDir(),
-				warnings: []string{"existing warning"},
-			}, runtime{newToolset: func(_ string, _ toolAccess, _ bool, _ tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
-				return tool.NewRegistry(additional)
-			}}, backendRuntime)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer session.finish(nil)
-			if session.terminalOptions.Services.LoadUsage != nil {
-				t.Fatal("provider usage was enabled")
-			}
-			if providerCalls != 2 || !slices.Equal(session.terminalOptions.Config.Warnings, []string{"existing warning", test.want}) {
-				t.Fatalf("providers=%d warnings=%q", providerCalls, session.terminalOptions.Config.Warnings)
-			}
-		})
+	if configured.closeCalls != 1 {
+		t.Fatalf("backend close calls = %d", configured.closeCalls)
 	}
 }
 
@@ -248,10 +175,13 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 			"balanced": {ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingHigh}},
 		},
 	}
-	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-		return provider, nil
-	}}
-	runtime := runtime{newToolset: func(_ string, _ toolAccess, _ bool, _ tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
+	backendRuntime := &fakeBackendRuntime{
+		newProvider: func() (agent.Provider, error) {
+			return provider, nil
+		},
+		metadata: provider.metadataFor,
+	}
+	runtime := environment{newToolset: func(_ string, _ toolAccess, _ bool, _ tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
 		return tool.NewRegistry(additional)
 	}}
 	session, err := newAgentSession(resolvedConfig{
@@ -287,7 +217,7 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 }
 
 func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
-	runtime := runtime{}
+	runtime := environment{}
 	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
 			return agent.Response{}, nil
@@ -319,7 +249,7 @@ func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	cwd := t.TempDir()
 	var requests []agent.Request
-	runtime := runtime{
+	runtime := environment{
 		stdin:  strings.NewReader(""),
 		stdout: io.Discard,
 		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error) {
@@ -347,15 +277,11 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	if _, err := first.engine.Run(context.Background(), "first prompt", func(agent.Event) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	agentCheckpoint, err := first.engine.Checkpoint()
-	if err != nil {
-		t.Fatal(err)
-	}
 	terminalCheckpoint := sessionStoreTestTerminalCheckpoint(t, "first prompt")
-	if err := first.terminalCommands.SaveCheckpoint(agentCheckpoint, terminalCheckpoint, false); err != nil {
+	if err := first.terminalOptions.Checkpoints.Save(terminalCheckpoint, false); err != nil {
 		t.Fatal(err)
 	}
-	sessionID := first.persistence.record.ID
+	sessionID := first.persistence.handle.record.ID
 	if err := first.finish(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +297,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	if second.terminalOptions.Config.InitialCheckpoint == nil || second.terminalOptions.Config.InitialCheckpoint.Description() != "first prompt" {
 		t.Fatalf("terminal checkpoint = %+v", second.terminalOptions.Config.InitialCheckpoint)
 	}
-	summaries, warnings, err := second.terminalCommands.ListSessions(context.Background())
+	summaries, warnings, err := second.terminalOptions.Sessions.List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +321,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 
 func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 	cwd := t.TempDir()
-	runtime := runtime{
+	runtime := environment{
 		stdin:  strings.NewReader(""),
 		stdout: io.Discard,
 		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error) {
@@ -414,17 +340,17 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.finish(nil)
-	if err := session.terminalCommands.SaveCheckpoint(sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "prompt"), false); err != nil {
+	if err := session.terminalOptions.Checkpoints.Save(sessionStoreTestTerminalCheckpoint(t, "prompt"), false); err != nil {
 		t.Fatal(err)
 	}
-	launch := subagent.NewLaunchTool(session.subagents)
+	launch := tool.NewSubagent(session.subagents)
 	if _, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`), nil); err != nil {
 		t.Fatal(err)
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		record, err := readSessionRecord(session.persistence.path)
+		record, err := readSessionRecord(session.persistence.handle.path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -444,7 +370,7 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 
 func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testing.T) {
 	cwd := t.TempDir()
-	runtime := runtime{
+	runtime := environment{
 		stdin:  strings.NewReader(""),
 		stdout: io.Discard,
 		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error) {
@@ -466,24 +392,24 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	launch := subagent.NewLaunchTool(first.subagents)
+	launch := tool.NewSubagent(first.subagents)
 	if _, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"running","prompt":"running"}]}`), nil); err != nil {
 		t.Fatal(err)
 	}
 	terminalCheckpoint := sessionStoreTestTerminalCheckpoint(t, "active prompt")
-	if err := first.terminalCommands.SaveCheckpoint(sessionStoreTestAgentCheckpoint(t), terminalCheckpoint, true); err != nil {
+	if err := first.terminalOptions.Checkpoints.Save(terminalCheckpoint, true); err != nil {
 		t.Fatal(err)
 	}
-	sessionID := first.persistence.record.ID
-	first.checkpoints.Stop()
+	sessionID := first.persistence.handle.record.ID
+	first.persistence.checkpoints.Stop()
 	if err := first.subagents.Close(); err != nil {
 		t.Fatal(err)
 	}
-	<-first.checkpointDone
+	<-first.persistence.changesDone
 	if err := first.tools.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := first.checkpoints.Close(); err != nil {
+	if err := first.persistence.checkpoints.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if err := closeBackendRuntime(first.backendRuntime); err != nil {
@@ -533,7 +459,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 		}), nil
 	}}
 	alternateDriver := &fakeBackendDriver{
-		descriptor: backend.Descriptor{ID: "alternate", Name: "Alternate"},
+		descriptor: backend.Descriptor{ID: "alternate", Name: "Alternate", DefaultModels: backend.ModelDefaults{Main: "alternate-model"}},
 		runtime:    alternateRuntime,
 	}
 	registry, err := backend.NewRegistry("test", defaultDriver, alternateDriver)
@@ -541,7 +467,6 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime.backends = registry
-	runtime.providerConfigs["alternate"] = ProviderConfig{MainModel: "alternate-model"}
 	store := newSessionStore(t.TempDir())
 
 	config, handle, selected, err := resolveInitialSession(context.Background(), Options{
@@ -565,14 +490,10 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agentCheckpoint, err := session.engine.Checkpoint()
-	if err != nil {
+	if err := session.terminalOptions.Checkpoints.Save(sessionStoreTestTerminalCheckpoint(t, "saved prompt"), false); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.terminalCommands.SaveCheckpoint(agentCheckpoint, sessionStoreTestTerminalCheckpoint(t, "saved prompt"), false); err != nil {
-		t.Fatal(err)
-	}
-	sessionID := session.persistence.record.ID
+	sessionID := session.persistence.handle.record.ID
 	if err := session.finish(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -630,7 +551,7 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 
 func TestNewAgentSessionReportsToolsetConfigurationFailure(t *testing.T) {
 	configureErr := errors.New("toolset failed")
-	runtime := runtime{
+	runtime := environment{
 		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error) {
 			return nil, configureErr
 		},
@@ -654,7 +575,7 @@ func TestFinishRegistryClosesToolsAndPreservesRunError(t *testing.T) {
 	runErr := context.Canceled
 	closeErr := errors.New("close failed")
 	closer := &closeRecordingTool{closeErr: closeErr}
-	registry, err := tool.NewRegistry([]tool.Tool{closer})
+	registry, err := tool.NewRegistry(nil, closeRecordingToolSet{tool: closer})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -670,7 +591,7 @@ func TestFinishRegistryClosesToolsAndPreservesRunError(t *testing.T) {
 
 func TestAgentSessionFinishClosesOwnedRegistry(t *testing.T) {
 	closer := &closeRecordingTool{}
-	registry, err := tool.NewRegistry([]tool.Tool{closer})
+	registry, err := tool.NewRegistry(nil, closeRecordingToolSet{tool: closer})
 	if err != nil {
 		t.Fatal(err)
 	}

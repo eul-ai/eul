@@ -13,18 +13,18 @@ import (
 	"github.com/eul-ai/eul/tool/textfile"
 )
 
-func (s *Service) rename(ctx context.Context, path string, hint protocol.Position, oldName, newName string) (int, error) {
+func (s *service) rename(ctx context.Context, path string, hint protocol.Position, oldName, newName string) (int, error) {
 	document, err := textfile.Load(path)
 	if err != nil {
 		return 0, err
 	}
-	position, err := resolveLSPRenamePosition(document.Data, hint, oldName)
+	position, err := resolveRenamePosition(document.Data, hint, oldName)
 	if err != nil {
 		return 0, err
 	}
 
-	var watcher *lspWatchManager
-	response, err := s.client.documentSnapshotRequest(ctx, document, func(ctx context.Context, session *lspSession, document protocol.TextDocumentIdentifier) (any, error) {
+	var watcher *watchManager
+	response, err := s.client.documentSnapshotRequest(ctx, document, func(ctx context.Context, session *session, document protocol.TextDocumentIdentifier) (any, error) {
 		watcher = session.client.watcher
 		params := protocol.TextDocumentPositionParams{TextDocument: document, Position: position}
 		return renameSymbol(ctx, session, params, newName)
@@ -36,10 +36,10 @@ func (s *Service) rename(ctx context.Context, path string, hint protocol.Positio
 	if !ok {
 		return 0, unexpectedRenameResponse(response)
 	}
-	return applyLSPWorkspaceEdit(ctx, watcher, workspaceEdit, document)
+	return applyWorkspaceEdit(ctx, watcher, workspaceEdit, document)
 }
 
-func renameSymbol(ctx context.Context, session *lspSession, params protocol.TextDocumentPositionParams, newName string) (*protocol.WorkspaceEdit, error) {
+func renameSymbol(ctx context.Context, session *session, params protocol.TextDocumentPositionParams, newName string) (*protocol.WorkspaceEdit, error) {
 	if !session.renameSupported {
 		return nil, errors.New("language server does not support rename")
 	}
@@ -58,7 +58,7 @@ func renameSymbol(ctx context.Context, session *lspSession, params protocol.Text
 	})
 }
 
-func resolveLSPRenamePosition(content []byte, hint protocol.Position, oldName string) (protocol.Position, error) {
+func resolveRenamePosition(content []byte, hint protocol.Position, oldName string) (protocol.Position, error) {
 	if strings.ContainsAny(oldName, "\r\n") {
 		return protocol.Position{}, errors.New("oldName must be a single-line identifier")
 	}

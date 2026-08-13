@@ -1,4 +1,4 @@
-package tool
+package lsp
 
 import (
 	"bytes"
@@ -6,14 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"unicode/utf8"
 
 	"go.lsp.dev/protocol"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/tool/lsp"
+	"github.com/eul-ai/eul/tool"
 )
 
 const (
@@ -31,7 +30,7 @@ var (
 	lspDiagnosticsToolDefinition = agent.ToolDefinition{
 		Name:        lspDiagnosticsToolName,
 		Description: "Return current language-server diagnostics for a source file.",
-		Parameters: strictObject(map[string]agent.JSONSchema{
+		Parameters: tool.StrictObject(map[string]agent.JSONSchema{
 			"path": {Type: "string", Description: "Source file path, relative to the session working directory or absolute."},
 		}, "path"),
 	}
@@ -48,30 +47,30 @@ var (
 	lspReferencesToolDefinition = agent.ToolDefinition{
 		Name:        lspReferencesToolName,
 		Description: "Return language-server reference locations for the symbol at a source position.",
-		Parameters: strictObject(map[string]agent.JSONSchema{
-			"path":               {Type: "string", Description: "Source file path, relative to the session working directory or absolute."},
-			"line":               {Type: "integer", Description: "Zero-based line number."},
-			"character":          {Type: "integer", Description: "Zero-based UTF-16 character offset."},
-			"includeDeclaration": {Type: "boolean", Description: "Whether to include the symbol declaration; defaults to false."},
+		Parameters: tool.StrictObject(map[string]agent.JSONSchema{
+			"path":                {Type: "string", Description: "Source file path, relative to the session working directory or absolute."},
+			"line":                {Type: "integer", Description: "Zero-based line number."},
+			"character":           {Type: "integer", Description: "Zero-based UTF-16 character offset."},
+			"include_declaration": {Type: "boolean", Description: "Whether to include the symbol declaration; defaults to false."},
 		}, "path", "line", "character"),
 	}
 	lspSymbolsToolDefinition = agent.ToolDefinition{
 		Name:        lspSymbolsToolName,
 		Description: "Return language-server document symbols for a source file.",
-		Parameters: strictObject(map[string]agent.JSONSchema{
+		Parameters: tool.StrictObject(map[string]agent.JSONSchema{
 			"path": {Type: "string", Description: "Source file path, relative to the session working directory or absolute."},
 		}, "path"),
 	}
 	lspRenameToolDefinition = agent.ToolDefinition{
 		Name:        lspRenameToolName,
 		Description: "Rename the symbol at a source position and apply the language-server workspace edits.",
-		Parameters: strictObject(map[string]agent.JSONSchema{
+		Parameters: tool.StrictObject(map[string]agent.JSONSchema{
 			"path":      {Type: "string", Description: "Source file path, relative to the session working directory or absolute."},
-			"line":      {Type: "integer", Description: "Approximate zero-based line used to disambiguate oldName."},
-			"character": {Type: "integer", Description: "Approximate zero-based UTF-16 character offset used to disambiguate oldName."},
-			"oldName":   {Type: "string", Description: "Current symbol name."},
-			"newName":   {Type: "string", Description: "New symbol name."},
-		}, "path", "line", "character", "oldName", "newName"),
+			"line":      {Type: "integer", Description: "Approximate zero-based line used to disambiguate old_name."},
+			"character": {Type: "integer", Description: "Approximate zero-based UTF-16 character offset used to disambiguate old_name."},
+			"old_name":  {Type: "string", Description: "Current symbol name."},
+			"new_name":  {Type: "string", Description: "New symbol name."},
+		}, "path", "line", "character", "old_name", "new_name"),
 	}
 )
 
@@ -87,7 +86,7 @@ const (
 )
 
 type lspTool struct {
-	service    *lsp.Service
+	service    *service
 	definition agent.ToolDefinition
 	operation  lspOperation
 }
@@ -106,27 +105,22 @@ type lspReferencesArguments struct {
 	Path               string `json:"path"`
 	Line               *int   `json:"line"`
 	Character          *int   `json:"character"`
-	IncludeDeclaration bool   `json:"includeDeclaration"`
+	IncludeDeclaration bool   `json:"include_declaration"`
 }
 
 type lspRenameArguments struct {
 	Path      string `json:"path"`
 	Line      *int   `json:"line"`
 	Character *int   `json:"character"`
-	OldName   string `json:"oldName"`
-	NewName   string `json:"newName"`
+	OldName   string `json:"old_name"`
+	NewName   string `json:"new_name"`
 }
 
-func NewLSP(cwd, home string, includeRename bool) ([]Tool, io.Closer, error) {
-	service, err := lsp.New(cwd, home)
-	if err != nil {
-		return nil, nil, err
+func newTools(service *service, includeRename bool) []tool.Tool {
+	if !service.available() {
+		return nil
 	}
-	if !service.Available() {
-		return nil, service, nil
-	}
-
-	tools := []Tool{
+	tools := []tool.Tool{
 		&lspTool{service: service, definition: lspDiagnosticsToolDefinition, operation: lspDiagnostics},
 		&lspTool{service: service, definition: lspHoverToolDefinition, operation: lspHover},
 		&lspTool{service: service, definition: lspDefinitionToolDefinition, operation: lspDefinition},
@@ -136,23 +130,23 @@ func NewLSP(cwd, home string, includeRename bool) ([]Tool, io.Closer, error) {
 	if includeRename {
 		tools = append(tools, &lspTool{service: service, definition: lspRenameToolDefinition, operation: lspRename})
 	}
-	return tools, service, nil
+	return tools
 }
 
 func (t *lspTool) Definition() agent.ToolDefinition {
 	return t.definition
 }
 
-func (t *lspTool) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
+func (t *lspTool) Presentation(snapshot tool.PresentationSnapshot) agent.ToolPresentation {
 	presentation := agent.ToolPresentation{Title: t.definition.Name}
 	switch t.operation {
 	case lspDiagnostics:
 		presentation.Arguments, _ = snapshot.Arguments["path"].(string)
 	case lspRename:
-		oldName, _ := snapshot.Arguments["oldName"].(string)
-		newName, _ := snapshot.Arguments["newName"].(string)
-		if oldName != "" && newName != "" {
-			presentation.Arguments = oldName + " → " + newName
+		old_name, _ := snapshot.Arguments["old_name"].(string)
+		new_name, _ := snapshot.Arguments["new_name"].(string)
+		if old_name != "" && new_name != "" {
+			presentation.Arguments = old_name + " → " + new_name
 		}
 	}
 	return presentation
@@ -176,23 +170,23 @@ func (t *lspTool) Execute(ctx context.Context, arguments json.RawMessage, _ agen
 func (t *lspTool) execute(ctx context.Context, arguments json.RawMessage) (agent.ToolResult, error) {
 	switch t.operation {
 	case lspDiagnostics, lspSymbols:
-		args, err := decodeArguments[lspPathArguments](arguments)
+		args, err := tool.DecodeArguments[lspPathArguments](arguments)
 		if err != nil {
 			return agent.ToolResult{}, err
 		}
 		var response any
 		switch t.operation {
 		case lspDiagnostics:
-			response, err = t.service.Diagnostics(ctx, args.Path)
+			response, err = t.service.diagnostics(ctx, args.Path)
 		case lspSymbols:
-			response, err = t.service.Symbols(ctx, args.Path)
+			response, err = t.service.symbols(ctx, args.Path)
 		}
 		if err != nil {
 			return agent.ToolResult{}, err
 		}
 		return formatLSPResult(response)
 	case lspHover, lspDefinition:
-		args, err := decodeArguments[lspPositionArguments](arguments)
+		args, err := tool.DecodeArguments[lspPositionArguments](arguments)
 		if err != nil {
 			return agent.ToolResult{}, err
 		}
@@ -203,16 +197,16 @@ func (t *lspTool) execute(ctx context.Context, arguments json.RawMessage) (agent
 		var response any
 		switch t.operation {
 		case lspHover:
-			response, err = t.service.Hover(ctx, args.Path, line, character)
+			response, err = t.service.hover(ctx, args.Path, line, character)
 		case lspDefinition:
-			response, err = t.service.Definition(ctx, args.Path, line, character)
+			response, err = t.service.definition(ctx, args.Path, line, character)
 		}
 		if err != nil {
 			return agent.ToolResult{}, err
 		}
 		return formatLSPResult(response)
 	case lspReferences:
-		args, err := decodeArguments[lspReferencesArguments](arguments)
+		args, err := tool.DecodeArguments[lspReferencesArguments](arguments)
 		if err != nil {
 			return agent.ToolResult{}, err
 		}
@@ -220,13 +214,13 @@ func (t *lspTool) execute(ctx context.Context, arguments json.RawMessage) (agent
 		if err != nil {
 			return agent.ToolResult{}, err
 		}
-		response, err := t.service.References(ctx, args.Path, line, character, args.IncludeDeclaration)
+		response, err := t.service.references(ctx, args.Path, line, character, args.IncludeDeclaration)
 		if err != nil {
 			return agent.ToolResult{}, err
 		}
 		return formatLSPResult(response)
 	case lspRename:
-		args, err := decodeArguments[lspRenameArguments](arguments)
+		args, err := tool.DecodeArguments[lspRenameArguments](arguments)
 		if err != nil {
 			return agent.ToolResult{}, err
 		}
@@ -234,7 +228,7 @@ func (t *lspTool) execute(ctx context.Context, arguments json.RawMessage) (agent
 		if err != nil {
 			return agent.ToolResult{}, err
 		}
-		changed, err := t.service.Rename(ctx, args.Path, line, character, args.OldName, args.NewName)
+		changed, err := t.service.renameSymbol(ctx, args.Path, line, character, args.OldName, args.NewName)
 		if err != nil {
 			return agent.ToolResult{}, err
 		}
@@ -255,7 +249,7 @@ func lspPosition(line, character *int) (int, int, error) {
 }
 
 func lspPositionSchema() agent.JSONSchema {
-	return strictObject(map[string]agent.JSONSchema{
+	return tool.StrictObject(map[string]agent.JSONSchema{
 		"path":      {Type: "string", Description: "Source file path, relative to the session working directory or absolute."},
 		"line":      {Type: "integer", Description: "Zero-based line number."},
 		"character": {Type: "integer", Description: "Zero-based UTF-16 character offset."},

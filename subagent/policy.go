@@ -14,7 +14,7 @@ const (
 func NewFinalizationPolicy(onBegin func()) agent.FinalizationPolicy {
 	return agent.FinalizationPolicy{
 		AfterDuration:    finalizeAfterDuration,
-		AfterGenerations: GenerationLimit,
+		AfterGenerations: generationLimit,
 		Prompt:           finalizationPrompt,
 		OnBegin: func(agent.FinalizationReason) {
 			onBegin()

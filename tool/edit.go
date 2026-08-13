@@ -15,7 +15,7 @@ const editToolName = "edit"
 var editToolDefinition = agent.ToolDefinition{
 	Name:        editToolName,
 	Description: "Replace nonempty oldText exactly once in a UTF-8 text file. Read the file first when its exact contents are uncertain.",
-	Parameters: strictObject(map[string]agent.JSONSchema{
+	Parameters: StrictObject(map[string]agent.JSONSchema{
 		"path":    {Type: "string", Description: "File path, relative to the session working directory or absolute."},
 		"oldText": {Type: "string", Description: "Nonempty exact text that must occur once."},
 		"newText": {Type: "string", Description: "Replacement text, which may be empty."},
@@ -57,7 +57,7 @@ func (e *Edit) Execute(ctx context.Context, arguments json.RawMessage, updates a
 		return agent.ToolResult{}, err
 	}
 
-	args, err := decodeArguments[editArguments](arguments)
+	args, err := DecodeArguments[editArguments](arguments)
 	if err != nil {
 		return errorResult(editToolName, err), nil
 	}

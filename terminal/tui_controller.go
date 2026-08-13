@@ -2,15 +2,13 @@ package terminal
 
 import (
 	"context"
-	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 
 	"golang.org/x/term"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/terminal/clipboard"
+	"github.com/eul-ai/eul/subagent"
 )
 
 type tuiEventKind uint8
@@ -36,7 +34,7 @@ type tuiEvent struct {
 	key            keyEvent
 	engine         engineMessage
 	providerUsage  providerUsageMessage
-	subagentStatus SubagentStatus
+	subagentStatus subagent.Status
 	permission     PermissionRequest
 	image          agent.Image
 	requestID      uint64
@@ -44,10 +42,22 @@ type tuiEvent struct {
 	err            error
 }
 
+type controllerEngine interface {
+	RunContent(context.Context, []agent.ContentPart, agent.EventSink) (agent.RunResult, error)
+	Compact(context.Context, agent.EventSink) error
+	Steer(string) bool
+	ClearSteering() []string
+	SetGoal(string) error
+	Goal() (agent.GoalState, bool)
+	ClearGoal()
+}
+
 type tuiController struct {
 	model              *tuiModel
 	renderer           *tuiRenderer
-	engine             Engine
+	engine             controllerEngine
+	operations         Operations
+	controls           Controls
 	output             io.Writer
 	outputFD           int
 	engineMessages     chan<- engineMessage
@@ -57,7 +67,7 @@ type tuiController struct {
 	usageRequests      chan<- struct{}
 	setThinkingLevel   func(agent.ThinkingLevel) error
 	setFastMode        func(bool) error
-	saveCheckpoint     func(agent.Checkpoint, Checkpoint, bool) error
+	saveCheckpoint     func(Checkpoint, bool) error
 	listSessions       func(context.Context) ([]SessionSummary, []string, error)
 	readClipboardImage func(context.Context) (agent.Image, error)
 	clipboardImages    chan<- tuiEvent
@@ -75,6 +85,7 @@ type tuiController struct {
 }
 
 func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, error) {
+	c.prepareCallbacks()
 	c.model.steeringView = &c.steering
 
 	switch event.kind {
@@ -108,6 +119,36 @@ func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, e
 
 	c.dirty = true
 	return false, nil
+}
+
+func (c *tuiController) prepareCallbacks() {
+	if c.engine == nil {
+		return
+	}
+	if c.operations.RunTurn == nil {
+		c.operations.RunTurn = func(ctx context.Context, content []agent.ContentPart, sink agent.EventSink) error {
+			_, err := c.engine.RunContent(ctx, content, sink)
+			return err
+		}
+	}
+	if c.operations.Compact == nil {
+		c.operations.Compact = c.engine.Compact
+	}
+	if c.controls.Steer == nil {
+		c.controls.Steer = c.engine.Steer
+	}
+	if c.controls.ClearSteering == nil {
+		c.controls.ClearSteering = c.engine.ClearSteering
+	}
+	if c.controls.SetGoal == nil {
+		c.controls.SetGoal = c.engine.SetGoal
+	}
+	if c.controls.Goal == nil {
+		c.controls.Goal = c.engine.Goal
+	}
+	if c.controls.ClearGoal == nil {
+		c.controls.ClearGoal = c.engine.ClearGoal
+	}
 }
 
 func (c *tuiController) handleParentCanceled(parentErr error) (bool, error) {
@@ -210,7 +251,7 @@ func (c *tuiController) handleEngineMessage(ctx context.Context, message engineM
 
 	interrupted := c.model.interrupted
 	if interrupted || message.err != nil {
-		c.model.restoreSteering(c.steering.restore(c.engine))
+		c.model.restoreSteering(c.steering.restore(c.controls.ClearSteering))
 	}
 	c.model.finishTurn(message.err)
 	if err := c.saveCurrentCheckpoint(false); err != nil {
@@ -240,7 +281,7 @@ func (c *tuiController) handleAgentEvent(message engineMessage) (bool, error) {
 		c.model.activity = activity{kind: activityPermission}
 	}
 	if message.ack != nil {
-		err := c.saveAgentCheckpoint(message.event.Checkpoint, true)
+		err := c.saveCurrentCheckpoint(true)
 		message.ack <- err
 		if err != nil {
 			return false, err
@@ -260,22 +301,22 @@ func (c *tuiController) handleProviderUsage(message providerUsageMessage) (bool,
 	return false, nil
 }
 
-func (c *tuiController) handleSubagentStatus(status SubagentStatus) (bool, error) {
+func (c *tuiController) handleSubagentStatus(status subagent.Status) (bool, error) {
 	c.model.subagentStatus = sanitizeSubagentStatus(status)
 	c.dirty = true
 	return false, nil
 }
 
-func sanitizeSubagentStatus(status SubagentStatus) SubagentStatus {
-	sanitized := SubagentStatus{
-		Running:    max(0, status.Running),
-		Finalizing: max(0, status.Finalizing),
-		Active:     make([]SubagentJobStatus, 0, len(status.Active)),
-		Awaiting:   make([]SubagentCompletionStatus, 0, len(status.Awaiting)),
+func sanitizeSubagentStatus(status subagent.Status) subagent.Status {
+	sanitized := subagent.Status{
+		Running:            max(0, status.Running),
+		Finalizing:         max(0, status.Finalizing),
+		Active:             make([]subagent.JobStatus, 0, len(status.Active)),
+		PendingCompletions: make([]subagent.Completion, 0, len(status.PendingCompletions)),
 	}
 	for _, job := range status.Active {
 		switch job.State {
-		case SubagentRunning, SubagentFinalizing, SubagentCanceling:
+		case subagent.StateRunning, subagent.StateFinalizing, subagent.StateCanceling:
 			job.ID = singleLine(job.ID, 120)
 			job.Task = singleLine(job.Task, 120)
 			job.Generations = max(0, job.Generations)
@@ -283,68 +324,15 @@ func sanitizeSubagentStatus(status SubagentStatus) SubagentStatus {
 			sanitized.Active = append(sanitized.Active, job)
 		}
 	}
-	for _, completion := range status.Awaiting {
-		switch completion.State {
-		case SubagentComplete, SubagentFailed, SubagentCanceled, SubagentInterrupted:
+	for _, completion := range status.PendingCompletions {
+		switch completion.Status {
+		case subagent.StateComplete, subagent.StateFailed, subagent.StateCanceled, subagent.StateInterrupted:
 			completion.SubagentID = singleLine(completion.SubagentID, 120)
 			completion.Task = singleLine(completion.Task, 120)
-			sanitized.Awaiting = append(sanitized.Awaiting, completion)
+			sanitized.PendingCompletions = append(sanitized.PendingCompletions, completion)
 		}
 	}
 	return sanitized
-}
-
-func (c *tuiController) handlePermission(request PermissionRequest) (bool, error) {
-	if request.Response == nil {
-		return false, nil
-	}
-	if !c.model.running || c.model.interrupted || c.model.activity.kind == activityCanceling {
-		respondPermission(request, false)
-		return false, nil
-	}
-	if c.permission != nil {
-		c.queuedPermissions = append(c.queuedPermissions, request)
-		c.model.permission.total++
-		c.dirty = true
-		return false, nil
-	}
-
-	c.permission = &request
-	c.model.showPermission(request, 1, 1)
-	c.dirty = true
-	return false, nil
-}
-
-func (c *tuiController) handleClipboardImage(requestID uint64, image agent.Image, err error) (bool, error) {
-	cancel, active := c.clipboardRequests[requestID]
-	if !active {
-		return false, nil
-	}
-	if c.model.running {
-		cancel()
-		delete(c.clipboardRequests, requestID)
-		c.model.removePendingImage(requestID)
-		return false, nil
-	}
-	cancel()
-	delete(c.clipboardRequests, requestID)
-
-	if err == nil {
-		err = clipboard.ValidateImage(image)
-	}
-	if err != nil {
-		if c.model.removePendingImage(requestID) {
-			setInputError(c.model, err)
-			c.dirty = true
-		}
-		return false, nil
-	}
-	if err := c.model.resolveImage(requestID, image); err != nil {
-		c.model.removePendingImage(requestID)
-		setInputError(c.model, err)
-	}
-	c.dirty = true
-	return false, nil
 }
 
 func (c *tuiController) handleFileSearch(result fileSearchResult) (bool, error) {
@@ -382,345 +370,4 @@ func (c *tuiController) handleRender() (bool, error) {
 	}
 	c.forceRedraw = false
 	return false, nil
-}
-
-func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool, error) {
-	switch action.kind {
-	case tuiActionNone:
-		return false, nil
-	case tuiActionHelp:
-		c.model.appendBlock(blockInfo, commandHelpText(c.model.fastModeAvailable))
-		if c.model.running {
-			return false, nil
-		}
-		return false, c.saveCurrentCheckpoint(false)
-	case tuiActionOpenResume:
-		if c.listSessions == nil {
-			setInputError(c.model, errors.New("session resumption is unavailable"))
-			return false, nil
-		}
-		summaries, warnings, err := c.listSessions(ctx)
-		if err != nil {
-			setInputError(c.model, err)
-			return false, nil
-		}
-		for _, warning := range warnings {
-			c.model.appendBlock(blockInfo, warning)
-		}
-		c.model.openResumePicker(summaries)
-	case tuiActionResume:
-		c.cancelClipboardRequests()
-		if err := c.saveCurrentCheckpoint(false); err != nil {
-			return false, err
-		}
-		c.outcome = RunOutcome{Action: RunResumeSession, SessionID: action.text}
-		return true, nil
-	case tuiActionNewSession:
-		c.cancelClipboardRequests()
-		if err := c.saveCurrentCheckpoint(false); err != nil {
-			return false, err
-		}
-		c.outcome = RunOutcome{Action: RunNewSession}
-		return true, nil
-	case tuiActionCancel:
-		c.interruptTurn()
-	case tuiActionCompact:
-		return false, c.startCompaction(ctx)
-	case tuiActionToggleFast:
-		if !c.model.fastModeAvailable || c.setFastMode == nil {
-			setInputError(c.model, errors.New("fast mode is unavailable for this model"))
-			return false, nil
-		}
-		if err := c.setFastMode(!c.model.fastMode); err != nil {
-			setInputError(c.model, err)
-			return false, nil
-		}
-		c.model.fastMode = !c.model.fastMode
-		state := "off"
-		if c.model.fastMode {
-			state = "on"
-		}
-		c.model.appendBlock(blockInfo, "Fast mode "+state)
-		if c.model.running {
-			return false, nil
-		}
-		return false, c.saveCurrentCheckpoint(false)
-	case tuiActionExit:
-		c.cancelClipboardRequests()
-		if !c.model.running {
-			if err := c.saveCurrentCheckpoint(false); err != nil {
-				return false, err
-			}
-		}
-		return true, nil
-	case tuiActionSubmit:
-		if err := c.startTurn(ctx, action.content); err != nil {
-			return false, err
-		}
-		c.cancelClipboardRequests()
-		c.model.finishSubmission(action.content)
-	case tuiActionSteer:
-		c.steering.enqueue(c.engine, action.prompt)
-		c.model.conversationVersion++
-	case tuiActionShowGoal:
-		goal, ok := c.engine.Goal()
-		switch {
-		case !ok:
-			c.model.appendBlock(blockInfo, "No goal is set")
-		case goal.Complete:
-			c.model.appendBlock(blockInfo, "Goal complete: "+goal.Objective)
-		default:
-			c.model.appendBlock(blockInfo, "Goal: "+goal.Objective)
-		}
-		if c.model.running {
-			return false, nil
-		}
-		return false, c.saveCurrentCheckpoint(false)
-	case tuiActionSetGoal:
-		if err := c.engine.SetGoal(action.prompt); err != nil {
-			setInputError(c.model, err)
-			return false, nil
-		}
-		if c.model.running {
-			c.model.appendBlock(blockInfo, "Goal set: "+action.prompt)
-			return false, nil
-		}
-		return false, c.startTurn(ctx, []agent.ContentPart{{Kind: agent.ContentPartText, Text: action.prompt}})
-	case tuiActionClearGoal:
-		_, hadGoal := c.engine.Goal()
-		c.engine.ClearGoal()
-		if hadGoal {
-			c.model.appendBlock(blockInfo, "Goal cleared")
-		} else {
-			c.model.appendBlock(blockInfo, "No goal is set")
-		}
-		if !c.model.running {
-			return false, c.saveCurrentCheckpoint(false)
-		}
-	case tuiActionDequeue:
-		c.restoreQueuedInput()
-	case tuiActionSetThinking:
-		if c.setThinkingLevel == nil {
-			setInputError(c.model, errors.New("thinking level selection is unavailable"))
-			return false, nil
-		}
-		if err := c.setThinkingLevel(action.thinkingLevel); err != nil {
-			setInputError(c.model, err)
-			return false, nil
-		}
-		c.model.thinkingLevel = action.thinkingLevel
-		if c.model.running {
-			return false, nil
-		}
-		return false, c.saveCurrentCheckpoint(false)
-	case tuiActionAttachImage:
-		if c.readClipboardImage == nil || c.clipboardImages == nil {
-			setInputError(c.model, errors.New("clipboard images are unavailable"))
-			return false, nil
-		}
-		if c.model.imageCount()+len(c.clipboardRequests) >= maxAttachedImages {
-			setInputError(c.model, errTooManyImages)
-			return false, nil
-		}
-		c.nextClipboardID++
-		requestID := c.nextClipboardID
-		readContext, cancel := context.WithCancel(ctx)
-		if c.clipboardRequests == nil {
-			c.clipboardRequests = make(map[uint64]context.CancelFunc)
-		}
-		c.clipboardRequests[requestID] = cancel
-		c.model.reserveImage(requestID)
-		go loadClipboardImage(readContext, requestID, c.readClipboardImage, c.clipboardImages, c.stopped)
-	case tuiActionAllowPermission:
-		c.resolvePermission(true)
-	case tuiActionDenyPermission:
-		c.resolvePermission(false)
-	case tuiActionCopy:
-		encoded := base64.StdEncoding.EncodeToString([]byte(action.text))
-		if err := writeOutput(c.output, "\x1b]52;c;%s\x07", encoded); err != nil {
-			return false, err
-		}
-	case tuiActionRedraw:
-		c.forceRedraw = true
-	}
-	return false, nil
-}
-
-func loadClipboardImage(
-	ctx context.Context,
-	requestID uint64,
-	read func(context.Context) (agent.Image, error),
-	events chan<- tuiEvent,
-	stopped <-chan struct{},
-) {
-	image, err := read(ctx)
-	event := tuiEvent{kind: tuiEventClipboardImage, requestID: requestID, image: image, err: err}
-	select {
-	case events <- event:
-	case <-ctx.Done():
-	case <-stopped:
-	}
-}
-
-func (c *tuiController) startTurn(ctx context.Context, content []agent.ContentPart) error {
-	c.model.beginTurnOperation()
-	if err := c.saveCurrentCheckpoint(true); err != nil {
-		c.model.rollbackTurnStart()
-		return err
-	}
-	c.model.appendUserContent(content)
-
-	turnContext, cancel := context.WithCancel(ctx)
-	c.turnCancel = cancel
-	go runEngineTurn(turnContext, c.engine, content, c.engineMessages, c.stopped)
-	return nil
-}
-
-func (c *tuiController) startCompaction(ctx context.Context) error {
-	c.model.beginCompaction()
-	if err := c.saveCurrentCheckpoint(true); err != nil {
-		return err
-	}
-
-	turnContext, cancel := context.WithCancel(ctx)
-	c.turnCancel = cancel
-	go runEngineCompaction(turnContext, c.engine, c.engineMessages, c.stopped)
-	return nil
-}
-
-func (c *tuiController) startDeferredTurn(ctx context.Context) error {
-	prompt, ok := c.steering.nextDeferred()
-	if !ok {
-		return nil
-	}
-	c.model.conversationVersion++
-	if err := c.startTurn(ctx, []agent.ContentPart{{Kind: agent.ContentPartText, Text: prompt}}); err != nil {
-		c.steering.restoreDeferred(prompt)
-		c.model.conversationVersion++
-		return err
-	}
-	return nil
-}
-
-func (c *tuiController) restoreQueuedInput() {
-	messages := c.steering.restore(c.engine)
-	c.model.restoreSteering(messages)
-	if len(messages) > 0 {
-		c.model.conversationVersion++
-	}
-}
-
-func (c *tuiController) interruptTurn() {
-	c.model.interrupted = true
-	c.cancelTurn()
-}
-
-func (c *tuiController) resolvePermission(allowed bool) {
-	if c.permission == nil {
-		return
-	}
-
-	respondPermission(*c.permission, allowed)
-	c.permission = nil
-	if len(c.queuedPermissions) == 0 {
-		c.model.clearPermission()
-		c.restoreActivityAfterPermission()
-		return
-	}
-
-	next := c.queuedPermissions[0]
-	c.queuedPermissions = c.queuedPermissions[1:]
-	index := c.model.permission.index + 1
-	total := c.model.permission.total
-	c.permission = &next
-	c.model.showPermission(next, index, total)
-}
-
-func (c *tuiController) denyPermissions() {
-	if c.permission != nil {
-		respondPermission(*c.permission, false)
-	}
-	for _, request := range c.queuedPermissions {
-		respondPermission(request, false)
-	}
-	c.permission = nil
-	c.queuedPermissions = nil
-	c.model.clearPermission()
-}
-
-func (c *tuiController) restoreActivityAfterPermission() {
-	if detail, ok := c.model.pendingToolActivity(); ok {
-		c.model.activity = activity{kind: activityTool, detail: detail}
-		return
-	}
-	c.model.activity = activity{kind: activityThinking}
-}
-
-func respondPermission(request PermissionRequest, allowed bool) {
-	select {
-	case request.Response <- allowed:
-	default:
-	}
-}
-
-func (c *tuiController) cancelRemovedClipboardRequests(previous []uint64) {
-	remaining := make(map[uint64]struct{}, len(c.model.pendingImageRequests()))
-	for _, requestID := range c.model.pendingImageRequests() {
-		remaining[requestID] = struct{}{}
-	}
-	for _, requestID := range previous {
-		if _, ok := remaining[requestID]; !ok {
-			c.cancelClipboardRequest(requestID)
-		}
-	}
-}
-
-func (c *tuiController) cancelClipboardRequest(requestID uint64) {
-	cancel, ok := c.clipboardRequests[requestID]
-	if !ok {
-		return
-	}
-	cancel()
-	delete(c.clipboardRequests, requestID)
-}
-
-func (c *tuiController) cancelClipboardRequests() {
-	for requestID, cancel := range c.clipboardRequests {
-		cancel()
-		delete(c.clipboardRequests, requestID)
-	}
-}
-
-func (c *tuiController) cancelTurn() {
-	c.denyPermissions()
-	c.restoreQueuedInput()
-	if c.turnCancel != nil {
-		c.turnCancel()
-	}
-	c.model.activity = activity{kind: activityCanceling}
-}
-
-func (c *tuiController) saveCurrentCheckpoint(active bool) error {
-	if c.saveCheckpoint == nil {
-		return nil
-	}
-	engine, ok := c.engine.(checkpointEngine)
-	if !ok {
-		return errCheckpointUnavailable
-	}
-	checkpoint, err := engine.Checkpoint()
-	if err != nil {
-		return err
-	}
-	return c.saveAgentCheckpoint(&checkpoint, active)
-}
-
-func (c *tuiController) saveAgentCheckpoint(checkpoint *agent.Checkpoint, active bool) error {
-	if c.saveCheckpoint == nil {
-		return nil
-	}
-	if checkpoint == nil {
-		return errors.New("terminal: agent checkpoint is missing")
-	}
-	return c.saveCheckpoint(*checkpoint, checkpointModel(c.model, c.steering.pending()), active)
 }

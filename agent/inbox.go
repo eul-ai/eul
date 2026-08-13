@@ -8,6 +8,5 @@ type InboxBatch struct {
 type InboxSource interface {
 	SnapshotInbox() InboxBatch
 	AcknowledgeInbox(InboxBatch) error
-	SettleDelivery() bool
-	ActiveContext() string
+	InboxEmpty() bool
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/subagent"
 )
 
 func renderFrame(model *tuiModel) string {
@@ -129,14 +130,14 @@ func TestStatusTruncatesSessionID(t *testing.T) {
 func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 	started := time.Unix(100, 0)
 	model := newTUIModel(140, 10, Options{})
-	model.subagentStatus = SubagentStatus{Active: []SubagentJobStatus{
+	model.subagentStatus = subagent.Status{Active: []subagent.JobStatus{
 		{
 			ID: "subagent-1", Task: "inspect layout", ModelProfile: "balanced", ThinkingLevel: agent.ThinkingLow,
-			State: SubagentRunning, Started: started, Usage: agent.Usage{InputTokens: 1_200, OutputTokens: 34},
+			State: subagent.StateRunning, Started: started, Usage: agent.Usage{InputTokens: 1_200, OutputTokens: 34},
 			Generations: 3, GenerationLimit: 20,
 		},
 		{
-			ID: "subagent-2", Task: "review progress", State: SubagentFinalizing, Started: started,
+			ID: "subagent-2", Task: "review progress", State: subagent.StateFinalizing, Started: started,
 			Generations: 20, GenerationLimit: 20,
 		},
 	}}
@@ -165,13 +166,13 @@ func TestSubagentStatusesUseStateColorsAndFreezeCompletedElapsed(t *testing.T) {
 	started := time.Unix(100, 0)
 	finished := started.Add(5 * time.Second)
 	model := newTUIModel(80, 10, Options{})
-	model.subagentStatus.Active = []SubagentJobStatus{
-		{ID: "running", State: SubagentRunning, Started: started},
-		{ID: "finalizing", State: SubagentFinalizing, Started: started},
+	model.subagentStatus.Active = []subagent.JobStatus{
+		{ID: "running", State: subagent.StateRunning, Started: started},
+		{ID: "finalizing", State: subagent.StateFinalizing, Started: started},
 	}
-	model.subagentStatus.Awaiting = []SubagentCompletionStatus{
-		{SubagentID: "complete", State: SubagentComplete, Started: started, Finished: finished},
-		{SubagentID: "failed", State: SubagentFailed, Started: started, Finished: finished},
+	model.subagentStatus.PendingCompletions = []subagent.Completion{
+		{SubagentID: "complete", Status: subagent.StateComplete, Started: started, Finished: finished},
+		{SubagentID: "failed", Status: subagent.StateFailed, Started: started, Finished: finished},
 	}
 
 	lines := renderSubagentsAt(model, 4, started.Add(time.Minute))
@@ -204,9 +205,9 @@ func TestSubagentStatusesUseStateColorsAndFreezeCompletedElapsed(t *testing.T) {
 
 func TestSubagentPanelIsCappedOnSmallTerminals(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
-	model.subagentStatus.Active = make([]SubagentJobStatus, 4)
+	model.subagentStatus.Active = make([]subagent.JobStatus, 4)
 	for index := range model.subagentStatus.Active {
-		model.subagentStatus.Active[index] = SubagentJobStatus{ID: "subagent-" + strconv.Itoa(index+1), State: SubagentRunning}
+		model.subagentStatus.Active[index] = subagent.JobStatus{ID: "subagent-" + strconv.Itoa(index+1), State: subagent.StateRunning}
 	}
 
 	_, layout := modelInputLayout(model)
@@ -217,9 +218,9 @@ func TestSubagentPanelIsCappedOnSmallTerminals(t *testing.T) {
 
 func TestStatusOmitsBackgroundSubagents(t *testing.T) {
 	model := newTUIModel(120, 12, Options{Config: Config{Model: "model"}})
-	model.subagentStatus = SubagentStatus{
+	model.subagentStatus = subagent.Status{
 		Running: 1,
-		Active:  []SubagentJobStatus{{ID: "subagent-1", State: SubagentRunning}},
+		Active:  []subagent.JobStatus{{ID: "subagent-1", State: subagent.StateRunning}},
 	}
 
 	left, _ := renderStatus(model, model.width)

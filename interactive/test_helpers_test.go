@@ -29,6 +29,12 @@ type fakeBackendRuntime struct {
 	closeErr              error
 	closeCalls            int
 	newProvider           func() (agent.Provider, error)
+	metadata              func(string) backend.ModelMetadata
+	usage                 func(context.Context) (backend.AccountUsage, error)
+}
+
+type metadataFreeBackendRuntime struct {
+	backend.Runtime
 }
 
 func (runtime *fakeBackendRuntime) CheckCredentials(context.Context) error {
@@ -38,6 +44,20 @@ func (runtime *fakeBackendRuntime) CheckCredentials(context.Context) error {
 
 func (runtime *fakeBackendRuntime) NewProvider() (agent.Provider, error) {
 	return runtime.newProvider()
+}
+
+func (runtime *fakeBackendRuntime) ModelMetadata(model string) backend.ModelMetadata {
+	if runtime.metadata != nil {
+		return runtime.metadata(model)
+	}
+	return backend.ModelMetadata{ThinkingLevels: agent.ThinkingLevels(), FastMode: true}
+}
+
+func (runtime *fakeBackendRuntime) Usage(ctx context.Context) (backend.AccountUsage, error) {
+	if runtime.usage != nil {
+		return runtime.usage(ctx)
+	}
+	return backend.AccountUsage{}, nil
 }
 
 func (runtime *fakeBackendRuntime) Close() error {
@@ -55,14 +75,14 @@ func (driver *fakeBackendDriver) Open(backend.Options) (backend.Runtime, error) 
 	return driver.runtime, nil
 }
 
-func testRuntime(cwd string, stdout, stderr *bytes.Buffer) runtime {
+func testRuntime(cwd string, stdout, stderr *bytes.Buffer) environment {
 	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
 			return agent.Response{}, nil
 		}), nil
 	}}
 	driver := &fakeBackendDriver{
-		descriptor: backend.Descriptor{ID: "test", Name: "Test Provider"},
+		descriptor: backend.Descriptor{ID: "test", Name: "Test Provider", DefaultModels: backend.ModelDefaults{Main: "gpt-5.6-sol", Fast: "gpt-5.6-luna", Balanced: "gpt-5.6-terra"}},
 		runtime:    backendRuntime,
 	}
 	backends, err := backend.NewRegistry("test", driver)
@@ -70,15 +90,12 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer) runtime {
 		panic(err)
 	}
 
-	return runtime{
+	return environment{
 		stdin:       strings.NewReader("/exit\n"),
 		stdout:      stdout,
 		getwd:       func() (string, error) { return cwd, nil },
 		userHomeDir: func() (string, error) { return filepath.Join(cwd, ".test-home"), nil },
 		backends:    backends,
-		providerConfigs: map[string]ProviderConfig{
-			"test": {MainModel: "gpt-5.6-sol", FastModel: "gpt-5.6-luna", BalancedModel: "gpt-5.6-terra"},
-		},
 		newToolset: func(cwd string, access toolAccess, noSandbox bool, authorizeNetwork tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
 			tools := []tool.Tool{tool.NewRead(cwd)}
 			if access == fullToolAccess {
@@ -94,9 +111,9 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer) runtime {
 	}
 }
 
-func testBackendDriver(t *testing.T, runtime runtime) *fakeBackendDriver {
+func testBackendDriver(t *testing.T, env environment) *fakeBackendDriver {
 	t.Helper()
-	driver, err := runtime.backends.Lookup("")
+	driver, err := env.backends.Lookup("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,13 +124,13 @@ func testBackendDriver(t *testing.T, runtime runtime) *fakeBackendDriver {
 	return fake
 }
 
-func resolveTestConfig(options Options, runtime runtime) (resolvedConfig, error) {
+func resolveTestConfig(options Options, env environment) (resolvedConfig, error) {
 	options.NoSandbox = true
-	driver, err := runtime.backends.Lookup(options.Provider)
+	driver, err := env.backends.Lookup(options.Provider)
 	if err != nil {
 		return resolvedConfig{}, err
 	}
-	return resolveConfig(options, runtime, driver.Descriptor(), runtime.providerConfigs[driver.Descriptor().ID])
+	return resolveConfig(options, env, driver.Descriptor())
 }
 
 func stringPointer(value string) *string {

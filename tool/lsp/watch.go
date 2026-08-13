@@ -10,54 +10,54 @@ import (
 )
 
 const (
-	lspWatchBatchDelay        = 20 * time.Millisecond
-	lspWatchNotifyTimeout     = time.Second
-	lspWatchSuppressionWindow = time.Second
+	watchBatchDelay        = 20 * time.Millisecond
+	watchNotifyTimeout     = time.Second
+	watchSuppressionWindow = time.Second
 )
 
-type lspWatchPattern struct {
+type watchPattern struct {
 	glob string
 	root string
 	kind protocol.WatchKind
 }
 
-type lspWatchRegistration struct {
+type watchRegistration struct {
 	id       string
-	patterns []lspWatchPattern
+	patterns []watchPattern
 }
 
-type lspWatchedPathState struct {
+type watchedPathState struct {
 	mode    fs.FileMode
 	size    int64
 	modTime time.Time
 }
 
-type lspWatchSuppression struct {
-	state lspWatchedPathState
+type watchSuppression struct {
+	state watchedPathState
 	until time.Time
 }
 
-type lspWatchCommand func(*lspWatchState)
+type watchCommand func(*watchState)
 
-type lspWatchManager struct {
+type watchManager struct {
 	folder protocol.WorkspaceFolder
-	native lspNativeWatcher
+	native nativeWatcher
 	notify func(context.Context, *protocol.DidChangeWatchedFilesParams) error
 
 	ctx       context.Context
 	cancel    context.CancelFunc
-	commands  chan lspWatchCommand
+	commands  chan watchCommand
 	done      chan struct{}
 	closeOnce sync.Once
 	closeErr  error
 }
 
-type lspWatchState struct {
-	manager       *lspWatchManager
-	registrations map[string][]lspWatchPattern
+type watchState struct {
+	manager       *watchManager
+	registrations map[string][]watchPattern
 	watchedDirs   map[string]struct{}
-	known         map[string]lspWatchedPathState
-	suppressed    map[string]lspWatchSuppression
+	known         map[string]watchedPathState
+	suppressed    map[string]watchSuppression
 	pending       map[string]struct{}
 	failure       error
 }

@@ -23,8 +23,8 @@ func TestSteeringCoordinatorTracksAcceptedAndDeferredMessages(t *testing.T) {
 	}
 	var coordinator steeringCoordinator
 
-	coordinator.enqueue(engine, "accepted")
-	coordinator.enqueue(engine, "deferred")
+	coordinator.enqueue(engine.Steer, "accepted")
+	coordinator.enqueue(engine.Steer, "deferred")
 	if !slices.Equal(coordinator.pending(), []string{"accepted", "deferred"}) {
 		t.Fatalf("pending = %q", coordinator.pending())
 	}
@@ -43,7 +43,7 @@ func TestSteeringCoordinatorIgnoresStaleDeliveryAfterRestore(t *testing.T) {
 		deferred: []string{"deferred"},
 	}
 
-	if restored := coordinator.restore(engine); !slices.Equal(restored, []string{"accepted", "deferred"}) {
+	if restored := coordinator.restore(engine.ClearSteering); !slices.Equal(restored, []string{"accepted", "deferred"}) {
 		t.Fatalf("restored = %q", restored)
 	}
 	if coordinator.delivered("accepted") || len(coordinator.pending()) != 0 {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/subagent"
 )
 
 func TestTerminalCheckpointRoundTrip(t *testing.T) {
@@ -18,7 +19,7 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	model.beginTurn("  First line of the prompt  \nsecond line")
 	model.appendBlock(blockAssistant, "answer")
 	model.running = false
-	model.subagentStatus = SubagentStatus{Running: 1, Awaiting: []SubagentCompletionStatus{{State: SubagentComplete}}}
+	model.subagentStatus = subagent.Status{Running: 1, PendingCompletions: []subagent.Completion{{Status: subagent.StateComplete}}}
 	model.history = []string{"older prompt"}
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)

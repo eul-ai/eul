@@ -5,31 +5,36 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
-	api "github.com/eul-ai/eul/backend/codex/api"
+	"github.com/eul-ai/eul/backend/codex/client"
 	"github.com/eul-ai/eul/backend/codex/oauth"
 )
 
 const (
-	ID   = "openai-codex"
-	Name = "OpenAI Codex"
+	ID            = "openai-codex"
+	Name          = "OpenAI Codex"
+	ModelFast     = "gpt-5.6-luna"
+	ModelBalanced = "gpt-5.6-terra"
+	ModelPowerful = "gpt-5.6-sol"
 )
 
 type oauthManager interface {
-	Login(context.Context, oauth.LoginMethod, oauth.Interaction) error
+	Login(context.Context, backend.LoginMethod, backend.LoginInteraction) error
 	Resolve(context.Context) (oauth.AccessCredential, error)
 	Logout(context.Context) error
 }
 
 type Driver struct {
-	newManager  func(string) (oauthManager, error)
-	newProvider func(api.TokenSource) (agent.Provider, error)
+	newManager func(string) (oauthManager, error)
+	newClient  func(client.TokenSource) (*client.Client, error)
 }
 
 var (
-	_ backend.Driver            = (*Driver)(nil)
-	_ backend.Runtime           = (*runtime)(nil)
-	_ backend.CredentialChecker = (*runtime)(nil)
-	_ oauth.Authenticator       = (*runtime)(nil)
+	_ backend.Driver                = (*Driver)(nil)
+	_ backend.Runtime               = (*runtime)(nil)
+	_ backend.CredentialChecker     = (*runtime)(nil)
+	_ backend.Authenticator         = (*runtime)(nil)
+	_ backend.UsageProvider         = (*runtime)(nil)
+	_ backend.ModelMetadataProvider = (*runtime)(nil)
 )
 
 func New() *Driver {
@@ -41,14 +46,22 @@ func New() *Driver {
 			}
 			return oauth.NewManager(path, oauth.Options{}), nil
 		},
-		newProvider: func(source api.TokenSource) (agent.Provider, error) {
-			return api.New(source, api.Options{})
+		newClient: func(source client.TokenSource) (*client.Client, error) {
+			return client.New(source, client.Options{})
 		},
 	}
 }
 
 func (*Driver) Descriptor() backend.Descriptor {
-	return backend.Descriptor{ID: ID, Name: Name}
+	return backend.Descriptor{
+		ID:   ID,
+		Name: Name,
+		DefaultModels: backend.ModelDefaults{
+			Main:     ModelPowerful,
+			Fast:     ModelFast,
+			Balanced: ModelBalanced,
+		},
+	}
 }
 
 func (driver *Driver) Open(options backend.Options) (backend.Runtime, error) {
@@ -57,17 +70,17 @@ func (driver *Driver) Open(options backend.Options) (backend.Runtime, error) {
 		return nil, err
 	}
 	return &runtime{
-		manager:     manager,
-		newProvider: driver.newProvider,
+		manager:   manager,
+		newClient: driver.newClient,
 	}, nil
 }
 
 type runtime struct {
-	manager     oauthManager
-	newProvider func(api.TokenSource) (agent.Provider, error)
+	manager   oauthManager
+	newClient func(client.TokenSource) (*client.Client, error)
 }
 
-func (configured *runtime) Login(ctx context.Context, method oauth.LoginMethod, interaction oauth.Interaction) error {
+func (configured *runtime) Login(ctx context.Context, method backend.LoginMethod, interaction backend.LoginInteraction) error {
 	return configured.manager.Login(ctx, method, interaction)
 }
 
@@ -81,7 +94,32 @@ func (configured *runtime) CheckCredentials(ctx context.Context) error {
 }
 
 func (configured *runtime) NewProvider() (agent.Provider, error) {
-	return configured.newProvider(oauthTokenSource{manager: configured.manager})
+	return configured.newClient(oauthTokenSource{manager: configured.manager})
+}
+
+func (configured *runtime) ModelMetadata(model string) backend.ModelMetadata {
+	return backend.ModelMetadata{
+		ContextWindow:  client.ContextWindow(model),
+		ThinkingLevels: client.SupportedThinkingLevels(model),
+		FastMode:       client.FastModeAvailable(model),
+	}
+}
+
+func (configured *runtime) Usage(ctx context.Context) (backend.AccountUsage, error) {
+	client, err := configured.newClient(oauthTokenSource{manager: configured.manager})
+	if err != nil {
+		return backend.AccountUsage{}, err
+	}
+	usage, err := client.Usage(ctx)
+	windows := make([]backend.UsageWindow, len(usage.Windows))
+	for index, window := range usage.Windows {
+		windows[index] = backend.UsageWindow{
+			Duration:    window.Duration,
+			UsedPercent: window.UsedPercent,
+			ResetsAt:    window.ResetsAt,
+		}
+	}
+	return backend.AccountUsage{Windows: windows}, err
 }
 
 func (*runtime) Close() error {
@@ -92,10 +130,10 @@ type oauthTokenSource struct {
 	manager oauthManager
 }
 
-func (source oauthTokenSource) Token(ctx context.Context) (api.Credential, error) {
+func (source oauthTokenSource) Token(ctx context.Context) (client.Credential, error) {
 	credential, err := source.manager.Resolve(ctx)
 	if err != nil {
-		return api.Credential{}, err
+		return client.Credential{}, err
 	}
-	return api.Credential{AccessToken: credential.AccessToken, AccountID: credential.AccountID}, nil
+	return client.Credential{AccessToken: credential.AccessToken, AccountID: credential.AccountID}, nil
 }

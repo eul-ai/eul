@@ -4,7 +4,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-type lspNativeWatcher interface {
+type nativeWatcher interface {
 	Add(string) error
 	Remove(string) error
 	Close() error
@@ -16,7 +16,7 @@ type fsnotifyLSPWatcher struct {
 	*fsnotify.Watcher
 }
 
-func newFSNotifyLSPWatcher() (lspNativeWatcher, error) {
+func newFSNotifyWatcher() (nativeWatcher, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err

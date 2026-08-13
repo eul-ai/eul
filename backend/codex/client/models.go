@@ -1,4 +1,4 @@
-package api
+package client
 
 import (
 	"fmt"
@@ -46,8 +46,16 @@ func contextWindow(model string) int64 {
 	return models[model].contextWindow
 }
 
-func supportedThinkingLevels(model string) []agent.ThinkingLevel {
+func SupportedThinkingLevels(model string) []agent.ThinkingLevel {
 	return thinkingLevelMap(model).SupportedLevels()
+}
+
+func ContextWindow(model string) int64 {
+	return contextWindow(model)
+}
+
+func FastModeAvailable(model string) bool {
+	return models[model].fastMode
 }
 
 func thinkingLevelMap(model string) agent.ThinkingLevelMap {

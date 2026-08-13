@@ -17,7 +17,7 @@ func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
 			return agent.Response{}, nil
 		}), nil
 	}}
-	session, err := newAgentSession(resolvedConfig{models: modelSelection{main: "model"}, cwd: t.TempDir()}, runtime{}, backendRuntime)
+	session, err := newAgentSession(resolvedConfig{models: modelSelection{main: "model"}, cwd: t.TempDir()}, environment{}, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}

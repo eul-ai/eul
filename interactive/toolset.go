@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/eul-ai/eul/tool"
+	"github.com/eul-ai/eul/tool/lsp"
 )
 
 type toolAccess uint8
@@ -52,16 +53,15 @@ func buildToolsetWithHomeAndNetworkAuthorizer(
 	default:
 		return nil, errors.New("unknown tool access")
 	}
-	lspTools, lspService, err := tool.NewLSP(cwd, home, includeRename)
+	lspSet, err := lsp.New(cwd, home, includeRename)
 	if err != nil {
 		return nil, fmt.Errorf("configure LSP: %w", err)
 	}
 
-	tools = append(tools, lspTools...)
 	tools = append(tools, additional...)
-	registry, err := tool.NewRegistry(tools, lspService)
+	registry, err := tool.NewRegistry(tools, lspSet)
 	if err != nil {
-		_ = lspService.Close()
+		_ = lspSet.Close()
 		return nil, err
 	}
 	return registry, nil

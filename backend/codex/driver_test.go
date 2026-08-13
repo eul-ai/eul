@@ -2,11 +2,12 @@ package codex
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
-	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
-	api "github.com/eul-ai/eul/backend/codex/api"
+	"github.com/eul-ai/eul/backend/codex/client"
 	"github.com/eul-ai/eul/backend/codex/oauth"
 )
 
@@ -15,23 +16,23 @@ type fakeManager struct {
 	resolveErr   error
 	loginErr     error
 	logoutErr    error
-	loginMethod  oauth.LoginMethod
+	loginMethod  backend.LoginMethod
 	loginCalls   int
 	logoutCalls  int
 	resolveCalls int
 }
 
-func (manager *fakeManager) Login(_ context.Context, method oauth.LoginMethod, interaction oauth.Interaction) error {
+func (manager *fakeManager) Login(_ context.Context, method backend.LoginMethod, interaction backend.LoginInteraction) error {
 	manager.loginCalls++
 	manager.loginMethod = method
 	switch method {
-	case oauth.LoginBrowser:
+	case backend.LoginBrowser:
 		if interaction.AuthURL != nil {
 			_ = interaction.AuthURL("https://example.test/login")
 		}
-	case oauth.LoginDevice:
+	case backend.LoginDevice:
 		if interaction.DeviceCode != nil {
-			_ = interaction.DeviceCode(oauth.DeviceCode{VerificationURL: "https://example.test/device", UserCode: "CODE"})
+			_ = interaction.DeviceCode(backend.DeviceCode{VerificationURL: "https://example.test/device", UserCode: "CODE"})
 		}
 	}
 	return manager.loginErr
@@ -47,12 +48,6 @@ func (manager *fakeManager) Logout(context.Context) error {
 	return manager.logoutErr
 }
 
-type fakeProvider struct{}
-
-func (fakeProvider) Generate(context.Context, agent.Request, agent.StreamObserver) (agent.Response, error) {
-	return agent.Response{}, nil
-}
-
 func TestDriverOpensRuntimeWithAuthenticationAndProviderCreation(t *testing.T) {
 	manager := &fakeManager{credential: oauth.AccessCredential{AccessToken: "access", AccountID: "account"}}
 	driver := New()
@@ -61,7 +56,7 @@ func TestDriverOpensRuntimeWithAuthenticationAndProviderCreation(t *testing.T) {
 		managerHome = home
 		return manager, nil
 	}
-	driver.newProvider = func(source api.TokenSource) (agent.Provider, error) {
+	driver.newClient = func(source client.TokenSource) (*client.Client, error) {
 		credential, err := source.Token(context.Background())
 		if err != nil {
 			return nil, err
@@ -69,7 +64,7 @@ func TestDriverOpensRuntimeWithAuthenticationAndProviderCreation(t *testing.T) {
 		if credential.AccessToken != "access" || credential.AccountID != "account" {
 			t.Fatalf("credential = %+v", credential)
 		}
-		return fakeProvider{}, nil
+		return client.New(source, client.Options{})
 	}
 
 	backendRuntime, err := driver.Open(backend.Options{Home: "/config/eul"})
@@ -87,7 +82,7 @@ func TestDriverOpensRuntimeWithAuthenticationAndProviderCreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := provider.(fakeProvider); !ok {
+	if _, ok := provider.(*client.Client); !ok {
 		t.Fatalf("provider = %T", provider)
 	}
 	if err := backendRuntime.Close(); err != nil {
@@ -98,11 +93,38 @@ func TestDriverOpensRuntimeWithAuthenticationAndProviderCreation(t *testing.T) {
 	}
 }
 
-func TestDriverModelCatalogConstants(t *testing.T) {
-	for _, model := range []string{api.ModelGPT56Sol, api.ModelGPT56Luna, api.ModelGPT56Terra} {
-		if metadata := (&api.Client{}).ModelMetadata(model); !metadata.FastMode || metadata.ContextWindow == 0 {
+func TestDriverModelDefaultsAreSupported(t *testing.T) {
+	defaults := New().Descriptor().DefaultModels
+	configured := &runtime{}
+	for _, model := range []string{defaults.Main, defaults.Fast, defaults.Balanced} {
+		if metadata := configured.ModelMetadata(model); !metadata.FastMode || metadata.ContextWindow == 0 {
 			t.Fatalf("model %q metadata = %+v", model, metadata)
 		}
+	}
+}
+
+func TestRuntimeLoadsAccountUsage(t *testing.T) {
+	manager := &fakeManager{credential: oauth.AccessCredential{AccessToken: "access", AccountID: "account"}}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/codex/usage" {
+			t.Errorf("usage path = %q", request.URL.Path)
+		}
+		_, _ = writer.Write([]byte(`{"rate_limit":{"primary_window":{"used_percent":25,"limit_window_seconds":3600}}}`))
+	}))
+	defer server.Close()
+
+	configured := &runtime{
+		manager: manager,
+		newClient: func(source client.TokenSource) (*client.Client, error) {
+			return client.New(source, client.Options{BaseURL: server.URL})
+		},
+	}
+	usage, err := configured.Usage(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(usage.Windows) != 1 || usage.Windows[0].UsedPercent != 25 {
+		t.Fatalf("usage = %+v", usage)
 	}
 }
 
@@ -111,7 +133,7 @@ func TestRuntimeBridgesLoginAndLogout(t *testing.T) {
 	configured := &runtime{manager: manager}
 
 	browserURL := ""
-	if err := configured.Login(context.Background(), oauth.LoginBrowser, oauth.Interaction{
+	if err := configured.Login(context.Background(), backend.LoginBrowser, backend.LoginInteraction{
 		AuthURL: func(url string) error {
 			browserURL = url
 			return nil
@@ -119,20 +141,20 @@ func TestRuntimeBridgesLoginAndLogout(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if manager.loginMethod != oauth.LoginBrowser || browserURL == "" {
+	if manager.loginMethod != backend.LoginBrowser || browserURL == "" {
 		t.Fatalf("browser method=%q URL=%q", manager.loginMethod, browserURL)
 	}
 
 	verificationURL, userCode := "", ""
-	if err := configured.Login(context.Background(), oauth.LoginDevice, oauth.Interaction{
-		DeviceCode: func(code oauth.DeviceCode) error {
+	if err := configured.Login(context.Background(), backend.LoginDevice, backend.LoginInteraction{
+		DeviceCode: func(code backend.DeviceCode) error {
 			verificationURL, userCode = code.VerificationURL, code.UserCode
 			return nil
 		},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if manager.loginMethod != oauth.LoginDevice || verificationURL == "" || userCode != "CODE" {
+	if manager.loginMethod != backend.LoginDevice || verificationURL == "" || userCode != "CODE" {
 		t.Fatalf("device method=%q URL=%q code=%q", manager.loginMethod, verificationURL, userCode)
 	}
 

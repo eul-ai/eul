@@ -46,7 +46,7 @@ func TestLSPRenameCapabilities(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			rename, prepare := lspRenameCapabilities(test.provider)
+			rename, prepare := renameCapabilities(test.provider)
 			if rename != test.wantRename || prepare != test.wantPrepare {
 				t.Fatalf("capabilities = rename %v, prepare %v; want rename %v, prepare %v", rename, prepare, test.wantRename, test.wantPrepare)
 			}
@@ -56,7 +56,7 @@ func TestLSPRenameCapabilities(t *testing.T) {
 
 func TestRenameSymbolRejectsUnsupportedRename(t *testing.T) {
 	server := &renameTestServer{}
-	result, err := renameSymbol(context.Background(), &lspSession{server: server}, protocol.TextDocumentPositionParams{}, "Number")
+	result, err := renameSymbol(context.Background(), &session{server: server}, protocol.TextDocumentPositionParams{}, "Number")
 	if result != nil || err == nil || !strings.Contains(err.Error(), "does not support rename") {
 		t.Fatalf("result=%+v error=%v", result, err)
 	}
@@ -67,7 +67,7 @@ func TestRenameSymbolRejectsUnsupportedRename(t *testing.T) {
 
 func TestRenameSymbolSkipsUnsupportedPrepare(t *testing.T) {
 	server := &renameTestServer{}
-	result, err := renameSymbol(context.Background(), &lspSession{server: server, renameSupported: true}, protocol.TextDocumentPositionParams{}, "Number")
+	result, err := renameSymbol(context.Background(), &session{server: server, renameSupported: true}, protocol.TextDocumentPositionParams{}, "Number")
 	if err != nil || result == nil {
 		t.Fatalf("result=%+v error=%v", result, err)
 	}
@@ -78,7 +78,7 @@ func TestRenameSymbolSkipsUnsupportedPrepare(t *testing.T) {
 
 func TestRenameSymbolRejectsNilPrepareResult(t *testing.T) {
 	server := &renameTestServer{}
-	result, err := renameSymbol(context.Background(), &lspSession{
+	result, err := renameSymbol(context.Background(), &session{
 		server: server, renameSupported: true, prepareRenameSupport: true,
 	}, protocol.TextDocumentPositionParams{}, "Number")
 	if result != nil || err == nil || !strings.Contains(err.Error(), "symbol is not renameable") {
@@ -92,7 +92,7 @@ func TestRenameSymbolRejectsNilPrepareResult(t *testing.T) {
 func TestRenameSymbolPropagatesPrepareFailure(t *testing.T) {
 	prepareErr := errors.New("prepare failed")
 	server := &renameTestServer{prepareErr: prepareErr}
-	if _, err := renameSymbol(context.Background(), &lspSession{
+	if _, err := renameSymbol(context.Background(), &session{
 		server: server, renameSupported: true, prepareRenameSupport: true,
 	}, protocol.TextDocumentPositionParams{}, "Number"); !errors.Is(err, prepareErr) {
 		t.Fatalf("error = %v, want %v", err, prepareErr)
@@ -104,7 +104,7 @@ func TestRenameSymbolPropagatesPrepareFailure(t *testing.T) {
 
 func TestRenameSymbolRenamesAfterPrepare(t *testing.T) {
 	server := &renameTestServer{prepareResult: &protocol.Range{}}
-	result, err := renameSymbol(context.Background(), &lspSession{
+	result, err := renameSymbol(context.Background(), &session{
 		server: server, renameSupported: true, prepareRenameSupport: true,
 	}, protocol.TextDocumentPositionParams{}, "Number")
 	if err != nil || result == nil {

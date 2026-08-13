@@ -27,7 +27,7 @@ type lspDocumentEdits struct {
 	version *int32
 }
 
-type lspFileChange struct {
+type fileChange struct {
 	snapshot textfile.Snapshot
 	data     []byte
 }
@@ -38,27 +38,27 @@ type lspPathEdits struct {
 	version       *int32
 }
 
-func applyLSPWorkspaceEdit(ctx context.Context, watcher *lspWatchManager, workspaceEdit *protocol.WorkspaceEdit, documents ...textfile.Snapshot) (int, error) {
+func applyWorkspaceEdit(ctx context.Context, watcher *watchManager, workspaceEdit *protocol.WorkspaceEdit, documents ...textfile.Snapshot) (int, error) {
 	changes, err := planLSPWorkspaceEdit(workspaceEdit, documents...)
 	if err != nil {
 		return 0, err
 	}
 	committed, commitErr := commitLSPFileChanges(ctx, changes)
-	notifyErr := notifyLSPFileChanges(watcher, changes[:committed])
+	notifyErr := notifyFileChanges(watcher, changes[:committed])
 	return committed, errors.Join(commitErr, notifyErr)
 }
 
-func notifyLSPFileChanges(watcher *lspWatchManager, changes []lspFileChange) error {
+func notifyFileChanges(watcher *watchManager, changes []fileChange) error {
 	paths := make([]string, len(changes))
 	for index, change := range changes {
 		paths[index] = change.snapshot.Path
 	}
-	notifyCtx, cancel := context.WithTimeout(context.Background(), lspWatchNotifyTimeout)
+	notifyCtx, cancel := context.WithTimeout(context.Background(), watchNotifyTimeout)
 	defer cancel()
 	return watcher.reportCommitted(notifyCtx, paths)
 }
 
-func planLSPWorkspaceEdit(workspaceEdit *protocol.WorkspaceEdit, documents ...textfile.Snapshot) ([]lspFileChange, error) {
+func planLSPWorkspaceEdit(workspaceEdit *protocol.WorkspaceEdit, documents ...textfile.Snapshot) ([]fileChange, error) {
 	if workspaceEdit == nil {
 		return nil, nil
 	}
@@ -139,7 +139,7 @@ func planLSPWorkspaceEdit(workspaceEdit *protocol.WorkspaceEdit, documents ...te
 	}
 	sort.Strings(resolvedPaths)
 
-	changes := make([]lspFileChange, 0, len(resolvedPaths))
+	changes := make([]fileChange, 0, len(resolvedPaths))
 	for _, resolvedPath := range resolvedPaths {
 		pathEdits := editsByPath[resolvedPath]
 		snapshot, opened := knownDocuments[resolvedPath]
@@ -157,7 +157,7 @@ func planLSPWorkspaceEdit(workspaceEdit *protocol.WorkspaceEdit, documents ...te
 		if err != nil {
 			return nil, fmt.Errorf("apply edits to %s: %w", filepath.ToSlash(pathEdits.requestedPath), err)
 		}
-		changes = append(changes, lspFileChange{snapshot: snapshot, data: updated})
+		changes = append(changes, fileChange{snapshot: snapshot, data: updated})
 	}
 	return changes, nil
 }
@@ -178,7 +178,7 @@ func validateLSPDocumentVersion(path string, version *int32, opened bool) error 
 	return nil
 }
 
-func commitLSPFileChanges(ctx context.Context, changes []lspFileChange) (int, error) {
+func commitLSPFileChanges(ctx context.Context, changes []fileChange) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}

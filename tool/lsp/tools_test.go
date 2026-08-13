@@ -22,11 +22,11 @@ func TestNewLSPIsUnavailableWhenServerIsUnavailable(t *testing.T) {
 	cwd := t.TempDir()
 	writeLSPTestConfig(t, cwd)
 
-	service, err := New(cwd, "")
+	service, err := New(cwd, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if service.Available() {
+	if service.service.available() {
 		t.Fatal("service is available")
 	}
 }
@@ -40,15 +40,15 @@ func TestLSPServiceCloseStopsSessionsOnce(t *testing.T) {
 	cwd := t.TempDir()
 	writeLSPTestConfig(t, cwd)
 
-	service, err := New(cwd, "")
+	service, err := New(cwd, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !service.Available() {
+	if !service.service.available() {
 		t.Fatal("service is unavailable")
 	}
 	stops := 0
-	service.client.sessions["test"] = &lspSession{stopSession: func() { stops++ }}
+	service.service.client.sessions["test"] = &session{stopSession: func() { stops++ }}
 	if err := service.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ var testThing = Thing{Value: 1}
 		t.Fatal(err)
 	}
 
-	service, err := New(cwd, "")
+	service, err := New(cwd, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ var testThing = Thing{Value: 1}
 	}
 
 	references := executeLSPTestOperation(t, ctx, service, "references", map[string]any{
-		"path": "sample.go", "line": thingLine, "character": thingCharacter, "includeDeclaration": true,
+		"path": "sample.go", "line": thingLine, "character": thingCharacter, "include_declaration": true,
 	})
 	if strings.Count(references.Output, "sample.go") < 2 {
 		t.Fatalf("references = %s", references.Output)
@@ -133,7 +133,7 @@ var testThing = Thing{Value: 1}
 		t.Fatalf("symbols = %s", symbols.Output)
 	}
 
-	session := service.client.sessions["gopls"]
+	session := service.service.client.sessions["gopls"]
 	if session == nil {
 		t.Fatal("gopls session was not cached")
 	}
@@ -152,7 +152,7 @@ func External(value Thing) int {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		externalReferences := executeLSPTestOperation(t, ctx, service, "references", map[string]any{
-			"path": "sample.go", "line": valueLine, "character": valueCharacter, "includeDeclaration": true,
+			"path": "sample.go", "line": valueLine, "character": valueCharacter, "include_declaration": true,
 		})
 		if strings.Contains(externalReferences.Output, "external.go") {
 			break
@@ -160,14 +160,14 @@ func External(value Thing) int {
 		if time.Now().After(deadline) {
 			t.Fatalf("external file change was not observed: %s", externalReferences.Output)
 		}
-		time.Sleep(lspWatchBatchDelay)
+		time.Sleep(watchBatchDelay)
 	}
-	if service.client.sessions["gopls"] != session {
+	if service.service.client.sessions["gopls"] != session {
 		t.Fatal("external file change restarted the gopls session")
 	}
 
 	rename := executeLSPTestOperation(t, ctx, service, "rename", map[string]any{
-		"path": "sample.go", "line": valueLine + 1, "character": 81, "oldName": "Value", "newName": "Number",
+		"path": "sample.go", "line": valueLine + 1, "character": 81, "old_name": "Value", "new_name": "Number",
 	})
 	if rename.Output != "renamed symbol in 3 files" {
 		t.Fatalf("rename = %s", rename.Output)
@@ -183,7 +183,7 @@ func External(value Thing) int {
 	assertFileContent(t, externalPath, strings.ReplaceAll(externalSource, "Value", "Number"))
 
 	rename = executeLSPTestOperation(t, ctx, service, "rename", map[string]any{
-		"path": "sample.go", "line": valueLine + 1, "character": 81, "oldName": "Number", "newName": "Value",
+		"path": "sample.go", "line": valueLine + 1, "character": 81, "old_name": "Number", "new_name": "Value",
 	})
 	if rename.Output != "renamed symbol in 3 files" {
 		t.Fatalf("reverse rename = %s", rename.Output)
@@ -224,7 +224,7 @@ var testValue = oldName
 		t.Fatal(err)
 	}
 
-	service, err := New(cwd, "")
+	service, err := New(cwd, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ var testValue = oldName
 
 	for _, names := range [][2]string{{"oldName", "NewName"}, {"NewName", "oldName"}} {
 		rename := executeLSPTestOperation(t, ctx, service, "rename", map[string]any{
-			"path": "rename.go", "line": line, "character": character, "oldName": names[0], "newName": names[1],
+			"path": "rename.go", "line": line, "character": character, "old_name": names[0], "new_name": names[1],
 		})
 		if rename.Output != "renamed symbol in 2 files" {
 			t.Fatalf("rename %s to %s = %s", names[0], names[1], rename.Output)
@@ -245,7 +245,7 @@ var testValue = oldName
 	assertFileContent(t, testPath, testSource)
 }
 
-func waitForLSPWatchRegistration(t *testing.T, ctx context.Context, watcher *lspWatchManager) {
+func waitForLSPWatchRegistration(t *testing.T, ctx context.Context, watcher *watchManager) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -259,7 +259,7 @@ func waitForLSPWatchRegistration(t *testing.T, ctx context.Context, watcher *lsp
 		if time.Now().After(deadline) {
 			t.Fatal("timed out waiting for watched-files registration")
 		}
-		time.Sleep(lspWatchBatchDelay)
+		time.Sleep(watchBatchDelay)
 	}
 }
 
@@ -299,14 +299,14 @@ func TestLSPDocumentOpenFailureInvalidatesSession(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			server := &documentLifecycleServer{openErr: test.openErr}
 			stopped := 0
-			session := &lspSession{
+			currentSession := &session{
 				server:      server,
-				client:      &lspProtocolClient{diagnostics: make(map[uri.URI][]protocol.Diagnostic), waiters: make(map[uri.URI][]chan []protocol.Diagnostic)},
+				client:      &protocolClient{diagnostics: make(map[uri.URI][]protocol.Diagnostic), waiters: make(map[uri.URI][]chan []protocol.Diagnostic)},
 				stopSession: func() { stopped++ },
 			}
-			config := lspServerConfig{name: "test", languageID: "go"}
-			client := newLSPClient(t.TempDir(), nil)
-			client.sessions[config.name] = session
+			config := serverConfig{name: "test", languageID: "go"}
+			client := newClient(t.TempDir(), nil)
+			client.sessions[config.name] = currentSession
 			ctx, cancel := context.WithCancel(context.Background())
 			if test.cancel {
 				cancel()
@@ -315,7 +315,7 @@ func TestLSPDocumentOpenFailureInvalidatesSession(t *testing.T) {
 			}
 
 			requestCalled := false
-			_, err := client.withOpenDocument(ctx, config, session, filepath.Join(t.TempDir(), "sample.go"), []byte("package sample"), func(context.Context, *lspSession, protocol.TextDocumentIdentifier) (any, error) {
+			_, err := client.withOpenDocument(ctx, config, currentSession, filepath.Join(t.TempDir(), "sample.go"), []byte("package sample"), func(context.Context, *session, protocol.TextDocumentIdentifier) (any, error) {
 				requestCalled = true
 				return nil, nil
 			})
@@ -350,17 +350,17 @@ func TestLSPDocumentCleanupUsesLiveContextAndInvalidatesFailedSession(t *testing
 		t.Run(test.name, func(t *testing.T) {
 			server := &documentLifecycleServer{closeErr: test.closeErr}
 			stopped := 0
-			session := &lspSession{
+			currentSession := &session{
 				server:      server,
-				client:      &lspProtocolClient{diagnostics: make(map[uri.URI][]protocol.Diagnostic), waiters: make(map[uri.URI][]chan []protocol.Diagnostic)},
+				client:      &protocolClient{diagnostics: make(map[uri.URI][]protocol.Diagnostic), waiters: make(map[uri.URI][]chan []protocol.Diagnostic)},
 				stopSession: func() { stopped++ },
 			}
-			config := lspServerConfig{name: "test", languageID: "go"}
-			client := newLSPClient(t.TempDir(), nil)
-			client.sessions[config.name] = session
+			config := serverConfig{name: "test", languageID: "go"}
+			client := newClient(t.TempDir(), nil)
+			client.sessions[config.name] = currentSession
 			ctx, cancel := context.WithCancel(context.Background())
 
-			response, err := client.withOpenDocument(ctx, config, session, filepath.Join(t.TempDir(), "sample.go"), []byte("package sample"), func(context.Context, *lspSession, protocol.TextDocumentIdentifier) (any, error) {
+			response, err := client.withOpenDocument(ctx, config, currentSession, filepath.Join(t.TempDir(), "sample.go"), []byte("package sample"), func(context.Context, *session, protocol.TextDocumentIdentifier) (any, error) {
 				cancel()
 				return "response", test.requestErr
 			})
@@ -385,7 +385,7 @@ func TestLSPDocumentCleanupUsesLiveContextAndInvalidatesFailedSession(t *testing
 }
 
 func TestLSPDiagnosticsCancellationRemovesWaiter(t *testing.T) {
-	client := &lspProtocolClient{
+	client := &protocolClient{
 		diagnostics: make(map[uri.URI][]protocol.Diagnostic),
 		waiters:     make(map[uri.URI][]chan []protocol.Diagnostic),
 	}
@@ -414,7 +414,7 @@ func (s blockingShutdownServer) Shutdown(ctx context.Context) error {
 
 func TestLSPShutdownIsBounded(t *testing.T) {
 	server := blockingShutdownServer{done: make(chan struct{})}
-	shutdownLSPServer(server, time.Millisecond)
+	shutdownServer(server, time.Millisecond)
 
 	select {
 	case <-server.done:
@@ -453,7 +453,7 @@ func TestLSPPositionOffsetUsesUTF16(t *testing.T) {
 	}
 }
 
-func executeLSPTestOperation(t *testing.T, ctx context.Context, service *Service, name string, arguments map[string]any) operationResult {
+func executeLSPTestOperation(t *testing.T, ctx context.Context, set *Set, name string, arguments map[string]any) operationResult {
 	t.Helper()
 
 	path, _ := arguments["path"].(string)
@@ -463,21 +463,21 @@ func executeLSPTestOperation(t *testing.T, ctx context.Context, service *Service
 	var err error
 	switch name {
 	case "diagnostics":
-		response, err = service.Diagnostics(ctx, path)
+		response, err = set.service.diagnostics(ctx, path)
 	case "hover":
-		response, err = service.Hover(ctx, path, line, character)
+		response, err = set.service.hover(ctx, path, line, character)
 	case "definition":
-		response, err = service.Definition(ctx, path, line, character)
+		response, err = set.service.definition(ctx, path, line, character)
 	case "references":
-		includeDeclaration, _ := arguments["includeDeclaration"].(bool)
-		response, err = service.References(ctx, path, line, character, includeDeclaration)
+		includeDeclaration, _ := arguments["include_declaration"].(bool)
+		response, err = set.service.references(ctx, path, line, character, includeDeclaration)
 	case "symbols":
-		response, err = service.Symbols(ctx, path)
+		response, err = set.service.symbols(ctx, path)
 	case "rename":
-		oldName, _ := arguments["oldName"].(string)
-		newName, _ := arguments["newName"].(string)
+		oldName, _ := arguments["old_name"].(string)
+		newName, _ := arguments["new_name"].(string)
 		var changed int
-		changed, err = service.Rename(ctx, path, line, character, oldName, newName)
+		changed, err = set.service.renameSymbol(ctx, path, line, character, oldName, newName)
 		response = fmt.Sprintf("renamed symbol in %d files", changed)
 	default:
 		t.Fatalf("unknown operation %q", name)
