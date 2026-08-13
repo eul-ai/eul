@@ -48,7 +48,7 @@ type environment struct {
 }
 
 type modelSet struct {
-	primary  string
+	main     string
 	fast     string
 	balanced string
 }
@@ -58,7 +58,7 @@ func (models modelSet) validate() error {
 		name  string
 		model string
 	}{
-		{name: "primary", model: models.primary},
+		{name: "main", model: models.main},
 		{name: "fast", model: models.fast},
 		{name: "balanced", model: models.balanced},
 	} {
@@ -132,7 +132,7 @@ func resolveModelSet(options Options, defaults backend.ModelDefaults) (modelSet,
 	if err != nil {
 		return modelSet{}, err
 	}
-	return modelSet{primary: main, fast: fast, balanced: balanced}, nil
+	return modelSet{main: main, fast: fast, balanced: balanced}, nil
 }
 
 func resolveConfiguredModel(override *string, providerDefault, fallback, name string) (string, error) {

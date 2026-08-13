@@ -20,19 +20,19 @@ func TestResolveConfigLoadsDefaultAndExplicitModels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if defaults.models != (modelSet{primary: "gpt-5.6-sol", fast: "gpt-5.6-luna", balanced: "gpt-5.6-terra"}) || defaults.thinkingLevel != agent.DefaultThinkingLevel {
+	if defaults.models != (modelSet{main: "gpt-5.6-sol", fast: "gpt-5.6-luna", balanced: "gpt-5.6-terra"}) || defaults.thinkingLevel != agent.DefaultThinkingLevel {
 		t.Fatalf("resolved defaults = %+v", defaults)
 	}
 
 	explicit, err := resolveTestConfig(Options{
-		Model:         stringPointer("primary-model"),
+		Model:         stringPointer("main-model"),
 		FastModel:     stringPointer("fast-model"),
 		BalancedModel: stringPointer("balanced-model"),
 	}, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if explicit.models != (modelSet{primary: "primary-model", fast: "fast-model", balanced: "balanced-model"}) {
+	if explicit.models != (modelSet{main: "main-model", fast: "fast-model", balanced: "balanced-model"}) {
 		t.Fatalf("config = %+v", explicit)
 	}
 
@@ -47,7 +47,7 @@ func TestResolveModelSetFallsBackToPrimary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if models != (modelSet{primary: "main-model", fast: "main-model", balanced: "main-model"}) {
+	if models != (modelSet{main: "main-model", fast: "main-model", balanced: "main-model"}) {
 		t.Fatalf("models = %+v", models)
 	}
 }
@@ -148,7 +148,7 @@ func TestResolveConfigLoadsProjectAndResolvesWorkingDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.models.primary != "gpt-5.6-sol" || config.thinkingLevel != agent.ThinkingMax || config.cwd != cwd || config.projectInstructions != "Project rules." {
+	if config.models.main != "gpt-5.6-sol" || config.thinkingLevel != agent.ThinkingMax || config.cwd != cwd || config.projectInstructions != "Project rules." {
 		t.Fatalf("config = %+v", config)
 	}
 }

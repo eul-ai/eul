@@ -26,7 +26,7 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 	store.now = func() time.Time { return now }
 	agentCheckpoint := sessionStoreTestAgentCheckpoint(t)
 
-	first, err := store.Create("test", cwd, modelSet{primary: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingHigh, agentCheckpoint, subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "first prompt\nmore"), true)
+	first, err := store.Create("test", cwd, modelSet{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingHigh, agentCheckpoint, subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "first prompt\nmore"), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 	}
 
 	now = now.Add(time.Hour)
-	second, err := store.Create("test", cwd, modelSet{primary: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, agentCheckpoint, subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "second prompt"), false)
+	second, err := store.Create("test", cwd, modelSet{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, agentCheckpoint, subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "second prompt"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,10 +121,10 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 }
 
 func TestSessionRecordModelSetKeepsModelJSONFields(t *testing.T) {
-	models := modelSet{primary: "main-model", fast: "fast-model", balanced: "balanced-model"}
+	models := modelSet{main: "main-model", fast: "fast-model", balanced: "balanced-model"}
 	encoded, err := json.Marshal(sessionRecord{
 		Version:       sessionRecordVersion,
-		Model:         models.primary,
+		Model:         models.main,
 		FastModel:     models.fast,
 		BalancedModel: models.balanced,
 		Agent:         sessionStoreTestAgentCheckpoint(t),
@@ -140,7 +140,7 @@ func TestSessionRecordModelSetKeepsModelJSONFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	for key, want := range map[string]string{
-		"model":          models.primary,
+		"model":          models.main,
 		"fast_model":     models.fast,
 		"balanced_model": models.balanced,
 	} {
@@ -169,9 +169,9 @@ func TestSessionStoreRequiresCompleteModelSet(t *testing.T) {
 	store := newSessionStore(t.TempDir())
 	cwd := t.TempDir()
 	for name, models := range map[string]modelSet{
-		"primary":  {fast: "fast-model", balanced: "balanced-model"},
-		"fast":     {primary: "main-model", balanced: "balanced-model"},
-		"balanced": {primary: "main-model", fast: "fast-model"},
+		"main":     {fast: "fast-model", balanced: "balanced-model"},
+		"fast":     {main: "main-model", balanced: "balanced-model"},
+		"balanced": {main: "main-model", fast: "fast-model"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := store.Create("test", cwd, models, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), terminal.EmptyCheckpoint(), false)
@@ -185,7 +185,7 @@ func TestSessionStoreRequiresCompleteModelSet(t *testing.T) {
 func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 	store := newSessionStore(t.TempDir())
 	cwd := t.TempDir()
-	handle, err := store.Create("test", cwd, modelSet{primary: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), terminal.EmptyCheckpoint(), false)
+	handle, err := store.Create("test", cwd, modelSet{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), terminal.EmptyCheckpoint(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 func TestSessionStoreListsMetadataWithoutDecodingCheckpoints(t *testing.T) {
 	store := newSessionStore(t.TempDir())
 	cwd := t.TempDir()
-	handle, err := store.Create("test", cwd, modelSet{primary: "model", fast: "model", balanced: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
+	handle, err := store.Create("test", cwd, modelSet{main: "model", fast: "model", balanced: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
 	store := newSessionStore(home)
-	handle, err := store.Create("test", cwd, modelSet{primary: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
+	handle, err := store.Create("test", cwd, modelSet{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
 		t.Fatalf("most recent corrupt-only error = %v", err)
 	}
 
-	valid, err := store.Create("test", cwd, modelSet{primary: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "valid prompt"), false)
+	valid, err := store.Create("test", cwd, modelSet{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "valid prompt"), false)
 	if err != nil {
 		t.Fatal(err)
 	}

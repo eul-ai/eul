@@ -81,10 +81,10 @@ models. For OpenAI Codex, it requests priority processing, which is currently
 advertised as 1.5x speed with increased plan usage. Use `/fast` to toggle it in
 an interactive session.
 
-The main and powerful-subagent model defaults to `gpt-5.6-sol`. Balanced
-subagents default to `gpt-5.6-terra`, and fast subagents default to
-`gpt-5.6-luna`. Use `--model`, `--balanced-model`, and `--fast-model` to
-override them for a new session.
+The main agent model defaults to `gpt-5.6-sol`; subagents using the `main`
+profile use that model too. Balanced subagents default to `gpt-5.6-terra`, and
+fast subagents default to `gpt-5.6-luna`. Use `--model`, `--balanced-model`, and
+`--fast-model` to override them for a new session.
 
 `EUL_HOME` overrides the credential and session directory.
 

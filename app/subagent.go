@@ -15,10 +15,10 @@ func (models modelSet) forProfile(profile subagent.Profile) string {
 		return models.fast
 	case subagent.ProfileBalanced:
 		return models.balanced
-	case subagent.ProfilePowerful:
-		return models.primary
+	case subagent.ProfileMain:
+		return models.main
 	default:
-		return models.primary
+		return models.main
 	}
 }
 

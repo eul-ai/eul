@@ -115,8 +115,9 @@ func (m *Manager) Close() error {
 	return nil
 }
 
-func (m *Manager) Start(tasks []Task, profile Profile, thinkingLevel agent.ThinkingLevel) ([]Job, error) {
-	if err := m.validateStart(tasks, profile, thinkingLevel); err != nil {
+func (m *Manager) Start(tasks []Task) ([]Job, error) {
+	tasks = m.normalizeTasks(tasks)
+	if err := m.validateStart(tasks); err != nil {
 		return nil, err
 	}
 
@@ -140,8 +141,8 @@ func (m *Manager) Start(tasks []Task, profile Profile, thinkingLevel agent.Think
 			order:         m.nextID,
 			description:   truncateUTF8Lines(strings.TrimSpace(task.Description), maxTaskDescriptionBytes, 1),
 			task:          task.Prompt,
-			modelProfile:  profile,
-			thinkingLevel: thinkingLevel,
+			modelProfile:  task.ModelProfile,
+			thinkingLevel: task.ThinkingLevel,
 			ctx:           jobCtx,
 			cancel:        cancel,
 			state:         StateRunning,
@@ -157,13 +158,31 @@ func (m *Manager) Start(tasks []Task, profile Profile, thinkingLevel agent.Think
 
 	startedJobs := make([]Job, len(jobs))
 	for index, job := range jobs {
-		startedJobs[index] = Job{ID: job.id, Description: job.description}
+		startedJobs[index] = Job{
+			ID:            job.id,
+			Description:   job.description,
+			ModelProfile:  job.modelProfile,
+			ThinkingLevel: job.thinkingLevel,
+		}
 		go m.runJob(job)
 	}
 	return startedJobs, nil
 }
 
-func (m *Manager) validateStart(tasks []Task, profile Profile, thinkingLevel agent.ThinkingLevel) error {
+func (m *Manager) normalizeTasks(tasks []Task) []Task {
+	normalized := slices.Clone(tasks)
+	for index := range normalized {
+		if normalized[index].ModelProfile == "" {
+			normalized[index].ModelProfile = ProfileBalanced
+		}
+		if normalized[index].ThinkingLevel == "" {
+			normalized[index].ThinkingLevel = agent.ClampThinkingLevel(agent.ThinkingLow, m.supportedThinkingLevels(normalized[index].ModelProfile))
+		}
+	}
+	return normalized
+}
+
+func (m *Manager) validateStart(tasks []Task) error {
 	if len(tasks) == 0 {
 		return errors.New("at least one task is required")
 	}
@@ -177,15 +196,15 @@ func (m *Manager) validateStart(tasks []Task, profile Profile, thinkingLevel age
 		if strings.TrimSpace(task.Prompt) == "" {
 			return errors.New("task prompts must be nonempty")
 		}
-	}
-	if !profile.valid() {
-		return errors.New("model profile must be one of fast, balanced, or powerful")
-	}
-	if err := validateThinkingLevel(thinkingLevel); err != nil {
-		return err
-	}
-	if !slices.Contains(m.supportedThinkingLevels(profile), thinkingLevel) {
-		return fmt.Errorf("thinking level %q is not supported by the %s model", thinkingLevel, profile)
+		if !task.ModelProfile.valid() {
+			return errors.New("model profile must be one of fast, balanced, or main")
+		}
+		if err := validateThinkingLevel(task.ThinkingLevel); err != nil {
+			return err
+		}
+		if !slices.Contains(m.supportedThinkingLevels(task.ModelProfile), task.ThinkingLevel) {
+			return fmt.Errorf("thinking level %q is not supported by the %s model", task.ThinkingLevel, task.ModelProfile)
+		}
 	}
 	return nil
 }
@@ -464,13 +483,6 @@ func (m *Manager) AcknowledgeInbox(batch agent.InboxBatch) error {
 	m.inbox = append([]Completion(nil), m.inbox[len(batch.MessageIDs):]...)
 	m.publishLocked()
 	return nil
-}
-
-func (m *Manager) SupportedThinkingLevels(profile Profile) []agent.ThinkingLevel {
-	if !profile.valid() {
-		return nil
-	}
-	return slices.Clone(m.supportedThinkingLevels(profile))
 }
 
 func (m *Manager) InboxEmpty() bool {

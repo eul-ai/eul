@@ -15,7 +15,7 @@ const (
 	Name          = "OpenAI Codex"
 	ModelFast     = "gpt-5.6-luna"
 	ModelBalanced = "gpt-5.6-terra"
-	ModelPowerful = "gpt-5.6-sol"
+	ModelMain     = "gpt-5.6-sol"
 )
 
 type oauthManager interface {
@@ -54,7 +54,7 @@ func (*Driver) Descriptor() backend.Descriptor {
 		ID:   ID,
 		Name: Name,
 		DefaultModels: backend.ModelDefaults{
-			Main:     ModelPowerful,
+			Main:     ModelMain,
 			Fast:     ModelFast,
 			Balanced: ModelBalanced,
 		},

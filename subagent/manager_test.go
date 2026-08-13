@@ -23,16 +23,16 @@ func TestTerminalTransitionQueuesCompletionAndFreesCapacity(t *testing.T) {
 	})})
 	defer manager.Close()
 
-	if _, err := manager.Start(testTasks(maxActive), ProfileBalanced, agent.ThinkingLow); err != nil {
+	if _, err := manager.Start(testTasks(maxActive)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.Start(testTasks(1), ProfileBalanced, agent.ThinkingLow); err == nil {
+	if _, err := manager.Start(testTasks(1)); err == nil {
 		t.Fatal("fifth active subagent was accepted")
 	}
 
 	releases <- struct{}{}
 	waitForStatus(t, manager, func(status Status) bool { return len(status.PendingCompletions) == 1 })
-	if _, err := manager.Start(testTasks(1), ProfileBalanced, agent.ThinkingLow); err != nil {
+	if _, err := manager.Start(testTasks(1)); err != nil {
 		t.Fatalf("completion did not free capacity: %v", err)
 	}
 	batch := manager.SnapshotInbox()
@@ -53,23 +53,21 @@ func TestStartValidatesLaunchPolicyBeforeMutation(t *testing.T) {
 	defer manager.Close()
 
 	tests := []struct {
-		name    string
-		tasks   []Task
-		profile Profile
-		level   agent.ThinkingLevel
+		name  string
+		tasks []Task
 	}{
-		{name: "no tasks", profile: ProfileBalanced, level: agent.ThinkingMedium},
-		{name: "too many tasks", tasks: testTasks(maxActive + 1), profile: ProfileBalanced, level: agent.ThinkingMedium},
-		{name: "blank description", tasks: []Task{{Prompt: "task"}}, profile: ProfileBalanced, level: agent.ThinkingMedium},
-		{name: "blank prompt", tasks: []Task{{Description: "task"}}, profile: ProfileBalanced, level: agent.ThinkingMedium},
-		{name: "unknown profile", tasks: testTasks(1), profile: Profile("unknown"), level: agent.ThinkingMedium},
-		{name: "invalid thinking", tasks: testTasks(1), profile: ProfileBalanced, level: agent.ThinkingLevel("invalid")},
-		{name: "disallowed thinking", tasks: testTasks(1), profile: ProfileBalanced, level: agent.ThinkingMax},
-		{name: "unsupported thinking", tasks: testTasks(1), profile: ProfileBalanced, level: agent.ThinkingLow},
+		{name: "no tasks"},
+		{name: "too many tasks", tasks: testTasks(maxActive + 1)},
+		{name: "blank description", tasks: []Task{{Prompt: "task"}}},
+		{name: "blank prompt", tasks: []Task{{Description: "task"}}},
+		{name: "unknown profile", tasks: []Task{{Description: "task", Prompt: "task", ModelProfile: Profile("unknown"), ThinkingLevel: agent.ThinkingMedium}}},
+		{name: "invalid thinking", tasks: []Task{{Description: "task", Prompt: "task", ModelProfile: ProfileBalanced, ThinkingLevel: agent.ThinkingLevel("invalid")}}},
+		{name: "disallowed thinking", tasks: []Task{{Description: "task", Prompt: "task", ModelProfile: ProfileBalanced, ThinkingLevel: agent.ThinkingMax}}},
+		{name: "unsupported thinking", tasks: []Task{{Description: "task", Prompt: "task", ModelProfile: ProfileBalanced, ThinkingLevel: agent.ThinkingLow}}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := manager.Start(test.tasks, test.profile, test.level); err == nil {
+			if _, err := manager.Start(test.tasks); err == nil {
 				t.Fatal("invalid launch accepted")
 			}
 			checkpoint := manager.Checkpoint()
@@ -77,6 +75,38 @@ func TestStartValidatesLaunchPolicyBeforeMutation(t *testing.T) {
 				t.Fatalf("manager mutated after rejection: %+v", checkpoint.data)
 			}
 		})
+	}
+}
+
+func TestStartUsesPerTaskPolicy(t *testing.T) {
+	requests := make(chan RunRequest, 2)
+	manager := NewManager(Config{Runner: RunFunc(func(_ context.Context, request RunRequest, _ func(Progress)) (agent.RunResult, error) {
+		requests <- request
+		return agent.RunResult{}, nil
+	})})
+	defer manager.Close()
+
+	jobs, err := manager.Start([]Task{
+		{Description: "fast", Prompt: "fast task", ModelProfile: ProfileFast, ThinkingLevel: agent.ThinkingMinimal},
+		{Description: "main", Prompt: "main task", ModelProfile: ProfileMain, ThinkingLevel: agent.ThinkingHigh},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jobs[0].ModelProfile != ProfileFast || jobs[0].ThinkingLevel != agent.ThinkingMinimal || jobs[1].ModelProfile != ProfileMain || jobs[1].ThinkingLevel != agent.ThinkingHigh {
+		t.Fatalf("jobs = %+v", jobs)
+	}
+
+	byTask := make(map[string]RunRequest, 2)
+	for range 2 {
+		request := <-requests
+		byTask[request.Task] = request
+	}
+	if byTask["fast task"].Profile != ProfileFast || byTask["fast task"].ThinkingLevel != agent.ThinkingMinimal {
+		t.Fatalf("fast request = %+v", byTask["fast task"])
+	}
+	if byTask["main task"].Profile != ProfileMain || byTask["main task"].ThinkingLevel != agent.ThinkingHigh {
+		t.Fatalf("main request = %+v", byTask["main task"])
 	}
 }
 
@@ -88,7 +118,7 @@ func TestCancelValidatesIDsAtomically(t *testing.T) {
 	})})
 	defer manager.Close()
 
-	jobs, err := manager.Start(testTasks(2), ProfileBalanced, agent.ThinkingLow)
+	jobs, err := manager.Start(testTasks(2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +161,7 @@ func TestCompleteFailedAndCanceledChildrenQueueTerminalNotifications(t *testing.
 		{Description: "complete", Prompt: "complete"},
 		{Description: "failed", Prompt: "failed"},
 		{Description: "cancel", Prompt: "cancel"},
-	}, ProfileBalanced, agent.ThinkingLow)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +186,7 @@ func TestWaitBlocksUntilCompletionAndDoesNotDrainInbox(t *testing.T) {
 		return agent.RunResult{Text: "done"}, nil
 	})})
 	defer manager.Close()
-	if _, err := manager.Start(testTasks(1), ProfileBalanced, agent.ThinkingLow); err != nil {
+	if _, err := manager.Start(testTasks(1)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -196,7 +226,7 @@ func TestWaitCancellationDoesNotCancelChild(t *testing.T) {
 		}
 	})})
 	defer manager.Close()
-	if _, err := manager.Start(testTasks(1), ProfileBalanced, agent.ThinkingLow); err != nil {
+	if _, err := manager.Start(testTasks(1)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -223,7 +253,7 @@ func TestInboxBoundsDescriptionResultAndBatch(t *testing.T) {
 		return agent.RunResult{Text: strings.Repeat("é\n", maxCompletionResultLines+100) + strings.Repeat("x", maxCompletionResultBytes)}, nil
 	})})
 	defer manager.Close()
-	if _, err := manager.Start([]Task{{Description: strings.Repeat("description", 1_000), Prompt: "task"}}, ProfileBalanced, agent.ThinkingLow); err != nil {
+	if _, err := manager.Start([]Task{{Description: strings.Repeat("description", 1_000), Prompt: "task"}}); err != nil {
 		t.Fatal(err)
 	}
 	status := waitForStatus(t, manager, func(status Status) bool { return len(status.PendingCompletions) == 1 })
@@ -243,7 +273,7 @@ func TestInboxAcknowledgesOnlyExactPrefix(t *testing.T) {
 		return agent.RunResult{Text: "done"}, nil
 	})})
 	defer manager.Close()
-	if _, err := manager.Start(testTasks(2), ProfileBalanced, agent.ThinkingLow); err != nil {
+	if _, err := manager.Start(testTasks(2)); err != nil {
 		t.Fatal(err)
 	}
 	waitForStatus(t, manager, func(status Status) bool { return len(status.PendingCompletions) == 2 })

@@ -148,14 +148,14 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 					return agent.Response{ToolCalls: []agent.ToolCall{{
 						ID:        "launch",
 						Name:      "subagent",
-						Arguments: []byte(`{"tasks":[{"description":"review alpha","prompt":"review alpha"},{"description":"review beta","prompt":"review beta"}]}`),
+						Arguments: []byte(`{"tasks":[{"description":"review alpha","prompt":"review alpha","model_profile":"fast","thinking_level":"minimal"},{"description":"review beta","prompt":"review beta","model_profile":"balanced","thinking_level":"medium"}]}`),
 					}}}, nil
 				case 2:
 					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "subagent" {
 						t.Fatalf("launch continuation inputs = %+v", request.Inputs)
 					}
 					output := request.Inputs[0].PlainText()
-					if !strings.Contains(output, "Started subagents (model: balanced, thinking: low)") || !strings.Contains(output, "subagent-1: review alpha") || !strings.Contains(output, "subagent-2: review beta") || strings.Contains(output, "finding for") {
+					if !strings.Contains(output, "subagent-1 (fast, minimal thinking): review alpha") || !strings.Contains(output, "subagent-2 (balanced, medium thinking): review beta") || strings.Contains(output, "finding for") {
 						t.Fatalf("launch output = %q", output)
 					}
 					return agent.Response{ToolCalls: []agent.ToolCall{{
@@ -237,7 +237,20 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	}
 	var tasks []string
 	for _, request := range childRequests {
-		if request.Model != "balanced-model" || request.ThinkingLevel != agent.ThinkingLow || !request.FastMode || !strings.Contains(request.Instructions, projectInstructions) || !strings.Contains(request.Instructions, "Current working directory: "+filepath.ToSlash(cwd)) {
+		task := request.Inputs[0].PlainText()
+		switch task {
+		case "review alpha":
+			if request.Model != "fast-model" || request.ThinkingLevel != agent.ThinkingMinimal {
+				t.Fatalf("alpha child request = %+v", request)
+			}
+		case "review beta":
+			if request.Model != "balanced-model" || request.ThinkingLevel != agent.ThinkingMedium {
+				t.Fatalf("beta child request = %+v", request)
+			}
+		default:
+			t.Fatalf("unexpected child request = %+v", request)
+		}
+		if !request.FastMode || !strings.Contains(request.Instructions, projectInstructions) || !strings.Contains(request.Instructions, "Current working directory: "+filepath.ToSlash(cwd)) {
 			t.Fatalf("child request = %+v", request)
 		}
 		names := make([]string, len(request.Tools))
@@ -248,7 +261,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 		if !slices.Equal(names, wantNames) {
 			t.Fatalf("child tools = %v, want %v", names, wantNames)
 		}
-		tasks = append(tasks, request.Inputs[0].PlainText())
+		tasks = append(tasks, task)
 	}
 	slices.Sort(tasks)
 	if !slices.Equal(tasks, []string{"review alpha", "review beta"}) {

@@ -62,7 +62,7 @@ type sessionRecord struct {
 
 func (record sessionRecord) models() modelSet {
 	return modelSet{
-		primary:  record.Model,
+		main:     record.Model,
 		fast:     record.FastModel,
 		balanced: record.BalancedModel,
 	}
@@ -131,7 +131,7 @@ func (store *sessionStore) Create(
 			Status:           sessionIdle,
 			Provider:         provider,
 			WorkingDirectory: cwd,
-			Model:            models.primary,
+			Model:            models.main,
 			FastModel:        models.fast,
 			BalancedModel:    models.balanced,
 			ThinkingLevel:    thinkingLevel,

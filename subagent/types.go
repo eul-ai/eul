@@ -14,12 +14,12 @@ type Profile string
 const (
 	ProfileFast     Profile = "fast"
 	ProfileBalanced Profile = "balanced"
-	ProfilePowerful Profile = "powerful"
+	ProfileMain     Profile = "main"
 )
 
 func (profile Profile) valid() bool {
 	switch profile {
-	case ProfileFast, ProfileBalanced, ProfilePowerful:
+	case ProfileFast, ProfileBalanced, ProfileMain:
 		return true
 	default:
 		return false
@@ -42,13 +42,17 @@ type Progress struct {
 }
 
 type Task struct {
-	Description string
-	Prompt      string
+	Description   string
+	Prompt        string
+	ModelProfile  Profile
+	ThinkingLevel agent.ThinkingLevel
 }
 
 type Job struct {
-	ID          string
-	Description string
+	ID            string
+	Description   string
+	ModelProfile  Profile
+	ThinkingLevel agent.ThinkingLevel
 }
 
 type WaitOutcome uint8

@@ -30,6 +30,14 @@ var taskSchema = StrictObject(map[string]agent.JSONSchema{
 		Type:        "string",
 		Description: "The complete task prompt. Include all context the subagent needs.",
 	},
+	"model_profile": {
+		Type:        "string",
+		Description: "fast, balanced (default), or main (the main agent's model).",
+	},
+	"thinking_level": {
+		Type:        "string",
+		Description: "off, minimal, low (default), medium, or high.",
+	},
 }, "description", "prompt")
 
 var launchDefinition = agent.ToolDefinition{
@@ -38,16 +46,8 @@ var launchDefinition = agent.ToolDefinition{
 	Parameters: StrictObject(map[string]agent.JSONSchema{
 		"tasks": {
 			Type:        "array",
-			Description: "One to four independent tasks.",
+			Description: "One to four independent tasks, each with its own model profile and thinking level.",
 			Items:       &taskSchema,
-		},
-		"model_profile": {
-			Type:        "string",
-			Description: "fast, balanced (default), or powerful.",
-		},
-		"thinking_level": {
-			Type:        "string",
-			Description: "off, minimal, low (default), medium, or high.",
 		},
 	}, "tasks"),
 }
@@ -73,14 +73,14 @@ var cancelDefinition = agent.ToolDefinition{
 }
 
 type subagentTask struct {
-	Description string `json:"description"`
-	Prompt      string `json:"prompt"`
+	Description   string  `json:"description"`
+	Prompt        string  `json:"prompt"`
+	ModelProfile  *string `json:"model_profile"`
+	ThinkingLevel *string `json:"thinking_level"`
 }
 
 type launchArguments struct {
-	Tasks         []subagentTask `json:"tasks"`
-	ModelProfile  *string        `json:"model_profile"`
-	ThinkingLevel *string        `json:"thinking_level"`
+	Tasks []subagentTask `json:"tasks"`
 }
 
 type waitArguments struct {
@@ -121,17 +121,9 @@ func (*launchTool) Definition() agent.ToolDefinition {
 
 func (launch *launchTool) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
 	values, _ := snapshot.Arguments["tasks"].([]any)
-	profile := subagent.ProfileBalanced
-	if value, ok := snapshot.Arguments["model_profile"].(string); ok {
-		profile = subagent.Profile(value)
-	}
-	thinkingLevel := agent.ThinkingLow
-	if value, ok := snapshot.Arguments["thinking_level"].(string); ok {
-		thinkingLevel = agent.ThinkingLevel(value)
-	}
 	return agent.ToolPresentation{
 		Title:     launchToolName,
-		Arguments: fmt.Sprintf("(%s, %s)", profile, thinkingLevel),
+		Arguments: fmt.Sprintf("(%d)", len(values)),
 		Markdown:  true,
 		Lines:     []string{fmt.Sprintf("Starting %d subagent(s).", len(values))},
 	}
@@ -146,31 +138,21 @@ func (launch *launchTool) Execute(ctx context.Context, arguments json.RawMessage
 	if err != nil {
 		return errorResult(launchToolName, err), nil
 	}
-	profile := subagent.ProfileBalanced
-	if args.ModelProfile != nil {
-		profile = subagent.Profile(*args.ModelProfile)
-	}
-	thinkingLevel := agent.ThinkingLow
-	if args.ThinkingLevel == nil {
-		thinkingLevel = agent.ClampThinkingLevel(thinkingLevel, launch.manager.SupportedThinkingLevels(profile))
-	} else {
-		thinkingLevel = agent.ThinkingLevel(*args.ThinkingLevel)
-	}
 
-	jobs, err := launch.manager.Start(toSubagentTasks(args.Tasks), profile, thinkingLevel)
+	jobs, err := launch.manager.Start(toSubagentTasks(args.Tasks))
 	if err != nil {
 		return errorResult(launchToolName, err), nil
 	}
 
 	var output strings.Builder
-	fmt.Fprintf(&output, "Started subagents (model: %s, thinking: %s):", profile, thinkingLevel)
+	output.WriteString("Started subagents:")
 	for _, job := range jobs {
-		fmt.Fprintf(&output, "\n- %s: %s", job.ID, strings.TrimSpace(job.Description))
+		fmt.Fprintf(&output, "\n- %s (%s, %s thinking): %s", job.ID, job.ModelProfile, job.ThinkingLevel, strings.TrimSpace(job.Description))
 	}
 	if updates != nil {
 		updates.SetFinal(agent.ToolPresentation{
 			Title:     launchToolName,
-			Arguments: fmt.Sprintf("(%s, %s)", profile, thinkingLevel),
+			Arguments: fmt.Sprintf("(%d)", len(jobs)),
 			Markdown:  true,
 			Lines:     []string{fmt.Sprintf("Started %d subagent(s).", len(jobs))},
 		})
@@ -281,6 +263,12 @@ func toSubagentTasks(tasks []subagentTask) []subagent.Task {
 	converted := make([]subagent.Task, len(tasks))
 	for index, task := range tasks {
 		converted[index] = subagent.Task{Description: task.Description, Prompt: task.Prompt}
+		if task.ModelProfile != nil {
+			converted[index].ModelProfile = subagent.Profile(*task.ModelProfile)
+		}
+		if task.ThinkingLevel != nil {
+			converted[index].ThinkingLevel = agent.ThinkingLevel(*task.ThinkingLevel)
+		}
 	}
 	return converted
 }

@@ -54,13 +54,13 @@ func resolveSessionModelMetadata(backendRuntime backend.Runtime, config resolved
 		return metadata
 	}
 
-	main := resolve(config.models.primary)
+	main := resolve(config.models.main)
 	return sessionModelMetadata{
 		main: main,
 		subagent: map[subagent.Profile]backend.ModelMetadata{
 			subagent.ProfileFast:     resolve(config.models.forProfile(subagent.ProfileFast)),
 			subagent.ProfileBalanced: resolve(config.models.forProfile(subagent.ProfileBalanced)),
-			subagent.ProfilePowerful: resolve(config.models.forProfile(subagent.ProfilePowerful)),
+			subagent.ProfileMain:     resolve(config.models.forProfile(subagent.ProfileMain)),
 		},
 		thinkingLevel: main.ClampThinkingLevel(config.thinkingLevel),
 	}
@@ -102,7 +102,7 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 		Sessions:     source.sessions,
 		StateChanges: terminalStateChanges(source.checkpoints),
 		Config: terminal.Config{
-			Model:              source.config.models.primary,
+			Model:              source.config.models.main,
 			WorkingDirectory:   source.config.cwd,
 			ThinkingLevel:      source.metadata.thinkingLevel,
 			ThinkingLevels:     source.metadata.main.ThinkingLevels,

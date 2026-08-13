@@ -92,7 +92,7 @@ func newAgentSessionComponents(
 	}
 	metadata := resolveSessionModelMetadata(backendRuntime, config)
 	if config.fastMode && !metadata.main.FastMode {
-		return nil, terminalOptionsBuilder{}, errors.Join(fmt.Errorf("fast mode is unavailable for model %q", config.models.primary), closeBackendRuntime(backendRuntime))
+		return nil, terminalOptionsBuilder{}, errors.Join(fmt.Errorf("fast mode is unavailable for model %q", config.models.main), closeBackendRuntime(backendRuntime))
 	}
 	loadUsage := runtimeUsageLoader(backendRuntime)
 	warnings := append([]string(nil), config.warnings...)
@@ -111,7 +111,7 @@ func newAgentSessionComponents(
 	}
 	engine = agent.New(provider, tools.registry, engineOptions(
 		config,
-		config.models.primary,
+		config.models.main,
 		settings,
 		checkpointing,
 		tools.subagents,

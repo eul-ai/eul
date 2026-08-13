@@ -51,7 +51,7 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (app.Options, e
 	flags := flag.NewFlagSet("eul", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
 	provider := flags.String("provider", "", "provider backend")
-	model := flags.String("model", "", "main and powerful-subagent model (defaults to the provider configuration)")
+	model := flags.String("model", "", "main agent model, also used by main-profile subagents (defaults to the provider configuration)")
 	fastModel := flags.String("fast-model", "", "fast subagent model (defaults to the provider configuration)")
 	balancedModel := flags.String("balanced-model", "", "balanced subagent model (defaults to the provider configuration)")
 	thinking := flags.String("thinking", string(agent.DefaultThinkingLevel), "thinking level")

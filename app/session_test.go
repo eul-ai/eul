@@ -38,7 +38,7 @@ func (provider *profileMetadataProvider) metadataFor(model string) backend.Model
 
 func TestModelSetSelectsSubagentProfiles(t *testing.T) {
 	models := modelSet{
-		primary:  "powerful-model",
+		main:     "main-model",
 		balanced: "balanced-model",
 		fast:     "fast-model",
 	}
@@ -48,7 +48,7 @@ func TestModelSetSelectsSubagentProfiles(t *testing.T) {
 	}{
 		{profile: subagent.ProfileFast, want: "fast-model"},
 		{profile: subagent.ProfileBalanced, want: "balanced-model"},
-		{profile: subagent.ProfilePowerful, want: "powerful-model"},
+		{profile: subagent.ProfileMain, want: "main-model"},
 	} {
 		if got := models.forProfile(test.profile); got != test.want {
 			t.Fatalf("profile %q selected %q, want %q", test.profile, got, test.want)
@@ -86,7 +86,7 @@ func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 	cwd := t.TempDir()
 	skills := []skill.Skill{{Name: "review", Description: "Review code"}}
 	warnings := []string{"Skipped skill invalid: malformed"}
-	session, err := newAgentSession(resolvedConfig{models: modelSet{primary: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills, warnings: warnings}, environment{}, backendRuntime)
+	session, err := newAgentSession(resolvedConfig{models: modelSet{main: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills, warnings: warnings}, environment{}, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 		}), nil
 	}}
 	session, err := newAgentSession(resolvedConfig{
-		models: modelSet{primary: "model", fast: "model", balanced: "model"},
+		models: modelSet{main: "model", fast: "model", balanced: "model"},
 		cwd:    t.TempDir(),
 	}, environment{}, backendRuntime)
 	if err != nil {
@@ -149,7 +149,7 @@ func TestNewAgentSessionRejectsUnsupportedFastMode(t *testing.T) {
 	}}
 	backendRuntime := metadataFreeBackendRuntime{Runtime: configured}
 	session, err := newAgentSession(resolvedConfig{
-		models:   modelSet{primary: "model", fast: "model", balanced: "model"},
+		models:   modelSet{main: "model", fast: "model", balanced: "model"},
 		fastMode: true,
 		cwd:      t.TempDir(),
 	}, environment{}, backendRuntime)
@@ -182,7 +182,7 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 		return tool.NewRegistry(additional)
 	}}
 	session, err := newAgentSession(resolvedConfig{
-		models:        modelSet{primary: "main", fast: "fast", balanced: "balanced"},
+		models:        modelSet{main: "main", fast: "fast", balanced: "balanced"},
 		thinkingLevel: agent.ThinkingHigh,
 		cwd:           t.TempDir(),
 	}, runtime, backendRuntime)
@@ -194,13 +194,13 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 	}
 
 	result, err := session.tools.Execute(context.Background(), agent.ToolCall{
-		ID: "fast", Name: "subagent", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}],"model_profile":"fast","thinking_level":"high"}`),
+		ID: "fast", Name: "subagent", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"fast","thinking_level":"high"}]}`),
 	}, nil)
 	if err != nil || !result.IsError || !strings.Contains(result.Output, "fast model") {
 		t.Fatalf("fast result = %+v, error = %v", result, err)
 	}
 	result, err = session.tools.Execute(context.Background(), agent.ToolCall{
-		ID: "balanced", Name: "subagent", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}],"model_profile":"balanced","thinking_level":"high"}`),
+		ID: "balanced", Name: "subagent", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"balanced","thinking_level":"high"}]}`),
 	}, nil)
 	if err != nil || result.IsError {
 		t.Fatalf("balanced result = %+v, error = %v", result, err)
@@ -221,7 +221,7 @@ func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 		}), nil
 	}}
 	cwd := t.TempDir()
-	session, err := newAgentSession(resolvedConfig{models: modelSet{primary: "model", fast: "model", balanced: "model"}, cwd: cwd}, runtime, backendRuntime)
+	session, err := newAgentSession(resolvedConfig{models: modelSet{main: "model", fast: "model", balanced: "model"}, cwd: cwd}, runtime, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 			}), nil
 		}}
 	}
-	config := resolvedConfig{provider: "test", models: modelSet{primary: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
+	config := resolvedConfig{provider: "test", models: modelSet{main: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
 	store := newSessionStore(t.TempDir())
 
 	first, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, nil)
@@ -329,7 +329,7 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 			return agent.Response{Text: "result for " + request.Inputs[0].PlainText()}, nil
 		}), nil
 	}}
-	config := resolvedConfig{provider: "test", models: modelSet{primary: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
+	config := resolvedConfig{provider: "test", models: modelSet{main: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
 	store := newSessionStore(t.TempDir())
 	session, err := newStoredAgentSession(config, runtime, backendRuntime, store, nil)
 	if err != nil {
@@ -381,7 +381,7 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 			}), nil
 		}}
 	}
-	config := resolvedConfig{provider: "test", models: modelSet{primary: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
+	config := resolvedConfig{provider: "test", models: modelSet{main: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
 	store := newSessionStore(t.TempDir())
 
 	first, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, nil)
@@ -499,7 +499,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer handle.Close()
-	if restored.provider != "alternate" || restored.models != (modelSet{primary: "selected-model", fast: "selected-fast-model", balanced: "selected-balanced-model"}) || selected.Descriptor().ID != "alternate" {
+	if restored.provider != "alternate" || restored.models != (modelSet{main: "selected-model", fast: "selected-fast-model", balanced: "selected-balanced-model"}) || selected.Descriptor().ID != "alternate" {
 		t.Fatalf("restored=%+v provider=%q", restored, selected.Descriptor().ID)
 	}
 }
@@ -507,7 +507,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	cwd := t.TempDir()
 	store := newSessionStore(t.TempDir())
-	corrupt, err := store.Create("test", cwd, modelSet{primary: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "corrupt"), false)
+	corrupt, err := store.Create("test", cwd, modelSet{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "corrupt"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +518,7 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	if err := os.WriteFile(corruptPath, []byte(`{"version":99}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	valid, err := store.Create("test", cwd, modelSet{primary: "model", fast: "persisted-fast", balanced: "persisted-balanced"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "valid"), false)
+	valid, err := store.Create("test", cwd, modelSet{main: "model", fast: "persisted-fast", balanced: "persisted-balanced"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "valid"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -537,7 +537,7 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	if len(config.warnings) != 1 || !strings.Contains(config.warnings[0], "Skipped session") || !strings.Contains(config.warnings[0], "unsupported session version") {
 		t.Fatalf("warnings = %v", config.warnings)
 	}
-	if config.models != (modelSet{primary: "model", fast: "persisted-fast", balanced: "persisted-balanced"}) {
+	if config.models != (modelSet{main: "model", fast: "persisted-fast", balanced: "persisted-balanced"}) {
 		t.Fatalf("restored models = %+v", config)
 	}
 }
@@ -555,7 +555,7 @@ func TestNewAgentSessionReportsToolsetConfigurationFailure(t *testing.T) {
 			return agent.Response{}, nil
 		}), nil
 	}}
-	_, err := newAgentSession(resolvedConfig{models: modelSet{primary: "model", fast: "model", balanced: "model"}, cwd: t.TempDir()}, runtime, backendRuntime)
+	_, err := newAgentSession(resolvedConfig{models: modelSet{main: "model", fast: "model", balanced: "model"}, cwd: t.TempDir()}, runtime, backendRuntime)
 	if !errors.Is(err, configureErr) || !strings.Contains(err.Error(), "configure tools") {
 		t.Fatalf("newAgentSession error = %v", err)
 	}

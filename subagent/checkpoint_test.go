@@ -48,7 +48,7 @@ func TestCheckpointRoundTripRestoresPendingAndInterruptsActive(t *testing.T) {
 			return agent.RunResult{}, nil
 		}
 	})})
-	if _, err := manager.Start([]Task{{Description: "finished", Prompt: "complete"}, {Description: "running", Prompt: "running"}}, ProfileBalanced, agent.ThinkingLow); err != nil {
+	if _, err := manager.Start([]Task{{Description: "finished", Prompt: "complete"}, {Description: "running", Prompt: "running"}}); err != nil {
 		t.Fatal(err)
 	}
 	waitForStatus(t, manager, func(status Status) bool { return len(status.PendingCompletions) == 1 && len(status.Active) == 1 })
@@ -79,7 +79,7 @@ func TestCheckpointRoundTripRestoresPendingAndInterruptsActive(t *testing.T) {
 	if status.PendingCompletions[1].MessageID <= status.PendingCompletions[0].MessageID {
 		t.Fatalf("message IDs = %d, %d", status.PendingCompletions[0].MessageID, status.PendingCompletions[1].MessageID)
 	}
-	jobs, err := restored.Start([]Task{{Description: "next", Prompt: "complete"}}, ProfileBalanced, agent.ThinkingLow)
+	jobs, err := restored.Start([]Task{{Description: "next", Prompt: "complete"}})
 	if err != nil {
 		t.Fatal(err)
 	}

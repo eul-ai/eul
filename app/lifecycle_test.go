@@ -158,7 +158,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 	target, err := store.Create(
 		"test",
 		targetCWD,
-		modelSet{primary: "resume-main", fast: "resume-fast", balanced: "resume-balanced"},
+		modelSet{main: "resume-main", fast: "resume-fast", balanced: "resume-balanced"},
 		agent.ThinkingMedium,
 		sessionStoreTestAgentCheckpoint(t),
 		subagent.EmptyCheckpoint(),
