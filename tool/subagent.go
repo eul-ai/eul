@@ -186,8 +186,24 @@ func (*waitTool) Definition() agent.ToolDefinition {
 	return waitDefinition
 }
 
-func (*waitTool) Presentation(PresentationSnapshot) agent.ToolPresentation {
-	return agent.ToolPresentation{Title: waitToolName, Markdown: true, Lines: []string{"Waiting for a subagent completion."}}
+func (*waitTool) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
+	var timeout time.Duration
+	if number, ok := snapshot.Arguments["timeout_ms"].(json.Number); ok {
+		if milliseconds, err := number.Int64(); err == nil {
+			timeout = time.Duration(milliseconds) * time.Millisecond
+		}
+	}
+
+	return waitPresentation(timeout, "Waiting for a subagent completion.")
+}
+
+func waitPresentation(timeout time.Duration, message string) agent.ToolPresentation {
+	arguments := ""
+	if timeout > 0 {
+		arguments = fmt.Sprintf("(%s timeout)", timeout)
+	}
+
+	return agent.ToolPresentation{Title: waitToolName, Arguments: arguments, Markdown: true, Lines: []string{message}}
 }
 
 func (wait *waitTool) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
@@ -212,7 +228,11 @@ func (wait *waitTool) Execute(ctx context.Context, arguments json.RawMessage, up
 
 	message := waitResultMessage(outcome)
 	if updates != nil {
-		updates.SetFinal(agent.ToolPresentation{Title: waitToolName, Markdown: true, Lines: []string{message}})
+		var timeout time.Duration
+		if args.TimeoutMS != nil {
+			timeout = time.Duration(timeoutMS) * time.Millisecond
+		}
+		updates.SetFinal(waitPresentation(timeout, message))
 	}
 	return successResult(message), nil
 }

@@ -17,6 +17,20 @@ func TestSubagentWaitDefaultTimeout(t *testing.T) {
 	}
 }
 
+func TestSubagentWaitPresentationShowsProvidedTimeout(t *testing.T) {
+	wait := &waitTool{}
+
+	defaultPresentation := wait.Presentation(PresentationSnapshot{Arguments: map[string]any{"timeout_ms": nil}})
+	if defaultPresentation.Arguments != "" {
+		t.Fatalf("default presentation = %+v", defaultPresentation)
+	}
+
+	customPresentation := wait.Presentation(PresentationSnapshot{Arguments: map[string]any{"timeout_ms": json.Number("1500")}})
+	if customPresentation.Arguments != "(1.5s timeout)" {
+		t.Fatalf("custom presentation = %+v", customPresentation)
+	}
+}
+
 func TestSubagentWaitIsSynchronizationOnly(t *testing.T) {
 	manager := subagent.NewManager(subagent.Config{Runner: subagent.RunFunc(func(context.Context, subagent.RunRequest, func(subagent.Progress)) (agent.RunResult, error) {
 		return agent.RunResult{Text: "research result"}, nil
@@ -62,9 +76,14 @@ func TestSubagentWaitTimesOutWithoutCancelingChild(t *testing.T) {
 	}
 	wait := NewSubagentWait(manager)
 
-	result, err := wait.Execute(context.Background(), json.RawMessage(`{"timeout_ms":1}`), nil)
-	if err != nil || result.IsError || !strings.Contains(result.Output, "No subagent completion") {
-		t.Fatalf("wait result = %+v, error = %v", result, err)
+	var presentation agent.ToolPresentation
+	updates := toolUpdateSinkFunc(func(update agent.ToolPresentation) error {
+		presentation = update
+		return nil
+	})
+	result, err := wait.Execute(context.Background(), json.RawMessage(`{"timeout_ms":1}`), updates)
+	if err != nil || result.IsError || !strings.Contains(result.Output, "No subagent completion") || presentation.Arguments != "(1ms timeout)" {
+		t.Fatalf("wait result = %+v, presentation = %+v, error = %v", result, presentation, err)
 	}
 	select {
 	case <-childDone:
