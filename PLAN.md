@@ -90,8 +90,8 @@ Implement [`INBOX.md`](INBOX.md) on the new boundaries. No backward compatibilit
 - Split state into active jobs and an ordered completion inbox.
 - Atomically transfer each terminal job out of active state and into exactly one bounded completion message.
 - Count only active jobs against concurrency.
-- Redesign `subagent_wait` as an argument-free synchronization tool that waits for inbox activity and never transports or consumes results.
-- Do not cancel children when a wait call is canceled.
+- Redesign `subagent_wait` as a synchronization tool with no IDs and an optional bounded timeout; it waits for inbox activity and never transports or consumes results.
+- Wake a blocked wait for steering, and do not cancel children when a wait is canceled, times out, or is interrupted by steering.
 - Keep cancellation explicit; a terminal cancellation produces a completion message like other terminal outcomes.
 - Remove selected-ID collection, terminal-job retention, and consume semantics.
 

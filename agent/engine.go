@@ -633,11 +633,14 @@ func (e *Engine) executeToolRound(ctx context.Context, calls []ToolCall, toolEve
 
 	roundCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	steering := e.continuations.beginToolRound()
+	defer e.continuations.endToolRound(steering)
 
 	completions := make(chan toolCompletion, len(calls))
 	for index, call := range calls {
 		go func() {
-			result, err := e.executeTool(roundCtx, call, toolEvents.update(call))
+			toolCtx := context.WithValue(roundCtx, steeringSignalKey{}, steering)
+			result, err := e.executeTool(toolCtx, call, toolEvents.update(call))
 			if updateErr := toolEvents.updateError(call); updateErr != nil {
 				result = failedToolResult(call, result, updateErr)
 				err = updateErr

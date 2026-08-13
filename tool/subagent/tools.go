@@ -9,15 +9,20 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/tool"
 )
 
 const (
-	launchToolName = "subagent"
-	waitToolName   = "subagent_wait"
-	cancelToolName = "subagent_cancel"
+	launchToolName       = "subagent"
+	waitToolName         = "subagent_wait"
+	cancelToolName       = "subagent_cancel"
+	defaultWaitTimeout   = 5 * time.Minute
+	maximumWaitTimeout   = time.Hour
+	defaultWaitTimeoutMS = int(defaultWaitTimeout / time.Millisecond)
+	maximumWaitTimeoutMS = int(maximumWaitTimeout / time.Millisecond)
 )
 
 var taskSchema = strictObject(map[string]agent.JSONSchema{
@@ -53,8 +58,10 @@ var launchDefinition = agent.ToolDefinition{
 
 var waitDefinition = agent.ToolDefinition{
 	Name:        waitToolName,
-	Description: "Wait until any active subagent produces a completion notification. The notification is delivered automatically after this tool returns.",
-	Parameters:  strictObject(nil),
+	Description: "Wait sparingly when no independent work remains and the next step requires a subagent result. Completion notifications are delivered automatically. Steering interrupts the wait.",
+	Parameters: strictObject(map[string]agent.JSONSchema{
+		"timeout_ms": nullable("integer", fmt.Sprintf("Optional timeout in milliseconds; null defaults to %d, maximum %d.", defaultWaitTimeoutMS, maximumWaitTimeoutMS)),
+	}),
 }
 
 var cancelDefinition = agent.ToolDefinition{
@@ -78,6 +85,10 @@ type launchArguments struct {
 	Tasks         []task  `json:"tasks"`
 	ModelProfile  *string `json:"model_profile"`
 	ThinkingLevel *string `json:"thinking_level"`
+}
+
+type waitArguments struct {
+	TimeoutMS *int `json:"timeout_ms"`
 }
 
 type cancelArguments struct {
@@ -181,19 +192,38 @@ func (*waitTool) Presentation(tool.PresentationSnapshot) agent.ToolPresentation 
 }
 
 func (wait *waitTool) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
-	if _, err := decodeArguments[struct{}](arguments); err != nil {
+	args, err := decodeArguments[waitArguments](arguments)
+	if err != nil {
 		return toolError(waitToolName, err), nil
 	}
-	if err := wait.manager.waitForCompletion(ctx); err != nil {
+	timeoutMS, err := optionalPositive(args.TimeoutMS, defaultWaitTimeoutMS, maximumWaitTimeoutMS, "timeout_ms")
+	if err != nil {
+		return toolError(waitToolName, err), nil
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
+	defer cancel()
+	outcome, err := wait.manager.waitForCompletion(waitCtx)
+	if err != nil {
 		if ctx.Err() != nil {
 			return agent.ToolResult{}, ctx.Err()
 		}
 		return toolError(waitToolName, err), nil
 	}
-	if updates != nil {
-		updates.SetFinal(agent.ToolPresentation{Title: waitToolName, Markdown: true, Lines: []string{"A subagent completion is available."}})
+
+	var message string
+	switch outcome {
+	case waitCompletion:
+		message = "A subagent completion is available."
+	case waitSteering:
+		message = "Wait interrupted by steering."
+	case waitTimeout:
+		message = "No subagent completion is available yet."
 	}
-	return toolSuccess("A subagent completion is available."), nil
+	if updates != nil {
+		updates.SetFinal(agent.ToolPresentation{Title: waitToolName, Markdown: true, Lines: []string{message}})
+	}
+	return toolSuccess(message), nil
 }
 
 func (*cancelTool) Definition() agent.ToolDefinition {
@@ -311,6 +341,29 @@ func strictObject(properties map[string]agent.JSONSchema, required ...string) ag
 		Required:             required,
 		AdditionalProperties: &additionalProperties,
 	}
+}
+
+func nullable(schemaType, description string) agent.JSONSchema {
+	return agent.JSONSchema{
+		Description: description,
+		AnyOf: []agent.JSONSchema{
+			{Type: schemaType},
+			{Type: "null"},
+		},
+	}
+}
+
+func optionalPositive(value *int, defaultValue, maximum int, field string) (int, error) {
+	if value == nil {
+		return defaultValue, nil
+	}
+	if *value <= 0 {
+		return 0, fmt.Errorf("%s must be positive", field)
+	}
+	if *value > maximum {
+		return 0, fmt.Errorf("%s must not exceed %d", field, maximum)
+	}
+	return *value, nil
 }
 
 func decodeArguments[T any](arguments json.RawMessage) (T, error) {

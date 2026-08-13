@@ -145,7 +145,10 @@ isolation and automatically allows network access.
 ## Subagents
 
 Eul may launch up to four independent read-only subagents for parallel research.
-They run in the background and can be canceled when no longer needed.
+They run in the background and can be canceled when no longer needed. Results are
+delivered automatically; waiting is only needed when the next step depends on a
+running subagent. Waits are bounded and can also be interrupted by steering
+without canceling the subagent.
 
 ## Goals
 

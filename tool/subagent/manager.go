@@ -312,23 +312,48 @@ func (m *Manager) cancelIDs(ids []string) ([]string, error) {
 	return canceled, nil
 }
 
-func (m *Manager) waitForCompletion(ctx context.Context) error {
+type waitOutcome uint8
+
+const (
+	waitCompletion waitOutcome = iota
+	waitSteering
+	waitTimeout
+)
+
+func (m *Manager) waitForCompletion(ctx context.Context) (waitOutcome, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+
+	steering := agent.SteeringSignal(ctx)
 	for {
 		m.mu.Lock()
 		switch {
 		case len(m.inbox) > 0:
 			m.mu.Unlock()
-			return nil
+			return waitCompletion, nil
 		case len(m.active) == 0:
 			m.mu.Unlock()
-			return errors.New("no active subagents or pending completions")
+			return 0, errors.New("no active subagents or pending completions")
 		default:
 			changes := m.changes
 			m.mu.Unlock()
 
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				m.mu.Lock()
+				completion := len(m.inbox) > 0
+				m.mu.Unlock()
+				switch {
+				case completion:
+					return waitCompletion, nil
+				case errors.Is(ctx.Err(), context.DeadlineExceeded):
+					return waitTimeout, nil
+				default:
+					return 0, ctx.Err()
+				}
+			case <-steering:
+				return waitSteering, nil
 			case <-changes:
 			}
 		}

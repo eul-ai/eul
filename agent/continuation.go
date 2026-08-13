@@ -36,6 +36,7 @@ type continuationArbiter struct {
 	mu                sync.Mutex
 	acceptingSteering bool
 	steering          []string
+	toolRoundSteering chan struct{}
 	goal              *GoalState
 }
 
@@ -44,6 +45,7 @@ func (arbiter *continuationArbiter) beginRun() {
 	defer arbiter.mu.Unlock()
 
 	arbiter.steering = nil
+	arbiter.toolRoundSteering = nil
 	arbiter.acceptingSteering = true
 }
 
@@ -52,6 +54,7 @@ func (arbiter *continuationArbiter) endRun() {
 	defer arbiter.mu.Unlock()
 
 	arbiter.steering = nil
+	arbiter.toolRoundSteering = nil
 	arbiter.acceptingSteering = false
 }
 
@@ -63,6 +66,10 @@ func (arbiter *continuationArbiter) steer(text string) bool {
 		return false
 	}
 	arbiter.steering = append(arbiter.steering, text)
+	if arbiter.toolRoundSteering != nil {
+		close(arbiter.toolRoundSteering)
+		arbiter.toolRoundSteering = nil
+	}
 	return true
 }
 
@@ -72,7 +79,30 @@ func (arbiter *continuationArbiter) clearSteering() []string {
 
 	steering := append([]string(nil), arbiter.steering...)
 	arbiter.steering = nil
+	arbiter.toolRoundSteering = nil
 	return steering
+}
+
+func (arbiter *continuationArbiter) beginToolRound() <-chan struct{} {
+	arbiter.mu.Lock()
+	defer arbiter.mu.Unlock()
+
+	steering := make(chan struct{})
+	if len(arbiter.steering) > 0 {
+		close(steering)
+		return steering
+	}
+	arbiter.toolRoundSteering = steering
+	return steering
+}
+
+func (arbiter *continuationArbiter) endToolRound(steering <-chan struct{}) {
+	arbiter.mu.Lock()
+	defer arbiter.mu.Unlock()
+
+	if arbiter.toolRoundSteering == steering {
+		arbiter.toolRoundSteering = nil
+	}
 }
 
 func (arbiter *continuationArbiter) setGoal(objective string) error {
@@ -110,6 +140,7 @@ func (arbiter *continuationArbiter) restoreGoal(goal *GoalState) {
 	defer arbiter.mu.Unlock()
 
 	arbiter.steering = nil
+	arbiter.toolRoundSteering = nil
 	arbiter.acceptingSteering = false
 	arbiter.goal = nil
 	if goal != nil {
@@ -138,6 +169,7 @@ func (arbiter *continuationArbiter) reset() {
 	defer arbiter.mu.Unlock()
 
 	arbiter.steering = nil
+	arbiter.toolRoundSteering = nil
 	arbiter.acceptingSteering = false
 	arbiter.goal = nil
 }

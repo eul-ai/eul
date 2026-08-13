@@ -89,16 +89,23 @@ func TestWaitBlocksUntilCompletionAndDoesNotDrainInbox(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	waitDone := make(chan error, 1)
-	go func() { waitDone <- manager.waitForCompletion(context.Background()) }()
+	type waitResult struct {
+		outcome waitOutcome
+		err     error
+	}
+	waitDone := make(chan waitResult, 1)
+	go func() {
+		outcome, err := manager.waitForCompletion(context.Background())
+		waitDone <- waitResult{outcome: outcome, err: err}
+	}()
 	select {
-	case err := <-waitDone:
-		t.Fatalf("wait returned early: %v", err)
+	case result := <-waitDone:
+		t.Fatalf("wait returned early: %+v", result)
 	case <-time.After(20 * time.Millisecond):
 	}
 	close(release)
-	if err := <-waitDone; err != nil {
-		t.Fatal(err)
+	if result := <-waitDone; result.err != nil || result.outcome != waitCompletion {
+		t.Fatalf("wait result = %+v", result)
 	}
 	if len(manager.SnapshotInbox().MessageIDs) != 1 {
 		t.Fatal("wait drained inbox")
@@ -124,7 +131,7 @@ func TestWaitCancellationDoesNotCancelChild(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := manager.waitForCompletion(ctx); !errors.Is(err, context.Canceled) {
+	if _, err := manager.waitForCompletion(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("wait error = %v", err)
 	}
 	select {
@@ -134,8 +141,8 @@ func TestWaitCancellationDoesNotCancelChild(t *testing.T) {
 	}
 
 	close(release)
-	if err := manager.waitForCompletion(context.Background()); err != nil {
-		t.Fatal(err)
+	if outcome, err := manager.waitForCompletion(context.Background()); err != nil || outcome != waitCompletion {
+		t.Fatalf("wait outcome = %v, error = %v", outcome, err)
 	}
 	<-childDone
 }
@@ -157,6 +164,59 @@ func TestWaitToolIsSynchronizationOnly(t *testing.T) {
 	}
 	if len(manager.SnapshotInbox().MessageIDs) != 1 {
 		t.Fatal("wait drained inbox")
+	}
+}
+
+func TestWaitToolTimesOutWithoutCancelingChild(t *testing.T) {
+	release := make(chan struct{})
+	childDone := make(chan struct{})
+	manager := NewManager(func(ctx context.Context, _ string, _ Profile, _ agent.ThinkingLevel, _ func(Progress)) (agent.RunResult, error) {
+		defer close(childDone)
+		select {
+		case <-ctx.Done():
+			return agent.RunResult{}, ctx.Err()
+		case <-release:
+			return agent.RunResult{Text: "done"}, nil
+		}
+	}, nil)
+	defer manager.Close()
+	if _, err := manager.start(testTasks(1), ProfileBalanced, agent.ThinkingLow); err != nil {
+		t.Fatal(err)
+	}
+	wait := NewWaitTool(manager)
+
+	result, err := wait.Execute(context.Background(), json.RawMessage(`{"timeout_ms":1}`), nil)
+	if err != nil || result.IsError || !strings.Contains(result.Output, "No subagent completion") {
+		t.Fatalf("wait result = %+v, error = %v", result, err)
+	}
+	select {
+	case <-childDone:
+		t.Fatal("timed out wait canceled child")
+	default:
+	}
+
+	close(release)
+	result, err = wait.Execute(context.Background(), json.RawMessage(`{"timeout_ms":1000}`), nil)
+	if err != nil || result.IsError || !strings.Contains(result.Output, "completion is available") {
+		t.Fatalf("completion wait result = %+v, error = %v", result, err)
+	}
+}
+
+func TestWaitToolValidatesTimeout(t *testing.T) {
+	manager := NewManager(nil, nil)
+	defer manager.Close()
+	wait := NewWaitTool(manager)
+
+	for _, arguments := range []string{
+		`{"timeout_ms":0}`,
+		`{"timeout_ms":-1}`,
+		`{"timeout_ms":3600001}`,
+		`{"other":1}`,
+	} {
+		result, err := wait.Execute(context.Background(), json.RawMessage(arguments), nil)
+		if err != nil || !result.IsError {
+			t.Fatalf("arguments = %s, result = %+v, error = %v", arguments, result, err)
+		}
 	}
 }
 

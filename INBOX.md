@@ -41,13 +41,14 @@ Keep asynchronous launch, but update its description to state that terminal resu
 
 ### `subagent_wait`
 
-Redesign it as a synchronization-only tool with no IDs:
+Redesign it as a synchronization-only tool with no IDs and an optional bounded timeout:
 
 - Return immediately when the inbox already contains a completion.
-- Otherwise block until any active subagent becomes terminal.
+- Otherwise block until any active subagent becomes terminal, steering interrupts the wait, or the timeout expires.
+- Default the independent wait timeout to five minutes; do not derive it from the subagent work budget.
 - Return an error immediately when there are neither active jobs nor pending completions.
 - On wake, return only a short acknowledgement. The result itself is delivered through the inbox before the next parent generation.
-- Canceling the wait call must not cancel child jobs; child cancellation remains explicit.
+- Canceling, timing out, or steering the wait must not cancel child jobs; child cancellation remains explicit.
 
 Waiting for the next completion rather than selected IDs makes the operation recoverable after compaction and lets the parent process results incrementally. The model can call it again while active jobs remain.
 
@@ -133,7 +134,8 @@ In `tool/subagent_wait.go`:
 
 - Remove the ID schema and result formatting.
 - Wait on the coordinator change signal without claiming inbox messages.
-- Do not propagate a canceled wait into child cancellation.
+- Accept an optional bounded timeout and wake immediately for steering.
+- Do not propagate a canceled, timed-out, or steering-interrupted wait into child cancellation.
 
 Update `tool/subagent_cancel.go` and all tool descriptions for the new lifecycle.
 
@@ -206,7 +208,7 @@ An awaiting-delivery entry disappears after a successful parent generation ackno
 - A terminal child leaves the active map, frees capacity, and queues exactly one bounded message.
 - Complete, failed, and canceled children all produce the correct envelope.
 - Wait blocks with active jobs, wakes on the first terminal transition, and does not drain the message.
-- A canceled wait leaves children running.
+- A canceled, timed-out, or steering-interrupted wait leaves children running.
 - A pending completion is included in the next parent generation and acknowledged afterward.
 - A failed generation does not acknowledge its inbox batch.
 - Launch → completion → automatic compaction still delivers the result.
