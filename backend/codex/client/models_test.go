@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/json"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -148,8 +149,17 @@ func TestEstimateInputTokensUsesOrderedTextParts(t *testing.T) {
 }
 
 func TestClientShouldCompactForContinuationStateHeadroom(t *testing.T) {
-	client := &Client{maxStateBytes: 160, stateOutputHeadroom: 50}
-	state, err := encodeState(nil, nil, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"` + strings.Repeat("x", 35) + `"}`)}, client.maxStateBytes)
+	client := &Client{
+		httpClient:          &http.Client{},
+		endpoint:            "https://example.com/responses",
+		tokenSource:         testTokenSource("token"),
+		maxRequestBytes:     defaultMaxRequestBytes,
+		maxResponseBytes:    defaultMaxResponseBytes,
+		maxErrorBytes:       defaultMaxErrorBytes,
+		maxStateBytes:       160,
+		stateOutputHeadroom: 50,
+	}
+	state, err := json.Marshal(map[string]any{"version": 1, "items": []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"` + strings.Repeat("x", 35) + `"}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}

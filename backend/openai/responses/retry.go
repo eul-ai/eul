@@ -1,4 +1,4 @@
-package client
+package responses
 
 import (
 	"errors"
@@ -93,6 +93,10 @@ func retryableHTTPStatus(status int) bool {
 		status >= http.StatusInternalServerError && status <= 599
 }
 
+func (c *Client) IsContextLimitError(err error) bool {
+	return contextLimitError(err)
+}
+
 func contextLimitError(err error) bool {
 	var httpErr *httpResponseError
 	if errors.As(err, &httpErr) && contextLimitResponseError(httpErr.detail) {
@@ -104,11 +108,14 @@ func contextLimitError(err error) bool {
 }
 
 func contextLimitResponseError(detail responseError) bool {
-	return strings.EqualFold(detail.Code, "context_length_exceeded")
+	return strings.EqualFold(string(detail.Code), "context_length_exceeded")
 }
 
 func retryableResponseError(detail responseError) bool {
-	for _, value := range []string{detail.Type, detail.Code} {
+	if code, err := strconv.Atoi(string(detail.Code)); err == nil && retryableHTTPStatus(code) {
+		return true
+	}
+	for _, value := range []string{detail.Type, string(detail.Code)} {
 		switch strings.ToLower(value) {
 		case "server_error", "service_unavailable_error", "server_is_overloaded", "rate_limit", "rate_limit_error", "rate_limit_exceeded":
 			return true

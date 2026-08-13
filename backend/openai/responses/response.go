@@ -1,4 +1,4 @@
-package client
+package responses
 
 import (
 	"bytes"
@@ -20,9 +20,31 @@ type createResponseEnvelope struct {
 }
 
 type responseError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	Type    string `json:"type"`
+	Code    errorCode `json:"code"`
+	Message string    `json:"message"`
+	Type    string    `json:"type"`
+}
+
+type errorCode string
+
+func (code *errorCode) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		*code = ""
+		return nil
+	}
+
+	var text string
+	if json.Unmarshal(data, &text) == nil {
+		*code = errorCode(text)
+		return nil
+	}
+
+	var number json.Number
+	if err := json.Unmarshal(data, &number); err != nil {
+		return err
+	}
+	*code = errorCode(number.String())
+	return nil
 }
 
 type responseFailureError struct {
@@ -212,7 +234,7 @@ func formatResponseError(response responseError) string {
 		parts = append(parts, response.Type)
 	}
 	if response.Code != "" {
-		parts = append(parts, response.Code)
+		parts = append(parts, string(response.Code))
 	}
 
 	prefix := strings.Join(parts, "/")

@@ -1,9 +1,7 @@
 package client
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend/openai/responses"
 )
 
 const (
@@ -55,6 +54,7 @@ type Client struct {
 
 var (
 	_ agent.Provider              = (*Client)(nil)
+	_ agent.GenerationRetryPolicy = (*Client)(nil)
 	_ agent.Compactor             = (*Client)(nil)
 	_ agent.CompactionErrorPolicy = (*Client)(nil)
 )
@@ -85,7 +85,6 @@ func New(source TokenSource, options Options) (*Client, error) {
 	}
 
 	baseURL = strings.TrimRight(baseURL, "/")
-	endpoint := baseURL + "/codex/responses"
 	usageEndpoint := baseURL + "/api/codex/usage"
 	if strings.Contains(baseURL, "/backend-api") {
 		usageEndpoint = baseURL + "/wham/usage"
@@ -93,7 +92,7 @@ func New(source TokenSource, options Options) (*Client, error) {
 
 	return &Client{
 		httpClient:          httpClient,
-		endpoint:            endpoint,
+		endpoint:            baseURL + "/codex/responses",
 		usageEndpoint:       usageEndpoint,
 		tokenSource:         source,
 		maxRequestBytes:     defaultMaxRequestBytes,
@@ -105,212 +104,112 @@ func New(source TokenSource, options Options) (*Client, error) {
 	}, nil
 }
 
-func (c *Client) stateOutputBudget() int {
-	budget := c.stateOutputHeadroom
-	if budget <= 0 {
-		budget = min(defaultStateOutputHeadroom, c.maxStateBytes/4)
-	}
-	return min(budget, max(0, c.maxStateBytes-continuationStateEnvelopeBytes))
-}
-
-func (c *Client) generationStateBytes() int {
-	return max(0, c.maxStateBytes-c.stateOutputBudget())
-}
-
 func (c *Client) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {
-	if err := ctx.Err(); err != nil {
-		return agent.Response{}, err
-	}
-
-	reasoning, err := responseReasoningFor(request.Model, request.ThinkingLevel, c.reasoningSummary)
-	if err != nil {
-		return agent.Response{}, c.errorf("%v", err)
-	}
-
-	wireRequest, newInputs, err := buildCreateRequestWithLimit(request, c.maxStateBytes, c.generationStateBytes())
-	if err != nil {
-		return agent.Response{}, c.errorf("build request: %v", err)
-	}
-
-	wireRequest.Reasoning = reasoning
-	wireRequest.Stream = true
-	wireRequest.Text = &responseText{Verbosity: "low"}
-	wireRequest.ToolChoice = "auto"
-	wireRequest.ParallelToolCalls = true
-
-	requestBody, oversized, err := marshalBoundedJSON(wireRequest, c.maxRequestBytes)
-	if err != nil {
-		return agent.Response{}, c.errorf("encode request: %v", err)
-	}
-	if oversized {
-		return agent.Response{}, c.errorf("request exceeds %d bytes", c.maxRequestBytes)
-	}
-
-	credential, err := c.resolveCredential(ctx)
+	shared, err := c.responsesClient()
 	if err != nil {
 		return agent.Response{}, err
 	}
-
-	httpResponse, err := c.post(ctx, c.endpoint, "text/event-stream", requestBody, credential, "request")
-	if err != nil {
-		return agent.Response{}, err
-	}
-	defer httpResponse.Body.Close()
-
-	stream := streamObserver{observer: observer}
-	wireResponse, err := readResponsesSSE(httpResponse.Body, c.maxResponseBytes, &stream)
-	if err != nil {
-		var observerErr *observerDeliveryError
-		if errors.As(err, &observerErr) {
-			return agent.Response{}, c.wrapf(err, "%v", err)
-		}
-		if classified := c.contextError(ctx, err, "read response"); classified != nil {
-			return agent.Response{}, classified
-		}
-		if isRetryableNetworkError(err) {
-			return agent.Response{}, c.retryableWrapf(err, "%v", err)
-		}
-		return agent.Response{}, c.wrapf(err, "%v", err)
-	}
-
-	text, calls, usage, err := normalizeResponse(wireResponse)
-	if err != nil {
-		return agent.Response{}, c.wrapf(err, "%v", err)
-	}
-
-	historyLength := len(wireRequest.Input) - len(newInputs)
-	history := wireRequest.Input[:historyLength]
-	outputStateBytes, err := encodedStateSize(wireResponse.Output)
-	if err != nil {
-		return agent.Response{}, c.errorf("%v", err)
-	}
-	inputStateBytes, err := encodedStateSize(history, newInputs)
-	if err != nil {
-		return agent.Response{}, c.errorf("%v", err)
-	}
-	if outputStateBytes-continuationStateEnvelopeBytes > c.maxStateBytes-inputStateBytes {
-		return agent.Response{}, c.errorf("response output cannot fit continuation state")
-	}
-	state, err := encodeState(history, newInputs, wireResponse.Output, c.maxStateBytes)
-	if err != nil {
-		return agent.Response{}, c.errorf("%v", err)
-	}
-
-	if text != "" && observer.Text != nil && !stream.sawDelta {
-		if err := observer.Text(text); err != nil {
-			deliveryErr := &observerDeliveryError{operation: "deliver text", cause: err}
-			return agent.Response{}, c.wrapf(deliveryErr, "%v", deliveryErr)
-		}
-	}
-
-	return agent.Response{
-		Text:      text,
-		ToolCalls: calls,
-		State:     state,
-		Usage:     usage,
-	}, nil
+	return shared.Generate(ctx, request, observer)
 }
 
 func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {
-	if err := ctx.Err(); err != nil {
+	shared, err := c.responsesClient()
+	if err != nil {
 		return agent.CompactResponse{}, err
 	}
+	return shared.Compact(ctx, request)
+}
 
+func (c *Client) RetryGeneration(err error, failedAttempts int) (time.Duration, bool) {
+	shared, sharedErr := c.responsesClient()
+	if sharedErr != nil {
+		return 0, false
+	}
+	return shared.RetryGeneration(err, failedAttempts)
+}
+
+func (c *Client) ShouldCompactAfterError(_ agent.Request, err error) bool {
+	shared, sharedErr := c.responsesClient()
+	return sharedErr == nil && shared.IsContextLimitError(err)
+}
+
+func (c *Client) responsesClient() (*responses.Client, error) {
+	return responses.New(responses.Options{
+		HTTPClient:          c.httpClient,
+		Endpoint:            c.endpoint,
+		ErrorPrefix:         "openai",
+		PrepareRequest:      c.prepareResponsesRequest,
+		RequestOptions:      c.responsesRequestOptions,
+		MaxRequestBytes:     c.maxRequestBytes,
+		MaxResponseBytes:    c.maxResponseBytes,
+		MaxErrorBytes:       c.maxErrorBytes,
+		MaxStateBytes:       c.maxStateBytes,
+		StateOutputHeadroom: c.stateOutputHeadroom,
+	})
+}
+
+func (c *Client) responsesRequestOptions(request agent.Request) (responses.RequestOptions, error) {
 	reasoning, err := responseReasoningFor(request.Model, request.ThinkingLevel, c.reasoningSummary)
 	if err != nil {
-		return agent.CompactResponse{}, c.errorf("%v", err)
+		return responses.RequestOptions{}, err
 	}
 
-	wireRequest, err := buildCompactRequest(request, c.maxStateBytes)
-	if err != nil {
-		return agent.CompactResponse{}, c.errorf("build compact request: %v", err)
+	serviceTier := ""
+	if request.FastMode {
+		serviceTier = "priority"
 	}
-	wireRequest.Reasoning = reasoning
-	wireRequest.Stream = true
-	wireRequest.Text = &responseText{Verbosity: "low"}
-	wireRequest.ToolChoice = "auto"
-	wireRequest.ParallelToolCalls = true
+	return responses.RequestOptions{
+		Reasoning: &responses.Reasoning{
+			Effort:  reasoning.Effort,
+			Summary: reasoning.Summary,
+		},
+		ServiceTier:       serviceTier,
+		TextVerbosity:     "low",
+		Include:           []string{"reasoning.encrypted_content"},
+		ToolChoice:        "auto",
+		ParallelToolCalls: true,
+	}, nil
+}
 
-	requestBody, oversized, err := marshalBoundedJSON(wireRequest, c.maxRequestBytes)
-	if err != nil {
-		return agent.CompactResponse{}, c.errorf("encode compact request: %v", err)
-	}
-	if oversized {
-		return agent.CompactResponse{}, c.errorf("compact request exceeds %d bytes", c.maxRequestBytes)
-	}
-
+func (c *Client) prepareResponsesRequest(ctx context.Context, request *http.Request) error {
 	credential, err := c.resolveCredential(ctx)
 	if err != nil {
-		return agent.CompactResponse{}, err
+		return err
 	}
-
-	httpResponse, err := c.post(ctx, c.endpoint, "text/event-stream", requestBody, credential, "compact request")
-	if err != nil {
-		return agent.CompactResponse{}, err
-	}
-	defer httpResponse.Body.Close()
-
-	wireResponse, err := readResponsesSSE(httpResponse.Body, c.maxResponseBytes, nil)
-	if err != nil {
-		if classified := c.contextError(ctx, err, "read compact response"); classified != nil {
-			return agent.CompactResponse{}, classified
-		}
-		return agent.CompactResponse{}, c.errorf("read compact response: %v", err)
-	}
-	if err := validateCompletedResponse(wireResponse); err != nil {
-		return agent.CompactResponse{}, c.errorf("%v", err)
-	}
-	usage, err := normalizeUsage(wireResponse.Usage)
-	if err != nil {
-		return agent.CompactResponse{}, c.errorf("%v", err)
-	}
-	if err := validateCompactOutput(wireResponse.Output); err != nil {
-		return agent.CompactResponse{}, c.errorf("%v", err)
-	}
-	input := wireRequest.Input[:len(wireRequest.Input)-1]
-	state, err := encodeState(nil, nil, compactedStateItems(input, wireResponse.Output), c.generationStateBytes())
-	if err != nil {
-		return agent.CompactResponse{}, c.errorf("%v", err)
-	}
-
-	return agent.CompactResponse{State: state, Usage: usage}, nil
-}
-
-func marshalBoundedJSON(value any, maximum int64) ([]byte, bool, error) {
-	body, err := json.Marshal(value)
-	if err != nil {
-		return nil, false, err
-	}
-	return body, int64(len(body)) > maximum, nil
-}
-
-func (c *Client) post(ctx context.Context, endpoint, accept string, body []byte, credential Credential, operation string) (*http.Response, error) {
-	return c.do(ctx, http.MethodPost, endpoint, accept, body, credential, operation)
+	request.Header.Set("Authorization", "Bearer "+credential.AccessToken)
+	request.Header.Set("chatgpt-account-id", credential.AccountID)
+	request.Header.Set("originator", "eul")
+	request.Header.Set("User-Agent", "eul")
+	request.Header.Set("x-codex-beta-features", "remote_compaction_v2")
+	request.Header.Set("OpenAI-Beta", "responses=experimental")
+	return nil
 }
 
 func (c *Client) get(ctx context.Context, endpoint string, credential Credential, operation string) (*http.Response, error) {
-	return c.do(ctx, http.MethodGet, endpoint, "application/json", nil, credential, operation)
-}
-
-func (c *Client) do(ctx context.Context, method, endpoint, accept string, body []byte, credential Credential, operation string) (*http.Response, error) {
-	request, err := c.newRequest(ctx, method, endpoint, accept, body, credential)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, c.errorf("create %s: %v", operation, err)
 	}
+	request.Header.Set("Authorization", "Bearer "+credential.AccessToken)
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("chatgpt-account-id", credential.AccountID)
+	request.Header.Set("originator", "eul")
+	request.Header.Set("User-Agent", "eul")
 
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		if classified := c.contextError(ctx, err, operation+" failed"); classified != nil {
-			return nil, classified
-		}
-		if isRetryableNetworkError(err) {
-			return nil, c.retryableWrapf(err, "%s failed: %v", operation, err)
+		if contextErr := ctx.Err(); contextErr != nil {
+			return nil, contextErr
 		}
 		return nil, c.wrapf(err, "%s failed: %v", operation, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		defer response.Body.Close()
-		return nil, c.decodeHTTPError(response)
+		body, _, readErr := readBounded(response.Body, c.maxErrorBytes)
+		if readErr != nil {
+			return nil, c.wrapf(readErr, "HTTP %s; read error response: %v", response.Status, readErr)
+		}
+		return nil, c.errorf("HTTP %s: %s", response.Status, strings.TrimSpace(string(body)))
 	}
 	return response, nil
 }
@@ -320,7 +219,7 @@ func (c *Client) contextError(ctx context.Context, err error, operation string) 
 		return contextErr
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return c.retryableWrapf(context.DeadlineExceeded, "%s: %v", operation, err)
+		return c.wrapf(context.DeadlineExceeded, "%s: %v", operation, err)
 	}
 	if errors.Is(err, context.Canceled) {
 		return c.wrapf(context.Canceled, "%s: %v", operation, err)
@@ -337,70 +236,6 @@ func (c *Client) resolveCredential(ctx context.Context) (Credential, error) {
 		return Credential{}, contextErr
 	}
 	return Credential{}, c.wrapf(err, "resolve authentication: %v", err)
-}
-
-func (c *Client) newRequest(ctx context.Context, method, endpoint, accept string, body []byte, credential Credential) (*http.Request, error) {
-	request, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Authorization", "Bearer "+credential.AccessToken)
-	request.Header.Set("Accept", accept)
-	request.Header.Set("chatgpt-account-id", credential.AccountID)
-	request.Header.Set("originator", "eul")
-	request.Header.Set("User-Agent", "eul")
-	request.Header.Set("x-codex-beta-features", "remote_compaction_v2")
-	if body != nil {
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("OpenAI-Beta", "responses=experimental")
-	}
-	return request, nil
-}
-
-func (c *Client) decodeHTTPError(response *http.Response) error {
-	body, truncated, err := readBounded(response.Body, c.maxErrorBytes)
-	if err != nil {
-		cause := err
-		switch {
-		case errors.Is(err, context.DeadlineExceeded):
-			cause = context.DeadlineExceeded
-		case errors.Is(err, context.Canceled):
-			cause = context.Canceled
-		}
-		return c.newHTTPResponseError(response, cause, responseError{}, "HTTP %s; read error response: %v", response.Status, err)
-	}
-
-	detail := strings.TrimSpace(string(body))
-	var errorDetail responseError
-	if !truncated {
-		var envelope struct {
-			Error responseError `json:"error"`
-		}
-		if json.Unmarshal(body, &envelope) == nil {
-			if formatted := formatResponseError(envelope.Error); formatted != "" {
-				errorDetail = envelope.Error
-				detail = formatted
-			}
-		}
-	}
-	if detail == "" {
-		detail = "empty error response"
-	}
-	if truncated {
-		detail += " [truncated]"
-	}
-
-	return c.newHTTPResponseError(response, nil, errorDetail, "HTTP %s: %s", response.Status, detail)
-}
-
-func (c *Client) newHTTPResponseError(response *http.Response, cause error, detail responseError, format string, arguments ...any) error {
-	return &httpResponseError{
-		message:    c.errorMessage(format, arguments...),
-		statusCode: response.StatusCode,
-		retryAfter: parseRetryAfter(response.Header.Get("Retry-After"), time.Now()),
-		detail:     detail,
-		cause:      cause,
-	}
 }
 
 func (c *Client) errorf(format string, arguments ...any) error {
@@ -432,7 +267,6 @@ func readBounded(reader io.Reader, maximum int64) ([]byte, bool, error) {
 	if int64(len(data)) <= maximum {
 		return data, false, nil
 	}
-
 	return data[:maximum], true, nil
 }
 

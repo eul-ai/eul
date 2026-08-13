@@ -1,4 +1,4 @@
-package client
+package responses
 
 import (
 	"bufio"
@@ -35,7 +35,7 @@ type responseStreamEvent struct {
 	Delta       string          `json:"delta"`
 	Arguments   string          `json:"arguments"`
 	Error       *responseError  `json:"error"`
-	Code        string          `json:"code"`
+	Code        errorCode       `json:"code"`
 	Message     string          `json:"message"`
 }
 

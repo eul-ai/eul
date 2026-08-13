@@ -1,4 +1,4 @@
-package client
+package responses
 
 import (
 	"bytes"
@@ -16,25 +16,25 @@ const (
 )
 
 type createResponseRequest struct {
-	Model             string             `json:"model"`
-	ServiceTier       string             `json:"service_tier,omitempty"`
-	Instructions      string             `json:"instructions"`
-	Input             []json.RawMessage  `json:"input"`
-	Tools             []functionTool     `json:"tools"`
-	Store             bool               `json:"store"`
-	Stream            bool               `json:"stream"`
-	Include           []string           `json:"include"`
-	Text              *responseText      `json:"text,omitempty"`
-	Reasoning         *responseReasoning `json:"reasoning,omitempty"`
-	ToolChoice        string             `json:"tool_choice,omitempty"`
-	ParallelToolCalls bool               `json:"parallel_tool_calls,omitempty"`
+	Model             string            `json:"model"`
+	ServiceTier       string            `json:"service_tier,omitempty"`
+	Instructions      string            `json:"instructions"`
+	Input             []json.RawMessage `json:"input"`
+	Tools             []functionTool    `json:"tools"`
+	Store             bool              `json:"store"`
+	Stream            bool              `json:"stream"`
+	Include           []string          `json:"include,omitempty"`
+	Text              *responseText     `json:"text,omitempty"`
+	Reasoning         *Reasoning        `json:"reasoning,omitempty"`
+	ToolChoice        string            `json:"tool_choice,omitempty"`
+	ParallelToolCalls bool              `json:"parallel_tool_calls,omitempty"`
 }
 
 type responseText struct {
 	Verbosity string `json:"verbosity"`
 }
 
-type responseReasoning struct {
+type Reasoning struct {
 	Effort  string `json:"effort"`
 	Summary string `json:"summary,omitempty"`
 }
@@ -108,20 +108,13 @@ func buildCreateRequestUnchecked(request agent.Request, maxStateBytes int) (crea
 		}
 	}
 
-	serviceTier := ""
-	if request.FastMode {
-		serviceTier = "priority"
-	}
-
 	return createResponseRequest{
 		Model:        request.Model,
-		ServiceTier:  serviceTier,
 		Instructions: request.Instructions,
 		Input:        input,
 		Tools:        tools,
 		Store:        false,
 		Stream:       false,
-		Include:      []string{"reasoning.encrypted_content"},
 	}, newItems, nil
 }
 

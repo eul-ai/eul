@@ -60,9 +60,21 @@ eul login [--provider <provider>] [--device-auth]
 eul logout [--provider <provider>]
 ```
 
-`--provider` selects a provider backend. The default and currently built-in
-backend is `openai-codex`. `--cwd` chooses the working directory for the session.
-Relative tool paths are resolved from that directory.
+`--provider` selects a provider backend. The built-in backends are
+`openai-codex` (the default) and `openrouter`. `--cwd` chooses the working
+directory for the session. Relative tool paths are resolved from that directory.
+
+OpenRouter uses an API key and requires an explicit model:
+
+```sh
+export OPENROUTER_API_KEY=...
+./eul --provider openrouter --model <provider/model>
+```
+
+OpenRouter supports Responses API streaming, reasoning, images, and tools when
+the selected model supports them. It does not use `eul login` or `eul logout`,
+and initially does not provide fast mode, account-usage windows, or context
+compaction.
 
 Thinking levels are:
 

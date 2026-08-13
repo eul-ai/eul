@@ -11,7 +11,7 @@ import (
 
 	"github.com/eul-ai/eul/app"
 	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/backend/codex"
+	"github.com/eul-ai/eul/backend/builtins"
 	"github.com/eul-ai/eul/terminal"
 )
 
@@ -39,7 +39,7 @@ func main() {
 	interrupts := make(chan os.Signal, 2)
 	signal.Notify(interrupts, os.Interrupt)
 
-	backends, err := backend.NewRegistry(codex.ID, codex.New())
+	backends, err := builtins.NewRegistry()
 	if err != nil {
 		panic(err)
 	}

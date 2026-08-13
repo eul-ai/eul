@@ -12,6 +12,11 @@ const (
 	ModelGPT56Sol   = "gpt-5.6-sol"
 )
 
+type responseReasoning struct {
+	Effort  string `json:"effort"`
+	Summary string `json:"summary,omitempty"`
+}
+
 type modelMetadata struct {
 	contextWindow  int64
 	thinkingLevels agent.ThinkingLevelMap
@@ -106,20 +111,14 @@ func responseReasoningFor(model string, level agent.ThinkingLevel, summary Reaso
 	return reasoning, nil
 }
 
-func (*Client) ShouldCompactAfterError(_ agent.Request, err error) bool {
-	return contextLimitError(err)
-}
-
 func (c *Client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
 	if len(request.State) == 0 {
 		return false
 	}
 	if c.maxStateBytes > 0 {
-		if _, _, err := buildCreateRequestWithLimit(request, c.maxStateBytes, c.generationStateBytes()); err != nil {
-			withoutState := request
-			withoutState.State = nil
-			_, _, inputErr := buildCreateRequestWithLimit(withoutState, c.maxStateBytes, c.generationStateBytes())
-			return inputErr == nil
+		shared, err := c.responsesClient()
+		if err == nil && shared.ShouldCompactState(request) {
+			return true
 		}
 	}
 	if usage.TotalTokens <= 0 {

@@ -1,4 +1,4 @@
-package client
+package responses
 
 import (
 	"bytes"
@@ -69,7 +69,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 			writer.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if wire.Model != "test-model" || wire.Instructions != "system instructions" || wire.Store || !wire.Stream || !slices.Equal(wire.Include, []string{"reasoning.encrypted_content"}) || wire.Reasoning == nil || wire.Reasoning.Effort != "high" || wire.Reasoning.Summary != "detailed" {
+		if wire.Model != "test-model" || wire.Instructions != "system instructions" || wire.Store || !wire.Stream || !slices.Equal(wire.Include, []string{"reasoning.encrypted_content"}) || wire.Reasoning == nil || wire.Reasoning.Effort != "high" || wire.Reasoning.Summary != "auto" {
 			t.Errorf("request %d shape = %+v", call, wire)
 		}
 		if len(wire.Tools) != 2 || wire.Tools[0].Type != "function" || wire.Tools[0].Name != "read" || wire.Tools[1].Name != "bash" || wire.Tools[0].Strict != nil || wire.Tools[1].Strict != nil || wire.Tools[0].Parameters.Type != "object" || wire.Tools[0].Parameters.AdditionalProperties == nil || *wire.Tools[0].Parameters.AdditionalProperties || !slices.Equal(wire.Tools[0].Parameters.Required, []string{"path"}) {
@@ -130,7 +130,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestClient(t, token, server.URL, Options{ReasoningSummary: ReasoningSummaryDetailed})
+	client := newTestClient(t, token, server.URL, Options{})
 	tools := []agent.ToolDefinition{strictTestTool("read"), strictTestTool("bash")}
 	var sinkText []string
 	first, err := generate(client, context.Background(), agent.Request{
@@ -553,8 +553,8 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 		client := newTestClient(t, "key", server.URL, Options{})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
-		if err == nil || !client.ShouldCompactAfterError(baseRequest(), err) {
-			t.Fatalf("Generate() error = %v, should compact = %t", err, client.ShouldCompactAfterError(baseRequest(), err))
+		if err == nil || !client.IsContextLimitError(err) {
+			t.Fatalf("Generate() error = %v, should compact = %t", err, client.IsContextLimitError(err))
 		}
 		if _, retry := client.RetryGeneration(err, 1); retry {
 			t.Fatal("context limit error was classified as a transient retry")
@@ -570,8 +570,8 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 		client := newTestClient(t, "key", server.URL, Options{})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
-		if err == nil || !client.ShouldCompactAfterError(baseRequest(), err) {
-			t.Fatalf("Generate() error = %v, should compact = %t", err, client.ShouldCompactAfterError(baseRequest(), err))
+		if err == nil || !client.IsContextLimitError(err) {
+			t.Fatalf("Generate() error = %v, should compact = %t", err, client.IsContextLimitError(err))
 		}
 	})
 
@@ -581,8 +581,8 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 		client := newTestClient(t, "key", server.URL, Options{})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
-		if err == nil || !client.ShouldCompactAfterError(baseRequest(), err) {
-			t.Fatalf("Generate() error = %v, should compact = %t", err, client.ShouldCompactAfterError(baseRequest(), err))
+		if err == nil || !client.IsContextLimitError(err) {
+			t.Fatalf("Generate() error = %v, should compact = %t", err, client.IsContextLimitError(err))
 		}
 	})
 }
@@ -646,172 +646,6 @@ func TestClientRetriesHTTP2InternalStreamErrorThroughEngine(t *testing.T) {
 	}
 }
 
-func TestClientCompactsContextLimitErrorThroughEngine(t *testing.T) {
-	generationCalls := 0
-	compactCalls := 0
-	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/codex/responses":
-			var wire createResponseRequest
-			if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
-				t.Errorf("decode request: %v", err)
-				writer.WriteHeader(http.StatusBadRequest)
-				return
-			}
-
-			if len(wire.Input) > 0 {
-				var last struct {
-					Type string `json:"type"`
-				}
-				_ = json.Unmarshal(wire.Input[len(wire.Input)-1], &last)
-				if last.Type == "compaction_trigger" {
-					compactCalls++
-					if len(wire.Input) != 2 {
-						t.Errorf("compact input count = %d, want 2", len(wire.Input))
-					} else {
-						assertInputItem(t, wire.Input, 0, map[string]string{"role": "user", "content": "hello"})
-						assertInputItem(t, wire.Input, 1, map[string]string{"type": "compaction_trigger"})
-					}
-					writeCompactSSE(t, writer, map[string]any{
-						"status": "completed",
-						"output": []any{map[string]any{"type": "compaction", "encrypted_content": "opaque"}},
-						"usage":  map[string]any{"input_tokens": 10, "output_tokens": 1, "total_tokens": 11},
-					})
-					return
-				}
-			}
-
-			generationCalls++
-			if generationCalls == 1 {
-				writer.Header().Set("Content-Type", "application/json")
-				writer.WriteHeader(http.StatusBadRequest)
-				fmt.Fprint(writer, `{"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too many tokens"}}`)
-				return
-			}
-			if len(wire.Input) != 2 {
-				t.Errorf("post-compaction input count = %d, want 2", len(wire.Input))
-			} else {
-				assertInputItem(t, wire.Input, 0, map[string]string{"role": "user", "content": "hello"})
-				assertInputItem(t, wire.Input, 1, map[string]string{"type": "compaction", "encrypted_content": "opaque"})
-			}
-			writeJSON(t, writer, map[string]any{
-				"status": "completed",
-				"output": []any{map[string]any{
-					"type":    "message",
-					"content": []any{map[string]any{"type": "output_text", "text": "recovered"}},
-				}},
-				"usage": map[string]any{"input_tokens": 5, "output_tokens": 2, "total_tokens": 7},
-			})
-		default:
-			t.Errorf("unexpected request path %q", request.URL.Path)
-			writer.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-	client := newTestClient(t, "key", server.URL, Options{})
-	engine := agent.New(client, emptyToolbox{}, agent.Options{Model: "test-model"})
-	var events []agent.Event
-
-	result, err := engine.Run(context.Background(), "hello", func(event agent.Event) error {
-		events = append(events, event)
-		return nil
-	})
-	if err != nil || result.Text != "recovered" || result.Usage != (agent.Usage{InputTokens: 15, OutputTokens: 3, TotalTokens: 18}) {
-		t.Fatalf("result = %+v, error = %v", result, err)
-	}
-	if generationCalls != 2 || compactCalls != 1 {
-		t.Fatalf("generation calls = %d, compact calls = %d", generationCalls, compactCalls)
-	}
-	kinds := make([]agent.EventKind, len(events))
-	for i, event := range events {
-		kinds[i] = event.Kind
-	}
-	if !slices.Equal(kinds, []agent.EventKind{agent.EventCompactionStart, agent.EventCompactionEnd, agent.EventAssistantText, agent.EventContextUsage}) {
-		t.Fatalf("events = %v", kinds)
-	}
-}
-
-func TestClientCompactsBeforeContinuationStateConsumesOutputHeadroom(t *testing.T) {
-	state, err := encodeState(nil, nil, []json.RawMessage{json.RawMessage(`{"type":"reasoning","encrypted_content":"` + strings.Repeat("x", 55) + `"}`)}, 180)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	requests := 0
-	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		requests++
-		var wire createResponseRequest
-		if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
-			t.Errorf("decode request: %v", err)
-			return
-		}
-
-		var last struct {
-			Type string `json:"type"`
-		}
-		if len(wire.Input) > 0 {
-			_ = json.Unmarshal(wire.Input[len(wire.Input)-1], &last)
-		}
-		if last.Type == "compaction_trigger" {
-			if len(wire.Input) != 3 {
-				t.Errorf("compact input count = %d, want 3", len(wire.Input))
-			} else {
-				assertInputItem(t, wire.Input, 1, map[string]string{"role": "user", "content": strings.Repeat("y", 20)})
-			}
-			writeCompactSSE(t, writer, map[string]any{
-				"status": "completed",
-				"output": []any{map[string]any{"type": "compaction", "encrypted_content": "short"}},
-			})
-			return
-		}
-
-		writeJSON(t, writer, map[string]any{
-			"status": "completed",
-			"output": []any{map[string]any{
-				"type": "message", "content": []any{map[string]any{"type": "output_text", "text": "ok"}},
-			}},
-		})
-	}))
-	defer server.Close()
-
-	client := newTestClient(t, "key", server.URL, Options{})
-	client.maxStateBytes = 280
-	client.stateOutputHeadroom = 90
-	withoutHeadroom := *client
-	withoutHeadroom.stateOutputHeadroom = 1
-	if withoutHeadroom.ShouldCompact(agent.Request{State: state, Inputs: []agent.Input{agent.NewTextInput(strings.Repeat("y", 20))}}, agent.Usage{}) {
-		t.Fatal("test request requires compaction without response headroom")
-	}
-	engine := agent.New(client, emptyToolbox{}, agent.Options{Model: "test-model"})
-	engineCheckpoint := agent.Checkpoint{}
-	checkpointJSON, err := json.Marshal(map[string]any{
-		"version":       2,
-		"state":         state,
-		"context_usage": agent.Usage{},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(checkpointJSON, &engineCheckpoint); err != nil {
-		t.Fatal(err)
-	}
-	if err := engine.RestoreCheckpoint(engineCheckpoint); err != nil {
-		t.Fatal(err)
-	}
-
-	var events []agent.EventKind
-	result, err := engine.Run(context.Background(), strings.Repeat("y", 20), func(event agent.Event) error {
-		events = append(events, event.Kind)
-		return nil
-	})
-	if err != nil || result.Text != "ok" || requests != 2 {
-		t.Fatalf("result = %+v, error = %v, requests = %d", result, err, requests)
-	}
-	if !slices.Contains(events, agent.EventCompactionStart) || !slices.Contains(events, agent.EventCompactionEnd) {
-		t.Fatalf("events = %v", events)
-	}
-}
-
 func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 	t.Run("SSE server error", func(t *testing.T) {
 		server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -850,8 +684,9 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 				Body:       errorReadCloser{err: syscall.ECONNRESET},
 			}, nil
 		})
-		client, err := New(testTokenSource("key"), Options{
-			BaseURL:    "https://example.com",
+		client, err := New(Options{
+			PrepareRequest: testPrepareRequest("key"), RequestOptions: testRequestOptions,
+			Endpoint:   "https://example.com/responses",
 			HTTPClient: &http.Client{Transport: transport},
 		})
 		if err != nil {
@@ -900,7 +735,7 @@ func TestClientDoesNotRetryPermanentOrObserverErrors(t *testing.T) {
 	if _, retry := client.RetryGeneration(err, 1); err == nil || retry {
 		t.Fatalf("HTTP error = %v, retry = %t", err, retry)
 	}
-	if client.ShouldCompactAfterError(baseRequest(), err) {
+	if client.IsContextLimitError(err) {
 		t.Fatalf("permanent HTTP error was classified for compaction: %v", err)
 	}
 
@@ -988,7 +823,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		transport := roundTripperFunc(func(*http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: errorReadCloser{err: context.DeadlineExceeded}}, nil
 		})
-		client, err := New(testTokenSource("token"), Options{BaseURL: "https://example.com", HTTPClient: &http.Client{Transport: transport}})
+		client, err := New(Options{PrepareRequest: testPrepareRequest("token"), RequestOptions: testRequestOptions, Endpoint: "https://example.com/responses", HTTPClient: &http.Client{Transport: transport}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1063,12 +898,14 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 	})
 }
 
-func TestClientValidatesRequestsBeforeResolvingCredentials(t *testing.T) {
-	var tokenCalls atomic.Int32
-	client, err := New(TokenSourceFunc(func(context.Context) (Credential, error) {
-		tokenCalls.Add(1)
-		return Credential{AccessToken: "token", AccountID: "account"}, nil
-	}), Options{BaseURL: "http://127.0.0.1:1"})
+func TestClientValidatesRequestsBeforePreparingRequest(t *testing.T) {
+	var prepareCalls atomic.Int32
+	options := testOptions("", "http://127.0.0.1:1")
+	options.PrepareRequest = func(context.Context, *http.Request) error {
+		prepareCalls.Add(1)
+		return nil
+	}
+	client, err := New(options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1086,32 +923,8 @@ func TestClientValidatesRequestsBeforeResolvingCredentials(t *testing.T) {
 	if _, err := client.Generate(context.Background(), baseRequest(), agent.StreamObserver{}); err == nil {
 		t.Fatal("Generate() accepted oversized request")
 	}
-	if tokenCalls.Load() != 0 {
-		t.Fatalf("token source calls = %d", tokenCalls.Load())
-	}
-}
-
-func TestClientRejectsUnsupportedThinkingLevelBeforeAuthentication(t *testing.T) {
-	calls := 0
-	client, err := New(TokenSourceFunc(func(context.Context) (Credential, error) {
-		calls++
-		return Credential{AccessToken: "token", AccountID: "account"}, nil
-	}), Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	request := agent.Request{Model: "unknown", ThinkingLevel: agent.ThinkingXHigh}
-	_, err = generate(client, context.Background(), request, nil, nil, nil)
-	if err == nil || !strings.Contains(err.Error(), `thinking level "xhigh" is not supported by model "unknown"`) {
-		t.Fatalf("Generate() error = %v", err)
-	}
-	_, err = client.Compact(context.Background(), request)
-	if err == nil || !strings.Contains(err.Error(), `thinking level "xhigh" is not supported by model "unknown"`) {
-		t.Fatalf("Compact() error = %v", err)
-	}
-	if calls != 0 {
-		t.Fatalf("token source calls = %d, want 0", calls)
+	if prepareCalls.Load() != 0 {
+		t.Fatalf("prepare request calls = %d", prepareCalls.Load())
 	}
 }
 
@@ -1120,7 +933,12 @@ func TestNewCopiesInjectedClientBeforeApplyingPolicy(t *testing.T) {
 	transport := http.DefaultTransport
 	injected := &http.Client{Transport: transport, CheckRedirect: redirect}
 
-	client, err := New(testTokenSource("token"), Options{BaseURL: "https://example.com", HTTPClient: injected})
+	client, err := New(Options{
+		Endpoint:       "https://example.com/responses",
+		HTTPClient:     injected,
+		RequestOptions: testRequestOptions,
+		PrepareRequest: testPrepareRequest("token"),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1141,8 +959,16 @@ func TestNewCopiesInjectedClientBeforeApplyingPolicy(t *testing.T) {
 
 func newTestClient(t *testing.T, token, baseURL string, overrides Options) *Client {
 	t.Helper()
-	overrides.BaseURL = baseURL
-	client, err := New(testTokenSource(token), overrides)
+	if overrides.Endpoint == "" {
+		overrides.Endpoint = strings.TrimRight(baseURL, "/") + "/codex/responses"
+	}
+	if overrides.PrepareRequest == nil {
+		overrides.PrepareRequest = testPrepareRequest(token)
+	}
+	if overrides.RequestOptions == nil {
+		overrides.RequestOptions = testRequestOptions
+	}
+	client, err := New(overrides)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1150,10 +976,43 @@ func newTestClient(t *testing.T, token, baseURL string, overrides Options) *Clie
 	return client
 }
 
-func testTokenSource(token string) TokenSource {
-	return TokenSourceFunc(func(context.Context) (Credential, error) {
-		return Credential{AccessToken: token, AccountID: "account"}, nil
-	})
+func testOptions(token, endpoint string) Options {
+	return Options{Endpoint: endpoint, PrepareRequest: testPrepareRequest(token), RequestOptions: testRequestOptions}
+}
+
+func testPrepareRequest(token string) PrepareRequestFunc {
+	return func(_ context.Context, request *http.Request) error {
+		request.Header.Set("Authorization", "Bearer "+token)
+		request.Header.Set("chatgpt-account-id", "account")
+		request.Header.Set("originator", "eul")
+		request.Header.Set("User-Agent", "eul")
+		request.Header.Set("x-codex-beta-features", "remote_compaction_v2")
+		request.Header.Set("OpenAI-Beta", "responses=experimental")
+		return nil
+	}
+}
+
+func testRequestOptions(request agent.Request) (RequestOptions, error) {
+	level := request.ThinkingLevel
+	if level == "" {
+		level = agent.DefaultThinkingLevel
+	}
+	effort := map[agent.ThinkingLevel]string{
+		agent.ThinkingOff: "none", agent.ThinkingMinimal: "minimal", agent.ThinkingLow: "low",
+		agent.ThinkingMedium: "medium", agent.ThinkingHigh: "high", agent.ThinkingXHigh: "xhigh", agent.ThinkingMax: "max",
+	}[level]
+	summary := "auto"
+	if level == agent.ThinkingOff {
+		summary = ""
+	}
+	serviceTier := ""
+	if request.FastMode {
+		serviceTier = "priority"
+	}
+	return RequestOptions{
+		Reasoning: &Reasoning{Effort: effort, Summary: summary}, ServiceTier: serviceTier,
+		TextVerbosity: "low", Include: []string{"reasoning.encrypted_content"}, ToolChoice: "auto", ParallelToolCalls: true,
+	}, nil
 }
 
 func strictTestTool(name string) agent.ToolDefinition {
