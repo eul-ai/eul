@@ -20,19 +20,11 @@ func toolTitle(call agent.ToolCall, presentation agent.ToolPresentation) string 
 	return "tool"
 }
 
-func toolHeading(call agent.ToolCall, presentation agent.ToolPresentation) string {
-	title := toolTitle(call, presentation)
-	if arguments := strings.TrimSpace(presentation.Arguments); arguments != "" {
-		title += " " + arguments
-	}
-	return title
-}
-
 func toolActivityDetail(call agent.ToolCall, presentation agent.ToolPresentation) string {
-	if call.Name == "bash" || toolTitle(call, presentation) == "bash" {
-		return "bash"
+	if call.Name != "" {
+		return diagnostic(call.Name, maxToolPresentationSummaryBytes)
 	}
-	return diagnostic(toolHeading(call, presentation), maxToolPresentationSummaryBytes)
+	return diagnostic(toolTitle(call, presentation), maxToolPresentationSummaryBytes)
 }
 
 func toolResultOutcome(result agent.ToolResult, presentation agent.ToolPresentation) string {

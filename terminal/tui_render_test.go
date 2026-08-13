@@ -1164,8 +1164,8 @@ func TestTUIModelTracksActivityAndContext(t *testing.T) {
 	if model.contextTokens != 123 {
 		t.Fatalf("context tokens = %d", model.contextTokens)
 	}
-	model.applyAgentEvent(agent.Event{Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "call-1", Name: "read"}, Presentation: agent.ToolPresentation{Title: "read file.go"}})
-	if model.activity.kind != activityTool || !strings.Contains(model.activity.detail, "file.go") || model.blocks[len(model.blocks)-1].kind != blockToolPending {
+	model.applyAgentEvent(agent.Event{Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "call-1", Name: "read"}, Presentation: agent.ToolPresentation{Title: "read", Arguments: "file.go"}})
+	if model.activity.kind != activityTool || model.activity.detail != "read" || model.blocks[len(model.blocks)-1].kind != blockToolPending {
 		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.blocks)
 	}
 	toolBlocks := len(model.blocks)
@@ -1207,7 +1207,7 @@ func TestTUIModelCorrelatesAndSanitizesStreamingToolBlocks(t *testing.T) {
 	if second.kind != blockTool || second.tool.Lines[0] != "complete" || second.toolOutcome != "ok" {
 		t.Fatalf("second block = %+v", second)
 	}
-	if model.activity.kind != activityTool || model.activity.detail != "write one" {
+	if model.activity.kind != activityTool || model.activity.detail != "write" {
 		t.Fatalf("activity = %+v", model.activity)
 	}
 }
@@ -1221,14 +1221,14 @@ func TestCanceledTurnKeepsCancelingActivity(t *testing.T) {
 	}
 }
 
-func TestTUIBashActivityOmitsCommand(t *testing.T) {
+func TestTUIToolActivityOmitsArguments(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.applyAgentEvent(agent.Event{
-		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "bash-1", Name: "bash"},
-		Presentation: agent.ToolPresentation{Title: "bash", Arguments: "first\n" + strings.Repeat("x", 1_000)},
+		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "read-1", Name: "read"},
+		Presentation: agent.ToolPresentation{Title: "read", Arguments: "first\n" + strings.Repeat("x", 1_000)},
 	})
-	block := model.blocks[model.toolBlockIndex("bash-1")]
-	if strings.Contains(block.tool.Arguments, "\n") || len(block.tool.Arguments) > maxToolPresentationSummaryBytes || model.activity.detail != "bash" || toolActivityDetail(agent.ToolCall{}, block.tool) != "bash" {
+	block := model.blocks[model.toolBlockIndex("read-1")]
+	if strings.Contains(block.tool.Arguments, "\n") || len(block.tool.Arguments) > maxToolPresentationSummaryBytes || model.activity.detail != "read" {
 		t.Fatalf("presentation=%+v activity=%q", block.tool, model.activity.detail)
 	}
 }

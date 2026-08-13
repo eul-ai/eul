@@ -40,6 +40,7 @@ type conversationBlock struct {
 	text        string
 	content     []agent.ContentPart
 	toolCallID  string
+	toolName    string
 	tool        agent.ToolPresentation
 	toolOutcome string
 }
@@ -280,6 +281,7 @@ func (m *tuiModel) startTool(call agent.ToolCall, presentation agent.ToolPresent
 	m.blocks = append(m.blocks, conversationBlock{
 		kind:       blockToolPending,
 		toolCallID: call.ID,
+		toolName:   call.Name,
 		tool:       sanitizeToolPresentation(call, presentation),
 	})
 	m.conversationVersion++
@@ -291,6 +293,9 @@ func (m *tuiModel) updateTool(call agent.ToolCall, presentation agent.ToolPresen
 	if index < 0 {
 		m.startTool(call, presentation)
 		return
+	}
+	if call.Name != "" {
+		m.blocks[index].toolName = call.Name
 	}
 	m.blocks[index].tool = sanitizeToolPresentation(call, presentation)
 	m.conversationVersion++
@@ -312,6 +317,9 @@ func (m *tuiModel) finishTool(call agent.ToolCall, presentation agent.ToolPresen
 
 	block := &m.blocks[index]
 	block.kind = kind
+	if call.Name != "" {
+		block.toolName = call.Name
+	}
 	block.tool = sanitizeToolPresentation(call, presentation)
 	block.toolOutcome = sanitizeAssistantText(toolResultOutcome(result, presentation))
 	m.conversationVersion++
@@ -329,7 +337,7 @@ func (m *tuiModel) toolBlockIndex(callID string) int {
 func (m *tuiModel) pendingToolActivity() (string, bool) {
 	for index := len(m.blocks) - 1; index >= 0; index-- {
 		if m.blocks[index].kind == blockToolPending {
-			return toolActivityDetail(agent.ToolCall{}, m.blocks[index].tool), true
+			return toolActivityDetail(agent.ToolCall{Name: m.blocks[index].toolName}, m.blocks[index].tool), true
 		}
 	}
 	return "", false
