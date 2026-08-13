@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/session"
+	"github.com/eul-ai/eul/interactive"
 )
 
 type reportedFlagError struct {
@@ -47,7 +47,7 @@ func (*resumeValue) IsBoolFlag() bool {
 	return true
 }
 
-func parseAgentArguments(arguments []string, runtime appRuntime) (session.Options, error) {
+func parseAgentArguments(arguments []string, runtime appRuntime) (interactive.Options, error) {
 	flags := flag.NewFlagSet("eul", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
 	provider := flags.String("provider", "", "provider backend")
@@ -62,16 +62,16 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (session.Option
 	flags.Var(resume, "resume", "resume the most recent session or a session selected with --resume=<id>")
 
 	if err := flags.Parse(arguments); err != nil {
-		return session.Options{}, reportedFlagError{error: err}
+		return interactive.Options{}, reportedFlagError{error: err}
 	}
 	if flags.NArg() != 0 {
-		return session.Options{}, errors.New("usage error: eul accepts no prompt arguments")
+		return interactive.Options{}, errors.New("usage error: eul accepts no prompt arguments")
 	}
 
 	explicit := make(map[string]bool)
 	flags.Visit(func(current *flag.Flag) { explicit[current.Name] = true })
 	if resume.enabled && (explicit["provider"] || explicit["model"] || explicit["fast-model"] || explicit["balanced-model"] || explicit["thinking"] || explicit["fast"] || explicit["cwd"]) {
-		return session.Options{}, errors.New("usage error: --resume cannot be combined with --provider, --model, --fast-model, --balanced-model, --thinking, --fast, or --cwd")
+		return interactive.Options{}, errors.New("usage error: --resume cannot be combined with --provider, --model, --fast-model, --balanced-model, --thinking, --fast, or --cwd")
 	}
 
 	thinkingLevel := agent.DefaultThinkingLevel
@@ -79,18 +79,15 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (session.Option
 		var err error
 		thinkingLevel, err = agent.ParseThinkingLevel(*thinking)
 		if err != nil {
-			return session.Options{}, err
+			return interactive.Options{}, err
 		}
 	}
 
-	return session.Options{
+	return interactive.Options{
 		Provider:         *provider,
-		Model:            *model,
-		ModelSet:         explicit["model"],
-		FastModel:        *fastModel,
-		FastModelSet:     explicit["fast-model"],
-		BalancedModel:    *balancedModel,
-		BalancedModelSet: explicit["balanced-model"],
+		Model:            optionalFlagValue(*model, explicit["model"]),
+		FastModel:        optionalFlagValue(*fastModel, explicit["fast-model"]),
+		BalancedModel:    optionalFlagValue(*balancedModel, explicit["balanced-model"]),
 		ThinkingLevel:    thinkingLevel,
 		FastMode:         *fast,
 		WorkingDirectory: *cwd,
@@ -98,6 +95,13 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (session.Option
 		Resume:           resume.enabled,
 		SessionID:        resume.sessionID,
 	}, nil
+}
+
+func optionalFlagValue(value string, set bool) *string {
+	if !set {
+		return nil
+	}
+	return &value
 }
 
 func resolveEULHome(runtime appRuntime) (string, error) {

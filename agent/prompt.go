@@ -4,11 +4,13 @@ import (
 	"html"
 	"path/filepath"
 	"strings"
+
+	"github.com/eul-ai/eul/skill"
 )
 
 const baseSystemPrompt = `You are a coding agent. Use the available tools to inspect and modify code. Be concise and report results clearly.`
 
-func buildSystemPrompt(definitions []ToolDefinition, workingDirectory, projectInstructions string, skills []Skill) string {
+func buildSystemPrompt(definitions []ToolDefinition, workingDirectory, projectInstructions string, skills []skill.Skill) string {
 	var prompt strings.Builder
 	prompt.WriteString(baseSystemPrompt)
 	if len(definitions) > 0 {

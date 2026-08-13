@@ -34,7 +34,7 @@ type engineMessage struct {
 }
 
 type providerUsageMessage struct {
-	usage agent.ProviderUsage
+	usage ProviderUsage
 	err   error
 }
 
@@ -83,7 +83,7 @@ func NewRunner(input io.Reader, output io.Writer) (*Runner, error) {
 }
 
 func (runner *Runner) Run(ctx context.Context, engine Engine, options Options) (RunOutcome, error) {
-	if err := validateCheckpointCapability(engine, options.SaveCheckpoint != nil); err != nil {
+	if err := validateCheckpointCapability(engine, canSaveCheckpoint(options.Persistence)); err != nil {
 		return RunOutcome{}, err
 	}
 
@@ -91,7 +91,7 @@ func (runner *Runner) Run(ctx context.Context, engine Engine, options Options) (
 	if err != nil {
 		return RunOutcome{}, fmt.Errorf("terminal: get size: %w", err)
 	}
-	if err := setTerminalTitle(runner.output, options.WorkingDirectory); err != nil {
+	if err := setTerminalTitle(runner.output, options.Config.WorkingDirectory); err != nil {
 		return RunOutcome{}, err
 	}
 	options.Input = runner.input
@@ -124,7 +124,7 @@ func (runner *Runner) Close() error {
 }
 
 func Run(ctx context.Context, engine Engine, options Options) (RunOutcome, error) {
-	if err := validateCheckpointCapability(engine, options.SaveCheckpoint != nil); err != nil {
+	if err := validateCheckpointCapability(engine, canSaveCheckpoint(options.Persistence)); err != nil {
 		return RunOutcome{}, err
 	}
 
@@ -165,7 +165,7 @@ func runTUIWithKeys(
 	stopped <-chan struct{},
 ) (RunOutcome, error) {
 	model := newTUIModel(width, height, options)
-	fileSearch := newFileSearchRunner(options.WorkingDirectory)
+	fileSearch := newFileSearchRunner(options.Config.WorkingDirectory)
 	defer fileSearch.close()
 	fileSearchMessages := make(chan fileSearchResult, 64)
 	engineMessages := make(chan engineMessage, 256)
@@ -181,7 +181,7 @@ func runTUIWithKeys(
 	}()
 	var usageRequests chan struct{}
 	var usageMessages <-chan providerUsageMessage
-	if options.LoadUsage != nil {
+	if options.Services.LoadUsage != nil {
 		requests := make(chan struct{}, 1)
 		messages := make(chan providerUsageMessage, 1)
 		done := make(chan struct{})
@@ -190,7 +190,7 @@ func runTUIWithKeys(
 		usageDone = done
 		go func() {
 			defer close(done)
-			loadProviderUsage(usageContext, options.LoadUsage, requests, messages)
+			loadProviderUsage(usageContext, options.Services.LoadUsage, requests, messages)
 		}()
 		requestProviderUsage(usageRequests)
 	}
@@ -206,15 +206,31 @@ func runTUIWithKeys(
 	spinnerTicker := time.NewTicker(80 * time.Millisecond)
 	defer spinnerTicker.Stop()
 	var usageClock <-chan time.Time
-	if options.LoadUsage != nil {
+	if options.Services.LoadUsage != nil {
 		usageTicker := time.NewTicker(time.Minute)
 		defer usageTicker.Stop()
 		usageClock = usageTicker.C
 	}
 
-	clipboardImageReader := options.ReadClipboardImage
+	clipboardImageReader := options.Services.ReadClipboardImage
 	if clipboardImageReader == nil {
 		clipboardImageReader = clipboard.ReadImage
+	}
+	var setThinkingLevel func(agent.ThinkingLevel) error
+	if canSetThinkingLevel(options.Commands) {
+		setThinkingLevel = options.Commands.SetThinkingLevel
+	}
+	var setFastMode func(bool) error
+	if canSetFastMode(options.Commands) {
+		setFastMode = options.Commands.SetFastMode
+	}
+	var saveCheckpoint func(agent.Checkpoint, Checkpoint, bool) error
+	if canSaveCheckpoint(options.Persistence) {
+		saveCheckpoint = options.Persistence.SaveCheckpoint
+	}
+	var listSessions func(context.Context) ([]SessionSummary, []string, error)
+	if canListSessions(options.Persistence) {
+		listSessions = options.Persistence.ListSessions
 	}
 	controller := &tuiController{
 		model:              model,
@@ -227,23 +243,24 @@ func runTUIWithKeys(
 		fileSearch:         fileSearch,
 		fileSearchMessages: fileSearchMessages,
 		usageRequests:      usageRequests,
-		setThinkingLevel:   options.SetThinkingLevel,
-		setFastMode:        options.SetFastMode,
-		saveCheckpoint:     options.SaveCheckpoint,
-		listSessions:       options.ListSessions,
+		setThinkingLevel:   setThinkingLevel,
+		setFastMode:        setFastMode,
+		saveCheckpoint:     saveCheckpoint,
+		listSessions:       listSessions,
 		readClipboardImage: clipboardImageReader,
 		clipboardImages:    clipboardImages,
 		clipboardRequests:  make(map[uint64]context.CancelFunc),
 		dirty:              true,
 	}
+	model.steeringView = &controller.steering
 	defer controller.cancelClipboardRequests()
 	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventRender}); err != nil {
 		return RunOutcome{}, err
 	}
 
-	interrupts := options.Interrupts
-	subagentUpdates := options.SubagentUpdates
-	permissionRequests := options.PermissionRequests
+	interrupts := options.Events.Interrupts
+	subagentUpdates := options.Events.SubagentUpdates
+	permissionRequests := options.Events.PermissionRequests
 	parentDone := ctx.Done()
 	for {
 		var event tuiEvent
@@ -316,7 +333,7 @@ func requestProviderUsage(requests chan<- struct{}) {
 
 func loadProviderUsage(
 	ctx context.Context,
-	load func(context.Context) (agent.ProviderUsage, error),
+	load func(context.Context) (ProviderUsage, error),
 	requests <-chan struct{},
 	messages chan<- providerUsageMessage,
 ) {

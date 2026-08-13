@@ -18,9 +18,9 @@ func renderFrame(model *tuiModel) string {
 }
 
 func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
-	model := newTUIModel(72, 12, Options{
+	model := newTUIModel(72, 12, Options{Config: Config{
 		Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, FastMode: true, ContextWindow: 272_000,
-	})
+	}})
 	model.contextTokens = 84_320
 	model.appendBlock(blockUser, "hello")
 	model.appendStream(blockAssistant, "answer")
@@ -115,9 +115,9 @@ func TestRenderFrameShowsPermission(t *testing.T) {
 }
 
 func TestStatusTruncatesSessionID(t *testing.T) {
-	model := newTUIModel(120, 12, Options{
+	model := newTUIModel(120, 12, Options{Config: Config{
 		Model: "model", SessionID: "0123456789abcdef0123456789abcdef",
-	})
+	}})
 
 	_, status := renderStatus(model, model.width)
 	want := "model (medium) · session 01234567 · context 0"
@@ -216,7 +216,7 @@ func TestSubagentPanelIsCappedOnSmallTerminals(t *testing.T) {
 }
 
 func TestStatusOmitsBackgroundSubagents(t *testing.T) {
-	model := newTUIModel(120, 12, Options{Model: "model"})
+	model := newTUIModel(120, 12, Options{Config: Config{Model: "model"}})
 	model.subagentStatus = SubagentStatus{
 		Running: 1,
 		Active:  []SubagentJobStatus{{ID: "subagent-1", State: SubagentRunning}},
@@ -236,8 +236,8 @@ func TestStatusOmitsBackgroundSubagents(t *testing.T) {
 
 func TestStatusShowsProviderUsageWindows(t *testing.T) {
 	now := time.Date(2027, time.January, 2, 10, 0, 0, 0, time.UTC)
-	model := newTUIModel(180, 12, Options{Model: "model"})
-	model.providerUsage = agent.ProviderUsage{Windows: []agent.UsageWindow{
+	model := newTUIModel(180, 12, Options{Config: Config{Model: "model"}})
+	model.providerUsage = ProviderUsage{Windows: []UsageWindow{
 		{Duration: 7 * 24 * time.Hour, UsedPercent: 20, ResetsAt: now.Add(3*24*time.Hour + 5*time.Hour)},
 		{Duration: 5 * time.Hour, UsedPercent: 42, ResetsAt: now.Add(3*time.Hour + 5*time.Minute)},
 	}}
@@ -257,10 +257,10 @@ func TestStatusShowsProviderUsageWindows(t *testing.T) {
 
 func TestStatusUsesCompactContextAndSingleUsage(t *testing.T) {
 	now := time.Date(2027, time.January, 2, 10, 0, 0, 0, time.UTC)
-	model := newTUIModel(120, 12, Options{
+	model := newTUIModel(120, 12, Options{Config: Config{
 		Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, ContextWindow: 272_000,
-	})
-	model.providerUsage = agent.ProviderUsage{Windows: []agent.UsageWindow{{
+	}})
+	model.providerUsage = ProviderUsage{Windows: []UsageWindow{{
 		Duration: 7 * 24 * time.Hour, UsedPercent: 59, ResetsAt: now.Add(9*time.Hour + 41*time.Minute),
 	}}}
 
@@ -371,7 +371,7 @@ func TestAssistantReasoningAndToolDetailsRenderInlineMarkdown(t *testing.T) {
 		{kind: blockAssistant, text: "Use *care* and **`code`**"},
 		{kind: blockTool, tool: agent.ToolPresentation{
 			Title: "subagent", Arguments: "(3)", Markdown: true,
-			Lines: []string{"1. complete — Read `./terminal/repl.go`"},
+			Lines: []string{"1. complete — Read `./terminal/api.go`"},
 		}, toolOutcome: "ok"},
 	}, 80)
 	if lines[0].text != "Planning" || lines[2].text != "Use care and code" {
@@ -398,7 +398,7 @@ func TestAssistantReasoningAndToolDetailsRenderInlineMarkdown(t *testing.T) {
 		switch lines[index].text {
 		case "subagent (3) — ok":
 			heading = &lines[index]
-		case "1. complete — Read ./terminal/repl.go":
+		case "1. complete — Read ./terminal/api.go":
 			detail = &lines[index]
 		}
 	}
@@ -413,7 +413,7 @@ func TestAssistantReasoningAndToolDetailsRenderInlineMarkdown(t *testing.T) {
 	}
 	var renderedDetail strings.Builder
 	renderLine(&renderedDetail, 1, 80, *detail)
-	if strings.Contains(detail.text, "`") || !strings.Contains(renderedDetail.String(), ansiForeground(currentTheme.markdownCode)+"./terminal/repl.go"+ansiForeground(currentTheme.foreground)) {
+	if strings.Contains(detail.text, "`") || !strings.Contains(renderedDetail.String(), ansiForeground(currentTheme.markdownCode)+"./terminal/api.go"+ansiForeground(currentTheme.foreground)) {
 		t.Fatalf("tool detail = %q", renderedDetail.String())
 	}
 }
@@ -599,7 +599,7 @@ func TestConversationWindowHasVerticalPadding(t *testing.T) {
 }
 
 func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
-	model := newTUIModel(48, 12, Options{Model: "model"})
+	model := newTUIModel(48, 12, Options{Config: Config{Model: "model"}})
 	model.appendBlock(blockUser, "Use **bold** text")
 	model.startTool(agent.ToolCall{ID: "read-1", Name: "read"}, agent.ToolPresentation{
 		Title: "read", Arguments: "README.md", Lines: []string{"before"},
@@ -648,9 +648,12 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 		t.Fatal("width change did not invalidate cached blocks")
 	}
 
-	model.queueSteering("inspect another file")
+	steering := &steeringCoordinator{accepted: []string{"inspect another file"}}
+	model.steeringView = steering
+	model.conversationVersion++
 	assertCachedConversationMatchesUncached(t, renderer, model)
-	model.removeSteering([]string{"inspect another file"})
+	steering.accepted = nil
+	model.conversationVersion++
 	assertCachedConversationMatchesUncached(t, renderer, model)
 
 	model.selection = textSelection{
@@ -660,7 +663,7 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 	}
 	assertCachedConversationMatchesUncached(t, renderer, model)
 
-	checkpoint := checkpointModel(model)
+	checkpoint := checkpointModel(model, nil)
 	model.clearConversation()
 	assertCachedConversationMatchesUncached(t, renderer, model)
 	if len(renderer.conversationBlocks) != 0 {
@@ -721,7 +724,7 @@ func TestMultilineInputExpandsEditorAndMovesCursor(t *testing.T) {
 }
 
 func TestFilePickerExpandsBetweenInputAndStatus(t *testing.T) {
-	model := newTUIModel(30, 12, Options{WorkingDirectory: t.TempDir()})
+	model := newTUIModel(30, 12, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@"); err != nil {
 		t.Fatal(err)
 	}
@@ -744,7 +747,7 @@ func TestFilePickerExpandsBetweenInputAndStatus(t *testing.T) {
 }
 
 func TestFilePickerShowsLoadingRow(t *testing.T) {
-	model := newTUIModel(30, 8, Options{WorkingDirectory: t.TempDir()})
+	model := newTUIModel(30, 8, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@"); err != nil {
 		t.Fatal(err)
 	}
@@ -755,7 +758,7 @@ func TestFilePickerShowsLoadingRow(t *testing.T) {
 }
 
 func TestFilePickerKeepsStableHeightWhileSearching(t *testing.T) {
-	model := newTUIModel(30, 12, Options{WorkingDirectory: t.TempDir()})
+	model := newTUIModel(30, 12, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@"); err != nil {
 		t.Fatal(err)
 	}
@@ -946,7 +949,8 @@ func TestPendingSteeringRendersAndDeliversInTranscriptOrder(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
 	model.beginTurn("initial")
 	model.appendStream(blockAssistant, "answer")
-	model.queueSteering("redirect")
+	controller := tuiController{model: model, engine: &fakeEngine{}, steering: steeringCoordinator{accepted: []string{"redirect"}}}
+	model.steeringView = &controller.steering
 	model.appendStream(blockAssistant, " continues")
 
 	lines := modelConversationLines(model, 40)
@@ -961,9 +965,11 @@ func TestPendingSteeringRendersAndDeliversInTranscriptOrder(t *testing.T) {
 		t.Fatal("cursor hidden while agent is running")
 	}
 
-	model.applyAgentEvent(agent.Event{Kind: agent.EventSteering, Text: "redirect"})
-	if len(model.steering) != 0 || len(model.blocks) != 3 || model.blocks[2].kind != blockUser || model.blocks[2].text != "redirect" {
-		t.Fatalf("steering=%q blocks=%+v", model.steering, model.blocks)
+	if _, err := controller.handleAgentEvent(engineMessage{event: &agent.Event{Kind: agent.EventSteering, Text: "redirect"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(controller.steering.pending()) != 0 || len(model.blocks) != 3 || model.blocks[2].kind != blockUser || model.blocks[2].text != "redirect" {
+		t.Fatalf("steering=%q blocks=%+v", controller.steering.pending(), model.blocks)
 	}
 }
 
@@ -971,11 +977,12 @@ func TestGoalContinuationHasDistinctTranscriptBlock(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
 	model.beginTurn("initial")
 	model.appendStream(blockAssistant, "first response")
-	model.queueSteering("same text")
+	steering := &steeringCoordinator{accepted: []string{"same text"}}
+	model.steeringView = steering
 
 	model.applyAgentEvent(agent.Event{Kind: agent.EventGoalContinuation, Text: "same text"})
-	if len(model.steering) != 1 || len(model.blocks) != 3 || model.blocks[2].kind != blockInfo || model.blocks[2].text != "Goal continuing" {
-		t.Fatalf("steering=%q blocks=%+v", model.steering, model.blocks)
+	if len(steering.pending()) != 1 || len(model.blocks) != 3 || model.blocks[2].kind != blockInfo || model.blocks[2].text != "Goal continuing" {
+		t.Fatalf("steering=%q blocks=%+v", steering.pending(), model.blocks)
 	}
 	model.appendStream(blockAssistant, "second response")
 	if len(model.blocks) != 4 || model.blocks[3].kind != blockAssistant {
@@ -984,7 +991,7 @@ func TestGoalContinuationHasDistinctTranscriptBlock(t *testing.T) {
 }
 
 func TestRendererOnlyWritesChangedRows(t *testing.T) {
-	model := newTUIModel(40, 8, Options{Model: "model"})
+	model := newTUIModel(40, 8, Options{Config: Config{Model: "model"}})
 	model.running = true
 	model.activity = activity{kind: activityThinking}
 	var renderer tuiRenderer
@@ -1110,7 +1117,7 @@ func TestRenderFrameSanitizesConversationText(t *testing.T) {
 }
 
 func TestRenderStatusSanitizesMetadata(t *testing.T) {
-	model := newTUIModel(80, 8, Options{Model: "safe\x1b[31m", ThinkingLevel: agent.ThinkingLevel("high\a")})
+	model := newTUIModel(80, 8, Options{Config: Config{Model: "safe\x1b[31m", ThinkingLevel: agent.ThinkingLevel("high\a")}})
 	left, right := renderStatus(model, 80)
 	status := left + right
 	if strings.ContainsAny(status, "\x1b\a") || !strings.Contains(right, "safe [31m (high)") {
@@ -1119,7 +1126,7 @@ func TestRenderStatusSanitizesMetadata(t *testing.T) {
 }
 
 func TestRenderStatusPrioritizesActivityAndContext(t *testing.T) {
-	model := newTUIModel(80, 20, Options{Model: "very-long-model", ThinkingLevel: agent.ThinkingMax, ContextWindow: 100})
+	model := newTUIModel(80, 20, Options{Config: Config{Model: "very-long-model", ThinkingLevel: agent.ThinkingMax, ContextWindow: 100}})
 	model.contextTokens = 50
 	model.activity = activity{kind: activityCompacting}
 
@@ -1302,7 +1309,7 @@ func TestConversationScrollingStopsAndResumesFollowing(t *testing.T) {
 
 func TestRenderFrameHandlesTinyDimensions(t *testing.T) {
 	for _, size := range [][2]int{{1, 1}, {2, 2}, {3, 3}, {4, 4}} {
-		model := newTUIModel(size[0], size[1], Options{Model: "model", ThinkingLevel: agent.ThinkingHigh})
+		model := newTUIModel(size[0], size[1], Options{Config: Config{Model: "model", ThinkingLevel: agent.ThinkingHigh}})
 		model.appendBlock(blockAssistant, "界")
 		if frame := renderFrame(model); frame == "" {
 			t.Fatalf("renderFrame(%dx%d) returned empty frame", size[0], size[1])

@@ -97,7 +97,7 @@ func TestSearchProjectFilesExcludesGitPointerFile(t *testing.T) {
 
 func TestFilePickerKeepsSearchQueriesLiteral(t *testing.T) {
 	for _, query := range []string{"~", "~/Code", "/var/log"} {
-		model := newTUIModel(80, 24, Options{WorkingDirectory: t.TempDir()})
+		model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 		if err := model.insertInput("@" + query); err != nil {
 			t.Fatal(err)
 		}
@@ -297,7 +297,7 @@ func TestFileReferenceTokenRequiresTokenBoundary(t *testing.T) {
 }
 
 func TestFilePickerRequestsNavigatesAndAppliesSelection(t *testing.T) {
-	model := newTUIModel(80, 24, Options{WorkingDirectory: t.TempDir()})
+	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("inspect @tui"); err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func TestFilePickerRequestsNavigatesAndAppliesSelection(t *testing.T) {
 }
 
 func TestFilePickerReplacementStopsBeforeImage(t *testing.T) {
-	model := newTUIModel(80, 24, Options{WorkingDirectory: t.TempDir()})
+	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@tu"); err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +345,7 @@ func TestFilePickerReplacementStopsBeforeImage(t *testing.T) {
 }
 
 func TestFilePickerRejectsStaleSearchResults(t *testing.T) {
-	model := newTUIModel(80, 24, Options{WorkingDirectory: t.TempDir()})
+	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@"); err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +369,7 @@ func TestFormatFileReferenceQuotesUnicodeWhitespace(t *testing.T) {
 }
 
 func TestFilePickerQuotesSpacesAndCanBeDismissed(t *testing.T) {
-	model := newTUIModel(80, 24, Options{WorkingDirectory: t.TempDir()})
+	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@"); err != nil {
 		t.Fatal(err)
 	}

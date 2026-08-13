@@ -14,24 +14,8 @@ type Descriptor struct {
 	Name string
 }
 
-type ModelDefaults struct {
-	Main     string
-	Fast     string
-	Balanced string
-}
-
 type Options struct {
 	Home string
-}
-
-type AuthOptions struct {
-	Home   string
-	Device bool
-}
-
-type Interaction struct {
-	OpenURL    func(string) error
-	DeviceCode func(verificationURL, userCode string) error
 }
 
 // Runtime is a configured backend. NewProvider may be called concurrently and
@@ -48,16 +32,8 @@ type CredentialChecker interface {
 	CheckCredentials(context.Context) error
 }
 
-// Authenticator is implemented by drivers that support explicit login and
-// logout commands.
-type Authenticator interface {
-	Login(context.Context, AuthOptions, Interaction) error
-	Logout(context.Context, AuthOptions) error
-}
-
 type Driver interface {
 	Descriptor() Descriptor
-	ModelDefaults() ModelDefaults
 	Open(Options) (Runtime, error)
 }
 

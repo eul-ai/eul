@@ -4,12 +4,17 @@ import (
 	"bytes"
 	"errors"
 	"flag"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/session"
+	"github.com/eul-ai/eul/interactive"
 )
+
+func stringPointer(value string) *string {
+	return &value
+}
 
 func TestParseAgentArguments(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -28,20 +33,17 @@ func TestParseAgentArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := session.Options{
+	want := interactive.Options{
 		Provider:         "test",
-		Model:            "gpt-5.6-sol",
-		ModelSet:         true,
-		FastModel:        "gpt-5.6-luna",
-		FastModelSet:     true,
-		BalancedModel:    "gpt-5.6-terra",
-		BalancedModelSet: true,
+		Model:            stringPointer("gpt-5.6-sol"),
+		FastModel:        stringPointer("gpt-5.6-luna"),
+		BalancedModel:    stringPointer("gpt-5.6-terra"),
 		ThinkingLevel:    agent.ThinkingHigh,
 		FastMode:         true,
 		WorkingDirectory: "project",
 		NoSandbox:        true,
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("arguments = %+v, want %+v", got, want)
 	}
 }
@@ -54,7 +56,7 @@ func TestParseAgentArgumentsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Provider != "" || got.Model != "" || got.ModelSet || got.ThinkingLevel != agent.ThinkingMedium {
+	if got.Provider != "" || got.Model != nil || got.ThinkingLevel != agent.ThinkingMedium {
 		t.Fatalf("parsed defaults = %+v", got)
 	}
 }

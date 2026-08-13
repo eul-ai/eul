@@ -10,6 +10,7 @@ import (
 	"runtime"
 
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/backend/codex/oauth"
 )
 
 func runLogin(arguments []string, runtime appRuntime) int {
@@ -34,12 +35,12 @@ func runLogin(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "login failed: %v", err)
 		return exitFailure
 	}
-	authenticator, ok := driver.(backend.Authenticator)
-	if !ok {
-		writeCLIError(runtime.stderr, "login failed: provider %q does not support login", driver.Descriptor().ID)
+	home, err := resolveEULHome(runtime)
+	if err != nil {
+		writeCLIError(runtime.stderr, "login failed: %v", err)
 		return exitFailure
 	}
-	home, err := resolveEULHome(runtime)
+	authenticator, backendRuntime, err := openAuthenticator(driver, home)
 	if err != nil {
 		writeCLIError(runtime.stderr, "login failed: %v", err)
 		return exitFailure
@@ -48,8 +49,12 @@ func runLogin(arguments []string, runtime appRuntime) int {
 	ctx, cancel := contextWithInterrupt(runtime.interrupts)
 	defer cancel()
 	descriptor := driver.Descriptor()
-	err = authenticator.Login(ctx, backend.AuthOptions{Home: home, Device: *device}, backend.Interaction{
-		OpenURL: func(url string) error {
+	method := oauth.LoginBrowser
+	if *device {
+		method = oauth.LoginDevice
+	}
+	err = authenticator.Login(ctx, method, oauth.Interaction{
+		AuthURL: func(url string) error {
 			fmt.Fprintf(runtime.stderr, "Open this URL to sign in with %s:\n%s\n", descriptor.Name, url)
 			if runtime.openURL != nil {
 				if err := runtime.openURL(url); err == nil {
@@ -59,11 +64,12 @@ func runLogin(arguments []string, runtime appRuntime) int {
 			fmt.Fprintln(runtime.stderr, "Browser could not be opened automatically; open the URL manually.")
 			return nil
 		},
-		DeviceCode: func(verificationURL, userCode string) error {
-			fmt.Fprintf(runtime.stderr, "Open %s and enter code: %s\n", verificationURL, userCode)
+		DeviceCode: func(code oauth.DeviceCode) error {
+			fmt.Fprintf(runtime.stderr, "Open %s and enter code: %s\n", code.VerificationURL, code.UserCode)
 			return nil
 		},
 	})
+	err = errors.Join(err, backendRuntime.Close())
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return exitInterrupted
@@ -97,12 +103,12 @@ func runLogout(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "logout failed: %v", err)
 		return exitFailure
 	}
-	authenticator, ok := driver.(backend.Authenticator)
-	if !ok {
-		writeCLIError(runtime.stderr, "logout failed: provider %q does not support logout", driver.Descriptor().ID)
+	home, err := resolveEULHome(runtime)
+	if err != nil {
+		writeCLIError(runtime.stderr, "logout failed: %v", err)
 		return exitFailure
 	}
-	home, err := resolveEULHome(runtime)
+	authenticator, backendRuntime, err := openAuthenticator(driver, home)
 	if err != nil {
 		writeCLIError(runtime.stderr, "logout failed: %v", err)
 		return exitFailure
@@ -110,7 +116,9 @@ func runLogout(arguments []string, runtime appRuntime) int {
 
 	ctx, cancel := contextWithInterrupt(runtime.interrupts)
 	defer cancel()
-	if err := authenticator.Logout(ctx, backend.AuthOptions{Home: home}); err != nil {
+	err = authenticator.Logout(ctx)
+	err = errors.Join(err, backendRuntime.Close())
+	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return exitInterrupted
 		}
@@ -120,6 +128,18 @@ func runLogout(arguments []string, runtime appRuntime) int {
 
 	fmt.Fprintln(runtime.stdout, "Logged out.")
 	return exitSuccess
+}
+
+func openAuthenticator(driver backend.Driver, home string) (oauth.Authenticator, backend.Runtime, error) {
+	backendRuntime, err := driver.Open(backend.Options{Home: home})
+	if err != nil {
+		return nil, nil, err
+	}
+	authenticator, ok := backendRuntime.(oauth.Authenticator)
+	if !ok {
+		return nil, nil, errors.Join(fmt.Errorf("provider %q does not support login or logout", driver.Descriptor().ID), backendRuntime.Close())
+	}
+	return authenticator, backendRuntime, nil
 }
 
 func contextWithInterrupt(interrupts <-chan os.Signal) (context.Context, context.CancelFunc) {

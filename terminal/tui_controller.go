@@ -67,7 +67,7 @@ type tuiController struct {
 	exitAfterTurn      bool
 	exitAfterTurnErr   error
 	outcome            RunOutcome
-	deferredSteering   []string
+	steering           steeringCoordinator
 	permission         *PermissionRequest
 	queuedPermissions  []PermissionRequest
 	dirty              bool
@@ -75,6 +75,8 @@ type tuiController struct {
 }
 
 func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, error) {
+	c.model.steeringView = &c.steering
+
 	switch event.kind {
 	case tuiEventParentCanceled:
 		return c.handleParentCanceled(event.err)
@@ -154,7 +156,7 @@ func (c *tuiController) handleResize() (bool, error) {
 
 func (c *tuiController) handleKey(ctx context.Context, key keyEvent) (bool, error) {
 	pendingBefore := c.model.pendingImageRequests()
-	action, err := reduceKeyWithFrame(c.model, key, c.renderer.frame)
+	action, err := handleKeyInput(c.model, key, c.renderer.frame)
 	if err != nil {
 		if !c.model.running {
 			if checkpointErr := c.saveCurrentCheckpoint(false); checkpointErr != nil {
@@ -208,9 +210,7 @@ func (c *tuiController) handleEngineMessage(ctx context.Context, message engineM
 
 	interrupted := c.model.interrupted
 	if interrupted || message.err != nil {
-		c.engine.ClearSteering()
-		c.deferredSteering = nil
-		c.model.restoreAllSteering()
+		c.model.restoreSteering(c.steering.restore(c.engine))
 	}
 	c.model.finishTurn(message.err)
 	if err := c.saveCurrentCheckpoint(false); err != nil {
@@ -228,7 +228,14 @@ func (c *tuiController) handleEngineMessage(ctx context.Context, message engineM
 }
 
 func (c *tuiController) handleAgentEvent(message engineMessage) (bool, error) {
-	c.model.applyAgentEvent(*message.event)
+	if message.event.Kind == agent.EventSteering {
+		if c.steering.delivered(message.event.Text) {
+			c.model.appendBlock(blockUser, message.event.Text)
+			c.model.setActiveActivity(activity{kind: activityThinking})
+		}
+	} else {
+		c.model.applyAgentEvent(*message.event)
+	}
 	if c.model.permission.active() {
 		c.model.activity = activity{kind: activityPermission}
 	}
@@ -246,7 +253,7 @@ func (c *tuiController) handleAgentEvent(message engineMessage) (bool, error) {
 
 func (c *tuiController) handleProviderUsage(message providerUsageMessage) (bool, error) {
 	if message.err == nil {
-		c.model.providerUsage = agent.ProviderUsage{Windows: append([]agent.UsageWindow(nil), message.usage.Windows...)}
+		c.model.providerUsage = ProviderUsage{Windows: append([]UsageWindow(nil), message.usage.Windows...)}
 	}
 
 	c.dirty = true
@@ -453,10 +460,8 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		c.cancelClipboardRequests()
 		c.model.finishSubmission(action.content)
 	case tuiActionSteer:
-		if len(c.deferredSteering) > 0 || !c.engine.Steer(action.prompt) {
-			c.deferredSteering = append(c.deferredSteering, action.prompt)
-		}
-		c.model.queueSteering(action.prompt)
+		c.steering.enqueue(c.engine, action.prompt)
+		c.model.conversationVersion++
 	case tuiActionShowGoal:
 		goal, ok := c.engine.Goal()
 		switch {
@@ -584,20 +589,25 @@ func (c *tuiController) startCompaction(ctx context.Context) error {
 }
 
 func (c *tuiController) startDeferredTurn(ctx context.Context) error {
-	if len(c.deferredSteering) == 0 {
+	prompt, ok := c.steering.nextDeferred()
+	if !ok {
 		return nil
 	}
-	prompt := c.deferredSteering[0]
-	c.deferredSteering = c.deferredSteering[1:]
-	c.model.removeSteering([]string{prompt})
-	return c.startTurn(ctx, []agent.ContentPart{{Kind: agent.ContentPartText, Text: prompt}})
+	c.model.conversationVersion++
+	if err := c.startTurn(ctx, []agent.ContentPart{{Kind: agent.ContentPartText, Text: prompt}}); err != nil {
+		c.steering.restoreDeferred(prompt)
+		c.model.conversationVersion++
+		return err
+	}
+	return nil
 }
 
 func (c *tuiController) restoreQueuedInput() {
-	messages := c.engine.ClearSteering()
-	messages = append(messages, c.deferredSteering...)
-	c.deferredSteering = nil
+	messages := c.steering.restore(c.engine)
 	c.model.restoreSteering(messages)
+	if len(messages) > 0 {
+		c.model.conversationVersion++
+	}
 }
 
 func (c *tuiController) interruptTurn() {
@@ -712,5 +722,5 @@ func (c *tuiController) saveAgentCheckpoint(checkpoint *agent.Checkpoint, active
 	if checkpoint == nil {
 		return errors.New("terminal: agent checkpoint is missing")
 	}
-	return c.saveCheckpoint(*checkpoint, checkpointModel(c.model), active)
+	return c.saveCheckpoint(*checkpoint, checkpointModel(c.model, c.steering.pending()), active)
 }

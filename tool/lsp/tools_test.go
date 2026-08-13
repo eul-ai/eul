@@ -1,9 +1,11 @@
 package lsp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,26 +15,23 @@ import (
 
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
-
-	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/tool"
 )
 
-func TestNewLSPOmitsToolsWhenServerIsUnavailable(t *testing.T) {
+func TestNewLSPIsUnavailableWhenServerIsUnavailable(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	cwd := t.TempDir()
 	writeLSPTestConfig(t, cwd)
 
-	set, err := New(cwd, "")
+	service, err := New(cwd, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tools := set.Tools(); len(tools) != 0 {
-		t.Fatalf("New() returned %d tools", len(tools))
+	if service.Available() {
+		t.Fatal("service is available")
 	}
 }
 
-func TestNewLSPRegistersFullAndReadOnlyToolSets(t *testing.T) {
+func TestLSPServiceCloseStopsSessionsOnce(t *testing.T) {
 	directory := t.TempDir()
 	if err := os.WriteFile(filepath.Join(directory, "gopls"), []byte(""), 0o755); err != nil {
 		t.Fatal(err)
@@ -40,53 +39,24 @@ func TestNewLSPRegistersFullAndReadOnlyToolSets(t *testing.T) {
 	t.Setenv("PATH", directory)
 	cwd := t.TempDir()
 	writeLSPTestConfig(t, cwd)
-	full, err := New(cwd, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	readOnly, err := NewReadOnly(cwd, "")
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	for _, test := range []struct {
-		name      string
-		set       *Set
-		wantNames []string
-	}{
-		{
-			name:      "full",
-			set:       full,
-			wantNames: []string{lspDiagnosticsToolName, lspHoverToolName, lspDefinitionToolName, lspReferencesToolName, lspSymbolsToolName, lspRenameToolName},
-		},
-		{
-			name:      "read-only",
-			set:       readOnly,
-			wantNames: []string{lspDiagnosticsToolName, lspHoverToolName, lspDefinitionToolName, lspReferencesToolName, lspSymbolsToolName},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			tools := test.set.Tools()
-			if len(tools) != len(test.wantNames) {
-				t.Fatalf("tool count = %d, want %d", len(tools), len(test.wantNames))
-			}
-			for index, current := range tools {
-				if current.Definition().Name != test.wantNames[index] {
-					t.Fatalf("tool %d = %q, want %q", index, current.Definition().Name, test.wantNames[index])
-				}
-			}
-			stops := 0
-			test.set.client.sessions["test"] = &lspSession{stopSession: func() { stops++ }}
-			if err := test.set.Close(); err != nil {
-				t.Fatalf("Close() error = %v", err)
-			}
-			if err := test.set.Close(); err != nil {
-				t.Fatalf("second Close() error = %v", err)
-			}
-			if stops != 1 {
-				t.Fatalf("session stops = %d, want 1", stops)
-			}
-		})
+	service, err := New(cwd, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !service.Available() {
+		t.Fatal("service is unavailable")
+	}
+	stops := 0
+	service.client.sessions["test"] = &lspSession{stopSession: func() { stops++ }}
+	if err := service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if stops != 1 {
+		t.Fatalf("session stops = %d, want 1", stops)
 	}
 }
 
@@ -123,55 +93,47 @@ var testThing = Thing{Value: 1}
 		t.Fatal(err)
 	}
 
-	set, err := New(cwd, "")
+	service, err := New(cwd, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	tools := set.Tools()
-	if len(tools) != 6 {
-		t.Fatalf("New() returned %d tools", len(tools))
-	}
-	registry, err := tool.NewRegistry(tools, set)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer registry.Close()
+	defer service.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	diagnostics := executeLSPTestTool(t, ctx, registry, lspDiagnosticsToolName, map[string]any{"path": "sample.go"})
+	diagnostics := executeLSPTestOperation(t, ctx, service, "diagnostics", map[string]any{"path": "sample.go"})
 	if !strings.Contains(diagnostics.Output, `"items": []`) {
 		t.Fatalf("diagnostics = %s", diagnostics.Output)
 	}
 
 	thingLine, thingCharacter := sourcePosition(t, source, "func Use(value Thing)", "Thing")
-	hover := executeLSPTestTool(t, ctx, registry, lspHoverToolName, map[string]any{
+	hover := executeLSPTestOperation(t, ctx, service, "hover", map[string]any{
 		"path": "sample.go", "line": thingLine, "character": thingCharacter,
 	})
 	if !strings.Contains(hover.Output, "Thing") {
 		t.Fatalf("hover = %s", hover.Output)
 	}
 
-	definition := executeLSPTestTool(t, ctx, registry, lspDefinitionToolName, map[string]any{
+	definition := executeLSPTestOperation(t, ctx, service, "definition", map[string]any{
 		"path": "sample.go", "line": thingLine, "character": thingCharacter,
 	})
 	if !strings.Contains(definition.Output, "sample.go") {
 		t.Fatalf("definition = %s", definition.Output)
 	}
 
-	references := executeLSPTestTool(t, ctx, registry, lspReferencesToolName, map[string]any{
+	references := executeLSPTestOperation(t, ctx, service, "references", map[string]any{
 		"path": "sample.go", "line": thingLine, "character": thingCharacter, "includeDeclaration": true,
 	})
 	if strings.Count(references.Output, "sample.go") < 2 {
 		t.Fatalf("references = %s", references.Output)
 	}
 
-	symbols := executeLSPTestTool(t, ctx, registry, lspSymbolsToolName, map[string]any{"path": "sample.go"})
+	symbols := executeLSPTestOperation(t, ctx, service, "symbols", map[string]any{"path": "sample.go"})
 	if !strings.Contains(symbols.Output, `"name": "Thing"`) || !strings.Contains(symbols.Output, `"name": "Use"`) {
 		t.Fatalf("symbols = %s", symbols.Output)
 	}
 
-	session := set.client.sessions["gopls"]
+	session := service.client.sessions["gopls"]
 	if session == nil {
 		t.Fatal("gopls session was not cached")
 	}
@@ -189,7 +151,7 @@ func External(value Thing) int {
 	valueLine, valueCharacter := sourcePosition(t, source, "return value.Value", "Value")
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		externalReferences := executeLSPTestTool(t, ctx, registry, lspReferencesToolName, map[string]any{
+		externalReferences := executeLSPTestOperation(t, ctx, service, "references", map[string]any{
 			"path": "sample.go", "line": valueLine, "character": valueCharacter, "includeDeclaration": true,
 		})
 		if strings.Contains(externalReferences.Output, "external.go") {
@@ -200,11 +162,11 @@ func External(value Thing) int {
 		}
 		time.Sleep(lspWatchBatchDelay)
 	}
-	if set.client.sessions["gopls"] != session {
+	if service.client.sessions["gopls"] != session {
 		t.Fatal("external file change restarted the gopls session")
 	}
 
-	rename := executeLSPTestTool(t, ctx, registry, lspRenameToolName, map[string]any{
+	rename := executeLSPTestOperation(t, ctx, service, "rename", map[string]any{
 		"path": "sample.go", "line": valueLine + 1, "character": 81, "oldName": "Value", "newName": "Number",
 	})
 	if rename.Output != "renamed symbol in 3 files" {
@@ -220,7 +182,7 @@ func External(value Thing) int {
 	assertFileContent(t, testPath, strings.ReplaceAll(testSource, "Value", "Number"))
 	assertFileContent(t, externalPath, strings.ReplaceAll(externalSource, "Value", "Number"))
 
-	rename = executeLSPTestTool(t, ctx, registry, lspRenameToolName, map[string]any{
+	rename = executeLSPTestOperation(t, ctx, service, "rename", map[string]any{
 		"path": "sample.go", "line": valueLine + 1, "character": 81, "oldName": "Number", "newName": "Value",
 	})
 	if rename.Output != "renamed symbol in 3 files" {
@@ -262,21 +224,17 @@ var testValue = oldName
 		t.Fatal(err)
 	}
 
-	set, err := New(cwd, "")
+	service, err := New(cwd, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry, err := tool.NewRegistry(set.Tools(), set)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer registry.Close()
+	defer service.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	line, character := sourcePosition(t, source, "var oldName", "oldName")
 
 	for _, names := range [][2]string{{"oldName", "NewName"}, {"NewName", "oldName"}} {
-		rename := executeLSPTestTool(t, ctx, registry, lspRenameToolName, map[string]any{
+		rename := executeLSPTestOperation(t, ctx, service, "rename", map[string]any{
 			"path": "rename.go", "line": line, "character": character, "oldName": names[0], "newName": names[1],
 		})
 		if rename.Output != "renamed symbol in 2 files" {
@@ -465,57 +423,6 @@ func TestLSPShutdownIsBounded(t *testing.T) {
 	}
 }
 
-func TestLSPToolDescriptionsAreServerAgnostic(t *testing.T) {
-	for _, definition := range []agent.ToolDefinition{
-		lspDiagnosticsToolDefinition,
-		lspHoverToolDefinition,
-		lspDefinitionToolDefinition,
-		lspReferencesToolDefinition,
-		lspSymbolsToolDefinition,
-		lspRenameToolDefinition,
-	} {
-		for _, config := range []lspServerConfig{{name: "gopls"}} {
-			if strings.Contains(strings.ToLower(definition.Description), strings.ToLower(config.name)) {
-				t.Fatalf("%s description names server %q: %s", definition.Name, config.name, definition.Description)
-			}
-		}
-	}
-}
-
-func TestLSPDiagnosticsPresentationShowsPath(t *testing.T) {
-	diagnostics := &lspTool{definition: lspDiagnosticsToolDefinition, operation: lspDiagnostics}
-	registry, err := tool.NewRegistry([]tool.Tool{diagnostics})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	presentation := registry.Presentation(agent.ToolCallSnapshot{
-		Name:         lspDiagnosticsToolName,
-		RawArguments: `{"path":"sample.go"}`,
-		Complete:     true,
-	})
-	if presentation.Title != lspDiagnosticsToolName || presentation.Arguments != "sample.go" {
-		t.Fatalf("diagnostics presentation = %+v", presentation)
-	}
-}
-
-func TestLSPRenamePresentationShowsNames(t *testing.T) {
-	rename := &lspTool{definition: lspRenameToolDefinition, operation: lspRename}
-	registry, err := tool.NewRegistry([]tool.Tool{rename})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	presentation := registry.Presentation(agent.ToolCallSnapshot{
-		Name:         lspRenameToolName,
-		RawArguments: `{"path":"sample.go","line":1,"character":2,"oldName":"Value","newName":"Number"}`,
-		Complete:     true,
-	})
-	if presentation.Title != lspRenameToolName || presentation.Arguments != "Value → Number" {
-		t.Fatalf("rename presentation = %+v", presentation)
-	}
-}
-
 func TestLSPPositionOffsetUsesUTF16(t *testing.T) {
 	content := []byte("a😀b\r\nnext")
 	for _, test := range []struct {
@@ -546,21 +453,54 @@ func TestLSPPositionOffsetUsesUTF16(t *testing.T) {
 	}
 }
 
-func executeLSPTestTool(t *testing.T, ctx context.Context, registry *tool.Registry, name string, arguments any) agent.ToolResult {
+func executeLSPTestOperation(t *testing.T, ctx context.Context, service *Service, name string, arguments map[string]any) operationResult {
 	t.Helper()
 
-	encoded, err := json.Marshal(arguments)
+	path, _ := arguments["path"].(string)
+	line, _ := arguments["line"].(int)
+	character, _ := arguments["character"].(int)
+	var response any
+	var err error
+	switch name {
+	case "diagnostics":
+		response, err = service.Diagnostics(ctx, path)
+	case "hover":
+		response, err = service.Hover(ctx, path, line, character)
+	case "definition":
+		response, err = service.Definition(ctx, path, line, character)
+	case "references":
+		includeDeclaration, _ := arguments["includeDeclaration"].(bool)
+		response, err = service.References(ctx, path, line, character, includeDeclaration)
+	case "symbols":
+		response, err = service.Symbols(ctx, path)
+	case "rename":
+		oldName, _ := arguments["oldName"].(string)
+		newName, _ := arguments["newName"].(string)
+		var changed int
+		changed, err = service.Rename(ctx, path, line, character, oldName, newName)
+		response = fmt.Sprintf("renamed symbol in %d files", changed)
+	default:
+		t.Fatalf("unknown operation %q", name)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := registry.Execute(ctx, agent.ToolCall{ID: "call", Name: name, Arguments: encoded}, nil)
+	if text, ok := response.(string); ok {
+		return operationResult{Output: text}
+	}
+	encoded, err := protocol.Marshal(response)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.IsError {
-		t.Fatalf("%s: %s", name, result.Output)
+	var output bytes.Buffer
+	if err := json.Indent(&output, encoded, "", "  "); err != nil {
+		t.Fatal(err)
 	}
-	return result
+	return operationResult{Output: output.String()}
+}
+
+type operationResult struct {
+	Output string
 }
 
 func sourcePosition(t *testing.T, source, lineText, symbol string) (int, int) {

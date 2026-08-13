@@ -195,7 +195,7 @@ func restoreCheckpointContent(content []checkpointContentPart) []agent.ContentPa
 	return parts
 }
 
-func checkpointModel(model *tuiModel) Checkpoint {
+func checkpointModel(model *tuiModel, queued []string) Checkpoint {
 	blocks := make([]checkpointBlock, len(model.blocks))
 	for index, block := range model.blocks {
 		blocks[index] = checkpointBlock{
@@ -207,7 +207,6 @@ func checkpointModel(model *tuiModel) Checkpoint {
 			ToolOutcome: block.toolOutcome,
 		}
 	}
-	queued := append([]string(nil), model.steering...)
 
 	return Checkpoint{data: terminalCheckpointData{
 		Version:       terminalCheckpointVersion,
@@ -216,7 +215,7 @@ func checkpointModel(model *tuiModel) Checkpoint {
 		Cursor:        model.textCursor(),
 		History:       append([]string(nil), model.history...),
 		ContextTokens: model.contextTokens,
-		QueuedInputs:  queued,
+		QueuedInputs:  append([]string(nil), queued...),
 	}}
 }
 

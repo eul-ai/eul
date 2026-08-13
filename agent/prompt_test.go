@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/eul-ai/eul/skill"
 )
 
 func TestBuildSystemPrompt(t *testing.T) {
@@ -31,7 +33,7 @@ func TestBuildSystemPrompt(t *testing.T) {
 }
 
 func TestBuildSystemPromptWithNoToolsOrWorkingDirectory(t *testing.T) {
-	prompt := buildSystemPrompt(nil, "", "", []Skill{{Name: "review", Description: "Review code", FilePath: "/skills/review/SKILL.md"}})
+	prompt := buildSystemPrompt(nil, "", "", []skill.Skill{{Name: "review", Description: "Review code", FilePath: "/skills/review/SKILL.md"}})
 
 	if strings.Contains(prompt, "concurrently") {
 		t.Fatalf("prompt includes tool guidance without tools:\n%s", prompt)

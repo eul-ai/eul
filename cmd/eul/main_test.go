@@ -12,6 +12,8 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/backend/codex/oauth"
+	"github.com/eul-ai/eul/interactive"
 )
 
 type providerFunction func(context.Context, agent.Request, agent.TextSink) (agent.Response, error)
@@ -22,6 +24,11 @@ type fakeBackendRuntime struct {
 	closeErr              error
 	closeCalls            int
 	newProvider           func() (agent.Provider, error)
+	loginErr              error
+	logoutErr             error
+	loginDevice           bool
+	logoutCalls           int
+	interactionCall       bool
 }
 
 func (runtime *fakeBackendRuntime) CheckCredentials(context.Context) error {
@@ -38,54 +45,44 @@ func (runtime *fakeBackendRuntime) Close() error {
 	return runtime.closeErr
 }
 
+func (runtime *fakeBackendRuntime) Login(_ context.Context, method oauth.LoginMethod, interaction oauth.Interaction) error {
+	runtime.loginDevice = method == oauth.LoginDevice
+	if method == oauth.LoginDevice && interaction.DeviceCode != nil {
+		runtime.interactionCall = true
+		_ = interaction.DeviceCode(oauth.DeviceCode{VerificationURL: "https://example.test/device", UserCode: "ABCD-EFGH"})
+	}
+	if method == oauth.LoginBrowser && interaction.AuthURL != nil {
+		runtime.interactionCall = true
+		_ = interaction.AuthURL("https://example.test/authorize")
+	}
+	return runtime.loginErr
+}
+
+func (runtime *fakeBackendRuntime) Logout(context.Context) error {
+	runtime.logoutCalls++
+	return runtime.logoutErr
+}
+
 type fakeBackendDriver struct {
-	descriptor      backend.Descriptor
-	defaults        backend.ModelDefaults
-	runtime         *fakeBackendRuntime
-	openErr         error
-	loginErr        error
-	logoutErr       error
-	loginDevice     bool
-	logoutCalls     int
-	interactionCall bool
+	descriptor backend.Descriptor
+	runtime    *fakeBackendRuntime
+	openErr    error
 }
 
 func (driver *fakeBackendDriver) Descriptor() backend.Descriptor {
 	return driver.descriptor
 }
 
-func (driver *fakeBackendDriver) ModelDefaults() backend.ModelDefaults {
-	return driver.defaults
-}
-
 func (driver *fakeBackendDriver) Open(backend.Options) (backend.Runtime, error) {
 	return driver.runtime, driver.openErr
-}
-
-func (driver *fakeBackendDriver) Login(_ context.Context, options backend.AuthOptions, interaction backend.Interaction) error {
-	driver.loginDevice = options.Device
-	if options.Device && interaction.DeviceCode != nil {
-		driver.interactionCall = true
-		_ = interaction.DeviceCode("https://example.test/device", "ABCD-EFGH")
-	}
-	if !options.Device && interaction.OpenURL != nil {
-		driver.interactionCall = true
-		_ = interaction.OpenURL("https://example.test/authorize")
-	}
-	return driver.loginErr
-}
-
-func (driver *fakeBackendDriver) Logout(context.Context, backend.AuthOptions) error {
-	driver.logoutCalls++
-	return driver.logoutErr
 }
 
 func (function providerFunction) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {
 	return function(ctx, request, observer.Text)
 }
 
-func (providerFunction) ModelMetadata(string) agent.ModelMetadata {
-	return agent.ModelMetadata{ThinkingLevels: agent.ThinkingLevels()}
+func (providerFunction) ModelMetadata(string) backend.ModelMetadata {
+	return backend.ModelMetadata{ThinkingLevels: agent.ThinkingLevels()}
 }
 
 func TestFinishRunClassifiesInterruptionAndCleanupFailure(t *testing.T) {
@@ -167,12 +164,7 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[strin
 	}}
 	driver := &fakeBackendDriver{
 		descriptor: backend.Descriptor{ID: "test", Name: "Test Provider"},
-		defaults: backend.ModelDefaults{
-			Main:     "gpt-5.6-sol",
-			Fast:     "gpt-5.6-luna",
-			Balanced: "gpt-5.6-terra",
-		},
-		runtime: backendRuntime,
+		runtime:    backendRuntime,
 	}
 	backends, err := backend.NewRegistry("test", driver)
 	if err != nil {
@@ -188,7 +180,10 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[strin
 		userHomeDir:   func() (string, error) { return filepath.Join(cwd, ".test-home"), nil },
 		userConfigDir: func() (string, error) { return filepath.Join(cwd, ".test-config"), nil },
 		backends:      backends,
-		openURL:       func(string) error { return nil },
+		providerConfigs: map[string]interactive.ProviderConfig{
+			"test": {MainModel: "gpt-5.6-sol", FastModel: "gpt-5.6-luna", BalancedModel: "gpt-5.6-terra"},
+		},
+		openURL: func(string) error { return nil },
 	}
 }
 

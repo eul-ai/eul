@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
-
-	"github.com/eul-ai/eul/agent"
 )
 
 func renderStatus(model *tuiModel, width int) (string, string) {
@@ -57,8 +55,8 @@ func renderStatusAt(model *tuiModel, width int, now time.Time) (string, string) 
 	return truncateCells(activity, width, true), ""
 }
 
-func providerUsageText(usage agent.ProviderUsage, now time.Time) (string, string) {
-	windows := append([]agent.UsageWindow(nil), usage.Windows...)
+func providerUsageText(usage ProviderUsage, now time.Time) (string, string) {
+	windows := append([]UsageWindow(nil), usage.Windows...)
 	sort.SliceStable(windows, func(left, right int) bool {
 		return windows[left].Duration < windows[right].Duration
 	})

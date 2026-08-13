@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/skill"
 )
 
 func TestCommandReferenceRequiresCommandPositionAndTracksReplacement(t *testing.T) {
@@ -40,7 +41,7 @@ func TestFastCommandOnlyAppearsWhenAvailable(t *testing.T) {
 		t.Fatalf("unavailable picker = %+v", unavailable.commandPicker)
 	}
 
-	missingSetter := newTUIModel(80, 24, Options{FastModeAvailable: true})
+	missingSetter := newTUIModel(80, 24, Options{Config: Config{FastModeAvailable: true}})
 	if err := missingSetter.insertInput("/fast"); err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +49,10 @@ func TestFastCommandOnlyAppearsWhenAvailable(t *testing.T) {
 		t.Fatalf("missing setter picker = %+v", missingSetter.commandPicker)
 	}
 
-	available := newTUIModel(80, 24, Options{FastModeAvailable: true, SetFastMode: func(bool) error { return nil }})
+	available := newTUIModel(80, 24, Options{
+		Config:   Config{FastModeAvailable: true},
+		Commands: testCommands{setFastMode: func(bool) error { return nil }},
+	})
 	if err := available.insertInput("/fast"); err != nil {
 		t.Fatal(err)
 	}
@@ -65,10 +69,10 @@ func TestFastCommandOnlyAppearsWhenAvailable(t *testing.T) {
 }
 
 func TestCommandPickerFiltersCommandsAndSkills(t *testing.T) {
-	model := newTUIModel(80, 24, Options{Skills: []agent.Skill{
+	model := newTUIModel(80, 24, Options{Config: Config{Skills: []skill.Skill{
 		{Name: "review", Description: "Review code"},
 		{Name: "Invalid Name", Description: "Cannot be invoked"},
-	}})
+	}}})
 	if err := model.insertInput("/skill:r"); err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +248,7 @@ func TestCommandPickerSuggestsRunnableCommandDuringTurn(t *testing.T) {
 }
 
 func TestFilePickerCanOpenInCommandArguments(t *testing.T) {
-	model := newTUIModel(80, 24, Options{WorkingDirectory: t.TempDir()})
+	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("/goal inspect @"); err != nil {
 		t.Fatal(err)
 	}

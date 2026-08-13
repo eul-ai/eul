@@ -23,7 +23,7 @@ func TestScreenModesRestoreEnhancedKeyboardReporting(t *testing.T) {
 func TestRunnerRunValidatesCheckpointCapabilityAtEntry(t *testing.T) {
 	runner := &Runner{}
 	_, err := runner.Run(context.Background(), &fakeEngine{}, Options{
-		SaveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error { return nil },
+		Persistence: testCommands{saveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error { return nil }},
 	})
 	if !errors.Is(err, errCheckpointUnavailable) {
 		t.Fatalf("Runner.Run() error = %v", err)
@@ -100,7 +100,7 @@ func TestRunTUIRendersSubagentUpdatesWhileIdle(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, err := runTUI(context.Background(), &fakeEngine{}, Options{
-			Input: reader, Output: output, SubagentUpdates: updates,
+			Input: reader, Output: output, Events: Events{SubagentUpdates: updates},
 		}, -1, 80, 24)
 		done <- err
 	}()
@@ -137,10 +137,10 @@ func TestRunTUILoadsProviderUsageAtStartupAndAfterTurn(t *testing.T) {
 	options := Options{
 		Input:  reader,
 		Output: output,
-		LoadUsage: func(context.Context) (agent.ProviderUsage, error) {
+		Services: Services{LoadUsage: func(context.Context) (ProviderUsage, error) {
 			calls <- struct{}{}
-			return agent.ProviderUsage{Windows: []agent.UsageWindow{{Duration: 5 * time.Hour, UsedPercent: 25}}}, nil
-		},
+			return ProviderUsage{Windows: []UsageWindow{{Duration: 5 * time.Hour, UsedPercent: 25}}}, nil
+		}},
 	}
 
 	done := make(chan error, 1)
@@ -199,13 +199,13 @@ func TestRunTUIWaitsForProviderUsageCleanup(t *testing.T) {
 		_, err := runTUI(context.Background(), &fakeEngine{}, Options{
 			Input:  reader,
 			Output: io.Discard,
-			LoadUsage: func(ctx context.Context) (agent.ProviderUsage, error) {
+			Services: Services{LoadUsage: func(ctx context.Context) (ProviderUsage, error) {
 				close(started)
 				<-ctx.Done()
 				close(canceled)
 				<-release
-				return agent.ProviderUsage{}, ctx.Err()
-			},
+				return ProviderUsage{}, ctx.Err()
+			}},
 		}, -1, 80, 24)
 		done <- err
 	}()
@@ -247,14 +247,14 @@ func TestLoadProviderUsageCoalescesRequestsAndRecovers(t *testing.T) {
 	started := make(chan int, 3)
 	releaseFirst := make(chan struct{})
 	calls := 0
-	load := func(context.Context) (agent.ProviderUsage, error) {
+	load := func(context.Context) (ProviderUsage, error) {
 		calls++
 		started <- calls
 		if calls == 1 {
 			<-releaseFirst
-			return agent.ProviderUsage{}, errors.New("temporarily unavailable")
+			return ProviderUsage{}, errors.New("temporarily unavailable")
 		}
-		return agent.ProviderUsage{Windows: []agent.UsageWindow{{Duration: 7 * 24 * time.Hour, UsedPercent: 20}}}, nil
+		return ProviderUsage{Windows: []UsageWindow{{Duration: 7 * 24 * time.Hour, UsedPercent: 20}}}, nil
 	}
 	go loadProviderUsage(ctx, load, requests, messages)
 
@@ -290,11 +290,11 @@ func TestLoadProviderUsageCancelsActiveRequest(t *testing.T) {
 	messages := make(chan providerUsageMessage, 1)
 	started := make(chan struct{})
 	canceled := make(chan error, 1)
-	load := func(ctx context.Context) (agent.ProviderUsage, error) {
+	load := func(ctx context.Context) (ProviderUsage, error) {
 		close(started)
 		<-ctx.Done()
 		canceled <- ctx.Err()
-		return agent.ProviderUsage{}, ctx.Err()
+		return ProviderUsage{}, ctx.Err()
 	}
 	go loadProviderUsage(ctx, load, requests, messages)
 
@@ -480,11 +480,11 @@ func TestHandleKeyCtrlCClearsInputBeforeExiting(t *testing.T) {
 func TestHandleKeyShiftTabCyclesThinkingLevel(t *testing.T) {
 	var configured agent.ThinkingLevel
 	model := newTUIModel(80, 24, Options{
-		ThinkingLevel: agent.ThinkingMedium,
-		SetThinkingLevel: func(level agent.ThinkingLevel) error {
+		Config: Config{ThinkingLevel: agent.ThinkingMedium},
+		Commands: testCommands{setThinkingLevel: func(level agent.ThinkingLevel) error {
 			configured = level
 			return nil
-		},
+		}},
 	})
 	messages := make(chan engineMessage, 1)
 	stopped := make(chan struct{})

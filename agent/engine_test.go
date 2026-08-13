@@ -122,6 +122,49 @@ func (t *fakeToolbox) Execute(ctx context.Context, call ToolCall, updates ToolUp
 	return t.execute(ctx, call)
 }
 
+type executionOnlyToolbox struct {
+	definitions []ToolDefinition
+	execute     func(context.Context, ToolCall) (ToolResult, error)
+}
+
+func (toolbox *executionOnlyToolbox) Definitions() []ToolDefinition {
+	return slices.Clone(toolbox.definitions)
+}
+
+func (toolbox *executionOnlyToolbox) Execute(ctx context.Context, call ToolCall, _ ToolUpdateSink) (ToolResult, error) {
+	return toolbox.execute(ctx, call)
+}
+
+func TestEngineUsesFallbackPresentationForExecutionOnlyToolbox(t *testing.T) {
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(context.Context, Request, TextSink) (Response, error) {
+			return Response{ToolCalls: []ToolCall{{ID: "call", Name: "read"}}}, nil
+		},
+		func(context.Context, Request, TextSink) (Response, error) {
+			return Response{Text: "done"}, nil
+		},
+	}}
+	toolbox := &executionOnlyToolbox{
+		definitions: []ToolDefinition{{Name: "read"}},
+		execute: func(context.Context, ToolCall) (ToolResult, error) {
+			return ToolResult{Output: "contents"}, nil
+		},
+	}
+	var presentations []ToolPresentation
+	engine := newTestEngine(t, provider, toolbox, Options{})
+	if _, err := engine.Run(context.Background(), "start", func(event Event) error {
+		if event.Kind == EventToolStart {
+			presentations = append(presentations, event.Presentation)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(presentations) != 1 || presentations[0].Title != "read" {
+		t.Fatalf("presentations = %+v", presentations)
+	}
+}
+
 func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 	provider := &scriptedProvider{t: t, reasoning: "Assessing files"}
 	provider.steps = []providerStep{

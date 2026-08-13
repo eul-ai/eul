@@ -8,7 +8,7 @@ import (
 )
 
 func reduceKey(model *tuiModel, key keyEvent) (tuiAction, error) {
-	return reduceKeyWithFrame(model, key, buildTerminalFrame(model))
+	return handleKeyInput(model, key, buildTerminalFrame(model))
 }
 
 func handleKey(

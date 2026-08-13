@@ -81,7 +81,8 @@ func (r *tuiRenderer) prepareConversation(model *tuiModel) {
 		appendBlank()
 	}
 
-	totalBlocks := len(model.blocks) + len(model.steering)
+	pendingSteering := model.pendingSteering()
+	totalBlocks := len(model.blocks) + len(pendingSteering)
 	appendedBlocks := 0
 	appendBlock := func(rendered renderedConversationBlock) {
 		lines = append(lines, rendered.lines...)
@@ -95,7 +96,7 @@ func (r *tuiRenderer) prepareConversation(model *tuiModel) {
 	for _, rendered := range r.conversationBlocks {
 		appendBlock(rendered)
 	}
-	for _, message := range model.steering {
+	for _, message := range pendingSteering {
 		appendBlock(renderConversationBlock(conversationBlock{kind: blockInfo, text: "Queued: " + message}, model.width))
 	}
 	for range conversationVerticalPadding {

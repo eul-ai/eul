@@ -4,7 +4,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/skill"
 )
 
 const commandPickerMaxVisible = 5
@@ -76,7 +76,7 @@ type commandPickerState struct {
 	dismissed  bool
 }
 
-func commandCompletions(skills []agent.Skill, fastModeAvailable bool) []commandCompletion {
+func commandCompletions(skills []skill.Skill, fastModeAvailable bool) []commandCompletion {
 	completions := make([]commandCompletion, 0, len(slashCommands)+len(skills))
 	for _, command := range slashCommands {
 		if command.fastMode && !fastModeAvailable {

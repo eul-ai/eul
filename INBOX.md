@@ -139,7 +139,7 @@ Update `tool/subagent_cancel.go` and all tool descriptions for the new lifecycle
 
 ## Provider and compaction changes
 
-In `agent/provider.go` and `backend/openai/codex/request.go`:
+In `agent/provider.go` and `backend/codex/api/request.go`:
 
 - Add and validate `InputInbox`.
 - Encode it as a model-visible message, never as `function_call_output`.

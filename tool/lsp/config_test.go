@@ -69,8 +69,8 @@ func TestNewLSPWithoutConfigReturnsEmptySet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if set.client != nil || len(set.Tools()) != 0 {
-		t.Fatalf("set = %+v, tools = %+v", set, set.Tools())
+	if set.client != nil || set.Available() {
+		t.Fatalf("service = %+v", set)
 	}
 }
 

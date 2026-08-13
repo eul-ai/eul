@@ -33,10 +33,6 @@ func (*providerOnlyDriver) Descriptor() backend.Descriptor {
 	return backend.Descriptor{ID: "provider-only", Name: "Provider Only"}
 }
 
-func (*providerOnlyDriver) ModelDefaults() backend.ModelDefaults {
-	return backend.ModelDefaults{Main: "model"}
-}
-
 func (driver *providerOnlyDriver) Open(backend.Options) (backend.Runtime, error) {
 	return driver.runtime, nil
 }
@@ -50,11 +46,11 @@ func TestBackendAuthenticationCapabilitiesAreOptional(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(t.TempDir(), &stdout, &stderr, nil)
 	runtime.backends = registry
-	for _, command := range []string{"login", "logout"} {
+	for index, command := range []string{"login", "logout"} {
 		stdout.Reset()
 		stderr.Reset()
-		if code := run([]string{command}, runtime); code != exitFailure || !strings.Contains(stderr.String(), "does not support "+command) {
-			t.Fatalf("command=%q code=%d stdout=%q stderr=%q", command, code, stdout.String(), stderr.String())
+		if code := run([]string{command}, runtime); code != exitFailure || !strings.Contains(stderr.String(), "does not support login or logout") || driver.runtime.closeCalls != index+1 {
+			t.Fatalf("command=%q code=%d close calls=%d stdout=%q stderr=%q", command, code, driver.runtime.closeCalls, stdout.String(), stderr.String())
 		}
 	}
 }
@@ -75,8 +71,8 @@ func TestRunLoginAndLogoutCommands(t *testing.T) {
 			runtime := testRuntime(cwd, &stdout, &stderr, nil)
 			driver := testBackendDriver(t, runtime)
 
-			if code := run(test.arguments, runtime); code != exitSuccess || driver.loginDevice != test.wantDevice || !driver.interactionCall || !strings.Contains(stderr.String(), test.wantText) || stdout.String() != "Logged in with Test Provider.\n" {
-				t.Fatalf("code=%d device=%v stdout=%q stderr=%q", code, driver.loginDevice, stdout.String(), stderr.String())
+			if code := run(test.arguments, runtime); code != exitSuccess || driver.runtime.loginDevice != test.wantDevice || !driver.runtime.interactionCall || driver.runtime.closeCalls != 1 || !strings.Contains(stderr.String(), test.wantText) || stdout.String() != "Logged in with Test Provider.\n" {
+				t.Fatalf("code=%d device=%v close calls=%d stdout=%q stderr=%q", code, driver.runtime.loginDevice, driver.runtime.closeCalls, stdout.String(), stderr.String())
 			}
 		})
 	}
@@ -84,8 +80,8 @@ func TestRunLoginAndLogoutCommands(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(cwd, &stdout, &stderr, nil)
 	driver := testBackendDriver(t, runtime)
-	if code := run([]string{"logout"}, runtime); code != exitSuccess || driver.logoutCalls != 1 || stdout.String() != "Logged out.\n" {
-		t.Fatalf("code=%d calls=%d stdout=%q stderr=%q", code, driver.logoutCalls, stdout.String(), stderr.String())
+	if code := run([]string{"logout"}, runtime); code != exitSuccess || driver.runtime.logoutCalls != 1 || driver.runtime.closeCalls != 1 || stdout.String() != "Logged out.\n" {
+		t.Fatalf("code=%d calls=%d close calls=%d stdout=%q stderr=%q", code, driver.runtime.logoutCalls, driver.runtime.closeCalls, stdout.String(), stderr.String())
 	}
 
 	for _, arguments := range [][]string{{"login", "--help"}, {"logout", "--help"}} {

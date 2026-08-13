@@ -122,7 +122,7 @@ func (permission permissionModel) active() bool {
 }
 
 type operationModel struct {
-	steering         []string
+	steeringView     *steeringCoordinator
 	permission       permissionModel
 	turnExecutedTool bool
 	running          bool
@@ -141,7 +141,7 @@ type statusModel struct {
 	fastModeAvailable          bool
 	contextWindow              int64
 	contextTokens              int64
-	providerUsage              agent.ProviderUsage
+	providerUsage              ProviderUsage
 	subagentStatus             SubagentStatus
 	activity                   activity
 	spinner                    int
@@ -155,49 +155,56 @@ type tuiModel struct {
 }
 
 func newTUIModel(width, height int, options Options) *tuiModel {
-	thinkingLevel := options.ThinkingLevel
+	thinkingLevel := options.Config.ThinkingLevel
 	if thinkingLevel == "" {
 		thinkingLevel = agent.DefaultThinkingLevel
 	}
-	thinkingLevels := append([]agent.ThinkingLevel(nil), options.ThinkingLevels...)
+	thinkingLevels := append([]agent.ThinkingLevel(nil), options.Config.ThinkingLevels...)
 	if len(thinkingLevels) == 0 {
 		thinkingLevels = agent.ThinkingLevels()
 	}
-	fastModeAvailable := options.FastModeAvailable && options.SetFastMode != nil
+	fastModeAvailable := options.Config.FastModeAvailable && canSetFastMode(options.Commands)
 
 	model := &tuiModel{
 		conversationModel: conversationModel{
 			following: true,
 		},
 		editorModel: editorModel{
-			commandCompletions: commandCompletions(options.Skills, fastModeAvailable),
-			filePicker:         filePickerState{enabled: options.WorkingDirectory != ""},
+			commandCompletions: commandCompletions(options.Config.Skills, fastModeAvailable),
+			filePicker:         filePickerState{enabled: options.Config.WorkingDirectory != ""},
 			historyIndex:       -1,
 		},
 		statusModel: statusModel{
 			width:                      width,
 			height:                     height,
-			model:                      singleLine(options.Model, 120),
-			sessionID:                  singleLine(options.SessionID, 120),
+			model:                      singleLine(options.Config.Model, 120),
+			sessionID:                  singleLine(options.Config.SessionID, 120),
 			thinkingLevel:              agent.ThinkingLevel(singleLine(string(thinkingLevel), 40)),
 			thinkingLevels:             thinkingLevels,
-			thinkingSelectionAvailable: options.SetThinkingLevel != nil,
-			fastMode:                   options.FastMode,
+			thinkingSelectionAvailable: canSetThinkingLevel(options.Commands),
+			fastMode:                   options.Config.FastMode,
 			fastModeAvailable:          fastModeAvailable,
-			contextWindow:              options.ContextWindow,
+			contextWindow:              options.Config.ContextWindow,
 			activity:                   activity{kind: activityReady},
 		},
 	}
-	if options.InitialCheckpoint != nil {
-		restoreModelCheckpoint(model, *options.InitialCheckpoint)
+	if options.Config.InitialCheckpoint != nil {
+		restoreModelCheckpoint(model, *options.Config.InitialCheckpoint)
 	}
-	if options.PreviousTurnActive {
+	if options.Config.PreviousTurnActive {
 		model.appendBlock(blockInfo, "Previous session ended during an active turn; tool side effects may remain")
 	}
-	for _, warning := range options.Warnings {
+	for _, warning := range options.Config.Warnings {
 		model.appendBlock(blockInfo, warning)
 	}
 	return model
+}
+
+func (m *tuiModel) pendingSteering() []string {
+	if m.steeringView == nil {
+		return nil
+	}
+	return m.steeringView.pending()
 }
 
 func (m *tuiModel) appendStream(kind blockKind, text string) {
@@ -247,8 +254,6 @@ func (m *tuiModel) applyAgentEvent(event agent.Event) {
 		m.contextTokens = event.Usage.TotalTokens
 	case agent.EventGenerationRetry:
 		m.setActiveActivity(activity{kind: activityRetrying, detail: "attempt " + strconv.Itoa(event.Attempt)})
-	case agent.EventSteering:
-		m.deliverSteering(event.Text)
 	case agent.EventGoalContinuation:
 		m.appendBlock(blockInfo, "Goal continuing")
 		m.setActiveActivity(activity{kind: activityThinking})
@@ -822,46 +827,17 @@ func (m *tuiModel) attachImage(image agent.Image) error {
 	return nil
 }
 
-func (m *tuiModel) queueSteering(prompt string) {
-	m.steering = append(m.steering, prompt)
-	m.conversationVersion++
-}
-
-func (m *tuiModel) deliverSteering(prompt string) {
-	m.removeSteering([]string{prompt})
-	m.appendBlock(blockUser, prompt)
-	m.setActiveActivity(activity{kind: activityThinking})
-}
-
-func (m *tuiModel) removeSteering(messages []string) {
-	for _, message := range messages {
-		for index, pending := range m.steering {
-			if pending != message {
-				continue
-			}
-			m.steering = append(m.steering[:index], m.steering[index+1:]...)
-			m.conversationVersion++
-			break
-		}
-	}
-}
-
 func (m *tuiModel) restoreSteering(messages []string) {
 	if len(messages) == 0 {
 		return
 	}
-	m.removeSteering(messages)
+
 	queued := strings.Join(messages, "\n\n")
 	current := m.inputText()
 	if strings.TrimSpace(current) != "" {
 		queued += "\n\n" + current
 	}
 	m.setInput(queued)
-}
-
-func (m *tuiModel) restoreAllSteering() {
-	messages := append([]string(nil), m.steering...)
-	m.restoreSteering(messages)
 }
 
 func (m *tuiModel) showPermission(request PermissionRequest, index, total int) {
@@ -894,7 +870,6 @@ func (m *tuiModel) clearPermission() {
 
 func (m *tuiModel) clearConversation() {
 	m.blocks = nil
-	m.steering = nil
 	m.conversationVersion++
 	m.closeStream()
 	m.contextTokens = 0

@@ -23,10 +23,9 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)
 	}
-	model.queueSteering("accepted")
-	model.queueSteering("deferred")
+	queued := []string{"accepted", "deferred"}
 
-	checkpoint := checkpointModel(model)
+	checkpoint := checkpointModel(model, queued)
 	if description := checkpoint.Description(); description != "First line of the prompt" {
 		t.Fatalf("description = %q", description)
 	}
@@ -39,7 +38,7 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	restored := newTUIModel(100, 30, Options{InitialCheckpoint: &decoded})
+	restored := newTUIModel(100, 30, Options{Config: Config{InitialCheckpoint: &decoded}})
 	if restored.running || restored.streamOpen || restored.activity.kind != activityReady || restored.subagentStatus.Running != 0 || len(restored.subagentStatus.Active) != 0 {
 		t.Fatalf("runtime state was restored: %+v", restored)
 	}
@@ -67,7 +66,7 @@ func TestTerminalCheckpointProjectsDraftImagesOut(t *testing.T) {
 	}
 	model.moveLeft()
 
-	checkpoint := checkpointModel(model)
+	checkpoint := checkpointModel(model, nil)
 	if checkpoint.data.Input != "before after" || checkpoint.data.Cursor != len([]rune("before afte")) {
 		t.Fatalf("input = %q, cursor = %d", checkpoint.data.Input, checkpoint.data.Cursor)
 	}
@@ -87,12 +86,12 @@ func TestTerminalCheckpointPreservesInlineImagePositions(t *testing.T) {
 		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("png")}},
 		{Kind: agent.ContentPartText, Text: " after"},
 	})
-	checkpoint := checkpointModel(model)
+	checkpoint := checkpointModel(model, nil)
 	if len(checkpoint.data.Blocks[0].Content) != 3 || checkpoint.data.Blocks[0].Content[1].Kind != agent.ContentPartImage {
 		t.Fatalf("checkpoint content = %+v", checkpoint.data.Blocks[0].Content)
 	}
 
-	restored := newTUIModel(80, 24, Options{InitialCheckpoint: &checkpoint})
+	restored := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint}})
 	if got := displayContent(restored.blocks[0].content); got != "before [image attached] after" {
 		t.Fatalf("restored content = %q", got)
 	}
@@ -108,7 +107,7 @@ func TestTerminalCheckpointSanitizesContentText(t *testing.T) {
 		}},
 	}}
 
-	restored := newTUIModel(80, 24, Options{InitialCheckpoint: &checkpoint})
+	restored := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint}})
 	if got := displayContent(restored.blocks[0].content); got != "before�after" {
 		t.Fatalf("restored content = %q", got)
 	}
@@ -117,7 +116,7 @@ func TestTerminalCheckpointSanitizesContentText(t *testing.T) {
 func TestImageOnlyCheckpointDescription(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.beginTurnContent([]agent.ContentPart{{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png"}}})
-	if description := checkpointModel(model).Description(); description != "Image attachment" {
+	if description := checkpointModel(model, nil).Description(); description != "Image attachment" {
 		t.Fatalf("description = %q", description)
 	}
 }
@@ -167,7 +166,7 @@ func TestVersionOneTerminalCheckpointFixture(t *testing.T) {
 		}
 	}
 
-	model := newTUIModel(80, 24, Options{InitialCheckpoint: &checkpoint})
+	model := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint}})
 	if len(model.blocks) != len(wantKinds) || model.blocks[3].kind != blockToolError || model.blocks[3].toolOutcome != "interrupted" {
 		t.Fatalf("restored blocks = %+v", model.blocks)
 	}
@@ -198,7 +197,7 @@ func assertTerminalCheckpointSemanticJSON(t *testing.T, got, want []byte) {
 
 func TestPreviousActiveSessionShowsWarning(t *testing.T) {
 	checkpoint := EmptyCheckpoint()
-	model := newTUIModel(80, 24, Options{InitialCheckpoint: &checkpoint, PreviousTurnActive: true})
+	model := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint, PreviousTurnActive: true}})
 	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo || !strings.Contains(model.blocks[0].text, "tool side effects may remain") {
 		t.Fatalf("blocks = %+v", model.blocks)
 	}
@@ -206,7 +205,7 @@ func TestPreviousActiveSessionShowsWarning(t *testing.T) {
 
 func TestStartupWarningsAreShownAfterRestoredConversation(t *testing.T) {
 	checkpoint := EmptyCheckpoint()
-	model := newTUIModel(80, 24, Options{InitialCheckpoint: &checkpoint, Warnings: []string{"Skipped skill broken: invalid"}})
+	model := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint, Warnings: []string{"Skipped skill broken: invalid"}}})
 	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo || !strings.Contains(model.blocks[0].text, "Skipped skill") {
 		t.Fatalf("blocks = %+v", model.blocks)
 	}

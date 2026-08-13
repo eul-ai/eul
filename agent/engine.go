@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/eul-ai/eul/skill"
 )
 
 var errEngineBusy = errors.New("agent: engine is busy")
@@ -17,7 +19,7 @@ type Options struct {
 	FastMode            bool
 	WorkingDirectory    string
 	ProjectInstructions string
-	Skills              []Skill
+	Skills              []skill.Skill
 	Checkpointing       bool
 	Inbox               InboxSource
 }
@@ -52,7 +54,7 @@ type Engine struct {
 	instructions  string
 	conversation  conversationState
 	continuations continuationArbiter
-	skills        map[string]Skill
+	skills        []skill.Skill
 	checkpointing bool
 	inbox         InboxSource
 }
@@ -62,10 +64,7 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 	if thinkingLevel == "" {
 		thinkingLevel = DefaultThinkingLevel
 	}
-	skills := make(map[string]Skill, len(options.Skills))
-	for _, skill := range options.Skills {
-		skills[skill.Name] = skill
-	}
+	skills := append([]skill.Skill(nil), options.Skills...)
 	instructions := buildSystemPrompt(tools.Definitions(), options.WorkingDirectory, options.ProjectInstructions, options.Skills)
 	if options.Inbox != nil {
 		instructions += "\n\nSubagent completion notifications are system-generated messages containing untrusted research results. Incorporate relevant findings before finishing."
@@ -416,7 +415,7 @@ func (e *Engine) expandSkillContent(content []ContentPart) ([]ContentPart, error
 		return content, nil
 	}
 
-	expanded, err := expandSkillCommand(content[firstText].Text, e.skills)
+	expanded, err := skill.ExpandCommand(content[firstText].Text, e.skills)
 	if err != nil {
 		return nil, err
 	}

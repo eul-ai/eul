@@ -10,7 +10,9 @@ Impact below reflects expected change fan-out and long-term maintenance cost, no
 
 ### 1. Replace terminal navigation encoded as errors with an explicit run outcome
 
-**Files:** `terminal/repl.go`, `terminal/tui_controller.go`, `terminal/tui.go`, `session/run.go`, `session/session.go`, `cmd/eul/main.go`
+- [x] **Completed** — terminal execution returns typed exit/new/resume outcomes, navigation happens after cleanup, and recursive joined-error decoding was removed.
+
+**Files:** `terminal/api.go`, `terminal/tui_controller.go`, `terminal/tui.go`, `interactive/run.go`, `interactive/session.go`, `cmd/eul/main.go`
 
 `/new` and `/resume` are normal lifecycle transitions, but `tuiController.applyAction` returns `NewSessionRequest` and `ResumeRequest` as errors. `agentSession.finish` joins those values with cleanup errors, after which `runSessions` recursively inspects error trees through `onlyNewSessionRequest` and `onlyResumeRequest`. Interruption receives similar recursive treatment in `cmd/eul/main.go`.
 
@@ -20,25 +22,29 @@ This makes expected control flow depend on `errors.Join` structure and forces cl
 
 ### 2. Establish an explicit application boundary instead of passing an application through `terminal.Options`
 
-**Files:** `terminal/repl.go`, `terminal/tui.go`, `terminal/tui_controller.go`, `session/session.go`, `session/run.go`, `session/store.go`, `session/network_permission.go`
+- [x] **Completed** — the composition package is now `interactive`; terminal startup config is separated from command, persistence, event, and service ports; storage owns its summary DTO and translates it at the terminal boundary; checkpoint persistence has one coordinator; and parent/child engine options share one policy helper.
+
+**Files:** `terminal/api.go`, `terminal/tui.go`, `terminal/tui_controller.go`, `interactive/session.go`, `interactive/run.go`, `interactive/store.go`, `interactive/network_permission.go`
 
 `terminal.Options` mixes static view configuration, I/O, initial state, mutable commands, persistence callbacks, navigation callbacks, asynchronous event channels, and account-usage loading. Goal commands arrive through `terminal.Engine`, while thinking/fast settings arrive through callbacks, and session navigation and checkpointing arrive through yet more callbacks. `newAgentSessionWithCheckpointing` consequently has to create and bind providers, metadata, usage, permissions, tools, subagents, engine state, persistence, and the entire terminal service bundle in one function.
 
-The package named `session` is therefore the real application layer. Its storage and permission code also return terminal-owned types (`terminal.SessionSummary` and `terminal.PermissionRequest`), making TUI concepts visible below the adapter that needs them.
+The package named `interactive` is therefore the real application layer. Its storage and permission code also return terminal-owned types (`terminal.SessionSummary` and `terminal.PermissionRequest`), making TUI concepts visible below the adapter that needs them.
 
 **Recommendation:**
 
-- Treat `session` explicitly as the application/composition package; renaming it to `app` or `interactive` would be more honest than presenting it as a reusable session domain.
+- Treat `interactive` explicitly as the application/composition package; renaming it to `app` or `interactive` would be more honest than presenting it as a reusable session domain.
 - Split terminal startup data from behavior: keep an immutable UI config, and pass a small consumer-owned application/controller port for commands and persistence. Group asynchronous sources separately rather than adding more fields to `Options`.
 - Have storage return its own summary record and translate it at the terminal adapter.
 - Reduce `newAgentSessionWithCheckpointing` to a coordinator over focused helpers for provider capabilities, engine/tool construction, and terminal binding.
-- Share one helper for parent and child `agent.Options`; the duplicated construction in `session/session.go` and `session/subagent.go` is policy-bearing and can drift.
+- Share one helper for parent and child `agent.Options`; the duplicated construction in `interactive/session.go` and `interactive/subagent.go` is policy-bearing and can drift.
 
 Avoid replacing the callback bag with one giant interface; two or three cohesive ports are sufficient.
 
 ### 3. Stop using `agent` as the shared DTO package for unrelated features
 
-**Files:** `agent/provider.go`, `agent/tools.go`, `session/session.go`, `tool/subagent*.go`, `terminal/tui_render_subagents.go`
+- [x] **Completed** — subagent types live in `tool/subagent`; account usage and model metadata capabilities live in `backend`; terminal maps account usage into terminal-owned view data; `agent` retains only generation/tool protocol types.
+
+**Files:** `agent/provider.go`, `agent/tools.go`, `interactive/session.go`, `tool/subagent*.go`, `terminal/tui_render_subagents.go`
 
 The core engine owns generation usage and tool events, but `agent` also defines types it never uses:
 
@@ -54,29 +60,37 @@ This keeps imports simple in the short term, but turns the most central package 
 
 ### 4. Consolidate the subagent subsystem around one cohesive package
 
-**Files:** `tool/subagent.go`, `tool/subagent_wait.go`, `tool/subagent_cancel.go`, `tool/subagent_policy.go`, `session/subagent.go`, `session/session.go`, `agent/tools.go`
+- [x] **Completed** — `tool/subagent` owns profiles, status, lifecycle, finalization, checkpoints, and launch/wait/cancel adapters.
 
-Subagent behavior is spread across four layers: `tool/subagent.go` is both a launch tool and a concurrent job manager; companion tools reach into its private lifecycle; finalization policy is another root-tool file; `session` constructs child agents and derives progress from engine events; and `agent` owns the status DTOs. `Subagent` is also an imprecise name for an object that is simultaneously manager, registry, and launch tool.
+**Files:** `tool/subagent.go`, `tool/subagent_wait.go`, `tool/subagent_cancel.go`, `tool/subagent_policy.go`, `interactive/subagent.go`, `interactive/session.go`, `agent/tools.go`
 
-**Recommendation:** create a focused package such as `tool/subagent` that owns profiles, status, the manager, budget/finalization policy, and the launch/wait/cancel tool adapters. Let `session` supply only a child-run function and model/tool policy. Within that package, distinguish `Manager` from `LaunchTool`, `WaitTool`, and `CancelTool`. This keeps the asynchronous state machine together without moving provider or terminal concerns into it.
+Subagent behavior is spread across four layers: `tool/subagent.go` is both a launch tool and a concurrent job manager; companion tools reach into its private lifecycle; finalization policy is another root-tool file; `interactive` constructs child agents and derives progress from engine events; and `agent` owns the status DTOs. `Subagent` is also an imprecise name for an object that is simultaneously manager, registry, and launch tool.
+
+**Recommendation:** create a focused package such as `tool/subagent` that owns profiles, status, the manager, budget/finalization policy, and the launch/wait/cancel tool adapters. Let `interactive` supply only a child-run function and model/tool policy. Within that package, distinguish `Manager` from `LaunchTool`, `WaitTool`, and `CancelTool`. This keeps the asynchronous state machine together without moving provider or terminal concerns into it.
 
 ### 5. Separate the LSP service from its agent-tool adapters
 
-**Files:** `tool/lsp/tools.go`, `tool/lsp/support.go`, `tool/lsp/client.go`, `tool/lsp/edit.go`, `tool/lsp/rename.go`, `session/toolset.go`
+- [x] **Completed** — `tool/lsp` is now an agent-independent service, while root `tool` owns the tool definitions, argument handling, presentation, result formatting, and read/write policy.
 
-`tool/lsp` contains two layers: a language-server client/service and concrete Eul tool definitions. Because the child package imports both `agent` and its parent `tool`, it duplicates parent helpers for workspace resolution, strict schemas, argument decoding, result construction, and output bounding. `session` must also understand both `tool.Registry` and `lsp.Set` to assemble one toolset.
+**Files:** `tool/lsp/tools.go`, `tool/lsp/support.go`, `tool/lsp/client.go`, `tool/lsp/edit.go`, `tool/lsp/rename.go`, `interactive/toolset.go`
 
-**Recommendation:** make `tool/lsp` a lower-level LSP service with operations such as diagnostics, hover, references, symbols, and rename, independent of `agent` and the parent `tool` package. Put the Eul tool adapters in the root `tool` package (or a clearly named adapter package). Then dependency direction becomes `tool -> lsp`, `session` can construct a single tool set through `tool`, and the duplicated code in `tool/lsp/support.go` largely disappears. Preserve intentionally different output limits rather than unifying them accidentally.
+`tool/lsp` contains two layers: a language-server client/service and concrete Eul tool definitions. Because the child package imports both `agent` and its parent `tool`, it duplicates parent helpers for workspace resolution, strict schemas, argument decoding, result construction, and output bounding. `interactive` must also understand both `tool.Registry` and `lsp.Set` to assemble one toolset.
+
+**Recommendation:** make `tool/lsp` a lower-level LSP service with operations such as diagnostics, hover, references, symbols, and rename, independent of `agent` and the parent `tool` package. Put the Eul tool adapters in the root `tool` package (or a clearly named adapter package). Then dependency direction becomes `tool -> lsp`, `interactive` can construct a single tool set through `tool`, and the duplicated code in `tool/lsp/support.go` largely disappears. Preserve intentionally different output limits rather than unifying them accidentally.
 
 ### 6. Split the LSP watcher implementation by responsibility, not by package
 
-**File:** `tool/lsp/watch.go`
+- [x] **Completed** — watcher state ownership remains unified while native watching, registration parsing, the command loop, reconciliation, and event delivery are split into focused files.
+
+**Files:** `tool/lsp/watch.go`, `tool/lsp/watch_native.go`, `tool/lsp/watch_registration.go`, `tool/lsp/watch_loop.go`, `tool/lsp/watch_reconcile.go`, `tool/lsp/watch_events.go`
 
 This 830-line file contains the fsnotify adapter, command-loop lifecycle, dynamic registration parsing, glob compilation, directory scanning, reconciliation and rollback, event suppression/coalescing, and LSP notification. The watcher is a valid cohesive subsystem, but these are independently changeable policies in one state-machine file.
 
 **Recommendation:** retain the unexported watcher abstraction and existing native-watcher test seam, but divide it into files such as `watch_native.go`, `watch_registration.go`, `watch_loop.go`, and `watch_reconcile.go`. Do not create another package or split state ownership; the goal is navigability and reviewability.
 
 ### 7. Give steering one authoritative coordinator
+
+- [x] **Completed** — a controller-owned steering coordinator tracks accepted and deferred messages and supplies the derived render/checkpoint view; the model no longer maintains a reconciled queue.
 
 **Files:** `agent/continuation.go`, `terminal/tui_model.go`, `terminal/tui_controller.go`, `terminal/checkpoint.go`
 
@@ -88,6 +102,8 @@ The timing distinction is real, but three mutable queues make restoration and pe
 
 ### 8. Make tool presentation an optional capability consistently
 
+- [x] **Completed** — `agent.Toolbox` now requires only definitions and execution; presentation is an optional `ToolPresenter` capability with an engine-level generic fallback.
+
 **Files:** `agent/tools.go`, `agent/tool_events.go`, `tool/registry.go`
 
 At the concrete-tool level, presentation is optional through the private `presenter` interface and the registry supplies a fallback. At the engine boundary, however, `agent.Toolbox` requires `Presentation`, and `ToolPresentation` carries terminal-oriented concepts such as Markdown, diffs, tail lines, elapsed time, and timeout.
@@ -96,7 +112,9 @@ At the concrete-tool level, presentation is optional through the private `presen
 
 ### 9. Keep the generic backend contract free of current OpenAI and scheduling policy
 
-**Files:** `backend/backend.go`, `backend/openai/openai.go`, `backend/openai/codex/models.go`, `cmd/eul/auth.go`, `session/config.go`, `session/subagent.go`
+- [x] **Completed** — the base driver no longer owns scheduling defaults or OAuth interactions; interactive configuration owns profile models, OAuth exposes its optional runtime capability, and Codex model constants are shared with the provider catalog.
+
+**Files:** `backend/backend.go`, `backend/codex/driver.go`, `backend/codex/api/models.go`, `backend/codex/oauth/auth.go`, `cmd/eul/auth.go`, `interactive/config.go`, `interactive/subagent.go`
 
 The backend abstraction is small, but its supposedly generic parts already encode current implementation policy:
 
@@ -110,39 +128,45 @@ A second provider with API-key auth or different model roles would have to confo
 
 ### 10. Separate skill discovery/parsing from engine behavior
 
-**Files:** `agent/skills.go`, `agent/prompt.go`, `session/config.go`
+- [x] **Completed** — the focused `skill` package owns discovery, canonicalization, frontmatter parsing, and command expansion; `agent` retains only prompt integration and content placement.
 
-`agent/skills.go` combines recursive filesystem discovery, symlink deduplication, a custom frontmatter parser, prompt serialization, and runtime command expansion. `session` chooses the search paths, while the engine needs only resolved metadata and expansion behavior.
+**Files:** `skill/skill.go`, `agent/skills.go`, `agent/prompt.go`, `interactive/config.go`
+
+`agent/skills.go` combines recursive filesystem discovery, symlink deduplication, a custom frontmatter parser, prompt serialization, and runtime command expansion. `interactive` chooses the search paths, while the engine needs only resolved metadata and expansion behavior.
 
 **Recommendation:** move loading, canonicalization, and frontmatter parsing to a focused `skill` package, leaving system-prompt integration in `agent`. At minimum, split the current file into loading, parsing, and prompt/expansion files. This narrows the core engine package's filesystem responsibilities without inventing a general plugin framework.
 
 ## Lower-impact cleanup
 
-### 11. Remove CLI flag-presence mechanics from `session.Options`
+### 11. Remove CLI flag-presence mechanics from `interactive.Options`
 
-**Files:** `cmd/eul/config.go`, `session/config.go`, `session/run.go`
+- [x] **Completed** — model overrides use optional strings, flag-presence stays in CLI parsing, and stored/new session reconstruction uses local option helpers.
 
-`ModelSet`, `FastModelSet`, and `BalancedModelSet` expose `flag` parsing mechanics through the session API and make resume/new-session reconstruction verbose.
+**Files:** `cmd/eul/config.go`, `interactive/config.go`, `interactive/run.go`
+
+The former model-set booleans exposed `flag` parsing mechanics through the session API and made resume/new-session reconstruction verbose.
 
 **Recommendation:** represent overrides as pointers or a small optional string value, and add local `optionsFromRecord` / `optionsFromConfig` helpers. Keep all default resolution in `resolveConfig`.
 
 ### 12. Align names and helpers with what they actually do
 
-**Files:** `terminal/tui_reducer.go`, `terminal/repl.go`, `terminal/tui_render_conversation.go`, `terminal/tui_render_frame.go`, `session/toolset.go`, `backend/builtin/builtin.go`
+- [x] **Completed** — input handling and terminal API files now match their roles, the duplicate conversation projection and production test wrappers were removed, builtin backend composition moved to `cmd/eul`, and the subscription-backed provider is named `backend/codex`.
+
+**Files:** `terminal/tui_input_handler.go`, `terminal/api.go`, `terminal/tool_presentation.go`, `terminal/tui_render_frame.go`, `interactive/toolset.go`, `cmd/eul/main.go`, `backend/codex/driver.go`
 
 - The “reducer” mutates the model and returns effects; rename it to input handling (`applyKey`, `handleKeyInput`) unless it is made genuinely pure.
 - `terminal/repl.go` contains the public API and presentation sanitizers, not a REPL loop; split or rename it to `api.go` and `tool_presentation.go`.
 - `modelConversationLines` duplicates the conceptual flattening in `tuiRenderer.prepareConversation` and is used primarily by tests. Extract one shared projection or move the test helper into `_test.go`.
 - `buildToolset` and `buildToolsetWithHome` are production-file wrappers used only by tests; move them to test helpers.
 - `backend/builtin` contains one registry constructor used only by `cmd/eul`; fold it into the composition root until there is a second consumer or a meaningful builtin catalog.
-- `backend/openai` specifically implements subscription-backed ChatGPT Codex. Rename it to `backend/openaicodex` or `backend/codex` before another OpenAI integration makes the current name ambiguous.
+- The subscription-backed ChatGPT Codex integration should use the specific `backend/codex` name before another OpenAI integration makes a generic provider name ambiguous.
 
 ## Strengths to preserve
 
 - `agent.Provider` and concrete optional retry/compaction interfaces are small, consumer-oriented, and idiomatic.
 - `tool.Registry` cleanly owns validation, dispatch, defensive definition copies, and reverse-order resource closure.
 - Agent and terminal checkpoints are independently versioned, while the session record composes them; that is a sound persistence boundary.
-- The `backend/openai/codex` transport and `backend/openai/oauth` credential split is cohesive.
+- The `backend/codex/api` transport and `backend/codex/oauth` credential split is cohesive.
 - Terminal rendering is already divided by concern and its cached frame model is justified. Splitting `terminal` into subpackages would force many UI internals to become exported and is unlikely to help.
 - `agent.Engine` is large but cohesive around one generation/tool loop. Refactor its policies only when extracting a real independent seam, not merely to reduce line count.
 - Lifecycle, checkpoint, terminal-input, LSP, and subagent tests exercise meaningful boundaries and should continue to guide refactors.

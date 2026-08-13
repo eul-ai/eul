@@ -12,9 +12,6 @@ type testDriver struct {
 }
 
 func (driver testDriver) Descriptor() Descriptor { return driver.descriptor }
-func (testDriver) ModelDefaults() ModelDefaults {
-	return ModelDefaults{}
-}
 func (testDriver) Open(Options) (Runtime, error) { return testRuntime{}, nil }
 
 type testRuntime struct{}

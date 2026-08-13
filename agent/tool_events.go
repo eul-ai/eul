@@ -66,6 +66,18 @@ func (tracker *toolEventTracker) emitLocked(event Event) error {
 	return nil
 }
 
+func (tracker *toolEventTracker) presentation(snapshot ToolCallSnapshot) ToolPresentation {
+	presenter, ok := tracker.tools.(ToolPresenter)
+	if !ok {
+		return ToolPresentation{Title: snapshot.Name}
+	}
+	presentation := presenter.Presentation(snapshot).Clone()
+	if presentation.Title == "" {
+		presentation.Title = snapshot.Name
+	}
+	return presentation
+}
+
 func (tracker *toolEventTracker) observeSnapshot(snapshot ToolCallSnapshot) error {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
@@ -73,7 +85,7 @@ func (tracker *toolEventTracker) observeSnapshot(snapshot ToolCallSnapshot) erro
 	if snapshot.ID == "" || snapshot.Name == "" {
 		return nil
 	}
-	presentation := tracker.tools.Presentation(snapshot).Clone()
+	presentation := tracker.presentation(snapshot)
 	call := ToolCall{ID: snapshot.ID, Name: snapshot.Name, Arguments: []byte(snapshot.RawArguments)}
 	current, exists := tracker.streamed[snapshot.ID]
 	if exists && current.presentation.Equal(presentation) {
@@ -124,7 +136,7 @@ func (tracker *toolEventTracker) beginExecution(call ToolCall) error {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
-	presentation := tracker.tools.Presentation(completeToolCallSnapshot(call)).Clone()
+	presentation := tracker.presentation(completeToolCallSnapshot(call))
 	streamed, exists := tracker.streamed[call.ID]
 	if !exists {
 		if err := tracker.emitLocked(Event{Kind: EventToolStart, Call: call, Presentation: presentation}); err != nil {

@@ -82,9 +82,9 @@ func TestParseInlineMarkdownPreservesCodeFences(t *testing.T) {
 }
 
 func TestParseInlineMarkdownNestedCodeInEmphasis(t *testing.T) {
-	got := parseInlineMarkdown("**`backend/openai/codex/models.go`** and *`SIGWINCH`*")
+	got := parseInlineMarkdown("**`backend/codex/api/models.go`** and *`SIGWINCH`*")
 	want := []inlineSpan{
-		{text: "backend/openai/codex/models.go", style: inlineStyle{bold: true, code: true}},
+		{text: "backend/codex/api/models.go", style: inlineStyle{bold: true, code: true}},
 		{text: " and ", style: inlineStyle{}},
 		{text: "SIGWINCH", style: inlineStyle{italic: true, code: true}},
 	}

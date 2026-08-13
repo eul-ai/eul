@@ -2,7 +2,6 @@ package lsp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,65 +10,33 @@ import (
 
 	"go.lsp.dev/protocol"
 
-	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/tool/textfile"
 )
 
-type lspRenameArguments struct {
-	Path      string `json:"path"`
-	Line      *int   `json:"line"`
-	Character *int   `json:"character"`
-	OldName   string `json:"oldName"`
-	NewName   string `json:"newName"`
-}
-
-func (t *lspTool) executeRename(ctx context.Context, arguments json.RawMessage) (agent.ToolResult, error) {
-	args, err := decodeArguments[lspRenameArguments](arguments)
-	if err != nil {
-		return agent.ToolResult{}, err
-	}
-	hint, err := validLSPPosition(args.Line, args.Character)
-	if err != nil {
-		return agent.ToolResult{}, err
-	}
-	if args.OldName == "" {
-		return agent.ToolResult{}, errors.New("oldName is required and must be nonempty")
-	}
-	if args.NewName == "" {
-		return agent.ToolResult{}, errors.New("newName is required and must be nonempty")
-	}
-	path, err := t.client.workspace.resolve(args.Path)
-	if err != nil {
-		return agent.ToolResult{}, err
-	}
+func (s *Service) rename(ctx context.Context, path string, hint protocol.Position, oldName, newName string) (int, error) {
 	document, err := textfile.Load(path)
 	if err != nil {
-		return agent.ToolResult{}, err
+		return 0, err
 	}
-	position, err := resolveLSPRenamePosition(document.Data, hint, args.OldName)
+	position, err := resolveLSPRenamePosition(document.Data, hint, oldName)
 	if err != nil {
-		return agent.ToolResult{}, err
+		return 0, err
 	}
 
 	var watcher *lspWatchManager
-	response, err := t.client.documentSnapshotRequest(ctx, document, func(ctx context.Context, session *lspSession, document protocol.TextDocumentIdentifier) (any, error) {
+	response, err := s.client.documentSnapshotRequest(ctx, document, func(ctx context.Context, session *lspSession, document protocol.TextDocumentIdentifier) (any, error) {
 		watcher = session.client.watcher
 		params := protocol.TextDocumentPositionParams{TextDocument: document, Position: position}
-		return renameSymbol(ctx, session, params, args.NewName)
+		return renameSymbol(ctx, session, params, newName)
 	})
 	if err != nil {
-		return agent.ToolResult{}, err
+		return 0, err
 	}
 	workspaceEdit, ok := response.(*protocol.WorkspaceEdit)
 	if !ok {
-		return agent.ToolResult{}, fmt.Errorf("unexpected rename response %T", response)
+		return 0, unexpectedRenameResponse(response)
 	}
-	changed, err := applyLSPWorkspaceEdit(ctx, watcher, workspaceEdit, document)
-	if err != nil {
-		return agent.ToolResult{}, err
-	}
-
-	return successResult(fmt.Sprintf("renamed symbol in %d files", changed)), nil
+	return applyLSPWorkspaceEdit(ctx, watcher, workspaceEdit, document)
 }
 
 func renameSymbol(ctx context.Context, session *lspSession, params protocol.TextDocumentPositionParams, newName string) (*protocol.WorkspaceEdit, error) {

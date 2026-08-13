@@ -100,16 +100,6 @@ type Usage struct {
 	TotalTokens  int64
 }
 
-type ProviderUsage struct {
-	Windows []UsageWindow
-}
-
-type UsageWindow struct {
-	Duration    time.Duration
-	UsedPercent int
-	ResetsAt    time.Time
-}
-
 type Request struct {
 	Model         string
 	ThinkingLevel ThinkingLevel
@@ -152,24 +142,6 @@ type Provider interface {
 // failedAttempts includes the attempt that returned err.
 type GenerationRetryPolicy interface {
 	RetryGeneration(err error, failedAttempts int) (time.Duration, bool)
-}
-
-type UsageProvider interface {
-	Usage(context.Context) (ProviderUsage, error)
-}
-
-type ModelMetadata struct {
-	ContextWindow  int64
-	ThinkingLevels []ThinkingLevel
-	FastMode       bool
-}
-
-func (metadata ModelMetadata) ClampThinkingLevel(level ThinkingLevel) ThinkingLevel {
-	return ClampThinkingLevel(level, metadata.ThinkingLevels)
-}
-
-type ModelMetadataProvider interface {
-	ModelMetadata(model string) ModelMetadata
 }
 
 type Compactor interface {
