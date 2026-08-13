@@ -104,6 +104,16 @@ type Events struct {
 	PermissionRequests <-chan PermissionRequest
 }
 
+type ProviderUsage struct {
+	Windows []UsageWindow
+}
+
+type UsageWindow struct {
+	Duration    time.Duration
+	UsedPercent int
+	ResetsAt    time.Time
+}
+
 type Services struct {
 	LoadUsage          func(context.Context) (ProviderUsage, error)
 	ReadClipboardImage func(context.Context) (agent.Image, error)

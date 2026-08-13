@@ -317,31 +317,3 @@ func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-
-func sessionStoreTestAgentCheckpoint(t testing.TB) agent.Checkpoint {
-	t.Helper()
-	var checkpoint agent.Checkpoint
-	if err := json.Unmarshal([]byte(`{"version":2,"context_usage":{"InputTokens":0,"OutputTokens":0,"TotalTokens":0}}`), &checkpoint); err != nil {
-		t.Fatal(err)
-	}
-	return checkpoint
-}
-
-func sessionStoreTestTerminalCheckpoint(t testing.TB, prompt string) terminal.Checkpoint {
-	t.Helper()
-	encoded, err := json.Marshal(map[string]any{
-		"version": 1,
-		"blocks": []map[string]any{{
-			"kind": 0,
-			"text": prompt,
-		}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var checkpoint terminal.Checkpoint
-	if err := json.Unmarshal(encoded, &checkpoint); err != nil {
-		t.Fatal(err)
-	}
-	return checkpoint
-}

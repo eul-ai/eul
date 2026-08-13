@@ -3,12 +3,14 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/terminal"
 	"github.com/eul-ai/eul/tool"
 )
 
@@ -134,4 +136,32 @@ func resolveTestConfig(options Options, env environment) (resolvedConfig, error)
 
 func stringPointer(value string) *string {
 	return &value
+}
+
+func sessionStoreTestAgentCheckpoint(t testing.TB) agent.Checkpoint {
+	t.Helper()
+	var checkpoint agent.Checkpoint
+	if err := json.Unmarshal([]byte(`{"version":2,"context_usage":{"InputTokens":0,"OutputTokens":0,"TotalTokens":0}}`), &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	return checkpoint
+}
+
+func sessionStoreTestTerminalCheckpoint(t testing.TB, prompt string) terminal.Checkpoint {
+	t.Helper()
+	encoded, err := json.Marshal(map[string]any{
+		"version": 1,
+		"blocks": []map[string]any{{
+			"kind": 0,
+			"text": prompt,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint terminal.Checkpoint
+	if err := json.Unmarshal(encoded, &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	return checkpoint
 }

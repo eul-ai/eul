@@ -1,12 +1,20 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
 )
 
 const goalContinuationPrompt = `Continue the active goal. Take the next unfinished step, or call update_goal when complete.`
+
+type steeringSignalKey struct{}
+
+func SteeringSignal(ctx context.Context) <-chan struct{} {
+	signal, _ := ctx.Value(steeringSignalKey{}).(<-chan struct{})
+	return signal
+}
 
 type continuationPoint uint8
 

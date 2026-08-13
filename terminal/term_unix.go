@@ -3,12 +3,20 @@
 package terminal
 
 import (
+	"os"
+	"os/signal"
 	"syscall"
 	"unsafe"
 )
 
 type terminalState struct {
 	termios syscall.Termios
+}
+
+func watchResize() (<-chan os.Signal, func()) {
+	resizes := make(chan os.Signal, 1)
+	signal.Notify(resizes, syscall.SIGWINCH)
+	return resizes, func() { signal.Stop(resizes) }
 }
 
 func isTerminal(fd int) bool {

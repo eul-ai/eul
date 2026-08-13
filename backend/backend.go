@@ -1,7 +1,6 @@
 package backend
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -32,12 +31,6 @@ type Options struct {
 type Runtime interface {
 	NewProvider() (agent.Provider, error)
 	Close() error
-}
-
-// CredentialChecker is implemented by backend runtimes that can verify their
-// credentials before the first provider request.
-type CredentialChecker interface {
-	CheckCredentials(context.Context) error
 }
 
 type Driver interface {
