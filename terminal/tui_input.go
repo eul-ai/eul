@@ -34,6 +34,7 @@ const (
 	keyCtrlC
 	keyCtrlD
 	keyCtrlL
+	keyCtrlV
 	keyMouse
 	keyEOF
 	keyFailure
@@ -224,6 +225,10 @@ func (d *keyDecoder) feed(data []byte, final bool) []keyEvent {
 			continue
 		case 0x0c:
 			events = append(events, keyEvent{code: keyCtrlL})
+			d.buffer = d.buffer[1:]
+			continue
+		case 0x16:
+			events = append(events, keyEvent{code: keyCtrlV})
 			d.buffer = d.buffer[1:]
 			continue
 		}
@@ -450,6 +455,7 @@ func matchKittyKeySequence(buffer []byte) (int, bool, keyEvent, bool) {
 	shift := modifier&1 != 0
 	alt := modifier&2 != 0
 	control := modifier&4 != 0
+	super := modifier&8 != 0
 	if finalByte != 'u' {
 		switch finalByte {
 		case 'A':
@@ -511,6 +517,8 @@ func matchKittyKeySequence(buffer []byte) (int, bool, keyEvent, bool) {
 		return consumed, false, keyEvent{code: keyEnd}, true
 	case (control && codepoint == 108) || codepoint == 12:
 		return consumed, false, keyEvent{code: keyCtrlL}, true
+	case ((control || super) && codepoint == 118) || codepoint == 22:
+		return consumed, false, keyEvent{code: keyCtrlV}, true
 	case codepoint == 127:
 		return consumed, false, keyEvent{code: keyBackspace}, true
 	default:

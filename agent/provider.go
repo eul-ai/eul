@@ -13,9 +13,68 @@ const (
 	InputToolResult InputKind = "tool_result"
 )
 
+type Image struct {
+	MediaType string
+	Data      []byte
+}
+
+type ContentPartKind string
+
+const (
+	ContentPartText  ContentPartKind = "text"
+	ContentPartImage ContentPartKind = "image"
+)
+
+type ContentPart struct {
+	Kind  ContentPartKind
+	Text  string `json:",omitempty"`
+	Image *Image `json:",omitempty"`
+}
+
+type Content struct {
+	Parts []ContentPart
+}
+
+func cloneContentParts(parts []ContentPart) []ContentPart {
+	if len(parts) == 0 {
+		return nil
+	}
+
+	cloned := make([]ContentPart, len(parts))
+	for index, part := range parts {
+		cloned[index] = part
+		if part.Image != nil {
+			image := *part.Image
+			image.Data = append([]byte(nil), image.Data...)
+			cloned[index].Image = &image
+		}
+	}
+	return cloned
+}
+
+func cloneContent(content *Content) *Content {
+	if content == nil {
+		return nil
+	}
+	return &Content{Parts: cloneContentParts(content.Parts)}
+}
+
+func cloneInputs(inputs []Input) []Input {
+	if len(inputs) == 0 {
+		return nil
+	}
+
+	cloned := append([]Input(nil), inputs...)
+	for index := range cloned {
+		cloned[index].Content = cloneContent(cloned[index].Content)
+	}
+	return cloned
+}
+
 type Input struct {
 	Kind    InputKind
 	Text    string
+	Content *Content `json:",omitempty"`
 	CallID  string
 	Tool    string
 	IsError bool

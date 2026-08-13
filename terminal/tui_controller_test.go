@@ -12,6 +12,59 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
+func TestTUIControllerRejectsInvalidClipboardImage(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	clipboardImages := make(chan tuiEvent, 1)
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		readClipboardImage: func(context.Context) (agent.Image, error) {
+			return agent.Image{MediaType: "image/png", Data: []byte("png")}, nil
+		},
+		clipboardImages: clipboardImages,
+		stopped:         make(chan struct{}),
+	}
+
+	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlV}); err != nil {
+		t.Fatal(err)
+	}
+	event := <-clipboardImages
+	if _, err := controller.transition(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	if len(model.input) != 0 || model.activity.kind != activityError {
+		t.Fatalf("input = %+v, activity = %+v", model.input, model.activity)
+	}
+}
+
+func TestTUIControllerPastesClipboardImage(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	clipboardImages := make(chan tuiEvent, 1)
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+		readClipboardImage: func(context.Context) (agent.Image, error) {
+			return agent.Image{MediaType: "image/png", Data: validTestPNG(t)}, nil
+		},
+		clipboardImages: clipboardImages,
+	}
+
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyCtrlV}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-clipboardImages:
+		if _, err := controller.transition(context.Background(), event); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("clipboard image was not read")
+	}
+	content := editorContent(model.input)
+	if len(content) != 1 || content[0].Image == nil || content[0].Image.MediaType != "image/png" || !slices.Equal(content[0].Image.Data, validTestPNG(t)) {
+		t.Fatalf("content = %+v", content)
+	}
+}
+
 type checkpointingFakeEngine struct {
 	*fakeEngine
 }
@@ -60,6 +113,367 @@ func TestTUIControllerSerializesPermissions(t *testing.T) {
 	}
 }
 
+func TestTUIControllerPreservesClipboardInsertionPoint(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	clipboardImages := make(chan tuiEvent, 1)
+	model := newTUIModel(80, 24, Options{})
+	if err := model.insertInput("before "); err != nil {
+		t.Fatal(err)
+	}
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		readClipboardImage: func(context.Context) (agent.Image, error) {
+			close(started)
+			<-release
+			return agent.Image{MediaType: "image/png", Data: validTestPNG(t)}, nil
+		},
+		clipboardImages: clipboardImages,
+		stopped:         make(chan struct{}),
+	}
+
+	if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionAttachImage}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if err := model.insertInput("after"); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	event := <-clipboardImages
+	if _, err := controller.transition(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+
+	content := editorContent(model.input)
+	if len(content) != 3 || content[0].Text != "before " || content[1].Image == nil || content[2].Text != "after" {
+		t.Fatalf("content = %+v", content)
+	}
+}
+
+func TestTUIControllerDiscardsClearedClipboardRead(t *testing.T) {
+	started := make(chan struct{})
+	finished := make(chan struct{})
+	model := newTUIModel(80, 24, Options{})
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
+			close(started)
+			<-ctx.Done()
+			close(finished)
+			return agent.Image{}, ctx.Err()
+		},
+		clipboardImages: make(chan tuiEvent, 1),
+		stopped:         make(chan struct{}),
+	}
+
+	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlV}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlC}); err != nil {
+		t.Fatal(err)
+	}
+	<-finished
+	if len(model.input) != 0 || len(controller.clipboardRequests) != 0 {
+		t.Fatalf("input = %+v, requests = %d", model.input, len(controller.clipboardRequests))
+	}
+}
+
+func TestTUIControllerDeletingPendingImageCancelsRead(t *testing.T) {
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	model := newTUIModel(80, 24, Options{})
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
+			close(started)
+			<-ctx.Done()
+			close(canceled)
+			return agent.Image{}, ctx.Err()
+		},
+		clipboardImages: make(chan tuiEvent, 1),
+		stopped:         make(chan struct{}),
+	}
+	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlV}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyBackspace}); err != nil {
+		t.Fatal(err)
+	}
+	<-canceled
+	if len(model.input) != 0 || len(controller.clipboardRequests) != 0 {
+		t.Fatalf("input = %+v, requests = %d", model.input, len(controller.clipboardRequests))
+	}
+}
+
+func TestTUIControllerDeleteCancelsPendingImage(t *testing.T) {
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	model := newTUIModel(80, 24, Options{})
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
+			close(started)
+			<-ctx.Done()
+			close(canceled)
+			return agent.Image{}, ctx.Err()
+		},
+		clipboardImages: make(chan tuiEvent, 1),
+		stopped:         make(chan struct{}),
+	}
+	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlV}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyLeft}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyDelete}); err != nil {
+		t.Fatal(err)
+	}
+	<-canceled
+	if len(model.input) != 0 || len(controller.clipboardRequests) != 0 {
+		t.Fatalf("input = %+v, requests = %d", model.input, len(controller.clipboardRequests))
+	}
+}
+
+func TestTUIControllerHistoryCancelsPendingImage(t *testing.T) {
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	model := newTUIModel(80, 24, Options{})
+	model.history = []string{"old prompt"}
+	if err := model.insertInput("draft"); err != nil {
+		t.Fatal(err)
+	}
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
+			close(started)
+			<-ctx.Done()
+			close(canceled)
+			return agent.Image{}, ctx.Err()
+		},
+		clipboardImages: make(chan tuiEvent, 1),
+		stopped:         make(chan struct{}),
+	}
+
+	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlV}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyUp}); err != nil {
+		t.Fatal(err)
+	}
+	<-canceled
+	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyDown}); err != nil {
+		t.Fatal(err)
+	}
+	if model.inputText() != "draft" || len(model.pendingImageRequests()) != 0 || len(controller.clipboardRequests) != 0 {
+		t.Fatalf("input = %q, pending = %v, requests = %d", model.inputText(), model.pendingImageRequests(), len(controller.clipboardRequests))
+	}
+}
+
+func TestTUIControllerSubmittingCancelsPendingImage(t *testing.T) {
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	launched := make(chan struct{})
+	model := newTUIModel(80, 24, Options{})
+	if err := model.insertInput("before"); err != nil {
+		t.Fatal(err)
+	}
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{runContentFunction: func(_ context.Context, content []agent.ContentPart, _ agent.EventSink) (agent.RunResult, error) {
+			if len(content) != 1 || content[0].Text != "before" {
+				t.Fatalf("content = %+v", content)
+			}
+			close(launched)
+			return agent.RunResult{}, nil
+		}}, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1),
+		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
+			close(started)
+			<-ctx.Done()
+			close(canceled)
+			return agent.Image{}, ctx.Err()
+		},
+		clipboardImages: make(chan tuiEvent, 1),
+		stopped:         make(chan struct{}),
+	}
+	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlV}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyEnter}); err != nil {
+		t.Fatal(err)
+	}
+	<-canceled
+	<-launched
+	if !model.running || len(model.blocks) != 1 || model.inputText() != "" || len(controller.clipboardRequests) != 0 {
+		t.Fatalf("running = %v, blocks = %+v, input = %q, requests = %d", model.running, model.blocks, model.inputText(), len(controller.clipboardRequests))
+	}
+}
+
+func TestTUIControllerExitCancelsClipboardRead(t *testing.T) {
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	model := newTUIModel(80, 24, Options{})
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
+			close(started)
+			<-ctx.Done()
+			close(canceled)
+			return agent.Image{}, ctx.Err()
+		},
+		clipboardImages: make(chan tuiEvent, 1),
+		stopped:         make(chan struct{}),
+	}
+	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlV}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	exit, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionExit})
+	if err != nil || !exit {
+		t.Fatalf("exit = %v, error = %v", exit, err)
+	}
+	<-canceled
+}
+
+func TestTUIControllerReadsClipboardImageWithoutBlocking(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	clipboardImages := make(chan tuiEvent, 1)
+	model := newTUIModel(80, 24, Options{})
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		readClipboardImage: func(context.Context) (agent.Image, error) {
+			close(started)
+			<-release
+			return agent.Image{MediaType: "image/png", Data: validTestPNG(t)}, nil
+		},
+		clipboardImages: clipboardImages,
+	}
+
+	if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionAttachImage}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("clipboard read did not start")
+	}
+	close(release)
+	select {
+	case event := <-clipboardImages:
+		if _, err := controller.transition(context.Background(), event); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("clipboard read did not finish")
+	}
+}
+
+func TestTUIControllerKeepsDraftWhenActiveCheckpointFails(t *testing.T) {
+	checkpointErr := errors.New("checkpoint failed")
+	model := newTUIModel(80, 24, Options{})
+	if err := model.insertInput("before "); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: validTestPNG(t)}); err != nil {
+		t.Fatal(err)
+	}
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &checkpointingFakeEngine{fakeEngine: &fakeEngine{}}, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+		saveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error { return checkpointErr },
+	}
+
+	action, err := reduceKey(model, keyEvent{code: keyEnter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.applyAction(context.Background(), action); !errors.Is(err, checkpointErr) {
+		t.Fatalf("error = %v", err)
+	}
+	if model.inputText() != "before " || model.imageCount() != 1 || model.running || len(model.blocks) != 0 {
+		t.Fatalf("input = %q, images = %d, running = %v, blocks = %+v", model.inputText(), model.imageCount(), model.running, model.blocks)
+	}
+}
+
+func TestTUIControllerActiveCheckpointOmitsUncommittedSubmission(t *testing.T) {
+	image := &agent.Image{MediaType: "image/png", Data: validTestPNG(t)}
+	content := []agent.ContentPart{
+		{Kind: agent.ContentPartText, Text: "describe "},
+		{Kind: agent.ContentPartImage, Image: image},
+	}
+	model := newTUIModel(80, 24, Options{})
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &checkpointingFakeEngine{fakeEngine: &fakeEngine{}}, output: io.Discard,
+		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+		saveCheckpoint: func(_ agent.Checkpoint, terminalCheckpoint Checkpoint, active bool) error {
+			if !active || len(terminalCheckpoint.data.Blocks) != 0 {
+				t.Fatalf("active=%v terminal=%+v", active, terminalCheckpoint.data)
+			}
+			return errors.New("stop before launch")
+		},
+	}
+
+	if err := controller.startTurn(context.Background(), content); err == nil {
+		t.Fatal("start succeeded")
+	}
+	if len(model.blocks) != 0 || model.running {
+		t.Fatalf("blocks = %+v, running = %v", model.blocks, model.running)
+	}
+}
+
+func TestTUIControllerSubmitsClipboardImageAfterCheckpoint(t *testing.T) {
+	events := make(chan string, 2)
+	engine := &fakeEngine{runContentFunction: func(_ context.Context, content []agent.ContentPart, _ agent.EventSink) (agent.RunResult, error) {
+		if contentText(content) != "describe" || len(content) != 2 || content[1].Image == nil || content[1].Image.MediaType != "image/png" || !slices.Equal(content[1].Image.Data, validTestPNG(t)) {
+			t.Fatalf("content=%+v", content)
+		}
+		events <- "launch"
+		return agent.RunResult{}, nil
+	}}
+	model := newTUIModel(80, 24, Options{})
+	messages := make(chan engineMessage, 1)
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, engine: &checkpointingFakeEngine{fakeEngine: engine}, output: io.Discard,
+		engineMessages: messages, stopped: make(chan struct{}),
+		saveCheckpoint: func(_ agent.Checkpoint, checkpoint Checkpoint, active bool) error {
+			if !active || len(checkpoint.data.Blocks) != 0 {
+				t.Fatalf("active=%v checkpoint=%+v", active, checkpoint.data)
+			}
+			events <- "checkpoint"
+			return nil
+		},
+	}
+
+	image := &agent.Image{MediaType: "image/png", Data: validTestPNG(t)}
+	if _, err := controller.applyAction(context.Background(), tuiAction{
+		kind: tuiActionSubmit,
+		content: []agent.ContentPart{
+			{Kind: agent.ContentPartText, Text: "describe"},
+			{Kind: agent.ContentPartImage, Image: image},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if first, second := <-events, <-events; first != "checkpoint" || second != "launch" {
+		t.Fatalf("events = %q, %q", first, second)
+	}
+	select {
+	case message := <-messages:
+		if !message.done || message.err != nil {
+			t.Fatalf("message = %+v", message)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("image turn did not finish")
+	}
+}
+
 func TestTUIControllerEOFWhileRunningDefersCheckpoint(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.running = true
@@ -99,7 +513,10 @@ func TestTUIControllerStartsOperationsAfterActiveCheckpoint(t *testing.T) {
 			activity:      activityThinking,
 			wantUserBlock: true,
 			start: func(ctx context.Context, controller *tuiController) error {
-				_, err := controller.applyAction(ctx, tuiAction{kind: tuiActionSubmit, prompt: "ordinary prompt"})
+				_, err := controller.applyAction(ctx, tuiAction{
+					kind:    tuiActionSubmit,
+					content: []agent.ContentPart{{Kind: agent.ContentPartText, Text: "ordinary prompt"}},
+				})
 				return err
 			},
 		},
@@ -140,7 +557,7 @@ func TestTUIControllerStartsOperationsAfterActiveCheckpoint(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			events := make(chan string, 2)
 			engine := &fakeEngine{
-				runFunction: func(context.Context, string, agent.EventSink) (agent.RunResult, error) {
+				runContentFunction: func(context.Context, []agent.ContentPart, agent.EventSink) (agent.RunResult, error) {
 					events <- "launch"
 					return agent.RunResult{}, nil
 				},
@@ -173,8 +590,8 @@ func TestTUIControllerStartsOperationsAfterActiveCheckpoint(t *testing.T) {
 			if first := <-events; first != "checkpoint" {
 				t.Fatalf("first operation = %q, want checkpoint", first)
 			}
-			if second := <-events; second != "launch" {
-				t.Fatalf("second operation = %q, want launch", second)
+			if launched := <-events; launched != "launch" {
+				t.Fatalf("launch operation = %q", launched)
 			}
 			if test.wantUserBlock {
 				if len(model.blocks) != 1 || model.blocks[0].kind != blockUser || model.blocks[0].text != test.prompt {
@@ -208,7 +625,10 @@ func TestTUIControllerDoesNotLaunchAfterActiveCheckpointFailure(t *testing.T) {
 			name:     "submit",
 			activity: activityThinking,
 			start: func(ctx context.Context, controller *tuiController) error {
-				_, err := controller.applyAction(ctx, tuiAction{kind: tuiActionSubmit, prompt: "ordinary prompt"})
+				_, err := controller.applyAction(ctx, tuiAction{
+					kind:    tuiActionSubmit,
+					content: []agent.ContentPart{{Kind: agent.ContentPartText, Text: "ordinary prompt"}},
+				})
 				return err
 			},
 		},
@@ -245,7 +665,7 @@ func TestTUIControllerDoesNotLaunchAfterActiveCheckpointFailure(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			launched := make(chan struct{}, 1)
 			engine := &fakeEngine{
-				runFunction: func(context.Context, string, agent.EventSink) (agent.RunResult, error) {
+				runContentFunction: func(context.Context, []agent.ContentPart, agent.EventSink) (agent.RunResult, error) {
 					launched <- struct{}{}
 					return agent.RunResult{}, nil
 				},
@@ -272,7 +692,12 @@ func TestTUIControllerDoesNotLaunchAfterActiveCheckpointFailure(t *testing.T) {
 				t.Fatal("operation launched after checkpoint failure")
 			case <-time.After(25 * time.Millisecond):
 			}
-			if controller.turnCancel != nil || !model.running || model.activity.kind != test.activity {
+			wantRunning := test.name == "compaction"
+			wantActivity := activityReady
+			if wantRunning {
+				wantActivity = test.activity
+			}
+			if controller.turnCancel != nil || model.running != wantRunning || model.activity.kind != wantActivity {
 				t.Fatalf("cancel=%v running=%v activity=%+v", controller.turnCancel != nil, model.running, model.activity)
 			}
 		})
@@ -726,8 +1151,8 @@ func TestTUIControllerQueuesAndDequeuesSteering(t *testing.T) {
 	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyAltUp}}); err != nil {
 		t.Fatal(err)
 	}
-	if len(queued) != 0 || len(model.steering) != 0 || string(model.input) != "steer\n\ndraft" {
-		t.Fatalf("queue=%q model queue=%q input=%q", queued, model.steering, model.input)
+	if len(queued) != 0 || len(model.steering) != 0 || model.inputText() != "steer\n\ndraft" {
+		t.Fatalf("queue=%q model queue=%q input=%q", queued, model.steering, model.inputText())
 	}
 }
 
@@ -754,8 +1179,8 @@ func TestTUIControllerCancelRestoresQueuedAndDeferredSteering(t *testing.T) {
 	if !canceled || !model.interrupted || model.activity.kind != activityCanceling || len(controller.deferredSteering) != 0 || len(model.steering) != 0 {
 		t.Fatalf("canceled=%v interrupted=%v activity=%+v deferred=%q pending=%q", canceled, model.interrupted, model.activity, controller.deferredSteering, model.steering)
 	}
-	if string(model.input) != "accepted\n\ndeferred\n\ndraft" {
-		t.Fatalf("restored input = %q", model.input)
+	if model.inputText() != "accepted\n\ndeferred\n\ndraft" {
+		t.Fatalf("restored input = %q", model.inputText())
 	}
 }
 
@@ -833,8 +1258,8 @@ func TestTUIControllerRestoresSteeringAfterRunError(t *testing.T) {
 	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventEngine, engine: engineMessage{done: true, err: failure}}); err != nil {
 		t.Fatal(err)
 	}
-	if string(model.input) != "retry this" || len(model.steering) != 0 || model.activity.kind != activityError {
-		t.Fatalf("input=%q steering=%q activity=%+v", model.input, model.steering, model.activity)
+	if model.inputText() != "retry this" || len(model.steering) != 0 || model.activity.kind != activityError {
+		t.Fatalf("input=%q steering=%q activity=%+v", model.inputText(), model.steering, model.activity)
 	}
 }
 

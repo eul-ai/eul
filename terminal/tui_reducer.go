@@ -26,6 +26,7 @@ const (
 	tuiActionClearGoal
 	tuiActionDequeue
 	tuiActionSetThinking
+	tuiActionAttachImage
 	tuiActionAllowPermission
 	tuiActionDenyPermission
 	tuiActionCopy
@@ -36,6 +37,7 @@ type tuiAction struct {
 	kind          tuiActionKind
 	prompt        string
 	text          string
+	content       []agent.ContentPart
 	thinkingLevel agent.ThinkingLevel
 }
 
@@ -82,6 +84,12 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 		return tuiAction{}, ErrInterrupted
 	case keyCtrlL:
 		return tuiAction{kind: tuiActionRedraw}, nil
+	case keyCtrlV:
+		if model.running {
+			setInputError(model, fmt.Errorf("images cannot be attached while the agent is running"))
+			return tuiAction{}, nil
+		}
+		return tuiAction{kind: tuiActionAttachImage}, nil
 	case keyPageUp:
 		scrollConversation(model, -1, frame)
 		return tuiAction{}, nil
@@ -285,7 +293,7 @@ func reduceInterrupt(model *tuiModel) (tuiAction, error) {
 }
 
 func reduceSteeringPrompt(model *tuiModel) tuiAction {
-	prompt := string(model.input)
+	prompt := model.inputText()
 	trimmed := strings.TrimSpace(prompt)
 	if trimmed == "" {
 		return tuiAction{}
@@ -305,22 +313,36 @@ func reduceSteeringPrompt(model *tuiModel) tuiAction {
 }
 
 func reducePrompt(model *tuiModel) tuiAction {
-	prompt, ok := model.takePrompt()
+	content, ok := model.submittingContent()
 	if !ok {
 		return tuiAction{}
 	}
 
+	prompt := contentText(content)
 	trimmed := strings.TrimSpace(prompt)
-	if action, _, matched := matchSlashCommand(prompt, trimmed, model.fastModeAvailable); matched {
-		return action
-	}
-	if strings.HasPrefix(trimmed, "/") {
-		model.appendBlock(blockError, "Unknown command "+diagnostic(trimmed, 120))
-		model.activity = activity{kind: activityError, detail: "unknown command"}
-		return tuiAction{}
+	if !contentHasImage(content) {
+		if action, _, matched := matchSlashCommand(prompt, trimmed, model.fastModeAvailable); matched {
+			model.finishSubmission(content)
+			return action
+		}
+		if strings.HasPrefix(trimmed, "/") {
+			model.finishSubmission(content)
+			model.appendBlock(blockError, "Unknown command "+diagnostic(trimmed, 120))
+			model.activity = activity{kind: activityError, detail: "unknown command"}
+			return tuiAction{}
+		}
 	}
 
-	return tuiAction{kind: tuiActionSubmit, prompt: prompt}
+	return tuiAction{kind: tuiActionSubmit, prompt: prompt, content: content}
+}
+
+func contentHasImage(content []agent.ContentPart) bool {
+	for _, part := range content {
+		if part.Kind == agent.ContentPartImage {
+			return true
+		}
+	}
+	return false
 }
 
 func setInputError(model *tuiModel, err error) {

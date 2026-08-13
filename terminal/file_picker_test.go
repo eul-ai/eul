@@ -8,6 +8,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/eul-ai/eul/agent"
 )
 
 func TestSearchProjectFilesIsFreshAndAppliesPolicy(t *testing.T) {
@@ -312,11 +314,33 @@ func TestFilePickerRequestsNavigatesAndAppliesSelection(t *testing.T) {
 	if err := model.applyFilePickerSelection(); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(model.input), "inspect @"+selected+" "; got != want {
+	if got, want := model.inputText(), "inspect @"+selected+" "; got != want {
 		t.Fatalf("input = %q, want %q", got, want)
 	}
 	if model.filePickerVisible() || model.cursor != len(model.input) {
 		t.Fatalf("picker remained open or cursor misplaced: picker=%+v cursor=%d", model.filePicker, model.cursor)
+	}
+}
+
+func TestFilePickerReplacementStopsBeforeImage(t *testing.T) {
+	model := newTUIModel(80, 24, Options{WorkingDirectory: t.TempDir()})
+	if err := model.insertInput("@tu"); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("image")}); err != nil {
+		t.Fatal(err)
+	}
+	model.cursor = len(editorItemsFromText("@tu"))
+	model.refreshFilePicker(true)
+	request := takePickerRequest(t, model)
+	model.applyFileSearchResult(fileSearchResult{id: request.id, paths: []string{"terminal/tui.go"}})
+
+	if err := model.applyFilePickerSelection(); err != nil {
+		t.Fatal(err)
+	}
+	content := editorContent(model.input)
+	if len(content) != 2 || content[0].Text != "@terminal/tui.go " || content[1].Kind != agent.ContentPartImage {
+		t.Fatalf("content = %+v", content)
 	}
 }
 
@@ -367,7 +391,7 @@ func TestFilePickerQuotesSpacesAndCanBeDismissed(t *testing.T) {
 	if err := model.applyFilePickerSelection(); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(model.input), `@"my folder/file.go" `; got != want {
+	if got, want := model.inputText(), `@"my folder/file.go" `; got != want {
 		t.Fatalf("input = %q, want %q", got, want)
 	}
 }

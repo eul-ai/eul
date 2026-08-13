@@ -47,11 +47,79 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	if len(restored.blocks) != 2 || restored.blocks[0].kind != blockUser || restored.blocks[1].text != "answer" {
 		t.Fatalf("blocks = %+v", restored.blocks)
 	}
-	if string(restored.input) != "accepted\n\ndeferred\n\ndraft" || restored.cursor != len(restored.input) {
-		t.Fatalf("input=%q cursor=%d", restored.input, restored.cursor)
+	if restored.inputText() != "accepted\n\ndeferred\n\ndraft" || restored.cursor != len(restored.input) {
+		t.Fatalf("input=%q cursor=%d", restored.inputText(), restored.cursor)
 	}
 	if len(restored.history) != 1 || restored.history[0] != "older prompt" {
 		t.Fatalf("history = %q", restored.history)
+	}
+}
+
+func TestTerminalCheckpointProjectsDraftImagesOut(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	if err := model.insertInput("before "); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("png")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.insertInput("after"); err != nil {
+		t.Fatal(err)
+	}
+	model.moveLeft()
+
+	checkpoint := checkpointModel(model)
+	if checkpoint.data.Input != "before after" || checkpoint.data.Cursor != len([]rune("before afte")) {
+		t.Fatalf("input = %q, cursor = %d", checkpoint.data.Input, checkpoint.data.Cursor)
+	}
+	encoded, err := json.Marshal(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "cG5n") || strings.Contains(string(encoded), imageAttachmentLabel) {
+		t.Fatalf("draft image was persisted: %s", encoded)
+	}
+}
+
+func TestTerminalCheckpointPreservesInlineImagePositions(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.beginTurnContent([]agent.ContentPart{
+		{Kind: agent.ContentPartText, Text: "before "},
+		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("png")}},
+		{Kind: agent.ContentPartText, Text: " after"},
+	})
+	checkpoint := checkpointModel(model)
+	if len(checkpoint.data.Blocks[0].Content) != 3 || checkpoint.data.Blocks[0].Content[1].Kind != agent.ContentPartImage {
+		t.Fatalf("checkpoint content = %+v", checkpoint.data.Blocks[0].Content)
+	}
+
+	restored := newTUIModel(80, 24, Options{InitialCheckpoint: &checkpoint})
+	if got := displayContent(restored.blocks[0].content); got != "before [image attached] after" {
+		t.Fatalf("restored content = %q", got)
+	}
+}
+
+func TestTerminalCheckpointSanitizesContentText(t *testing.T) {
+	checkpoint := EmptyCheckpoint()
+	checkpoint.data.Blocks = []checkpointBlock{{
+		Kind: blockUser,
+		Content: []checkpointContentPart{{
+			Kind: agent.ContentPartText,
+			Text: "before\x1bafter",
+		}},
+	}}
+
+	restored := newTUIModel(80, 24, Options{InitialCheckpoint: &checkpoint})
+	if got := displayContent(restored.blocks[0].content); got != "before�after" {
+		t.Fatalf("restored content = %q", got)
+	}
+}
+
+func TestImageOnlyCheckpointDescription(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.beginTurnContent([]agent.ContentPart{{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png"}}})
+	if description := checkpointModel(model).Description(); description != "Image attachment" {
+		t.Fatalf("description = %q", description)
 	}
 }
 
@@ -104,8 +172,8 @@ func TestVersionOneTerminalCheckpointFixture(t *testing.T) {
 	if len(model.blocks) != len(wantKinds) || model.blocks[3].kind != blockToolError || model.blocks[3].toolOutcome != "interrupted" {
 		t.Fatalf("restored blocks = %+v", model.blocks)
 	}
-	if string(model.input) != "queued\n\ndraft" || model.contextTokens != 42 || len(model.history) != 2 {
-		t.Fatalf("input=%q context=%d history=%q", model.input, model.contextTokens, model.history)
+	if model.inputText() != "queued\n\ndraft" || model.contextTokens != 42 || len(model.history) != 2 {
+		t.Fatalf("input=%q context=%d history=%q", model.inputText(), model.contextTokens, model.history)
 	}
 
 	encoded, err := json.Marshal(checkpoint)

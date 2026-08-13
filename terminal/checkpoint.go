@@ -32,11 +32,17 @@ type terminalCheckpointData struct {
 }
 
 type checkpointBlock struct {
-	Kind        blockKind              `json:"kind"`
-	Text        string                 `json:"text,omitempty"`
-	ToolCallID  string                 `json:"tool_call_id,omitempty"`
-	Tool        agent.ToolPresentation `json:"tool,omitempty"`
-	ToolOutcome string                 `json:"tool_outcome,omitempty"`
+	Kind        blockKind               `json:"kind"`
+	Text        string                  `json:"text,omitempty"`
+	Content     []checkpointContentPart `json:"content,omitempty"`
+	ToolCallID  string                  `json:"tool_call_id,omitempty"`
+	Tool        agent.ToolPresentation  `json:"tool,omitempty"`
+	ToolOutcome string                  `json:"tool_outcome,omitempty"`
+}
+
+type checkpointContentPart struct {
+	Kind agent.ContentPartKind `json:"kind"`
+	Text string                `json:"text,omitempty"`
 }
 
 func EmptyCheckpoint() Checkpoint {
@@ -85,12 +91,32 @@ func (checkpoint Checkpoint) Description() string {
 		}
 		prompt := strings.TrimSpace(block.Text)
 		if prompt == "" {
+			for _, part := range block.Content {
+				if part.Kind == agent.ContentPartText {
+					prompt += part.Text
+				}
+			}
+			prompt = strings.TrimSpace(prompt)
+		}
+		if prompt == "" && checkpointContentHasImage(block.Content) {
+			return "Image attachment"
+		}
+		if prompt == "" {
 			continue
 		}
 		line, _, _ := strings.Cut(prompt, "\n")
 		return singleLine(strings.TrimSpace(line), maxSessionDescriptionBytes)
 	}
 	return ""
+}
+
+func checkpointContentHasImage(content []checkpointContentPart) bool {
+	for _, part := range content {
+		if part.Kind == agent.ContentPartImage {
+			return true
+		}
+	}
+	return false
 }
 
 func validateTerminalCheckpointData(data terminalCheckpointData) error {
@@ -110,6 +136,13 @@ func validateTerminalCheckpointData(data terminalCheckpointData) error {
 	for index, block := range data.Blocks {
 		if block.Kind < blockUser || block.Kind > blockInfo {
 			return fmt.Errorf("terminal: checkpoint block %d has unknown kind %d", index, block.Kind)
+		}
+		for partIndex, part := range block.Content {
+			switch part.Kind {
+			case agent.ContentPartText, agent.ContentPartImage:
+			default:
+				return fmt.Errorf("terminal: checkpoint block %d content part %d has unknown kind %q", index, partIndex, part.Kind)
+			}
 		}
 	}
 	for index, prompt := range data.History {
@@ -137,6 +170,7 @@ func cloneTerminalCheckpointData(data terminalCheckpointData) terminalCheckpoint
 	blocks := data.Blocks
 	data.Blocks = make([]checkpointBlock, len(blocks))
 	for index, block := range blocks {
+		block.Content = append([]checkpointContentPart(nil), block.Content...)
 		block.Tool = block.Tool.Clone()
 		data.Blocks[index] = block
 	}
@@ -145,12 +179,29 @@ func cloneTerminalCheckpointData(data terminalCheckpointData) terminalCheckpoint
 	return data
 }
 
+func checkpointContent(content []agent.ContentPart) []checkpointContentPart {
+	parts := make([]checkpointContentPart, 0, len(content))
+	for _, part := range content {
+		parts = append(parts, checkpointContentPart{Kind: part.Kind, Text: part.Text})
+	}
+	return parts
+}
+
+func restoreCheckpointContent(content []checkpointContentPart) []agent.ContentPart {
+	parts := make([]agent.ContentPart, 0, len(content))
+	for _, part := range content {
+		parts = append(parts, agent.ContentPart{Kind: part.Kind, Text: part.Text})
+	}
+	return parts
+}
+
 func checkpointModel(model *tuiModel) Checkpoint {
 	blocks := make([]checkpointBlock, len(model.blocks))
 	for index, block := range model.blocks {
 		blocks[index] = checkpointBlock{
 			Kind:        block.kind,
 			Text:        block.text,
+			Content:     checkpointContent(block.content),
 			ToolCallID:  block.toolCallID,
 			Tool:        block.tool.Clone(),
 			ToolOutcome: block.toolOutcome,
@@ -161,8 +212,8 @@ func checkpointModel(model *tuiModel) Checkpoint {
 	return Checkpoint{data: terminalCheckpointData{
 		Version:       terminalCheckpointVersion,
 		Blocks:        blocks,
-		Input:         string(model.input),
-		Cursor:        model.cursor,
+		Input:         model.inputText(),
+		Cursor:        model.textCursor(),
 		History:       append([]string(nil), model.history...),
 		ContextTokens: model.contextTokens,
 		QueuedInputs:  queued,
@@ -182,6 +233,7 @@ func restoreModelCheckpoint(model *tuiModel, checkpoint Checkpoint) {
 		model.blocks[index] = conversationBlock{
 			kind:        kind,
 			text:        sanitizeAssistantText(block.Text),
+			content:     sanitizeContent(restoreCheckpointContent(block.Content)),
 			toolCallID:  block.ToolCallID,
 			tool:        sanitizeToolPresentation(agent.ToolCall{ID: block.ToolCallID}, block.Tool),
 			toolOutcome: sanitizeAssistantText(outcome),
@@ -189,14 +241,14 @@ func restoreModelCheckpoint(model *tuiModel, checkpoint Checkpoint) {
 	}
 	model.history = data.History
 	model.contextTokens = data.ContextTokens
-	model.input = []rune(data.Input)
+	model.input = editorItemsFromText(data.Input)
 	model.cursor = data.Cursor
 	if len(data.QueuedInputs) > 0 {
 		queued := strings.Join(data.QueuedInputs, "\n\n")
 		if strings.TrimSpace(data.Input) != "" {
 			queued += "\n\n" + data.Input
 		}
-		model.input = []rune(queued)
+		model.input = editorItemsFromText(queued)
 		model.cursor = len(model.input)
 	}
 	model.conversationVersion++
@@ -205,5 +257,6 @@ func restoreModelCheckpoint(model *tuiModel, checkpoint Checkpoint) {
 	model.activity = activity{kind: activityReady}
 	model.streamOpen = false
 	model.historyIndex = -1
-	model.historyDraft = ""
+	model.historyDraft = nil
+	model.historyDraftCursor = 0
 }

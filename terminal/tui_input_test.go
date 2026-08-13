@@ -75,6 +75,9 @@ func TestKeyDecoderHandlesModifiedKeys(t *testing.T) {
 		"\x1b[3u":         keyCtrlC,
 		"\x1b[100;5u":     keyCtrlD,
 		"\x1b[108;5u":     keyCtrlL,
+		"\x16":            keyCtrlV,
+		"\x1b[118;5u":     keyCtrlV,
+		"\x1b[118;9u":     keyCtrlV,
 		"\x1b[127u":       keyBackspace,
 		"\x1b[1;1:1D":     keyLeft,
 		"\x1b[1;1:1C":     keyRight,
@@ -177,7 +180,7 @@ func TestTUIModelEditsAndNavigatesHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	model.delete()
-	if got := string(model.input); got != "a界" {
+	if got := model.inputText(); got != "a界" {
 		t.Fatalf("input = %q", got)
 	}
 
@@ -189,12 +192,53 @@ func TestTUIModelEditsAndNavigatesHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	model.historyUp()
-	if got := string(model.input); got != "a界" {
+	if got := model.inputText(); got != "a界" {
 		t.Fatalf("history up = %q", got)
 	}
 	model.historyDown()
-	if got := string(model.input); got != "draft" {
+	if got := model.inputText(); got != "draft" {
 		t.Fatalf("history down = %q", got)
+	}
+}
+
+func TestTUIModelEditsInlineImages(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	if err := model.insertInput("before after"); err != nil {
+		t.Fatal(err)
+	}
+	model.cursor = len(editorItemsFromText("before "))
+	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("one")}); err != nil {
+		t.Fatal(err)
+	}
+	if model.cursor != len(editorItemsFromText("before "))+1 {
+		t.Fatalf("cursor = %d", model.cursor)
+	}
+
+	content := editorContent(model.input)
+	if len(content) != 3 || content[0].Text != "before " || content[1].Image == nil || string(content[1].Image.Data) != "one" || content[2].Text != "after" {
+		t.Fatalf("content = %+v", content)
+	}
+
+	model.moveLeft()
+	model.delete()
+	if got := model.inputText(); got != "before after" || model.imageCount() != 0 {
+		t.Fatalf("input = %q, images = %d", got, model.imageCount())
+	}
+
+	model.cursor = len(editorItemsFromText("before "))
+	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("two")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("three")}); err != nil {
+		t.Fatal(err)
+	}
+	model.backspace()
+	if model.imageCount() != 1 {
+		t.Fatalf("images after first backspace = %d", model.imageCount())
+	}
+	model.backspace()
+	if model.imageCount() != 0 || model.cursor != len(editorItemsFromText("before ")) {
+		t.Fatalf("cursor = %d, images = %d", model.cursor, model.imageCount())
 	}
 }
 
@@ -214,6 +258,55 @@ func TestTUIModelInsertsNewlineAndPreservesItInPrompt(t *testing.T) {
 	}
 }
 
+func TestTUIModelNavigatesLinesWithImages(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	if err := model.insertInput("ab"); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("png")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.insertInput("c\nxy"); err != nil {
+		t.Fatal(err)
+	}
+	model.cursor = len(model.input)
+	if !model.moveUp() || model.cursor != 2 {
+		t.Fatalf("up cursor = %d", model.cursor)
+	}
+	model.moveEnd()
+	if model.cursor != 4 {
+		t.Fatalf("end cursor = %d", model.cursor)
+	}
+	model.moveHome()
+	if model.cursor != 0 {
+		t.Fatalf("home cursor = %d", model.cursor)
+	}
+	if !model.moveDown() || model.cursor != 5 {
+		t.Fatalf("down cursor = %d", model.cursor)
+	}
+}
+
+func TestTUIModelHistoryRestoresInlineDraft(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.history = []string{"old prompt"}
+	if err := model.insertInput("draft "); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("png")}); err != nil {
+		t.Fatal(err)
+	}
+	cursor := model.cursor
+
+	model.historyUp()
+	if got := model.inputText(); got != "old prompt" {
+		t.Fatalf("history input = %q", got)
+	}
+	model.historyDown()
+	if got := model.inputText(); got != "draft " || model.imageCount() != 1 || model.cursor != cursor {
+		t.Fatalf("draft = %q, images = %d, cursor = %d", got, model.imageCount(), model.cursor)
+	}
+}
+
 func TestArrowUpMovesToPreviousInputLineBeforeHistory(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.history = []string{"old prompt"}
@@ -224,14 +317,14 @@ func TestArrowUpMovesToPreviousInputLineBeforeHistory(t *testing.T) {
 	if _, err := reduceKey(model, keyEvent{code: keyUp}); err != nil {
 		t.Fatal(err)
 	}
-	if got := string(model.input); got != "first\nsecond" || model.cursor != len([]rune("first")) || model.historyIndex != -1 {
+	if got := model.inputText(); got != "first\nsecond" || model.cursor != len([]rune("first")) || model.historyIndex != -1 {
 		t.Fatalf("first up: input=%q cursor=%d historyIndex=%d", got, model.cursor, model.historyIndex)
 	}
 
 	if _, err := reduceKey(model, keyEvent{code: keyUp}); err != nil {
 		t.Fatal(err)
 	}
-	if got := string(model.input); got != "old prompt" || model.historyIndex != 0 {
+	if got := model.inputText(); got != "old prompt" || model.historyIndex != 0 {
 		t.Fatalf("second up: input=%q historyIndex=%d", got, model.historyIndex)
 	}
 }
@@ -239,7 +332,8 @@ func TestArrowUpMovesToPreviousInputLineBeforeHistory(t *testing.T) {
 func TestArrowDownMovesToNextInputLineBeforeHistory(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.history = []string{"first\nsecond"}
-	model.historyDraft = "draft"
+	model.historyDraft = editorItemsFromText("draft")
+	model.historyDraftCursor = len(model.historyDraft)
 	model.historyIndex = 0
 	model.setInput(model.history[0])
 	model.cursor = len([]rune("first"))
@@ -247,14 +341,14 @@ func TestArrowDownMovesToNextInputLineBeforeHistory(t *testing.T) {
 	if _, err := reduceKey(model, keyEvent{code: keyDown}); err != nil {
 		t.Fatal(err)
 	}
-	if got := string(model.input); got != "first\nsecond" || model.cursor != len([]rune("first\nsecon")) || model.historyIndex != 0 {
+	if got := model.inputText(); got != "first\nsecond" || model.cursor != len([]rune("first\nsecon")) || model.historyIndex != 0 {
 		t.Fatalf("first down: input=%q cursor=%d historyIndex=%d", got, model.cursor, model.historyIndex)
 	}
 
 	if _, err := reduceKey(model, keyEvent{code: keyDown}); err != nil {
 		t.Fatal(err)
 	}
-	if got := string(model.input); got != "draft" || model.historyIndex != -1 {
+	if got := model.inputText(); got != "draft" || model.historyIndex != -1 {
 		t.Fatalf("second down: input=%q historyIndex=%d", got, model.historyIndex)
 	}
 }
@@ -346,7 +440,7 @@ func TestTUIModelPreservesPastedNewlinesAndRejectsNUL(t *testing.T) {
 	if err := model.insertInput("one\r\n\r\ntwo\tthree\x1b"); err != nil {
 		t.Fatal(err)
 	}
-	if got := string(model.input); got != "one\n\ntwo three�" {
+	if got := model.inputText(); got != "one\n\ntwo three�" {
 		t.Fatalf("input = %q", got)
 	}
 	if err := model.insertInput("bad\x00"); !errors.Is(err, errInvalidInput) {

@@ -134,6 +134,37 @@ func TestParseReasoningSummary(t *testing.T) {
 	}
 }
 
+func TestEstimateInputTokensUsesOrderedTextParts(t *testing.T) {
+	inputs := []agent.Input{{
+		Text: "ignored",
+		Content: &agent.Content{Parts: []agent.ContentPart{
+			{Kind: agent.ContentPartText, Text: "12345"},
+			{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("image")}},
+			{Kind: agent.ContentPartText, Text: "678"},
+		}},
+	}}
+	if got := estimateInputTokens(inputs); got != 2 {
+		t.Fatalf("tokens = %d, want 2", got)
+	}
+}
+
+func TestClientShouldCompactForContinuationStateHeadroom(t *testing.T) {
+	client := &Client{maxStateBytes: 160, stateOutputHeadroom: 50}
+	state, err := encodeState(nil, nil, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"` + strings.Repeat("x", 35) + `"}`)}, client.maxStateBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := agent.Request{State: state, Inputs: []agent.Input{{Kind: agent.InputUser, Text: strings.Repeat("y", 25)}}}
+
+	if !client.ShouldCompact(request, agent.Usage{}) {
+		t.Fatal("near-limit state did not trigger compaction")
+	}
+	request.State = nil
+	if client.ShouldCompact(request, agent.Usage{}) {
+		t.Fatal("fresh input triggered compaction without state")
+	}
+}
+
 func TestClientShouldCompact(t *testing.T) {
 	client := &Client{}
 	solLimit := models["gpt-5.6-sol"].contextWindow * 9 / 10

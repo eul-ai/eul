@@ -96,8 +96,19 @@ func (*Client) ShouldCompactAfterError(_ agent.Request, err error) bool {
 	return contextLimitError(err)
 }
 
-func (*Client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
-	if len(request.State) == 0 || usage.TotalTokens <= 0 {
+func (c *Client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
+	if len(request.State) == 0 {
+		return false
+	}
+	if c.maxStateBytes > 0 {
+		if _, _, err := buildCreateRequestWithLimit(request, c.maxStateBytes, c.generationStateBytes()); err != nil {
+			withoutState := request
+			withoutState.State = nil
+			_, _, inputErr := buildCreateRequestWithLimit(withoutState, c.maxStateBytes, c.generationStateBytes())
+			return inputErr == nil
+		}
+	}
+	if usage.TotalTokens <= 0 {
 		return false
 	}
 
@@ -115,7 +126,16 @@ func (*Client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
 func estimateInputTokens(inputs []agent.Input) int64 {
 	var total int64
 	for _, input := range inputs {
-		bytes := int64(len(input.Text))
+		textBytes := len(input.Text)
+		if input.Content != nil {
+			textBytes = 0
+			for _, part := range input.Content.Parts {
+				if part.Kind == agent.ContentPartText {
+					textBytes += len(part.Text)
+				}
+			}
+		}
+		bytes := int64(textBytes)
 		total += bytes / 4
 		if bytes%4 != 0 {
 			total++

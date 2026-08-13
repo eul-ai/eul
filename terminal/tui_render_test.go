@@ -109,8 +109,8 @@ func TestRenderFrameShowsPermission(t *testing.T) {
 	if cellWidth(buttons[:strings.Index(buttons, "[n] Deny")]) != strings.Index(input.lines[descriptionIndex], "bash") {
 		t.Fatalf("permission button alignment = %q, description = %q", buttons, input.lines[descriptionIndex])
 	}
-	if frame.cursorVisible || string(model.input) != "queued steering" {
-		t.Fatalf("cursor=%v input=%q", frame.cursorVisible, model.input)
+	if frame.cursorVisible || model.inputText() != "queued steering" {
+		t.Fatalf("cursor=%v input=%q", frame.cursorVisible, model.inputText())
 	}
 }
 
@@ -607,6 +607,15 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 
 	renderer := &tuiRenderer{}
 	assertCachedConversationMatchesUncached(t, renderer, model)
+	model.blocks[0].content = []agent.ContentPart{
+		{Kind: agent.ContentPartText, Text: "before "},
+		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("one")}},
+	}
+	model.conversationVersion++
+	assertCachedConversationMatchesUncached(t, renderer, model)
+	if !strings.Contains(renderer.conversationBlocks[0].plain[0], imageAttachmentLabel) {
+		t.Fatalf("content change did not invalidate cached block: %q", renderer.conversationBlocks[0].plain)
+	}
 	firstBlockLine := &renderer.conversationBlocks[0].lines[0]
 	previousFrame := projectTerminalFrame(model, renderer.prepare(model))
 	previousPlain := append([]string(nil), previousFrame.conversationLines...)
@@ -766,6 +775,101 @@ func TestFilePickerKeepsStableHeightWhileSearching(t *testing.T) {
 	}
 }
 
+func TestInputRendersImagesInline(t *testing.T) {
+	model := newTUIModel(120, 8, Options{})
+	if err := model.insertInput("Hey checkout this image: "); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("one")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.insertInput(". Compare it to this: "); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("two")}); err != nil {
+		t.Fatal(err)
+	}
+
+	input := renderInput(model, model.width, maximumInputHeight(model.height, 0))
+	want := "> Hey checkout this image: [image attached]. Compare it to this: [image attached]"
+	if len(input.lines) != 1 || input.lines[0] != want {
+		t.Fatalf("input = %+v", input)
+	}
+	if input.cursorColumn != 3+cellWidth(strings.TrimPrefix(want, "> ")) {
+		t.Fatalf("cursor = %d", input.cursorColumn)
+	}
+}
+
+func TestInputWrapsInlineImageAsUnit(t *testing.T) {
+	model := newTUIModel(20, 8, Options{})
+	if err := model.insertInput("12345"); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("png")}); err != nil {
+		t.Fatal(err)
+	}
+	input := renderInput(model, model.width, maximumInputHeight(model.height, 0))
+	if len(input.lines) != 2 || input.lines[0] != "> 12345" || input.lines[1] != "  [image attached]" {
+		t.Fatalf("input = %+v", input)
+	}
+	if input.cursorRow != 1 || input.cursorColumn != 19 {
+		t.Fatalf("cursor = %d,%d", input.cursorRow, input.cursorColumn)
+	}
+}
+
+func TestInputKeepsNarrowImageCursorPositionsDistinct(t *testing.T) {
+	model := newTUIModel(3, 8, Options{})
+	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("png")}); err != nil {
+		t.Fatal(err)
+	}
+
+	after := renderInput(model, model.width, maximumInputHeight(model.height, 0))
+	model.moveLeft()
+	before := renderInput(model, model.width, maximumInputHeight(model.height, 0))
+	if len(after.lines) != 2 || after.lines[0] != "> [" || after.lines[1] != "  " {
+		t.Fatalf("after = %+v", after)
+	}
+	if before.cursorRow != 0 || before.cursorColumn != 3 || after.cursorRow != 1 || after.cursorColumn != 3 {
+		t.Fatalf("before = %d,%d after = %d,%d", before.cursorRow, before.cursorColumn, after.cursorRow, after.cursorColumn)
+	}
+}
+
+func TestSubmittedImageMarkerWrapsAtomically(t *testing.T) {
+	content := []agent.ContentPart{
+		{Kind: agent.ContentPartText, Text: "12345"},
+		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png"}},
+	}
+	lines := conversationBlockLines(conversationBlock{kind: blockUser, content: content}, 20)
+	if len(lines) != 2 || lines[0].text != "12345" || lines[1].text != imageAttachmentLabel {
+		t.Fatalf("lines = %+v", lines)
+	}
+}
+
+func TestInputCursorMovesAcrossInlineImage(t *testing.T) {
+	model := newTUIModel(40, 8, Options{})
+	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("png")}); err != nil {
+		t.Fatal(err)
+	}
+	after := renderInput(model, model.width, maximumInputHeight(model.height, 0))
+	model.moveLeft()
+	before := renderInput(model, model.width, maximumInputHeight(model.height, 0))
+	if before.cursorRow != after.cursorRow || before.cursorColumn >= after.cursorColumn {
+		t.Fatalf("before = %d,%d after = %d,%d", before.cursorRow, before.cursorColumn, after.cursorRow, after.cursorColumn)
+	}
+}
+
+func TestSubmittedImagesRenderInline(t *testing.T) {
+	content := []agent.ContentPart{
+		{Kind: agent.ContentPartText, Text: "before "},
+		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png"}},
+		{Kind: agent.ContentPartText, Text: " after"},
+	}
+	lines := conversationBlockLines(conversationBlock{kind: blockUser, content: content}, 80)
+	if len(lines) != 1 || lines[0].text != "before [image attached] after" {
+		t.Fatalf("lines = %+v", lines)
+	}
+}
+
 func TestInputPreservesBlankPastedLines(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
 	if err := model.insertInput("abc\n\ndef"); err != nil {
@@ -788,6 +892,21 @@ func TestInputWrapsAndKeepsCursorVisible(t *testing.T) {
 		t.Fatalf("input = %+v", input)
 	}
 	if input.cursorRow != 1 || input.cursorColumn != 4 {
+		t.Fatalf("cursor = %d,%d", input.cursorRow, input.cursorColumn)
+	}
+}
+
+func TestInputWrapsCursorAfterExactWidthText(t *testing.T) {
+	model := newTUIModel(8, 6, Options{})
+	if err := model.insertInput("123456"); err != nil {
+		t.Fatal(err)
+	}
+
+	input := renderInput(model, model.width, 2)
+	if len(input.lines) != 2 || input.lines[0] != "> 123456" || input.lines[1] != "  " {
+		t.Fatalf("input = %+v", input)
+	}
+	if input.cursorRow != 1 || input.cursorColumn != 3 {
 		t.Fatalf("cursor = %d,%d", input.cursorRow, input.cursorColumn)
 	}
 }

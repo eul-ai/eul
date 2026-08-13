@@ -25,8 +25,9 @@ type inlineStyle struct {
 }
 
 type inlineSpan struct {
-	text  string
-	style inlineStyle
+	text   string
+	style  inlineStyle
+	atomic bool
 }
 
 type formattedLine struct {
@@ -64,6 +65,22 @@ func wrapInlineSpans(spans []inlineSpan, width int) []formattedLine {
 	}
 
 	for _, span := range spans {
+		if span.atomic {
+			spanWidth := cellWidth(span.text)
+			if lineWidth > 0 && lineWidth+spanWidth > width {
+				flush()
+				continuation = true
+			}
+			if spanWidth > width {
+				appendInlineSpan(&current, truncateCells(span.text, width, false), span.style)
+				lineWidth = width
+			} else {
+				appendInlineSpan(&current, span.text, span.style)
+				lineWidth += spanWidth
+			}
+			continue
+		}
+
 		for _, character := range span.text {
 			switch character {
 			case '\n':
@@ -289,7 +306,7 @@ func appendInlineSpan(spans *[]inlineSpan, text string, style inlineStyle) {
 	if text == "" {
 		return
 	}
-	if len(*spans) > 0 && (*spans)[len(*spans)-1].style == style {
+	if len(*spans) > 0 && !(*spans)[len(*spans)-1].atomic && (*spans)[len(*spans)-1].style == style {
 		(*spans)[len(*spans)-1].text += text
 		return
 	}

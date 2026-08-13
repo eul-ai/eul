@@ -113,8 +113,10 @@ diffs, errors, context usage, and model activity visible while you work.
 | Ctrl-C | Clear the editor, cancel the active turn, or exit from an empty prompt |
 | Ctrl-D | Exit from an empty prompt |
 | Ctrl-L | Redraw the terminal |
+| Ctrl-V / Command-V | Paste an image from the system clipboard |
 
-Bracketed multiline paste preserves newlines and blank lines.
+Bracketed multiline paste preserves newlines and blank lines. Clipboard images use
+native macOS support; Linux requires `wl-paste` or `xclip`. Windows is unsupported.
 
 ### Commands
 

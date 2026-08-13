@@ -200,7 +200,7 @@ func commandReference(input []rune, cursor int) (int, int, string, bool) {
 }
 
 func (m *tuiModel) refreshCommandPicker(reopen bool) {
-	start, end, query, ok := commandReference(m.input, m.cursor)
+	start, end, query, ok := commandReference(m.inputReferenceRunes(), m.cursor)
 	if !ok {
 		m.clearCommandPicker()
 		return
@@ -287,15 +287,15 @@ func (m *tuiModel) applyCommandPickerSelection() error {
 	}
 
 	completion := picker.matches[picker.selected].text
-	before := string(m.input[:picker.tokenStart])
-	after := string(m.input[picker.tokenEnd:])
-	if len(before)+len(completion)+len(after) > maxInputBytes {
+	removedBytes := len(editorText(m.input[picker.tokenStart:picker.tokenEnd]))
+	if len(m.inputText())-removedBytes+len(completion) > maxInputBytes {
 		return errInputTooLong
 	}
 
 	m.leaveHistory()
-	m.input = []rune(before + completion + after)
-	m.cursor = len([]rune(before + completion))
+	if !m.replaceItemRange(picker.tokenStart, picker.tokenEnd, completion) {
+		return nil
+	}
 	m.dismissCommandPicker()
 	return nil
 }

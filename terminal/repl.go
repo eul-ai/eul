@@ -30,6 +30,7 @@ var (
 
 type Engine interface {
 	Run(context.Context, string, agent.EventSink) (agent.RunResult, error)
+	RunContent(context.Context, []agent.ContentPart, agent.EventSink) (agent.RunResult, error)
 	Compact(context.Context, agent.EventSink) error
 	Steer(string) bool
 	ClearSteering() []string
@@ -106,6 +107,7 @@ type Options struct {
 	PreviousTurnActive bool
 	SaveCheckpoint     func(agent.Checkpoint, Checkpoint, bool) error
 	ListSessions       func(context.Context) ([]SessionSummary, []string, error)
+	ReadClipboardImage func(context.Context) (agent.Image, error)
 }
 
 type fileDescriptor interface {

@@ -42,7 +42,7 @@ func (m *tuiModel) refreshFilePicker(reopen bool) {
 		m.clearFilePicker()
 		return
 	}
-	start, query, ok := fileReferenceToken(m.input, m.cursor)
+	start, query, ok := fileReferenceToken(m.inputReferenceRunes(), m.cursor)
 	if !ok {
 		m.clearFilePicker()
 		return
@@ -150,15 +150,15 @@ func (m *tuiModel) applyFilePickerSelection() error {
 	}
 
 	reference := formatFileReference(picker.matches[picker.selected]) + " "
-	before := string(m.input[:picker.tokenStart])
-	after := string(m.input[picker.tokenEnd:])
-	if len(before)+len(reference)+len(after) > maxInputBytes {
+	removedBytes := len(editorText(m.input[picker.tokenStart:picker.tokenEnd]))
+	if len(m.inputText())-removedBytes+len(reference) > maxInputBytes {
 		return errInputTooLong
 	}
 
 	m.leaveHistory()
-	m.input = []rune(before + reference + after)
-	m.cursor = len([]rune(before + reference))
+	if !m.replaceItemRange(picker.tokenStart, picker.tokenEnd, reference) {
+		return nil
+	}
 	m.clearFilePicker()
 	return nil
 }

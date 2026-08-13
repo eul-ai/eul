@@ -71,9 +71,32 @@ func validateCheckpointData(data checkpointData) error {
 			if input.CallID != "" || input.Tool != "" || input.IsError {
 				return fmt.Errorf("agent: checkpoint input %d has invalid user metadata", index)
 			}
+			if input.Content == nil {
+				break
+			}
+			if input.Text != "" {
+				return fmt.Errorf("agent: checkpoint input %d has both text and content", index)
+			}
+			for partIndex, part := range input.Content.Parts {
+				switch part.Kind {
+				case ContentPartText:
+					if part.Image != nil {
+						return fmt.Errorf("agent: checkpoint input %d content part %d has an image on text", index, partIndex)
+					}
+				case ContentPartImage:
+					if part.Image == nil {
+						return fmt.Errorf("agent: checkpoint input %d content part %d is missing an image", index, partIndex)
+					}
+				default:
+					return fmt.Errorf("agent: checkpoint input %d content part %d has unknown kind %q", index, partIndex, part.Kind)
+				}
+			}
 		case InputToolResult:
 			if input.CallID == "" || input.Tool == "" {
 				return fmt.Errorf("agent: checkpoint input %d has incomplete tool metadata", index)
+			}
+			if input.Content != nil {
+				return fmt.Errorf("agent: checkpoint input %d has content on a tool result", index)
 			}
 		default:
 			return fmt.Errorf("agent: checkpoint input %d has unknown kind %q", index, input.Kind)
@@ -86,8 +109,9 @@ func validateCheckpointData(data checkpointData) error {
 }
 
 func cloneCheckpointData(data checkpointData) checkpointData {
-	data.State = append([]byte(nil), data.State...)
-	data.PendingInputs = append([]Input(nil), data.PendingInputs...)
+	conversation := conversationState{state: data.State, inputs: data.PendingInputs}.clone()
+	data.State = conversation.state
+	data.PendingInputs = conversation.inputs
 	if data.Goal != nil {
 		goal := *data.Goal
 		data.Goal = &goal

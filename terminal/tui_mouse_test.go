@@ -43,7 +43,7 @@ func TestMouseWheelScrollsConversationWithoutNavigatingHistory(t *testing.T) {
 	if model.scrollTop != max(0, bottom-mouseWheelScrollLines) || model.following {
 		t.Fatalf("scrolled conversation: top=%d bottom=%d following=%t", model.scrollTop, bottom, model.following)
 	}
-	if got := string(model.input); got != "draft" || model.historyIndex != -1 {
+	if got := model.inputText(); got != "draft" || model.historyIndex != -1 {
 		t.Fatalf("mouse wheel navigated input history: input=%q historyIndex=%d", got, model.historyIndex)
 	}
 
@@ -85,7 +85,7 @@ func TestMouseDragSelectsAndCopiesRenderedText(t *testing.T) {
 	if model.selection.set {
 		t.Fatalf("selection remains after copy: %+v", model.selection)
 	}
-	if got := string(model.input); got != "draft" || model.cursor != len([]rune("draft")) {
+	if got := model.inputText(); got != "draft" || model.cursor != len([]rune("draft")) {
 		t.Fatalf("selection changed input: input=%q cursor=%d", got, model.cursor)
 	}
 }

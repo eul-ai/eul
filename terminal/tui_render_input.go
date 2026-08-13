@@ -241,6 +241,10 @@ func permissionButtons(allowSelected bool, style lineStyle) styledLine {
 	return styledLine{spans: spans, style: style}
 }
 
+func isEditorWord(item editorItem) bool {
+	return item.kind == editorItemRune && !unicode.IsSpace(item.character)
+}
+
 func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {
 	if width < 1 || maximumHeight < 1 {
 		return renderedInput{}
@@ -248,67 +252,110 @@ func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {
 	if model.permission.active() {
 		return renderPermission(model, width, maximumHeight)
 	}
-	if width <= 2 {
-		return renderedInput{lines: []string{truncateCells("> ", width, false)}, cursorColumn: width}
+	firstPrefix := "> "
+	continuationPrefix := "  "
+	prefixWidth := 2
+	switch width {
+	case 1:
+		firstPrefix = ""
+		continuationPrefix = ""
+		prefixWidth = 0
+	case 2:
+		firstPrefix = ">"
+		continuationPrefix = " "
+		prefixWidth = 1
 	}
 
-	contentWidth := width - 2
-	contents := make([]string, 0, 1)
+	contentWidth := width - prefixWidth
+	contents := make([]string, 0, 2)
 	var line strings.Builder
 	lineWidth := 0
 	cursorRow := 0
-	cursorColumn := 3
+	cursorColumn := prefixWidth + 1
 	cursorFound := false
 	flush := func() {
 		contents = append(contents, line.String())
 		line.Reset()
 		lineWidth = 0
 	}
+	setCursor := func(index int) {
+		if index != model.cursor || cursorFound {
+			return
+		}
+		cursorRow = len(contents)
+		cursorColumn = prefixWidth + lineWidth + 1
+		cursorFound = true
+	}
 
-	for index, character := range model.input {
-		if character == '\n' {
-			if index == model.cursor {
-				cursorRow = len(contents)
-				cursorColumn = min(width, 3+lineWidth)
-				cursorFound = true
-			}
+	for index, item := range model.input {
+		setCursor(index)
+		if isEditorNewline(item) {
 			flush()
 			continue
 		}
 
-		if !unicode.IsSpace(character) && (index == 0 || unicode.IsSpace(model.input[index-1])) {
+		if item.kind != editorItemRune {
+			label := imageAttachmentLabel
+			if item.kind == editorItemPendingImage {
+				label = "[loading image]"
+			}
+			labelWidth := cellWidth(label)
+			if lineWidth > 0 && lineWidth+labelWidth > contentWidth {
+				cursorAtItem := index == model.cursor
+				flush()
+				if cursorAtItem {
+					cursorRow = len(contents)
+					cursorColumn = prefixWidth + 1
+				}
+			}
+			displayWidth := min(labelWidth, contentWidth)
+			line.WriteString(truncateCells(label, displayWidth, false))
+			lineWidth += displayWidth
+			if lineWidth == contentWidth {
+				flush()
+			}
+			continue
+		}
+
+		character := item.character
+		if !unicode.IsSpace(character) && (index == 0 || !isEditorWord(model.input[index-1])) {
 			wordWidth := 0
-			for wordEnd := index; wordEnd < len(model.input) && !unicode.IsSpace(model.input[wordEnd]); wordEnd++ {
-				wordWidth += runeWidth(model.input[wordEnd])
+			for wordEnd := index; wordEnd < len(model.input) && isEditorWord(model.input[wordEnd]); wordEnd++ {
+				wordWidth += runeWidth(model.input[wordEnd].character)
 			}
 			if lineWidth > 0 && lineWidth+wordWidth > contentWidth {
+				cursorAtItem := index == model.cursor
 				flush()
+				if cursorAtItem {
+					cursorRow = len(contents)
+					cursorColumn = prefixWidth + 1
+				}
 			}
 		}
 
 		characterWidth := runeWidth(character)
 		if lineWidth > 0 && lineWidth+characterWidth > contentWidth {
+			cursorAtItem := index == model.cursor
 			flush()
-		}
-		if index == model.cursor {
-			cursorRow = len(contents)
-			cursorColumn = min(width, 3+lineWidth)
-			cursorFound = true
+			if cursorAtItem {
+				cursorRow = len(contents)
+				cursorColumn = prefixWidth + 1
+			}
 		}
 		line.WriteRune(character)
 		lineWidth += characterWidth
 	}
-	if !cursorFound {
-		cursorRow = len(contents)
-		cursorColumn = min(width, 3+lineWidth)
+	if model.cursor == len(model.input) && lineWidth >= contentWidth {
+		flush()
 	}
+	setCursor(len(model.input))
 	flush()
 
 	lines := make([]string, len(contents))
 	for index, content := range contents {
-		prefix := "  "
+		prefix := continuationPrefix
 		if index == 0 {
-			prefix = "> "
+			prefix = firstPrefix
 		}
 		lines[index] = truncateCells(prefix+content, width, false)
 	}

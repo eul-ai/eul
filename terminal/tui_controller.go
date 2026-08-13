@@ -10,6 +10,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/terminal/clipboard"
 )
 
 type tuiEventKind uint8
@@ -23,6 +24,7 @@ const (
 	tuiEventProviderUsage
 	tuiEventSubagentStatus
 	tuiEventPermission
+	tuiEventClipboardImage
 	tuiEventFileSearch
 	tuiEventSpinner
 	tuiEventUsageClock
@@ -36,6 +38,8 @@ type tuiEvent struct {
 	providerUsage  providerUsageMessage
 	subagentStatus agent.SubagentStatus
 	permission     PermissionRequest
+	image          agent.Image
+	requestID      uint64
 	fileSearch     fileSearchResult
 	err            error
 }
@@ -55,6 +59,10 @@ type tuiController struct {
 	setFastMode        func(bool) error
 	saveCheckpoint     func(agent.Checkpoint, Checkpoint, bool) error
 	listSessions       func(context.Context) ([]SessionSummary, []string, error)
+	readClipboardImage func(context.Context) (agent.Image, error)
+	clipboardImages    chan<- tuiEvent
+	clipboardRequests  map[uint64]context.CancelFunc
+	nextClipboardID    uint64
 	turnCancel         context.CancelFunc
 	exitAfterTurn      error
 	deferredSteering   []string
@@ -82,6 +90,8 @@ func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, e
 		return c.handleSubagentStatus(event.subagentStatus)
 	case tuiEventPermission:
 		return c.handlePermission(event.permission)
+	case tuiEventClipboardImage:
+		return c.handleClipboardImage(event.requestID, event.image, event.err)
 	case tuiEventFileSearch:
 		return c.handleFileSearch(event.fileSearch)
 	case tuiEventSpinner:
@@ -97,6 +107,7 @@ func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, e
 }
 
 func (c *tuiController) handleParentCanceled(parentErr error) (bool, error) {
+	c.cancelClipboardRequests()
 	if !c.model.running {
 		if err := c.saveCurrentCheckpoint(false); err != nil {
 			return false, err
@@ -139,6 +150,7 @@ func (c *tuiController) handleResize() (bool, error) {
 }
 
 func (c *tuiController) handleKey(ctx context.Context, key keyEvent) (bool, error) {
+	pendingBefore := c.model.pendingImageRequests()
 	action, err := reduceKeyWithFrame(c.model, key, c.renderer.frame)
 	if err != nil {
 		if !c.model.running {
@@ -148,6 +160,7 @@ func (c *tuiController) handleKey(ctx context.Context, key keyEvent) (bool, erro
 		}
 		return false, err
 	}
+	c.cancelRemovedClipboardRequests(pendingBefore)
 
 	exit, err := c.applyAction(ctx, action)
 	if err != nil {
@@ -293,6 +306,38 @@ func (c *tuiController) handlePermission(request PermissionRequest) (bool, error
 	return false, nil
 }
 
+func (c *tuiController) handleClipboardImage(requestID uint64, image agent.Image, err error) (bool, error) {
+	cancel, active := c.clipboardRequests[requestID]
+	if !active {
+		return false, nil
+	}
+	if c.model.running {
+		cancel()
+		delete(c.clipboardRequests, requestID)
+		c.model.removePendingImage(requestID)
+		return false, nil
+	}
+	cancel()
+	delete(c.clipboardRequests, requestID)
+
+	if err == nil {
+		err = clipboard.ValidateImage(image)
+	}
+	if err != nil {
+		if c.model.removePendingImage(requestID) {
+			setInputError(c.model, err)
+			c.dirty = true
+		}
+		return false, nil
+	}
+	if err := c.model.resolveImage(requestID, image); err != nil {
+		c.model.removePendingImage(requestID)
+		setInputError(c.model, err)
+	}
+	c.dirty = true
+	return false, nil
+}
+
 func (c *tuiController) handleFileSearch(result fileSearchResult) (bool, error) {
 	if !c.model.applyFileSearchResult(result) {
 		return false, nil
@@ -355,11 +400,13 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		}
 		c.model.openResumePicker(summaries)
 	case tuiActionResume:
+		c.cancelClipboardRequests()
 		if err := c.saveCurrentCheckpoint(false); err != nil {
 			return false, err
 		}
 		return false, &ResumeRequest{SessionID: action.text}
 	case tuiActionNewSession:
+		c.cancelClipboardRequests()
 		if err := c.saveCurrentCheckpoint(false); err != nil {
 			return false, err
 		}
@@ -388,6 +435,7 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		}
 		return false, c.saveCurrentCheckpoint(false)
 	case tuiActionExit:
+		c.cancelClipboardRequests()
 		if !c.model.running {
 			if err := c.saveCurrentCheckpoint(false); err != nil {
 				return false, err
@@ -395,7 +443,11 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		}
 		return true, nil
 	case tuiActionSubmit:
-		return false, c.startTurn(ctx, action.prompt)
+		if err := c.startTurn(ctx, action.content); err != nil {
+			return false, err
+		}
+		c.cancelClipboardRequests()
+		c.model.finishSubmission(action.content)
 	case tuiActionSteer:
 		if len(c.deferredSteering) > 0 || !c.engine.Steer(action.prompt) {
 			c.deferredSteering = append(c.deferredSteering, action.prompt)
@@ -424,7 +476,7 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 			c.model.appendBlock(blockInfo, "Goal set: "+action.prompt)
 			return false, nil
 		}
-		return false, c.startTurn(ctx, action.prompt)
+		return false, c.startTurn(ctx, []agent.ContentPart{{Kind: agent.ContentPartText, Text: action.prompt}})
 	case tuiActionClearGoal:
 		_, hadGoal := c.engine.Goal()
 		c.engine.ClearGoal()
@@ -452,6 +504,24 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 			return false, nil
 		}
 		return false, c.saveCurrentCheckpoint(false)
+	case tuiActionAttachImage:
+		if c.readClipboardImage == nil || c.clipboardImages == nil {
+			setInputError(c.model, errors.New("clipboard images are unavailable"))
+			return false, nil
+		}
+		if c.model.imageCount()+len(c.clipboardRequests) >= maxAttachedImages {
+			setInputError(c.model, errTooManyImages)
+			return false, nil
+		}
+		c.nextClipboardID++
+		requestID := c.nextClipboardID
+		readContext, cancel := context.WithCancel(ctx)
+		if c.clipboardRequests == nil {
+			c.clipboardRequests = make(map[uint64]context.CancelFunc)
+		}
+		c.clipboardRequests[requestID] = cancel
+		c.model.reserveImage(requestID)
+		go loadClipboardImage(readContext, requestID, c.readClipboardImage, c.clipboardImages, c.stopped)
 	case tuiActionAllowPermission:
 		c.resolvePermission(true)
 	case tuiActionDenyPermission:
@@ -467,15 +537,33 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 	return false, nil
 }
 
-func (c *tuiController) startTurn(ctx context.Context, prompt string) error {
-	c.model.beginTurn(prompt)
+func loadClipboardImage(
+	ctx context.Context,
+	requestID uint64,
+	read func(context.Context) (agent.Image, error),
+	events chan<- tuiEvent,
+	stopped <-chan struct{},
+) {
+	image, err := read(ctx)
+	event := tuiEvent{kind: tuiEventClipboardImage, requestID: requestID, image: image, err: err}
+	select {
+	case events <- event:
+	case <-ctx.Done():
+	case <-stopped:
+	}
+}
+
+func (c *tuiController) startTurn(ctx context.Context, content []agent.ContentPart) error {
+	c.model.beginTurnOperation()
 	if err := c.saveCurrentCheckpoint(true); err != nil {
+		c.model.rollbackTurnStart()
 		return err
 	}
+	c.model.appendUserContent(content)
 
 	turnContext, cancel := context.WithCancel(ctx)
 	c.turnCancel = cancel
-	go runEngineTurn(turnContext, c.engine, prompt, c.engineMessages, c.stopped)
+	go runEngineTurn(turnContext, c.engine, content, c.engineMessages, c.stopped)
 	return nil
 }
 
@@ -498,7 +586,7 @@ func (c *tuiController) startDeferredTurn(ctx context.Context) error {
 	prompt := c.deferredSteering[0]
 	c.deferredSteering = c.deferredSteering[1:]
 	c.model.removeSteering([]string{prompt})
-	return c.startTurn(ctx, prompt)
+	return c.startTurn(ctx, []agent.ContentPart{{Kind: agent.ContentPartText, Text: prompt}})
 }
 
 func (c *tuiController) restoreQueuedInput() {
@@ -558,6 +646,34 @@ func respondPermission(request PermissionRequest, allowed bool) {
 	select {
 	case request.Response <- allowed:
 	default:
+	}
+}
+
+func (c *tuiController) cancelRemovedClipboardRequests(previous []uint64) {
+	remaining := make(map[uint64]struct{}, len(c.model.pendingImageRequests()))
+	for _, requestID := range c.model.pendingImageRequests() {
+		remaining[requestID] = struct{}{}
+	}
+	for _, requestID := range previous {
+		if _, ok := remaining[requestID]; !ok {
+			c.cancelClipboardRequest(requestID)
+		}
+	}
+}
+
+func (c *tuiController) cancelClipboardRequest(requestID uint64) {
+	cancel, ok := c.clipboardRequests[requestID]
+	if !ok {
+		return
+	}
+	cancel()
+	delete(c.clipboardRequests, requestID)
+}
+
+func (c *tuiController) cancelClipboardRequests() {
+	for requestID, cancel := range c.clipboardRequests {
+		cancel()
+		delete(c.clipboardRequests, requestID)
 	}
 }
 

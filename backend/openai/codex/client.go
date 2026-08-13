@@ -16,12 +16,13 @@ import (
 )
 
 const (
-	defaultBaseURL          = "https://chatgpt.com/backend-api"
-	defaultHTTPTimeout      = 10 * time.Minute
-	defaultMaxRequestBytes  = int64(32 * 1024 * 1024)
-	defaultMaxResponseBytes = int64(16 * 1024 * 1024)
-	defaultMaxErrorBytes    = int64(64 * 1024)
-	defaultMaxStateBytes    = 16 * 1024 * 1024
+	defaultBaseURL             = "https://chatgpt.com/backend-api"
+	defaultHTTPTimeout         = 10 * time.Minute
+	defaultMaxRequestBytes     = int64(32 * 1024 * 1024)
+	defaultMaxResponseBytes    = int64(16 * 1024 * 1024)
+	defaultMaxErrorBytes       = int64(64 * 1024)
+	defaultMaxStateBytes       = 16 * 1024 * 1024
+	defaultStateOutputHeadroom = 1024 * 1024
 )
 
 type Options struct {
@@ -40,15 +41,16 @@ type TokenSource interface {
 }
 
 type Client struct {
-	httpClient       *http.Client
-	endpoint         string
-	usageEndpoint    string
-	tokenSource      TokenSource
-	maxRequestBytes  int64
-	maxResponseBytes int64
-	maxErrorBytes    int64
-	maxStateBytes    int
-	reasoningSummary ReasoningSummary
+	httpClient          *http.Client
+	endpoint            string
+	usageEndpoint       string
+	tokenSource         TokenSource
+	maxRequestBytes     int64
+	maxResponseBytes    int64
+	maxErrorBytes       int64
+	maxStateBytes       int
+	stateOutputHeadroom int
+	reasoningSummary    ReasoningSummary
 }
 
 var (
@@ -92,15 +94,16 @@ func New(source TokenSource, options Options) (*Client, error) {
 	}
 
 	return &Client{
-		httpClient:       httpClient,
-		endpoint:         endpoint,
-		usageEndpoint:    usageEndpoint,
-		tokenSource:      source,
-		maxRequestBytes:  defaultMaxRequestBytes,
-		maxResponseBytes: defaultMaxResponseBytes,
-		maxErrorBytes:    defaultMaxErrorBytes,
-		maxStateBytes:    defaultMaxStateBytes,
-		reasoningSummary: reasoningSummary,
+		httpClient:          httpClient,
+		endpoint:            endpoint,
+		usageEndpoint:       usageEndpoint,
+		tokenSource:         source,
+		maxRequestBytes:     defaultMaxRequestBytes,
+		maxResponseBytes:    defaultMaxResponseBytes,
+		maxErrorBytes:       defaultMaxErrorBytes,
+		maxStateBytes:       defaultMaxStateBytes,
+		stateOutputHeadroom: defaultStateOutputHeadroom,
+		reasoningSummary:    reasoningSummary,
 	}, nil
 }
 
@@ -110,6 +113,18 @@ func (*Client) ModelMetadata(model string) agent.ModelMetadata {
 		ThinkingLevels: supportedThinkingLevels(model),
 		FastMode:       models[model].fastMode,
 	}
+}
+
+func (c *Client) stateOutputBudget() int {
+	budget := c.stateOutputHeadroom
+	if budget <= 0 {
+		budget = min(defaultStateOutputHeadroom, c.maxStateBytes/4)
+	}
+	return min(budget, max(0, c.maxStateBytes-continuationStateEnvelopeBytes))
+}
+
+func (c *Client) generationStateBytes() int {
+	return max(0, c.maxStateBytes-c.stateOutputBudget())
 }
 
 func (c *Client) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {
@@ -122,7 +137,7 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, observer a
 		return agent.Response{}, c.errorf("%v", err)
 	}
 
-	wireRequest, newInputs, err := buildCreateRequest(request, c.maxStateBytes)
+	wireRequest, newInputs, err := buildCreateRequestWithLimit(request, c.maxStateBytes, c.generationStateBytes())
 	if err != nil {
 		return agent.Response{}, c.errorf("build request: %v", err)
 	}
@@ -175,6 +190,17 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, observer a
 
 	historyLength := len(wireRequest.Input) - len(newInputs)
 	history := wireRequest.Input[:historyLength]
+	outputStateBytes, err := encodedStateSize(wireResponse.Output)
+	if err != nil {
+		return agent.Response{}, c.errorf("%v", err)
+	}
+	inputStateBytes, err := encodedStateSize(history, newInputs)
+	if err != nil {
+		return agent.Response{}, c.errorf("%v", err)
+	}
+	if outputStateBytes-continuationStateEnvelopeBytes > c.maxStateBytes-inputStateBytes {
+		return agent.Response{}, c.errorf("response output cannot fit continuation state")
+	}
 	state, err := encodeState(history, newInputs, wireResponse.Output, c.maxStateBytes)
 	if err != nil {
 		return agent.Response{}, c.errorf("%v", err)
@@ -252,7 +278,7 @@ func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.Comp
 		return agent.CompactResponse{}, c.errorf("%v", err)
 	}
 	input := wireRequest.Input[:len(wireRequest.Input)-1]
-	state, err := encodeState(nil, nil, compactedStateItems(input, wireResponse.Output), c.maxStateBytes)
+	state, err := encodeState(nil, nil, compactedStateItems(input, wireResponse.Output), c.generationStateBytes())
 	if err != nil {
 		return agent.CompactResponse{}, c.errorf("%v", err)
 	}

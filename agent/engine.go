@@ -78,14 +78,18 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 }
 
 func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunResult, error) {
-	return e.run(ctx, userText, sink, FinalizationPolicy{})
+	return e.run(ctx, []ContentPart{{Kind: ContentPartText, Text: userText}}, sink, FinalizationPolicy{})
+}
+
+func (e *Engine) RunContent(ctx context.Context, content []ContentPart, sink EventSink) (RunResult, error) {
+	return e.run(ctx, content, sink, FinalizationPolicy{})
 }
 
 func (e *Engine) RunWithFinalization(ctx context.Context, userText string, sink EventSink, policy FinalizationPolicy) (RunResult, error) {
-	return e.run(ctx, userText, sink, policy)
+	return e.run(ctx, []ContentPart{{Kind: ContentPartText, Text: userText}}, sink, policy)
 }
 
-func (e *Engine) run(ctx context.Context, userText string, sink EventSink, policy FinalizationPolicy) (RunResult, error) {
+func (e *Engine) run(ctx context.Context, content []ContentPart, sink EventSink, policy FinalizationPolicy) (RunResult, error) {
 	if !e.mu.TryLock() {
 		return RunResult{}, errEngineBusy
 	}
@@ -95,7 +99,7 @@ func (e *Engine) run(ctx context.Context, userText string, sink EventSink, polic
 		return RunResult{}, err
 	}
 
-	userText, err := expandSkillCommand(userText, e.skills)
+	content, err := e.expandSkillContent(content)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -104,7 +108,7 @@ func (e *Engine) run(ctx context.Context, userText string, sink EventSink, polic
 	defer e.endContinuations()
 
 	current := e.conversation.clone()
-	current.inputs = append(current.inputs, Input{Kind: InputUser, Text: userText})
+	current.inputs = append(current.inputs, userInput(content))
 	var result RunResult
 	started := time.Now()
 	normalGenerations := 0
@@ -346,6 +350,32 @@ func bestFinalizationText(values ...string) string {
 	return ""
 }
 
+func (e *Engine) expandSkillContent(content []ContentPart) ([]ContentPart, error) {
+	content = cloneContentParts(content)
+	firstText := -1
+	for index, part := range content {
+		switch {
+		case part.Kind == ContentPartImage:
+			return content, nil
+		case part.Kind == ContentPartText && strings.TrimSpace(part.Text) != "":
+			firstText = index
+		}
+		if firstText >= 0 {
+			break
+		}
+	}
+	if firstText < 0 || !strings.HasPrefix(strings.TrimSpace(content[firstText].Text), "/skill:") {
+		return content, nil
+	}
+
+	expanded, err := expandSkillCommand(content[firstText].Text, e.skills)
+	if err != nil {
+		return nil, err
+	}
+	content[firstText].Text = expanded
+	return content, nil
+}
+
 func (e *Engine) request(current conversationState) Request {
 	thinkingLevel, fastMode := e.currentSettings()
 	return Request{
@@ -353,7 +383,7 @@ func (e *Engine) request(current conversationState) Request {
 		ThinkingLevel: thinkingLevel,
 		FastMode:      fastMode,
 		Instructions:  e.instructions,
-		Inputs:        current.inputs,
+		Inputs:        cloneInputs(current.inputs),
 		Tools:         e.tools.Definitions(),
 		State:         current.state,
 	}
@@ -370,7 +400,10 @@ func (e *Engine) generateResponse(ctx context.Context, request Request, sink Eve
 	retryPolicy, canRetry := e.provider.(GenerationRetryPolicy)
 	for failedAttempts := 1; ; failedAttempts++ {
 		toolEvents := newToolEventTracker(e.tools, sink)
-		response, err := e.provider.Generate(ctx, request, StreamObserver{
+		providerRequest := request
+		providerRequest.Inputs = cloneInputs(request.Inputs)
+		providerRequest.State = append([]byte(nil), request.State...)
+		response, err := e.provider.Generate(ctx, providerRequest, StreamObserver{
 			Text: func(text string) error {
 				return toolEvents.emitProvider(Event{Kind: EventAssistantText, Text: text})
 			},
@@ -455,7 +488,10 @@ func (e *Engine) compactRequest(ctx context.Context, sink EventSink, compactor C
 		return request, current, Usage{}, err
 	}
 
-	compacted, err := compactor.Compact(ctx, request)
+	providerRequest := request
+	providerRequest.Inputs = cloneInputs(request.Inputs)
+	providerRequest.State = append([]byte(nil), request.State...)
+	compacted, err := compactor.Compact(ctx, providerRequest)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return request, current, Usage{}, ctxErr
@@ -559,7 +595,7 @@ type conversationState struct {
 
 func (current conversationState) clone() conversationState {
 	current.state = append([]byte(nil), current.state...)
-	current.inputs = append([]Input(nil), current.inputs...)
+	current.inputs = cloneInputs(current.inputs)
 	return current
 }
 
@@ -667,7 +703,7 @@ func (e *Engine) endContinuations() {
 }
 
 func deliverContinuation(current *conversationState, next pendingContinuation, sink EventSink) error {
-	current.inputs = append(current.inputs, Input{Kind: InputUser, Text: next.text})
+	current.inputs = append(current.inputs, userInput([]ContentPart{{Kind: ContentPartText, Text: next.text}}))
 	eventKind := EventSteering
 	if next.kind == continuationGoal {
 		eventKind = EventGoalContinuation
@@ -677,6 +713,17 @@ func deliverContinuation(current *conversationState, next pendingContinuation, s
 		return err
 	}
 	return nil
+}
+
+func userInput(content []ContentPart) Input {
+	var text strings.Builder
+	for _, part := range content {
+		if part.Kind != ContentPartText {
+			return Input{Kind: InputUser, Content: &Content{Parts: cloneContentParts(content)}}
+		}
+		text.WriteString(part.Text)
+	}
+	return Input{Kind: InputUser, Text: text.String()}
 }
 
 func toolResultInput(result ToolResult) Input {

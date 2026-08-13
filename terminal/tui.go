@@ -14,6 +14,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/terminal/clipboard"
 )
 
 const (
@@ -164,6 +165,7 @@ func runTUIWithKeys(
 	defer fileSearch.close()
 	fileSearchMessages := make(chan fileSearchResult, 64)
 	engineMessages := make(chan engineMessage, 256)
+	clipboardImages := make(chan tuiEvent, maxAttachedImages)
 
 	usageContext, cancelUsage := context.WithCancel(ctx)
 	var usageDone <-chan struct{}
@@ -206,6 +208,10 @@ func runTUIWithKeys(
 		usageClock = usageTicker.C
 	}
 
+	clipboardImageReader := options.ReadClipboardImage
+	if clipboardImageReader == nil {
+		clipboardImageReader = clipboard.ReadImage
+	}
 	controller := &tuiController{
 		model:              model,
 		renderer:           &tuiRenderer{},
@@ -221,8 +227,12 @@ func runTUIWithKeys(
 		setFastMode:        options.SetFastMode,
 		saveCheckpoint:     options.SaveCheckpoint,
 		listSessions:       options.ListSessions,
+		readClipboardImage: clipboardImageReader,
+		clipboardImages:    clipboardImages,
+		clipboardRequests:  make(map[uint64]context.CancelFunc),
 		dirty:              true,
 	}
+	defer controller.cancelClipboardRequests()
 	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventRender}); err != nil {
 		return err
 	}
@@ -263,6 +273,7 @@ func runTUIWithKeys(
 				continue
 			}
 			event = tuiEvent{kind: tuiEventPermission, permission: request}
+		case event = <-clipboardImages:
 		case result := <-fileSearchMessages:
 			event = tuiEvent{kind: tuiEventFileSearch, fileSearch: result}
 		case <-spinnerTicker.C:
@@ -355,9 +366,9 @@ func renderIfDirty(renderer *tuiRenderer, model *tuiModel, output io.Writer, dir
 	return nil
 }
 
-func runEngineTurn(ctx context.Context, engine Engine, prompt string, messages chan<- engineMessage, stopped <-chan struct{}) {
+func runEngineTurn(ctx context.Context, engine Engine, content []agent.ContentPart, messages chan<- engineMessage, stopped <-chan struct{}) {
 	runEngineOperation(ctx, messages, stopped, func(sink agent.EventSink) error {
-		_, err := engine.Run(ctx, prompt, sink)
+		_, err := engine.RunContent(ctx, content, sink)
 		return err
 	})
 }
