@@ -2,8 +2,9 @@ package codex
 
 import (
 	"context"
+	"io"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/eul-ai/eul/backend"
@@ -105,18 +106,20 @@ func TestDriverModelDefaultsAreSupported(t *testing.T) {
 
 func TestRuntimeLoadsAccountUsage(t *testing.T) {
 	manager := &fakeManager{credential: oauth.AccessCredential{AccessToken: "access", AccountID: "account"}}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	httpClient := &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
 		if request.URL.Path != "/api/codex/usage" {
 			t.Errorf("usage path = %q", request.URL.Path)
 		}
-		_, _ = writer.Write([]byte(`{"rate_limit":{"primary_window":{"used_percent":25,"limit_window_seconds":3600}}}`))
-	}))
-	defer server.Close()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"rate_limit":{"primary_window":{"used_percent":25,"limit_window_seconds":3600}}}`)),
+		}, nil
+	})}
 
 	configured := &runtime{
 		manager: manager,
 		newClient: func(source client.TokenSource) (*client.Client, error) {
-			return client.New(source, client.Options{BaseURL: server.URL})
+			return client.New(source, client.Options{HTTPClient: httpClient, BaseURL: "https://example.test"})
 		},
 	}
 	usage, err := configured.Usage(context.Background())
@@ -126,6 +129,12 @@ func TestRuntimeLoadsAccountUsage(t *testing.T) {
 	if len(usage.Windows) != 1 || usage.Windows[0].UsedPercent != 25 {
 		t.Fatalf("usage = %+v", usage)
 	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
 }
 
 func TestRuntimeBridgesLoginAndLogout(t *testing.T) {
