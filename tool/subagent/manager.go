@@ -430,6 +430,7 @@ func (m *Manager) ActiveContext() string {
 	for _, job := range jobs {
 		fmt.Fprintf(&output, "- %s: %s (%s)\n", job.id, strings.TrimSpace(job.description), job.state)
 	}
+	output.WriteString("Do not finish while required delegated work is still active. Continue independent work, or call subagent_wait when the next step depends on these results.")
 	return strings.TrimSpace(output.String())
 }
 

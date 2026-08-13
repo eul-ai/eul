@@ -211,19 +211,24 @@ func (wait *waitTool) Execute(ctx context.Context, arguments json.RawMessage, up
 		return toolError(waitToolName, err), nil
 	}
 
-	var message string
-	switch outcome {
-	case waitCompletion:
-		message = "A subagent completion is available."
-	case waitSteering:
-		message = "Wait interrupted by steering."
-	case waitTimeout:
-		message = "No subagent completion is available yet."
-	}
+	message := waitResultMessage(outcome)
 	if updates != nil {
 		updates.SetFinal(agent.ToolPresentation{Title: waitToolName, Markdown: true, Lines: []string{message}})
 	}
 	return toolSuccess(message), nil
+}
+
+func waitResultMessage(outcome waitOutcome) string {
+	switch outcome {
+	case waitCompletion:
+		return "A subagent completion is available."
+	case waitSteering:
+		return "Wait interrupted by steering. The subagents remain active. Address the steering input, then continue the original task; if it still requires their results and no independent work remains, call subagent_wait again instead of finishing."
+	case waitTimeout:
+		return "No subagent completion is available yet."
+	default:
+		return ""
+	}
 }
 
 func (*cancelTool) Definition() agent.ToolDefinition {

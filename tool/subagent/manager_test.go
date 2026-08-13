@@ -167,6 +167,13 @@ func TestWaitToolIsSynchronizationOnly(t *testing.T) {
 	}
 }
 
+func TestWaitToolSteeringResultPreservesOriginalTask(t *testing.T) {
+	message := waitResultMessage(waitSteering)
+	if !strings.Contains(message, "continue the original task") || !strings.Contains(message, "call subagent_wait again") {
+		t.Fatalf("steering result = %q", message)
+	}
+}
+
 func TestWaitToolTimesOutWithoutCancelingChild(t *testing.T) {
 	release := make(chan struct{})
 	childDone := make(chan struct{})
