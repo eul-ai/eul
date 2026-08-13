@@ -44,7 +44,11 @@ func Run(ctx context.Context, options Options, dependencies Dependencies) error 
 	if err != nil {
 		return session.finish(err)
 	}
-	return errors.Join(runSessions(ctx, runner, session, config, driver, runtime, store, home), runner.Close())
+	runErr := runSessions(ctx, runner, session, config, driver, runtime, store, home)
+	if closeErr := runner.Close(); closeErr != nil {
+		return closeErr
+	}
+	return runErr
 }
 
 func resolveInitialSession(
@@ -119,8 +123,15 @@ func runSessions(
 	home string,
 ) error {
 	for {
-		runErr := session.run(ctx, runner)
-		if onlyNewSessionRequest(runErr) {
+		outcome, runErr := session.run(ctx, runner)
+		if runErr != nil {
+			return runErr
+		}
+
+		switch outcome.Action {
+		case terminal.RunExit:
+			return nil
+		case terminal.RunNewSession:
 			var err error
 			config, err = resolveConfig(Options{
 				Model:            config.models.main,
@@ -145,70 +156,26 @@ func runSessions(
 				return err
 			}
 			continue
-		}
-
-		request, resume := onlyResumeRequest(runErr)
-		if !resume {
-			return runErr
-		}
-
-		var handle *sessionHandle
-		var err error
-		config, handle, driver, err = resolveStoredSession(ctx, store, runtime, config.cwd, request.SessionID)
-		if err != nil {
-			return err
-		}
-		backendRuntime, err := openBackendRuntime(ctx, driver, home, runtime.interrupts)
-		if err != nil {
-			_ = handle.Close()
-			return err
-		}
-		session, err = newStoredAgentSession(config, runtime, backendRuntime, store, handle)
-		if err != nil {
-			return err
+		case terminal.RunResumeSession:
+			var handle *sessionHandle
+			var err error
+			config, handle, driver, err = resolveStoredSession(ctx, store, runtime, config.cwd, outcome.SessionID)
+			if err != nil {
+				return err
+			}
+			backendRuntime, err := openBackendRuntime(ctx, driver, home, runtime.interrupts)
+			if err != nil {
+				_ = handle.Close()
+				return err
+			}
+			session, err = newStoredAgentSession(config, runtime, backendRuntime, store, handle)
+			if err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("session: unknown terminal run action %d", outcome.Action)
 		}
 	}
-}
-
-func onlyNewSessionRequest(err error) bool {
-	joined, ok := err.(interface{ Unwrap() []error })
-	if !ok {
-		_, ok := err.(*terminal.NewSessionRequest)
-		return ok
-	}
-
-	causes := joined.Unwrap()
-	if len(causes) == 0 {
-		return false
-	}
-	for _, cause := range causes {
-		if !onlyNewSessionRequest(cause) {
-			return false
-		}
-	}
-	return true
-}
-
-func onlyResumeRequest(err error) (*terminal.ResumeRequest, bool) {
-	joined, ok := err.(interface{ Unwrap() []error })
-	if !ok {
-		request, ok := err.(*terminal.ResumeRequest)
-		return request, ok
-	}
-
-	causes := joined.Unwrap()
-	if len(causes) == 0 {
-		return nil, false
-	}
-	var selected *terminal.ResumeRequest
-	for _, cause := range causes {
-		request, ok := onlyResumeRequest(cause)
-		if !ok || selected != nil && selected.SessionID != request.SessionID {
-			return nil, false
-		}
-		selected = request
-	}
-	return selected, selected != nil
 }
 
 func openBackendRuntime(ctx context.Context, driver backend.Driver, home string, interrupts <-chan os.Signal) (backend.Runtime, error) {

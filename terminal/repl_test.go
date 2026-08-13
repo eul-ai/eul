@@ -116,7 +116,7 @@ func (e *fakeEngine) compactionCount() int {
 
 func TestRunRequiresTerminal(t *testing.T) {
 	var output bytes.Buffer
-	err := Run(context.Background(), &fakeEngine{}, Options{
+	_, err := Run(context.Background(), &fakeEngine{}, Options{
 		Input: strings.NewReader("/exit\n"), Output: &output,
 	})
 	if !errors.Is(err, ErrNotTerminal) {
@@ -126,7 +126,7 @@ func TestRunRequiresTerminal(t *testing.T) {
 
 func TestRunValidatesCheckpointCapabilityBeforeTerminalSetup(t *testing.T) {
 	var output bytes.Buffer
-	err := Run(context.Background(), &fakeEngine{}, Options{
+	_, err := Run(context.Background(), &fakeEngine{}, Options{
 		Input:          strings.NewReader(""),
 		Output:         &output,
 		SaveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error { return nil },

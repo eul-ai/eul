@@ -98,6 +98,8 @@ func validateCheckpointData(data checkpointData) error {
 			if input.Content != nil {
 				return fmt.Errorf("agent: checkpoint input %d has content on a tool result", index)
 			}
+		case InputInbox:
+			return fmt.Errorf("agent: checkpoint input %d contains transient inbox data", index)
 		default:
 			return fmt.Errorf("agent: checkpoint input %d has unknown kind %q", index, input.Kind)
 		}

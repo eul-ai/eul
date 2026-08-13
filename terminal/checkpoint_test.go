@@ -3,7 +3,6 @@ package terminal
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
 	"reflect"
@@ -19,7 +18,7 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	model.beginTurn("  First line of the prompt  \nsecond line")
 	model.appendBlock(blockAssistant, "answer")
 	model.running = false
-	model.subagentStatus = agent.SubagentStatus{Running: 1, Completed: 1}
+	model.subagentStatus = SubagentStatus{Running: 1, Awaiting: []SubagentCompletionStatus{{State: SubagentComplete}}}
 	model.history = []string{"older prompt"}
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)
@@ -41,7 +40,7 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	}
 
 	restored := newTUIModel(100, 30, Options{InitialCheckpoint: &decoded})
-	if restored.running || restored.streamOpen || restored.activity.kind != activityReady || restored.subagentStatus.Running != 0 || len(restored.subagentStatus.Jobs) != 0 {
+	if restored.running || restored.streamOpen || restored.activity.kind != activityReady || restored.subagentStatus.Running != 0 || len(restored.subagentStatus.Active) != 0 {
 		t.Fatalf("runtime state was restored: %+v", restored)
 	}
 	if len(restored.blocks) != 2 || restored.blocks[0].kind != blockUser || restored.blocks[1].text != "answer" {
@@ -292,9 +291,8 @@ func TestResumeCommandListsSessionsWithoutStoreDependency(t *testing.T) {
 	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo || !strings.Contains(model.blocks[0].text, "Skipped session") {
 		t.Fatalf("warning blocks = %+v", model.blocks)
 	}
-	_, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}})
-	var request *ResumeRequest
-	if !errors.As(err, &request) || request.SessionID != "session" {
-		t.Fatalf("resume error = %v", err)
+	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}})
+	if err != nil || !exit || controller.outcome != (RunOutcome{Action: RunResumeSession, SessionID: "session"}) {
+		t.Fatalf("resume exit=%v outcome=%+v error=%v", exit, controller.outcome, err)
 	}
 }

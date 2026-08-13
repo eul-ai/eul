@@ -142,7 +142,7 @@ type statusModel struct {
 	contextWindow              int64
 	contextTokens              int64
 	providerUsage              agent.ProviderUsage
-	subagentStatus             agent.SubagentStatus
+	subagentStatus             SubagentStatus
 	activity                   activity
 	spinner                    int
 }

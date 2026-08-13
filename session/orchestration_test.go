@@ -3,7 +3,6 @@ package session
 import (
 	"bytes"
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/terminal"
 )
 
 func TestBuildToolsWithoutLSPConfig(t *testing.T) {
@@ -133,6 +131,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	var mu sync.Mutex
 	factoryCalls := 0
 	var childRequests []agent.Request
+	releaseChildren := make(chan struct{})
 	mainCalls := 0
 	driver := testBackendDriver(t, runtime)
 	driver.runtime.newProvider = func() (agent.Provider, error) {
@@ -153,7 +152,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 					for _, definition := range request.Tools {
 						definitions[definition.Name] = definition
 					}
-					if !strings.Contains(definitions["subagent"].Description, "worthwhile parallel investigation") || definitions["subagent_wait"].Name == "" || definitions["subagent_cancel"].Name == "" {
+					if !strings.Contains(definitions["subagent"].Description, "delivered automatically") || definitions["subagent_wait"].Name == "" || definitions["subagent_cancel"].Name == "" {
 						t.Fatalf("subagent definitions = %+v", definitions)
 					}
 					if strings.Contains(request.Instructions, "explicitly asks for subagents") {
@@ -181,21 +180,23 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "read" || !strings.Contains(request.Inputs[0].Text, projectInstructions) {
 						t.Fatalf("independent continuation inputs = %+v", request.Inputs)
 					}
+					close(releaseChildren)
 					return agent.Response{ToolCalls: []agent.ToolCall{{
 						ID:        "wait",
 						Name:      "subagent_wait",
-						Arguments: []byte(`{"ids":["subagent-1","subagent-2"]}`),
+						Arguments: []byte(`{}`),
 					}}}, nil
 				case 4:
-					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "subagent_wait" {
+					if len(request.Inputs) != 2 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "subagent_wait" || !strings.Contains(request.Inputs[0].Text, "completion is available") || request.Inputs[1].Kind != agent.InputInbox || !strings.Contains(request.Inputs[1].Text, "finding for review") {
 						t.Fatalf("wait continuation inputs = %+v", request.Inputs)
-					}
-					output := request.Inputs[0].Text
-					if !strings.Contains(output, "Subagent subagent-1 (model: balanced, thinking: low):\nfinding for review alpha") || !strings.Contains(output, "Subagent subagent-2 (model: balanced, thinking: low):\nfinding for review beta") {
-						t.Fatalf("wait output = %q", output)
 					}
 					if err := sink("combined answer"); err != nil {
 						return agent.Response{}, err
+					}
+					return agent.Response{Text: "combined answer"}, nil
+				case 5:
+					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputInbox || !strings.Contains(request.Inputs[0].Text, "finding for review") {
+						t.Fatalf("late completion inputs = %+v", request.Inputs)
 					}
 					return agent.Response{Text: "combined answer"}, nil
 				default:
@@ -212,6 +213,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 			if len(request.Inputs) != 1 {
 				t.Fatalf("child inputs = %+v", request.Inputs)
 			}
+			<-releaseChildren
 			return agent.Response{Text: "finding for " + request.Inputs[0].Text}, nil
 		}), nil
 	}
@@ -240,7 +242,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	if driver.runtime.closeCalls != 1 {
 		t.Fatalf("backend close calls = %d, want 1", driver.runtime.closeCalls)
 	}
-	if result.Text != "combined answer" || mainCalls != 4 {
+	if result.Text != "combined answer" || mainCalls < 4 || mainCalls > 5 {
 		t.Fatalf("result = %+v, main calls = %d", result, mainCalls)
 	}
 
@@ -267,24 +269,5 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	slices.Sort(tasks)
 	if !slices.Equal(tasks, []string{"review alpha", "review beta"}) {
 		t.Fatalf("child tasks = %v", tasks)
-	}
-}
-
-func TestOnlySessionRequestsRejectCleanupFailures(t *testing.T) {
-	newRequest := &terminal.NewSessionRequest{}
-	if !onlyNewSessionRequest(errors.Join(newRequest)) {
-		t.Fatal("new session request was not recognized")
-	}
-	if onlyNewSessionRequest(errors.Join(newRequest, errors.New("cleanup failed"))) {
-		t.Fatal("new session request hid cleanup failure")
-	}
-
-	request := &terminal.ResumeRequest{SessionID: "session"}
-	got, ok := onlyResumeRequest(errors.Join(request))
-	if !ok || got.SessionID != "session" {
-		t.Fatalf("request=%+v ok=%v", got, ok)
-	}
-	if _, ok := onlyResumeRequest(errors.Join(request, errors.New("cleanup failed"))); ok {
-		t.Fatal("resume request hid cleanup failure")
 	}
 }

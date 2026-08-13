@@ -60,18 +60,17 @@ type SessionSummary struct {
 	Active      bool
 }
 
-type ResumeRequest struct {
+type RunAction uint8
+
+const (
+	RunExit RunAction = iota
+	RunNewSession
+	RunResumeSession
+)
+
+type RunOutcome struct {
+	Action    RunAction
 	SessionID string
-}
-
-func (request *ResumeRequest) Error() string {
-	return "terminal: resume session " + request.SessionID
-}
-
-type NewSessionRequest struct{}
-
-func (*NewSessionRequest) Error() string {
-	return "terminal: start new session"
 }
 
 type PermissionRequest struct {
@@ -100,7 +99,7 @@ type Options struct {
 	SetThinkingLevel   func(agent.ThinkingLevel) error
 	SetFastMode        func(bool) error
 	LoadUsage          func(context.Context) (agent.ProviderUsage, error)
-	SubagentUpdates    <-chan agent.SubagentStatus
+	SubagentUpdates    <-chan SubagentStatus
 	PermissionRequests <-chan PermissionRequest
 	InitialCheckpoint  *Checkpoint
 	SessionID          string

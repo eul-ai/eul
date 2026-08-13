@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/eul-ai/eul/agent"
 )
 
 func renderSubagents(model *tuiModel, height int) []styledLine {
@@ -13,9 +11,17 @@ func renderSubagents(model *tuiModel, height int) []styledLine {
 }
 
 func renderSubagentsAt(model *tuiModel, height int, now time.Time) []styledLine {
-	jobs := model.subagentStatus.Jobs
-	lines := make([]styledLine, 0, min(height, len(jobs)))
-	for _, job := range jobs[:min(height, len(jobs))] {
+	lines := make([]styledLine, 0, min(height, len(model.subagentStatus.Active)+len(model.subagentStatus.Awaiting)))
+	lines = appendSubagentSection(lines, "active", model.subagentStatus.Active, height, now)
+	awaiting := model.subagentStatus.jobs()[len(model.subagentStatus.Active):]
+	return appendSubagentSection(lines, "awaiting delivery", awaiting, height, now)
+}
+
+func appendSubagentSection(lines []styledLine, category string, jobs []SubagentJobStatus, height int, now time.Time) []styledLine {
+	for _, job := range jobs {
+		if len(lines) >= height {
+			break
+		}
 		state := string(job.State)
 		details := make([]string, 0, 4)
 		if job.ModelProfile != "" {
@@ -36,6 +42,7 @@ func renderSubagentsAt(model *tuiModel, height int, now time.Time) []styledLine 
 		}
 
 		spans := []inlineSpan{
+			{text: category + " · ", style: inlineStyle{foreground: inlineForegroundDefault}},
 			{text: job.ID, style: inlineStyle{bold: true}},
 			{text: "  "},
 			{text: state, style: inlineStyle{foreground: subagentStateForeground(job.State)}},
@@ -53,15 +60,15 @@ func renderSubagentsAt(model *tuiModel, height int, now time.Time) []styledLine 
 	return lines
 }
 
-func subagentStateForeground(state agent.SubagentState) inlineForeground {
+func subagentStateForeground(state SubagentState) inlineForeground {
 	switch state {
-	case agent.SubagentPending, agent.SubagentRunning:
+	case SubagentRunning:
 		return inlineForegroundAccent
-	case agent.SubagentFinalizing, agent.SubagentCanceling:
+	case SubagentFinalizing, SubagentCanceling, SubagentCanceled:
 		return inlineForegroundOrange
-	case agent.SubagentComplete:
+	case SubagentComplete:
 		return inlineForegroundSuccess
-	case agent.SubagentFailed:
+	case SubagentFailed, SubagentInterrupted:
 		return inlineForegroundError
 	default:
 		return inlineForegroundDefault

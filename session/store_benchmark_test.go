@@ -10,6 +10,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/terminal"
+	"github.com/eul-ai/eul/tool/subagent"
 )
 
 func BenchmarkSessionStoreSave(b *testing.B) {
@@ -25,6 +26,7 @@ func BenchmarkSessionStoreSave(b *testing.B) {
 				modelSelection{main: "main-model", fast: "fast-model", balanced: "balanced-model"},
 				agent.ThinkingHigh,
 				agentCheckpoint,
+				subagent.EmptyCheckpoint(),
 				checkpoint,
 				false,
 			)
@@ -32,7 +34,7 @@ func BenchmarkSessionStoreSave(b *testing.B) {
 				b.Fatal(err)
 			}
 			b.Cleanup(func() { _ = handle.Close() })
-			if err := handle.Save(agentCheckpoint, checkpoint, false, agent.ThinkingHigh, false); err != nil {
+			if err := handle.Save(agentCheckpoint, subagent.EmptyCheckpoint(), checkpoint, false, agent.ThinkingHigh, false); err != nil {
 				b.Fatal(err)
 			}
 			info, err := os.Stat(handle.path)
@@ -44,7 +46,7 @@ func BenchmarkSessionStoreSave(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				if err := handle.Save(agentCheckpoint, checkpoint, false, agent.ThinkingHigh, false); err != nil {
+				if err := handle.Save(agentCheckpoint, subagent.EmptyCheckpoint(), checkpoint, false, agent.ThinkingHigh, false); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -65,13 +67,14 @@ func BenchmarkSessionStoreRead(b *testing.B) {
 				modelSelection{main: "main-model", fast: "fast-model", balanced: "balanced-model"},
 				agent.ThinkingHigh,
 				agentCheckpoint,
+				subagent.EmptyCheckpoint(),
 				checkpoint,
 				false,
 			)
 			if err != nil {
 				b.Fatal(err)
 			}
-			if err := handle.Save(agentCheckpoint, checkpoint, false, agent.ThinkingHigh, false); err != nil {
+			if err := handle.Save(agentCheckpoint, subagent.EmptyCheckpoint(), checkpoint, false, agent.ThinkingHigh, false); err != nil {
 				b.Fatal(err)
 			}
 			path := handle.path

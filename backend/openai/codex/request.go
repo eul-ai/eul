@@ -90,7 +90,10 @@ func buildCreateRequestUnchecked(request agent.Request, maxStateBytes int) (crea
 		return createResponseRequest{}, nil, err
 	}
 
-	newItems := encodeInputs(request.Inputs)
+	newItems, err := encodeInputs(request.Inputs)
+	if err != nil {
+		return createResponseRequest{}, nil, err
+	}
 	input := make([]json.RawMessage, 0, len(history)+len(newItems))
 	input = append(input, history...)
 	input = append(input, newItems...)
@@ -154,20 +157,36 @@ func compactedStateItems(input, output []json.RawMessage) []json.RawMessage {
 	return append(items, output...)
 }
 
-func encodeInputs(inputs []agent.Input) []json.RawMessage {
+func encodeInputs(inputs []agent.Input) ([]json.RawMessage, error) {
 	items := make([]json.RawMessage, len(inputs))
-	for i, input := range inputs {
-		var value any = inputMessage{Role: "user", Content: encodeUserContent(input)}
-		if input.Kind == agent.InputToolResult {
+	for index, input := range inputs {
+		var value any
+		switch input.Kind {
+		case agent.InputUser:
+			if input.CallID != "" || input.Tool != "" || input.IsError || input.Content != nil && input.Text != "" {
+				return nil, fmt.Errorf("input %d has invalid user metadata", index)
+			}
+			value = inputMessage{Role: "user", Content: encodeUserContent(input)}
+		case agent.InputInbox:
+			if input.Text == "" || input.Content != nil || input.CallID != "" || input.Tool != "" || input.IsError {
+				return nil, fmt.Errorf("input %d has invalid inbox metadata", index)
+			}
+			value = inputMessage{Role: "user", Content: input.Text}
+		case agent.InputToolResult:
+			if input.CallID == "" || input.Content != nil {
+				return nil, fmt.Errorf("input %d has invalid tool result metadata", index)
+			}
 			output := input.Text
 			if input.IsError {
 				output = "[tool error]\n" + output
 			}
 			value = functionCallOutput{Type: "function_call_output", CallID: input.CallID, Output: output}
+		default:
+			return nil, fmt.Errorf("input %d has unknown kind %q", index, input.Kind)
 		}
-		items[i], _ = json.Marshal(value)
+		items[index], _ = json.Marshal(value)
 	}
-	return items
+	return items, nil
 }
 
 func encodeUserContent(input agent.Input) any {

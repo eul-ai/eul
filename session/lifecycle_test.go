@@ -11,18 +11,19 @@ import (
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/terminal"
 	"github.com/eul-ai/eul/tool"
+	"github.com/eul-ai/eul/tool/subagent"
 )
 
 type scriptedSessionRunner struct {
-	steps   []func(context.Context, terminal.Engine, terminal.Options) error
+	steps   []func(context.Context, terminal.Engine, terminal.Options) (terminal.RunOutcome, error)
 	options []terminal.Options
 }
 
-func (runner *scriptedSessionRunner) Run(ctx context.Context, engine terminal.Engine, options terminal.Options) error {
+func (runner *scriptedSessionRunner) Run(ctx context.Context, engine terminal.Engine, options terminal.Options) (terminal.RunOutcome, error) {
 	runner.options = append(runner.options, options)
 	index := len(runner.options) - 1
 	if index >= len(runner.steps) {
-		return errors.New("unexpected session run")
+		return terminal.RunOutcome{}, errors.New("unexpected session run")
 	}
 	return runner.steps[index](ctx, engine, options)
 }
@@ -112,8 +113,8 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 			backendRuntimes[0].closeCalls == 1
 	}
 
-	runner := &scriptedSessionRunner{steps: []func(context.Context, terminal.Engine, terminal.Options) error{
-		func(_ context.Context, _ terminal.Engine, options terminal.Options) error {
+	runner := &scriptedSessionRunner{steps: []func(context.Context, terminal.Engine, terminal.Options) (terminal.RunOutcome, error){
+		func(_ context.Context, _ terminal.Engine, options terminal.Options) (terminal.RunOutcome, error) {
 			if options.SessionID != initialID || options.Model != "main-model" || options.ThinkingLevel != agent.ThinkingHigh {
 				t.Fatalf("initial options = session %q, model %q, thinking %q", options.SessionID, options.Model, options.ThinkingLevel)
 			}
@@ -123,9 +124,9 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 			if err := options.SetFastMode(true); err != nil {
 				t.Fatal(err)
 			}
-			return &terminal.NewSessionRequest{}
+			return terminal.RunOutcome{Action: terminal.RunNewSession}, nil
 		},
-		func(_ context.Context, _ terminal.Engine, options terminal.Options) error {
+		func(_ context.Context, _ terminal.Engine, options terminal.Options) (terminal.RunOutcome, error) {
 			if options.SessionID == "" || options.SessionID == initialID {
 				t.Fatalf("new session ID = %q, initial = %q", options.SessionID, initialID)
 			}
@@ -135,7 +136,7 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 			if err := options.SaveCheckpoint(sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "new session prompt"), false); err != nil {
 				t.Fatal(err)
 			}
-			return nil
+			return terminal.RunOutcome{Action: terminal.RunExit}, nil
 		},
 	}}
 
@@ -182,6 +183,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 		modelSelection{main: "resume-main", fast: "resume-fast", balanced: "resume-balanced"},
 		agent.ThinkingMedium,
 		sessionStoreTestAgentCheckpoint(t),
+		subagent.EmptyCheckpoint(),
 		targetTerminal,
 		true,
 	)
@@ -215,14 +217,14 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 			backendRuntimes[0].closeCalls == 1
 	}
 
-	runner := &scriptedSessionRunner{steps: []func(context.Context, terminal.Engine, terminal.Options) error{
-		func(_ context.Context, _ terminal.Engine, options terminal.Options) error {
+	runner := &scriptedSessionRunner{steps: []func(context.Context, terminal.Engine, terminal.Options) (terminal.RunOutcome, error){
+		func(_ context.Context, _ terminal.Engine, options terminal.Options) (terminal.RunOutcome, error) {
 			if options.SessionID != initialID || options.Model != "initial-main" || options.ThinkingLevel != agent.ThinkingHigh {
 				t.Fatalf("initial options = session %q, model %q, thinking %q", options.SessionID, options.Model, options.ThinkingLevel)
 			}
-			return &terminal.ResumeRequest{SessionID: targetID}
+			return terminal.RunOutcome{Action: terminal.RunResumeSession, SessionID: targetID}, nil
 		},
-		func(_ context.Context, _ terminal.Engine, options terminal.Options) error {
+		func(_ context.Context, _ terminal.Engine, options terminal.Options) (terminal.RunOutcome, error) {
 			if options.SessionID != targetID {
 				t.Fatalf("resumed session ID = %q, want %q", options.SessionID, targetID)
 			}
@@ -232,7 +234,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 			if options.InitialCheckpoint == nil || options.InitialCheckpoint.Description() != "resume target prompt" {
 				t.Fatalf("resumed checkpoint = %#v", options.InitialCheckpoint)
 			}
-			return nil
+			return terminal.RunOutcome{Action: terminal.RunExit}, nil
 		},
 	}}
 
@@ -262,6 +264,40 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 	}
 }
 
+func TestRunSessionsExitClosesSession(t *testing.T) {
+	ctx := context.Background()
+	cwd := t.TempDir()
+	home := t.TempDir()
+	backendRuntimes := newLifecycleBackendRuntimes(1)
+	driver := newLifecycleBackendDriver(backendRuntimes)
+	toolState := &lifecycleToolState{}
+	runtime := newLifecycleRuntime(t, cwd, driver, toolState)
+	store := newSessionStore(home)
+	config := resolveLifecycleConfig(t, runtime, "main-model", "fast-model", "balanced-model", agent.ThinkingHigh, cwd)
+
+	backendRuntime, err := openBackendRuntime(ctx, driver, home, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialSession, err := newStoredAgentSession(config, runtime, backendRuntime, store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &scriptedSessionRunner{steps: []func(context.Context, terminal.Engine, terminal.Options) (terminal.RunOutcome, error){
+		func(context.Context, terminal.Engine, terminal.Options) (terminal.RunOutcome, error) {
+			return terminal.RunOutcome{Action: terminal.RunExit}, nil
+		},
+	}}
+
+	if err := runSessions(ctx, runner, initialSession, config, driver, runtime, store, home); err != nil {
+		t.Fatal(err)
+	}
+	if driver.openCalls != 1 {
+		t.Fatalf("backend open calls = %d, want 1", driver.openCalls)
+	}
+	assertLifecycleCleanup(t, driver, backendRuntimes, toolState, 1)
+}
+
 func TestRunSessionsDoesNotHideCleanupFailure(t *testing.T) {
 	ctx := context.Background()
 	cwd := t.TempDir()
@@ -282,22 +318,15 @@ func TestRunSessionsDoesNotHideCleanupFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &scriptedSessionRunner{steps: []func(context.Context, terminal.Engine, terminal.Options) error{
-		func(context.Context, terminal.Engine, terminal.Options) error {
-			return &terminal.NewSessionRequest{}
+	runner := &scriptedSessionRunner{steps: []func(context.Context, terminal.Engine, terminal.Options) (terminal.RunOutcome, error){
+		func(context.Context, terminal.Engine, terminal.Options) (terminal.RunOutcome, error) {
+			return terminal.RunOutcome{Action: terminal.RunNewSession}, nil
 		},
 	}}
 
 	runErr := runSessions(ctx, runner, initialSession, config, driver, runtime, store, home)
 	if runErr == nil || !strings.Contains(runErr.Error(), cleanupErr.Error()) {
 		t.Fatalf("run error = %v", runErr)
-	}
-	var request *terminal.NewSessionRequest
-	if !errors.As(runErr, &request) {
-		t.Fatalf("run error lost new-session request: %v", runErr)
-	}
-	if onlyNewSessionRequest(runErr) {
-		t.Fatalf("cleanup failure was hidden: %v", runErr)
 	}
 	if driver.openCalls != 1 {
 		t.Fatalf("backend open calls = %d, want 1", driver.openCalls)

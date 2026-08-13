@@ -99,7 +99,7 @@ func (m *tuiModel) pickerHeight() int {
 }
 
 func modelInputLayout(model *tuiModel) (renderedInput, tuiLayout) {
-	subagentHeight := min(len(model.subagentStatus.Jobs), max(0, model.height-5))
+	subagentHeight := min(len(model.subagentStatus.Active)+len(model.subagentStatus.Awaiting), max(0, model.height-5))
 	pickerHeight := min(model.pickerHeight(), max(0, maximumPickerHeight(model.height)-subagentHeight))
 	availableHeight := model.height - subagentHeight
 	maximumHeight := maximumInputHeight(availableHeight, pickerHeight)
@@ -121,7 +121,7 @@ func maximumPermissionInputHeight(height int) int {
 }
 
 func permissionDetailCapacityForModel(model *tuiModel) int {
-	subagentHeight := min(len(model.subagentStatus.Jobs), max(0, model.height-5))
+	subagentHeight := min(len(model.subagentStatus.Active)+len(model.subagentStatus.Awaiting), max(0, model.height-5))
 	maximumHeight := maximumPermissionInputHeight(model.height - subagentHeight)
 	return permissionDetailCapacity(min(maximumPermissionHeight, maximumHeight))
 }

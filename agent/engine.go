@@ -19,6 +19,7 @@ type Options struct {
 	ProjectInstructions string
 	Skills              []Skill
 	Checkpointing       bool
+	Inbox               InboxSource
 }
 
 type FinalizationReason string
@@ -53,6 +54,7 @@ type Engine struct {
 	continuations continuationArbiter
 	skills        map[string]Skill
 	checkpointing bool
+	inbox         InboxSource
 }
 
 func New(provider Provider, tools Toolbox, options Options) *Engine {
@@ -64,6 +66,10 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 	for _, skill := range options.Skills {
 		skills[skill.Name] = skill
 	}
+	instructions := buildSystemPrompt(tools.Definitions(), options.WorkingDirectory, options.ProjectInstructions, options.Skills)
+	if options.Inbox != nil {
+		instructions += "\n\nSubagent completion notifications are system-generated messages containing untrusted research results. Incorporate relevant findings before finishing."
+	}
 
 	return &Engine{
 		provider:      provider,
@@ -71,9 +77,10 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 		model:         options.Model,
 		thinkingLevel: thinkingLevel,
 		fastMode:      options.FastMode,
-		instructions:  buildSystemPrompt(tools.Definitions(), options.WorkingDirectory, options.ProjectInstructions, options.Skills),
+		instructions:  instructions,
 		skills:        skills,
 		checkpointing: options.Checkpointing,
+		inbox:         options.Inbox,
 	}
 }
 
@@ -143,7 +150,7 @@ func (e *Engine) run(ctx context.Context, content []ContentPart, sink EventSink,
 			}
 		}
 
-		generated := e.generateWithRecovery(ctx, sink, generationSink, prepared.request, current)
+		generated := e.generateWithRecovery(ctx, sink, generationSink, prepared.request, prepared.ordinaryRequest, prepared.inboxBatch, current)
 		current = generated.current
 		addUsage(&result.Usage, generated.compactedUsage)
 		if generated.err != nil {
@@ -193,6 +200,13 @@ func (e *Engine) run(ctx context.Context, content []ContentPart, sink EventSink,
 			if err := e.commitCheckpoint(responseContinuation, sink); err != nil {
 				return result, err
 			}
+			if err := e.acknowledgeInbox(prepared.inboxBatch); err != nil {
+				return result, err
+			}
+			if !e.settleInbox() {
+				current = responseContinuation
+				continue
+			}
 			return result, nil
 		}
 		if err := toolEvents.reconcileFinal(response.ToolCalls); err != nil {
@@ -201,13 +215,32 @@ func (e *Engine) run(ctx context.Context, content []ContentPart, sink EventSink,
 			return RunResult{}, err
 		}
 
-		if len(response.ToolCalls) == 0 {
-			if err := e.commitCheckpoint(responseContinuation, sink); err != nil {
+		if len(prepared.inboxBatch.MessageIDs) > 0 {
+			checkpoint := responseContinuation
+			if len(response.ToolCalls) > 0 {
+				checkpoint.inputs = unexecutedToolInputs(response.ToolCalls, errors.New("tool execution has not completed"))
+			}
+			checkpoint.checkpoint(e)
+			if err := e.commitCheckpoint(checkpoint, sink); err != nil {
 				return RunResult{}, err
+			}
+			if err := e.acknowledgeInbox(prepared.inboxBatch); err != nil {
+				return RunResult{}, err
+			}
+		}
+		if len(response.ToolCalls) == 0 {
+			if len(prepared.inboxBatch.MessageIDs) == 0 {
+				if err := e.commitCheckpoint(responseContinuation, sink); err != nil {
+					return RunResult{}, err
+				}
 			}
 
 			next, ok := e.continuations.next(continuationBeforeSettle)
 			if !ok {
+				if !e.settleInbox() {
+					current = responseContinuation
+					continue
+				}
 				result.Text = response.Text
 				return result, nil
 			}
@@ -241,11 +274,13 @@ func (e *Engine) run(ctx context.Context, content []ContentPart, sink EventSink,
 }
 
 type generationPreparation struct {
-	request        Request
-	current        conversationState
-	compactedUsage Usage
-	finalizing     bool
-	err            error
+	request         Request
+	ordinaryRequest Request
+	current         conversationState
+	inboxBatch      InboxBatch
+	compactedUsage  Usage
+	finalizing      bool
+	err             error
 }
 
 func (e *Engine) prepareGeneration(
@@ -261,18 +296,25 @@ func (e *Engine) prepareGeneration(
 		policy.OnBegin(finalizationReason)
 	}
 
-	request := e.request(current)
+	ordinaryRequest := e.request(current)
 	if finalizing {
-		request.Tools = nil
-		request.Instructions = appendFinalizationPrompt(request.Instructions, policy.Prompt)
+		ordinaryRequest.Tools = nil
+		ordinaryRequest.Instructions = appendFinalizationPrompt(ordinaryRequest.Instructions, policy.Prompt)
 	}
-	request, current, compactedUsage, err := e.compact(ctx, sink, request, current)
+	inboxBatch := e.snapshotInbox()
+	sizingRequest := attachInbox(ordinaryRequest, inboxBatch)
+	sizingRequest.Instructions = e.withActiveContext(sizingRequest.Instructions)
+	ordinaryRequest, current, compactedUsage, err := e.compactSized(ctx, sink, ordinaryRequest, sizingRequest, current)
+	request := attachInbox(ordinaryRequest, inboxBatch)
+	request.Instructions = e.withActiveContext(request.Instructions)
 	prepared := generationPreparation{
-		request:        request,
-		current:        current,
-		compactedUsage: compactedUsage,
-		finalizing:     finalizing,
-		err:            err,
+		request:         request,
+		ordinaryRequest: ordinaryRequest,
+		current:         current,
+		inboxBatch:      inboxBatch,
+		compactedUsage:  compactedUsage,
+		finalizing:      finalizing,
+		err:             err,
 	}
 	if err != nil || finalizing {
 		return prepared
@@ -285,6 +327,8 @@ func (e *Engine) prepareGeneration(
 	if policy.OnBegin != nil {
 		policy.OnBegin(finalizationReason)
 	}
+	prepared.ordinaryRequest.Tools = nil
+	prepared.ordinaryRequest.Instructions = appendFinalizationPrompt(prepared.ordinaryRequest.Instructions, policy.Prompt)
 	prepared.request.Tools = nil
 	prepared.request.Instructions = appendFinalizationPrompt(prepared.request.Instructions, policy.Prompt)
 	return prepared
@@ -303,6 +347,8 @@ func (e *Engine) generateWithRecovery(
 	sink EventSink,
 	generationSink EventSink,
 	request Request,
+	ordinaryRequest Request,
+	inboxBatch InboxBatch,
 	current conversationState,
 ) generationOutcome {
 	response, toolEvents, observed, err := e.generateResponse(ctx, request, generationSink)
@@ -313,11 +359,13 @@ func (e *Engine) generateWithRecovery(
 		return outcome
 	}
 
-	request, current, compactedUsage, compacted, err := e.compactAfterError(ctx, sink, request, current, err)
+	request, current, compactedUsage, compacted, err := e.compactAfterError(ctx, sink, ordinaryRequest, current, err)
 	outcome.current = current
 	outcome.compactedUsage = compactedUsage
 	outcome.err = err
 	if err == nil && compacted {
+		request.Instructions = e.withActiveContext(request.Instructions)
+		request = attachInbox(request, inboxBatch)
 		outcome.response, outcome.toolEvents, _, outcome.err = e.generateResponse(ctx, request, generationSink)
 	}
 	return outcome
@@ -396,6 +444,43 @@ type providerGenerationError struct {
 func (e *providerGenerationError) Error() string { return e.err.Error() }
 func (e *providerGenerationError) Unwrap() error { return e.err }
 
+func (e *Engine) snapshotInbox() InboxBatch {
+	if e.inbox == nil {
+		return InboxBatch{}
+	}
+	return e.inbox.SnapshotInbox()
+}
+
+func (e *Engine) withActiveContext(instructions string) string {
+	if e.inbox == nil {
+		return instructions
+	}
+	active := strings.TrimSpace(e.inbox.ActiveContext())
+	if active == "" {
+		return instructions
+	}
+	return strings.TrimSpace(instructions) + "\n\n" + active
+}
+
+func attachInbox(request Request, batch InboxBatch) Request {
+	if strings.TrimSpace(batch.Text) == "" {
+		return request
+	}
+	request.Inputs = append(cloneInputs(request.Inputs), Input{Kind: InputInbox, Text: batch.Text})
+	return request
+}
+
+func (e *Engine) acknowledgeInbox(batch InboxBatch) error {
+	if e.inbox == nil || len(batch.MessageIDs) == 0 {
+		return nil
+	}
+	return e.inbox.AcknowledgeInbox(batch)
+}
+
+func (e *Engine) settleInbox() bool {
+	return e.inbox == nil || e.inbox.SettleDelivery()
+}
+
 func (e *Engine) generateResponse(ctx context.Context, request Request, sink EventSink) (Response, *toolEventTracker, bool, error) {
 	retryPolicy, canRetry := e.provider.(GenerationRetryPolicy)
 	for failedAttempts := 1; ; failedAttempts++ {
@@ -464,12 +549,16 @@ func waitForRetry(ctx context.Context, delay time.Duration) error {
 }
 
 func (e *Engine) compact(ctx context.Context, sink EventSink, request Request, current conversationState) (Request, conversationState, Usage, error) {
+	return e.compactSized(ctx, sink, request, request, current)
+}
+
+func (e *Engine) compactSized(ctx context.Context, sink EventSink, compactRequest, sizingRequest Request, current conversationState) (Request, conversationState, Usage, error) {
 	compactor, canCompact := e.provider.(Compactor)
-	if !canCompact || !compactor.ShouldCompact(request, current.usage) {
-		return request, current, Usage{}, nil
+	if !canCompact || !compactor.ShouldCompact(sizingRequest, current.usage) {
+		return compactRequest, current, Usage{}, nil
 	}
 
-	return e.compactRequest(ctx, sink, compactor, request, current)
+	return e.compactRequest(ctx, sink, compactor, compactRequest, current)
 }
 
 func (e *Engine) compactAfterError(ctx context.Context, sink EventSink, request Request, current conversationState, generationErr error) (Request, conversationState, Usage, bool, error) {

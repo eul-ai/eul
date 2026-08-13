@@ -109,30 +109,12 @@ func finishRun(runErr error, errorOutput io.Writer) int {
 	if runErr == nil {
 		return exitSuccess
 	}
-	if isOnlyInterruption(runErr) {
+	if errors.Is(runErr, terminal.ErrInterrupted) || errors.Is(runErr, context.Canceled) {
 		return exitInterrupted
 	}
 
 	writeCLIError(errorOutput, "%v", runErr)
 	return exitFailure
-}
-
-func isOnlyInterruption(err error) bool {
-	joined, ok := err.(interface{ Unwrap() []error })
-	if !ok {
-		return errors.Is(err, terminal.ErrInterrupted) || errors.Is(err, context.Canceled)
-	}
-
-	causes := joined.Unwrap()
-	if len(causes) == 0 {
-		return false
-	}
-	for _, cause := range causes {
-		if !isOnlyInterruption(cause) {
-			return false
-		}
-	}
-	return true
 }
 
 func writeCLIError(output io.Writer, format string, arguments ...any) {

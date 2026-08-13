@@ -493,8 +493,8 @@ func TestTUIControllerEOFWhileRunningDefersCheckpoint(t *testing.T) {
 	if err != nil || exit {
 		t.Fatalf("transition exit=%v error=%v", exit, err)
 	}
-	if !canceled || !errors.Is(controller.exitAfterTurn, io.EOF) || saveCalls != 0 {
-		t.Fatalf("canceled=%v exitAfterTurn=%v saveCalls=%d", canceled, controller.exitAfterTurn, saveCalls)
+	if !canceled || !controller.exitAfterTurn || controller.exitAfterTurnErr != nil || saveCalls != 0 {
+		t.Fatalf("canceled=%v exitAfterTurn=%v exitAfterTurnErr=%v saveCalls=%d", canceled, controller.exitAfterTurn, controller.exitAfterTurnErr, saveCalls)
 	}
 }
 
@@ -717,9 +717,8 @@ func TestTUIControllerNewSessionKeepsCurrentConversation(t *testing.T) {
 	}
 
 	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}})
-	var request *NewSessionRequest
-	if !errors.As(err, &request) || exit {
-		t.Fatalf("transition exit=%v error=%v", exit, err)
+	if err != nil || !exit || controller.outcome.Action != RunNewSession {
+		t.Fatalf("transition exit=%v outcome=%+v error=%v", exit, controller.outcome, err)
 	}
 	if len(model.blocks) != 1 || model.blocks[0].text != "keep me" {
 		t.Fatalf("blocks = %+v", model.blocks)
@@ -928,10 +927,9 @@ func TestTUIControllerNewSessionLeavesCurrentGoal(t *testing.T) {
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 	}
 
-	_, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionNewSession})
-	var request *NewSessionRequest
-	if !errors.As(err, &request) {
-		t.Fatalf("new session error = %v", err)
+	exit, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionNewSession})
+	if err != nil || !exit || controller.outcome.Action != RunNewSession {
+		t.Fatalf("new session exit=%v outcome=%+v error=%v", exit, controller.outcome, err)
 	}
 	if _, ok := engine.Goal(); !ok {
 		t.Fatal("current goal was cleared")
@@ -944,28 +942,30 @@ func TestTUIControllerAppliesSubagentStatus(t *testing.T) {
 
 	_, err := controller.transition(context.Background(), tuiEvent{
 		kind: tuiEventSubagentStatus,
-		subagentStatus: agent.SubagentStatus{
-			Running: 2, Finalizing: 1, Completed: 2,
-			Jobs: []agent.SubagentJobStatus{
-				{ID: "subagent-1\nignored", Task: "inspect\nignored", State: agent.SubagentRunning, Generations: -1},
-				{ID: "subagent-2", Task: "finished", State: agent.SubagentComplete},
-				{ID: "subagent-3", Task: "failed", State: agent.SubagentFailed},
-				{ID: "subagent-invalid", State: agent.SubagentState("invalid")},
+		subagentStatus: SubagentStatus{
+			Running: 2, Finalizing: 1,
+			Active: []SubagentJobStatus{
+				{ID: "subagent-1\nignored", Task: "inspect\nignored", State: SubagentRunning, Generations: -1},
+				{ID: "subagent-invalid", State: SubagentState("invalid")},
+			},
+			Awaiting: []SubagentCompletionStatus{
+				{SubagentID: "subagent-2", Task: "finished", State: SubagentComplete},
+				{SubagentID: "subagent-3", Task: "failed", State: SubagentFailed},
 			},
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if model.subagentStatus.Running != 2 || model.subagentStatus.Finalizing != 1 || model.subagentStatus.Completed != 2 || len(model.subagentStatus.Jobs) != 3 || model.subagentStatus.Jobs[0].ID != "subagent-1 ignored" || model.subagentStatus.Jobs[0].Task != "inspect ignored" || model.subagentStatus.Jobs[0].Generations != 0 || model.subagentStatus.Jobs[1].State != agent.SubagentComplete || model.subagentStatus.Jobs[2].State != agent.SubagentFailed || !controller.dirty {
+	if model.subagentStatus.Running != 2 || model.subagentStatus.Finalizing != 1 || len(model.subagentStatus.Awaiting) != 2 || len(model.subagentStatus.Active) != 1 || model.subagentStatus.Active[0].ID != "subagent-1 ignored" || model.subagentStatus.Active[0].Task != "inspect ignored" || model.subagentStatus.Active[0].Generations != 0 || model.subagentStatus.Awaiting[0].State != SubagentComplete || model.subagentStatus.Awaiting[1].State != SubagentFailed || !controller.dirty {
 		t.Fatalf("status=%+v dirty=%v", model.subagentStatus, controller.dirty)
 	}
 
 	_, err = controller.transition(context.Background(), tuiEvent{
 		kind:           tuiEventSubagentStatus,
-		subagentStatus: agent.SubagentStatus{Running: -1, Finalizing: -1, Completed: -1},
+		subagentStatus: SubagentStatus{Running: -1, Finalizing: -1, Awaiting: nil},
 	})
-	if err != nil || model.subagentStatus.Running != 0 || model.subagentStatus.Finalizing != 0 || model.subagentStatus.Completed != 0 || len(model.subagentStatus.Jobs) != 0 {
+	if err != nil || model.subagentStatus.Running != 0 || model.subagentStatus.Finalizing != 0 || len(model.subagentStatus.Awaiting) != 0 || len(model.subagentStatus.Active) != 0 {
 		t.Fatalf("sanitized status=%+v error=%v", model.subagentStatus, err)
 	}
 }
@@ -1003,7 +1003,7 @@ func TestTUIControllerEventDirtiness(t *testing.T) {
 		{
 			name: "running subagent spinner redraws",
 			prepare: func(model *tuiModel) {
-				model.subagentStatus = agent.SubagentStatus{Running: 1, Jobs: []agent.SubagentJobStatus{{State: agent.SubagentRunning}}}
+				model.subagentStatus = SubagentStatus{Running: 1, Active: []SubagentJobStatus{{State: SubagentRunning}}}
 			},
 			event:     tuiEvent{kind: tuiEventSpinner},
 			wantDirty: true,
@@ -1011,7 +1011,7 @@ func TestTUIControllerEventDirtiness(t *testing.T) {
 		{
 			name: "completed subagent spinner is ignored",
 			prepare: func(model *tuiModel) {
-				model.subagentStatus = agent.SubagentStatus{Completed: 1, Jobs: []agent.SubagentJobStatus{{State: agent.SubagentComplete}}}
+				model.subagentStatus = SubagentStatus{Awaiting: []SubagentCompletionStatus{{State: SubagentComplete}}}
 			},
 			event:     tuiEvent{kind: tuiEventSpinner},
 			wantDirty: false,

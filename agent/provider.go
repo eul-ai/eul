@@ -11,6 +11,7 @@ type InputKind string
 const (
 	InputUser       InputKind = "user"
 	InputToolResult InputKind = "tool_result"
+	InputInbox      InputKind = "inbox"
 )
 
 type Image struct {

@@ -37,8 +37,54 @@ func TestBuildCreateRequest(t *testing.T) {
 	}
 }
 
+func TestEncodeInboxInputAsUserMessage(t *testing.T) {
+	items, err := encodeInputs([]agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %d", len(items))
+	}
+	var message inputMessage
+	if err := json.Unmarshal(items[0], &message); err != nil {
+		t.Fatal(err)
+	}
+	if message.Role != "user" || message.Content != "<subagent_notifications>result</subagent_notifications>" {
+		t.Fatalf("message = %+v", message)
+	}
+}
+
+func TestInboxInputSurvivesContinuationState(t *testing.T) {
+	request, newItems, err := buildCreateRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}}}, defaultMaxStateBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := encodeState(nil, newItems, nil, defaultMaxStateBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := decodeState(state, defaultMaxStateBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Input) != 1 || len(restored) != 1 || string(request.Input[0]) != string(restored[0]) {
+		t.Fatalf("request = %s, restored = %s", request.Input, restored)
+	}
+}
+
+func TestBuildCreateRequestRejectsInvalidInputKinds(t *testing.T) {
+	for _, input := range []agent.Input{
+		{Kind: "unknown", Text: "value"},
+		{Kind: agent.InputInbox, Content: &agent.Content{}},
+	} {
+		if _, _, err := buildCreateRequest(agent.Request{Inputs: []agent.Input{input}}, defaultMaxStateBytes); err == nil {
+			t.Fatalf("input %+v was accepted", input)
+		}
+	}
+}
+
 func TestEncodeInputContentInOrder(t *testing.T) {
-	items := encodeInputs([]agent.Input{{
+	items, err := encodeInputs([]agent.Input{{
 		Kind: agent.InputUser,
 		Content: &agent.Content{Parts: []agent.ContentPart{
 			{Kind: agent.ContentPartText, Text: "before"},
@@ -47,6 +93,9 @@ func TestEncodeInputContentInOrder(t *testing.T) {
 			{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("two")}},
 		}},
 	}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(items) != 1 {
 		t.Fatalf("items = %d", len(items))
 	}
@@ -90,7 +139,10 @@ func TestOrderedInputContentSurvivesContinuationState(t *testing.T) {
 }
 
 func TestEncodeTextAndImageOnlyContent(t *testing.T) {
-	text := encodeInputs([]agent.Input{{Kind: agent.InputUser, Text: "hello"}})
+	text, err := encodeInputs([]agent.Input{{Kind: agent.InputUser, Text: "hello"}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	var textMessage struct {
 		Content string `json:"content"`
 	}
@@ -98,13 +150,16 @@ func TestEncodeTextAndImageOnlyContent(t *testing.T) {
 		t.Fatalf("text input = %s, error = %v", text[0], err)
 	}
 
-	image := encodeInputs([]agent.Input{{
+	image, err := encodeInputs([]agent.Input{{
 		Kind: agent.InputUser,
 		Content: &agent.Content{Parts: []agent.ContentPart{{
 			Kind:  agent.ContentPartImage,
 			Image: &agent.Image{MediaType: "image/png", Data: []byte("png")},
 		}}},
 	}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	var imageMessage struct {
 		Content []inputContentPart `json:"content"`
 	}

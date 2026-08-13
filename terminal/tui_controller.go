@@ -36,7 +36,7 @@ type tuiEvent struct {
 	key            keyEvent
 	engine         engineMessage
 	providerUsage  providerUsageMessage
-	subagentStatus agent.SubagentStatus
+	subagentStatus SubagentStatus
 	permission     PermissionRequest
 	image          agent.Image
 	requestID      uint64
@@ -64,7 +64,9 @@ type tuiController struct {
 	clipboardRequests  map[uint64]context.CancelFunc
 	nextClipboardID    uint64
 	turnCancel         context.CancelFunc
-	exitAfterTurn      error
+	exitAfterTurn      bool
+	exitAfterTurnErr   error
+	outcome            RunOutcome
 	deferredSteering   []string
 	permission         *PermissionRequest
 	queuedPermissions  []PermissionRequest
@@ -115,7 +117,8 @@ func (c *tuiController) handleParentCanceled(parentErr error) (bool, error) {
 		return true, parentErr
 	}
 
-	c.exitAfterTurn = parentErr
+	c.exitAfterTurn = true
+	c.exitAfterTurnErr = parentErr
 	c.cancelTurn()
 	c.dirty = true
 	return false, nil
@@ -176,8 +179,8 @@ func (c *tuiController) handleKey(ctx context.Context, key keyEvent) (bool, erro
 			}
 			return true, nil
 		}
-		if c.exitAfterTurn == nil {
-			c.exitAfterTurn = io.EOF
+		if !c.exitAfterTurn {
+			c.exitAfterTurn = true
 			c.cancelTurn()
 		}
 	}
@@ -199,11 +202,8 @@ func (c *tuiController) handleEngineMessage(ctx context.Context, message engineM
 	if err := ctx.Err(); err != nil {
 		return true, err
 	}
-	if c.exitAfterTurn != nil {
-		if errors.Is(c.exitAfterTurn, io.EOF) {
-			return true, nil
-		}
-		return true, c.exitAfterTurn
+	if c.exitAfterTurn {
+		return true, c.exitAfterTurnErr
 	}
 
 	interrupted := c.model.interrupted
@@ -253,33 +253,35 @@ func (c *tuiController) handleProviderUsage(message providerUsageMessage) (bool,
 	return false, nil
 }
 
-func (c *tuiController) handleSubagentStatus(status agent.SubagentStatus) (bool, error) {
+func (c *tuiController) handleSubagentStatus(status SubagentStatus) (bool, error) {
 	c.model.subagentStatus = sanitizeSubagentStatus(status)
 	c.dirty = true
 	return false, nil
 }
 
-func sanitizeSubagentStatus(status agent.SubagentStatus) agent.SubagentStatus {
-	sanitized := agent.SubagentStatus{
+func sanitizeSubagentStatus(status SubagentStatus) SubagentStatus {
+	sanitized := SubagentStatus{
 		Running:    max(0, status.Running),
 		Finalizing: max(0, status.Finalizing),
-		Completed:  max(0, status.Completed),
-		Jobs:       make([]agent.SubagentJobStatus, 0, len(status.Jobs)),
+		Active:     make([]SubagentJobStatus, 0, len(status.Active)),
+		Awaiting:   make([]SubagentCompletionStatus, 0, len(status.Awaiting)),
 	}
-	for _, job := range status.Jobs {
+	for _, job := range status.Active {
 		switch job.State {
-		case agent.SubagentPending,
-			agent.SubagentRunning,
-			agent.SubagentFinalizing,
-			agent.SubagentCanceling,
-			agent.SubagentComplete,
-			agent.SubagentFailed,
-			agent.SubagentCanceled:
+		case SubagentRunning, SubagentFinalizing, SubagentCanceling:
 			job.ID = singleLine(job.ID, 120)
 			job.Task = singleLine(job.Task, 120)
 			job.Generations = max(0, job.Generations)
 			job.GenerationLimit = max(0, job.GenerationLimit)
-			sanitized.Jobs = append(sanitized.Jobs, job)
+			sanitized.Active = append(sanitized.Active, job)
+		}
+	}
+	for _, completion := range status.Awaiting {
+		switch completion.State {
+		case SubagentComplete, SubagentFailed, SubagentCanceled, SubagentInterrupted:
+			completion.SubagentID = singleLine(completion.SubagentID, 120)
+			completion.Task = singleLine(completion.Task, 120)
+			sanitized.Awaiting = append(sanitized.Awaiting, completion)
 		}
 	}
 	return sanitized
@@ -404,13 +406,15 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		if err := c.saveCurrentCheckpoint(false); err != nil {
 			return false, err
 		}
-		return false, &ResumeRequest{SessionID: action.text}
+		c.outcome = RunOutcome{Action: RunResumeSession, SessionID: action.text}
+		return true, nil
 	case tuiActionNewSession:
 		c.cancelClipboardRequests()
 		if err := c.saveCurrentCheckpoint(false); err != nil {
 			return false, err
 		}
-		return false, &NewSessionRequest{}
+		c.outcome = RunOutcome{Action: RunNewSession}
+		return true, nil
 	case tuiActionCancel:
 		c.interruptTurn()
 	case tuiActionCompact:

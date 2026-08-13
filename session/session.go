@@ -10,31 +10,84 @@ import (
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/terminal"
 	"github.com/eul-ai/eul/tool"
+	"github.com/eul-ai/eul/tool/subagent"
 )
 
 type sessionRunner interface {
-	Run(context.Context, terminal.Engine, terminal.Options) error
+	Run(context.Context, terminal.Engine, terminal.Options) (terminal.RunOutcome, error)
 }
 
 type agentSession struct {
 	engine          *agent.Engine
 	tools           *tool.Registry
+	subagents       *subagent.Manager
 	backendRuntime  backend.Runtime
 	terminalOptions terminal.Options
 	thinkingLevel   agent.ThinkingLevel
 	fastMode        bool
 	persistence     *sessionHandle
+	checkpoints     *checkpointCoordinator
+	checkpointDone  chan struct{}
 }
 
 type sessionModelMetadata struct {
 	main          agent.ModelMetadata
-	subagent      map[tool.SubagentModelProfile]agent.ModelMetadata
+	subagent      map[subagent.Profile]agent.ModelMetadata
 	thinkingLevel agent.ThinkingLevel
 }
 
 type sessionToolset struct {
 	registry        *tool.Registry
-	subagentUpdates <-chan agent.SubagentStatus
+	subagents       *subagent.Manager
+	subagentUpdates <-chan terminal.SubagentStatus
+}
+
+func forwardSubagentStatus(source <-chan subagent.Status) <-chan terminal.SubagentStatus {
+	updates := make(chan terminal.SubagentStatus, 1)
+	go func() {
+		defer close(updates)
+		for status := range source {
+			mapped := terminal.SubagentStatus{
+				Running:    status.Running,
+				Finalizing: status.Finalizing,
+				Active:     make([]terminal.SubagentJobStatus, len(status.Active)),
+				Awaiting:   make([]terminal.SubagentCompletionStatus, len(status.Awaiting)),
+			}
+			for index, job := range status.Active {
+				mapped.Active[index] = terminal.SubagentJobStatus{
+					ID:              job.ID,
+					Task:            job.Task,
+					ModelProfile:    string(job.ModelProfile),
+					ThinkingLevel:   job.ThinkingLevel,
+					State:           terminal.SubagentState(job.State),
+					Started:         job.Started,
+					Usage:           job.Usage,
+					Generations:     job.Generations,
+					GenerationLimit: job.GenerationLimit,
+				}
+			}
+			for index, completion := range status.Awaiting {
+				mapped.Awaiting[index] = terminal.SubagentCompletionStatus{
+					MessageID:  completion.MessageID,
+					SubagentID: completion.SubagentID,
+					Task:       completion.Task,
+					State:      terminal.SubagentState(completion.Status),
+					Started:    completion.Started,
+					Finished:   completion.Finished,
+				}
+			}
+			select {
+			case updates <- mapped:
+			default:
+				select {
+				case <-updates:
+				default:
+				}
+				updates <- mapped
+			}
+		}
+	}()
+	return updates
 }
 
 type terminalOptionSource struct {
@@ -43,7 +96,7 @@ type terminalOptionSource struct {
 	metadata           sessionModelMetadata
 	warnings           []string
 	loadUsage          func(context.Context) (agent.ProviderUsage, error)
-	subagentUpdates    <-chan agent.SubagentStatus
+	subagentUpdates    <-chan terminal.SubagentStatus
 	permissionRequests <-chan terminal.PermissionRequest
 	setThinkingLevel   func(agent.ThinkingLevel) error
 	setFastMode        func(bool) error
@@ -75,10 +128,10 @@ func resolveSessionModelMetadata(provider agent.Provider, config resolvedConfig)
 	main := resolve(config.models.main)
 	return sessionModelMetadata{
 		main: main,
-		subagent: map[tool.SubagentModelProfile]agent.ModelMetadata{
-			tool.SubagentModelFast:     resolve(config.models.subagent(tool.SubagentModelFast)),
-			tool.SubagentModelBalanced: resolve(config.models.subagent(tool.SubagentModelBalanced)),
-			tool.SubagentModelPowerful: resolve(config.models.subagent(tool.SubagentModelPowerful)),
+		subagent: map[subagent.Profile]agent.ModelMetadata{
+			subagent.ProfileFast:     resolve(config.models.subagent(subagent.ProfileFast)),
+			subagent.ProfileBalanced: resolve(config.models.subagent(subagent.ProfileBalanced)),
+			subagent.ProfilePowerful: resolve(config.models.subagent(subagent.ProfilePowerful)),
 		},
 		thinkingLevel: main.ClampThinkingLevel(config.thinkingLevel),
 	}
@@ -99,10 +152,10 @@ func newSessionToolset(
 			return buildToolsetWithHomeAndNetworkAuthorizer(cwd, "", access, noSandbox, authorizeNetwork, additional...)
 		}
 	}
-	subagent := tool.NewSubagentWithThinkingLevels(func(ctx context.Context, task string, modelProfile tool.SubagentModelProfile, thinkingLevel agent.ThinkingLevel, update func(tool.SubagentProgress)) (agent.RunResult, error) {
-		enabled := fastMode.Load() && metadata.subagent[modelProfile].FastMode
-		return runChildAgent(ctx, backendRuntime, newToolset, config, modelProfile, thinkingLevel, enabled, task, update)
-	}, func(profile tool.SubagentModelProfile) []agent.ThinkingLevel {
+	manager := subagent.NewManager(func(ctx context.Context, task string, profile subagent.Profile, thinkingLevel agent.ThinkingLevel, update func(subagent.Progress)) (agent.RunResult, error) {
+		enabled := fastMode.Load() && metadata.subagent[profile].FastMode
+		return runChildAgent(ctx, backendRuntime, newToolset, config, profile, thinkingLevel, enabled, task, update)
+	}, func(profile subagent.Profile) []agent.ThinkingLevel {
 		return metadata.subagent[profile].ThinkingLevels
 	})
 	registry, err := newToolset(
@@ -110,15 +163,16 @@ func newSessionToolset(
 		fullToolAccess,
 		config.noSandbox,
 		authorizeNetwork,
-		subagent,
-		tool.NewSubagentWait(subagent),
-		tool.NewSubagentCancel(subagent),
+		subagent.NewLaunchTool(manager),
+		subagent.NewWaitTool(manager),
+		subagent.NewCancelTool(manager),
 		tool.NewUpdateGoal(completeGoal),
 	)
 	if err != nil {
-		return sessionToolset{}, errors.Join(fmt.Errorf("configure tools: %w", err), subagent.Close())
+		return sessionToolset{}, errors.Join(fmt.Errorf("configure tools: %w", err), manager.Close())
 	}
-	return sessionToolset{registry: registry, subagentUpdates: subagent.StatusUpdates()}, nil
+	updates := forwardSubagentStatus(manager.StatusUpdates())
+	return sessionToolset{registry: registry, subagents: manager, subagentUpdates: updates}, nil
 }
 
 func (source terminalOptionSource) options() terminal.Options {
@@ -188,10 +242,12 @@ func newAgentSessionWithCheckpointing(
 		ProjectInstructions: config.projectInstructions,
 		Skills:              config.skills,
 		Checkpointing:       checkpointing,
+		Inbox:               tools.subagents,
 	})
 	session := &agentSession{
 		engine:         engine,
 		tools:          tools.registry,
+		subagents:      tools.subagents,
 		backendRuntime: backendRuntime,
 		thinkingLevel:  metadata.thinkingLevel,
 		fastMode:       fastMode.Load(),
@@ -201,12 +257,18 @@ func newAgentSessionWithCheckpointing(
 			return err
 		}
 		session.thinkingLevel = level
+		if session.checkpoints != nil {
+			session.checkpoints.SetThinkingLevel(level)
+		}
 		return nil
 	}
 	setFastMode := func(enabled bool) error {
 		engine.SetFastMode(enabled)
 		fastMode.Store(enabled)
 		session.fastMode = enabled
+		if session.checkpoints != nil {
+			session.checkpoints.SetFastMode(enabled)
+		}
 		return nil
 	}
 	session.terminalOptions = terminalOptionSource{
@@ -266,6 +328,7 @@ func newStoredAgentSession(
 			config.models,
 			session.thinkingLevel,
 			agentCheckpoint,
+			session.subagents.Checkpoint(),
 			terminal.EmptyCheckpoint(),
 			session.fastMode,
 		)
@@ -281,27 +344,47 @@ func newStoredAgentSession(
 
 func (session *agentSession) attachPersistence(handle *sessionHandle, restore bool) error {
 	session.persistence = handle
-	session.terminalOptions.SessionID = handle.record.ID
+	session.checkpoints = newCheckpointCoordinator(
+		handle,
+		session.engine,
+		session.subagents,
+		session.thinkingLevel,
+		session.fastMode,
+	)
+	record := handle.Record()
+	session.terminalOptions.SessionID = record.ID
 	if restore {
-		if err := session.engine.RestoreCheckpoint(handle.record.Agent); err != nil {
+		if err := session.engine.RestoreCheckpoint(record.Agent); err != nil {
 			return fmt.Errorf("restore agent session: %w", err)
 		}
-		checkpoint := handle.record.Terminal
+		if err := session.subagents.RestoreCheckpoint(record.Subagent); err != nil {
+			return fmt.Errorf("restore subagents: %w", err)
+		}
+		checkpoint := record.Terminal
 		session.terminalOptions.InitialCheckpoint = &checkpoint
-		session.terminalOptions.PreviousTurnActive = handle.record.Status == sessionActive
+		session.terminalOptions.PreviousTurnActive = record.Status == sessionActive
+		if err := session.checkpoints.RestoreIdle(record.Agent); err != nil {
+			return fmt.Errorf("save restored subagents: %w", err)
+		}
 	}
 
-	session.terminalOptions.SaveCheckpoint = func(agentCheckpoint agent.Checkpoint, terminalCheckpoint terminal.Checkpoint, active bool) error {
-		return handle.Save(agentCheckpoint, terminalCheckpoint, active, session.thinkingLevel, session.fastMode)
-	}
+	session.terminalOptions.SaveCheckpoint = session.checkpoints.SaveTerminal
+	session.checkpointDone = make(chan struct{})
+	go func() {
+		defer close(session.checkpointDone)
+		for range session.subagents.CheckpointUpdates() {
+			session.checkpoints.SaveIdle()
+		}
+	}()
+
 	session.terminalOptions.ListSessions = func(context.Context) ([]terminal.SessionSummary, []string, error) {
-		summaries, warnings, err := handle.store.List(handle.record.WorkingDirectory)
+		summaries, warnings, err := handle.store.List(record.WorkingDirectory)
 		if err != nil {
 			return nil, nil, err
 		}
 		visible := summaries[:0]
 		for _, summary := range summaries {
-			if summary.ID != handle.record.ID {
+			if summary.ID != record.ID {
 				visible = append(visible, summary)
 			}
 		}
@@ -310,22 +393,43 @@ func (session *agentSession) attachPersistence(handle *sessionHandle, restore bo
 	return nil
 }
 
-func (session *agentSession) run(ctx context.Context, runner sessionRunner) error {
-	return session.finish(runner.Run(ctx, session.engine, session.terminalOptions))
+func (session *agentSession) run(ctx context.Context, runner sessionRunner) (terminal.RunOutcome, error) {
+	outcome, runErr := runner.Run(ctx, session.engine, session.terminalOptions)
+	cleanupErr := session.finish(nil)
+	if cleanupErr != nil {
+		return terminal.RunOutcome{}, cleanupErr
+	}
+	return outcome, runErr
 }
 
 func (session *agentSession) finish(runErr error) error {
+	if session.checkpoints != nil {
+		session.checkpoints.Stop()
+	}
+	var subagentErr error
+	if session.subagents != nil {
+		subagentErr = session.subagents.Close()
+	}
+	if session.checkpointDone != nil {
+		<-session.checkpointDone
+	}
+	var finalCheckpointErr error
+	if session.checkpoints != nil {
+		finalCheckpointErr = session.checkpoints.SaveFinal()
+	}
 	toolErr := finishRegistry(nil, session.tools, "close tools")
 	var persistenceErr error
-	if session.persistence != nil {
+	if session.checkpoints != nil {
+		persistenceErr = session.checkpoints.Close()
+	} else if session.persistence != nil {
 		persistenceErr = session.persistence.Close()
-		if persistenceErr != nil {
-			persistenceErr = fmt.Errorf("close session: %w", persistenceErr)
-		}
+	}
+	if persistenceErr != nil {
+		persistenceErr = fmt.Errorf("close session: %w", persistenceErr)
 	}
 	backendErr := closeBackendRuntime(session.backendRuntime)
 	session.backendRuntime = nil
-	return errors.Join(runErr, toolErr, persistenceErr, backendErr)
+	return errors.Join(runErr, subagentErr, finalCheckpointErr, toolErr, persistenceErr, backendErr)
 }
 
 func closeBackendRuntime(backendRuntime backend.Runtime) error {

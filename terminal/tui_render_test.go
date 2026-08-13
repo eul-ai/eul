@@ -129,14 +129,14 @@ func TestStatusTruncatesSessionID(t *testing.T) {
 func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 	started := time.Unix(100, 0)
 	model := newTUIModel(140, 10, Options{})
-	model.subagentStatus = agent.SubagentStatus{Jobs: []agent.SubagentJobStatus{
+	model.subagentStatus = SubagentStatus{Active: []SubagentJobStatus{
 		{
 			ID: "subagent-1", Task: "inspect layout", ModelProfile: "balanced", ThinkingLevel: agent.ThinkingLow,
-			State: agent.SubagentRunning, Started: started, Usage: agent.Usage{InputTokens: 1_200, OutputTokens: 34},
+			State: SubagentRunning, Started: started, Usage: agent.Usage{InputTokens: 1_200, OutputTokens: 34},
 			Generations: 3, GenerationLimit: 20,
 		},
 		{
-			ID: "subagent-2", Task: "review progress", State: agent.SubagentFinalizing, Started: started,
+			ID: "subagent-2", Task: "review progress", State: SubagentFinalizing, Started: started,
 			Generations: 20, GenerationLimit: 20,
 		},
 	}}
@@ -144,10 +144,10 @@ func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 	lines := renderSubagentsAt(model, 2, started.Add(time.Minute+5*time.Second))
 	first := renderedLineText(lines[0], model.width)
 	second := renderedLineText(lines[1], model.width)
-	if !strings.Contains(first, "subagent-1  running (balanced, low thinking, 1m5s, 1.2k input, 34 output, 3/20 generations) — inspect layout") {
+	if !strings.Contains(first, "active · subagent-1  running (balanced, low thinking, 1m5s, 1.2k input, 34 output, 3/20 generations) — inspect layout") {
 		t.Fatalf("running line = %q", first)
 	}
-	if !strings.Contains(second, "subagent-2  finalizing (1m5s, 20/20 generations) — review progress") {
+	if !strings.Contains(second, "active · subagent-2  finalizing (1m5s, 20/20 generations) — review progress") {
 		t.Fatalf("finalizing line = %q", second)
 	}
 
@@ -165,11 +165,13 @@ func TestSubagentStatusesUseStateColorsAndFreezeCompletedElapsed(t *testing.T) {
 	started := time.Unix(100, 0)
 	finished := started.Add(5 * time.Second)
 	model := newTUIModel(80, 10, Options{})
-	model.subagentStatus.Jobs = []agent.SubagentJobStatus{
-		{ID: "running", State: agent.SubagentRunning, Started: started},
-		{ID: "finalizing", State: agent.SubagentFinalizing, Started: started},
-		{ID: "complete", State: agent.SubagentComplete, Started: started, Finished: finished},
-		{ID: "failed", State: agent.SubagentFailed, Started: started, Finished: finished},
+	model.subagentStatus.Active = []SubagentJobStatus{
+		{ID: "running", State: SubagentRunning, Started: started},
+		{ID: "finalizing", State: SubagentFinalizing, Started: started},
+	}
+	model.subagentStatus.Awaiting = []SubagentCompletionStatus{
+		{SubagentID: "complete", State: SubagentComplete, Started: started, Finished: finished},
+		{SubagentID: "failed", State: SubagentFailed, Started: started, Finished: finished},
 	}
 
 	lines := renderSubagentsAt(model, 4, started.Add(time.Minute))
@@ -186,8 +188,8 @@ func TestSubagentStatusesUseStateColorsAndFreezeCompletedElapsed(t *testing.T) {
 		currentTheme.error,
 	}
 	for index, line := range lines {
-		if line.spans[2].style.foreground != wantForegrounds[index] {
-			t.Fatalf("line %d foreground = %v", index, line.spans[2].style.foreground)
+		if line.spans[3].style.foreground != wantForegrounds[index] {
+			t.Fatalf("line %d foreground = %v", index, line.spans[3].style.foreground)
 		}
 		var rendered strings.Builder
 		renderLine(&rendered, 1, model.width, line)
@@ -195,16 +197,16 @@ func TestSubagentStatusesUseStateColorsAndFreezeCompletedElapsed(t *testing.T) {
 			t.Fatalf("line %d did not use color %+v: %q", index, wantColors[index], rendered.String())
 		}
 	}
-	if complete := renderedLineText(lines[2], model.width); !strings.Contains(complete, "complete (5s)") {
+	if complete := renderedLineText(lines[2], model.width); !strings.Contains(complete, "awaiting delivery · complete  complete (5s)") {
 		t.Fatalf("complete line = %q", complete)
 	}
 }
 
 func TestSubagentPanelIsCappedOnSmallTerminals(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
-	model.subagentStatus.Jobs = make([]agent.SubagentJobStatus, 4)
-	for index := range model.subagentStatus.Jobs {
-		model.subagentStatus.Jobs[index] = agent.SubagentJobStatus{ID: "subagent-" + strconv.Itoa(index+1), State: agent.SubagentRunning}
+	model.subagentStatus.Active = make([]SubagentJobStatus, 4)
+	for index := range model.subagentStatus.Active {
+		model.subagentStatus.Active[index] = SubagentJobStatus{ID: "subagent-" + strconv.Itoa(index+1), State: SubagentRunning}
 	}
 
 	_, layout := modelInputLayout(model)
@@ -215,9 +217,9 @@ func TestSubagentPanelIsCappedOnSmallTerminals(t *testing.T) {
 
 func TestStatusOmitsBackgroundSubagents(t *testing.T) {
 	model := newTUIModel(120, 12, Options{Model: "model"})
-	model.subagentStatus = agent.SubagentStatus{
+	model.subagentStatus = SubagentStatus{
 		Running: 1,
-		Jobs:    []agent.SubagentJobStatus{{ID: "subagent-1", State: agent.SubagentRunning}},
+		Active:  []SubagentJobStatus{{ID: "subagent-1", State: SubagentRunning}},
 	}
 
 	left, _ := renderStatus(model, model.width)

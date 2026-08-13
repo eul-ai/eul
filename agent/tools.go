@@ -85,38 +85,6 @@ type ToolResult struct {
 	IsError bool
 }
 
-type SubagentState string
-
-const (
-	SubagentPending    SubagentState = "pending"
-	SubagentRunning    SubagentState = "running"
-	SubagentFinalizing SubagentState = "finalizing"
-	SubagentCanceling  SubagentState = "canceling"
-	SubagentComplete   SubagentState = "complete"
-	SubagentFailed     SubagentState = "failed"
-	SubagentCanceled   SubagentState = "canceled"
-)
-
-type SubagentJobStatus struct {
-	ID              string
-	Task            string
-	ModelProfile    string
-	ThinkingLevel   ThinkingLevel
-	State           SubagentState
-	Started         time.Time
-	Finished        time.Time
-	Usage           Usage
-	Generations     int
-	GenerationLimit int
-}
-
-type SubagentStatus struct {
-	Running    int
-	Finalizing int
-	Completed  int
-	Jobs       []SubagentJobStatus
-}
-
 type Toolbox interface {
 	Definitions() []ToolDefinition
 	Presentation(ToolCallSnapshot) ToolPresentation

@@ -82,17 +82,17 @@ func NewRunner(input io.Reader, output io.Writer) (*Runner, error) {
 	return runner, nil
 }
 
-func (runner *Runner) Run(ctx context.Context, engine Engine, options Options) error {
+func (runner *Runner) Run(ctx context.Context, engine Engine, options Options) (RunOutcome, error) {
 	if err := validateCheckpointCapability(engine, options.SaveCheckpoint != nil); err != nil {
-		return err
+		return RunOutcome{}, err
 	}
 
 	width, height, err := term.GetSize(runner.outputFD)
 	if err != nil {
-		return fmt.Errorf("terminal: get size: %w", err)
+		return RunOutcome{}, fmt.Errorf("terminal: get size: %w", err)
 	}
 	if err := setTerminalTitle(runner.output, options.WorkingDirectory); err != nil {
-		return err
+		return RunOutcome{}, err
 	}
 	options.Input = runner.input
 	options.Output = runner.output
@@ -123,16 +123,20 @@ func (runner *Runner) Close() error {
 	return runner.closeErr
 }
 
-func Run(ctx context.Context, engine Engine, options Options) error {
+func Run(ctx context.Context, engine Engine, options Options) (RunOutcome, error) {
 	if err := validateCheckpointCapability(engine, options.SaveCheckpoint != nil); err != nil {
-		return err
+		return RunOutcome{}, err
 	}
 
 	runner, err := NewRunner(options.Input, options.Output)
 	if err != nil {
-		return err
+		return RunOutcome{}, err
 	}
-	return errors.Join(runner.Run(ctx, engine, options), runner.Close())
+	outcome, runErr := runner.Run(ctx, engine, options)
+	if closeErr := runner.Close(); closeErr != nil {
+		return RunOutcome{}, closeErr
+	}
+	return outcome, runErr
 }
 
 func wrapRestoreError(err error) error {
@@ -142,7 +146,7 @@ func wrapRestoreError(err error) error {
 	return fmt.Errorf("terminal: restore: %w", err)
 }
 
-func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width, height int) error {
+func runTUI(ctx context.Context, engine Engine, options Options, outputFD, width, height int) (RunOutcome, error) {
 	keys := make(chan keyEvent, 64)
 	stopped := make(chan struct{})
 	defer close(stopped)
@@ -159,7 +163,7 @@ func runTUIWithKeys(
 	height int,
 	keys <-chan keyEvent,
 	stopped <-chan struct{},
-) error {
+) (RunOutcome, error) {
 	model := newTUIModel(width, height, options)
 	fileSearch := newFileSearchRunner(options.WorkingDirectory)
 	defer fileSearch.close()
@@ -234,7 +238,7 @@ func runTUIWithKeys(
 	}
 	defer controller.cancelClipboardRequests()
 	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventRender}); err != nil {
-		return err
+		return RunOutcome{}, err
 	}
 
 	interrupts := options.Interrupts
@@ -289,12 +293,12 @@ func runTUIWithKeys(
 		if err != nil {
 			cancelActiveTurn(controller.turnCancel, engineMessages)
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return ctxErr
+				return RunOutcome{}, ctxErr
 			}
-			return err
+			return RunOutcome{}, err
 		}
 		if done {
-			return err
+			return controller.outcome, nil
 		}
 		if controller.dirty && renderClock == nil {
 			renderTimer.Reset(renderDelay)

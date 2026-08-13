@@ -88,13 +88,16 @@ func (providerFunction) ModelMetadata(string) agent.ModelMetadata {
 	return agent.ModelMetadata{ThinkingLevels: agent.ThinkingLevels()}
 }
 
-func TestFinishRunReportsCleanupFailureJoinedWithInterruption(t *testing.T) {
-	cleanupErr := errors.New("cleanup failed")
+func TestFinishRunClassifiesInterruptionAndCleanupFailure(t *testing.T) {
 	var output bytes.Buffer
+	if code := finishRun(context.Canceled, &output); code != exitInterrupted || output.Len() != 0 {
+		t.Fatalf("interruption code=%d output=%q", code, output.String())
+	}
 
-	code := finishRun(errors.Join(context.Canceled, cleanupErr), &output)
-	if code != exitFailure || !strings.Contains(output.String(), cleanupErr.Error()) {
-		t.Fatalf("code=%d output=%q", code, output.String())
+	cleanupErr := errors.New("cleanup failed")
+	output.Reset()
+	if code := finishRun(cleanupErr, &output); code != exitFailure || !strings.Contains(output.String(), cleanupErr.Error()) {
+		t.Fatalf("cleanup code=%d output=%q", code, output.String())
 	}
 }
 

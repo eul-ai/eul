@@ -6,15 +6,15 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/tool"
+	"github.com/eul-ai/eul/tool/subagent"
 )
 
-func (models modelSelection) subagent(profile tool.SubagentModelProfile) string {
+func (models modelSelection) subagent(profile subagent.Profile) string {
 	var selected string
 	switch profile {
-	case tool.SubagentModelFast:
+	case subagent.ProfileFast:
 		selected = models.fast
-	case tool.SubagentModelBalanced:
+	case subagent.ProfileBalanced:
 		selected = models.balanced
 	}
 	if selected == "" {
@@ -28,11 +28,11 @@ func runChildAgent(
 	backendRuntime backend.Runtime,
 	newToolset toolsetFactory,
 	config resolvedConfig,
-	modelProfile tool.SubagentModelProfile,
+	modelProfile subagent.Profile,
 	thinkingLevel agent.ThinkingLevel,
 	fastMode bool,
 	task string,
-	update func(tool.SubagentProgress),
+	update func(subagent.Progress),
 ) (agent.RunResult, error) {
 	provider, err := backendRuntime.NewProvider()
 	if err != nil {
@@ -54,9 +54,9 @@ func runChildAgent(
 	var liveUsage agent.Usage
 	normalGenerations := 0
 	finalizing := false
-	policy := tool.NewSubagentFinalizationPolicy(func() {
+	policy := subagent.NewFinalizationPolicy(func() {
 		finalizing = true
-		update(tool.SubagentProgress{
+		update(subagent.Progress{
 			Usage:       liveUsage,
 			Generations: normalGenerations,
 			Finalizing:  true,
@@ -71,7 +71,7 @@ func runChildAgent(
 			if event.Kind == agent.EventContextUsage && !finalizing {
 				normalGenerations++
 			}
-			update(tool.SubagentProgress{Usage: liveUsage, Generations: normalGenerations})
+			update(subagent.Progress{Usage: liveUsage, Generations: normalGenerations})
 		}
 		return nil
 	}, policy)

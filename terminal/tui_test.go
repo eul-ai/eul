@@ -22,7 +22,7 @@ func TestScreenModesRestoreEnhancedKeyboardReporting(t *testing.T) {
 
 func TestRunnerRunValidatesCheckpointCapabilityAtEntry(t *testing.T) {
 	runner := &Runner{}
-	err := runner.Run(context.Background(), &fakeEngine{}, Options{
+	_, err := runner.Run(context.Background(), &fakeEngine{}, Options{
 		SaveCheckpoint: func(agent.Checkpoint, Checkpoint, bool) error { return nil },
 	})
 	if !errors.Is(err, errCheckpointUnavailable) {
@@ -44,7 +44,7 @@ func TestRunTUIParentCancellationWinsOverEOF(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var output bytes.Buffer
-	err := runTUI(ctx, &fakeEngine{}, Options{Input: strings.NewReader(""), Output: &output}, -1, 80, 24)
+	_, err := runTUI(ctx, &fakeEngine{}, Options{Input: strings.NewReader(""), Output: &output}, -1, 80, 24)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("runTUI() error = %v", err)
 	}
@@ -67,7 +67,8 @@ func TestRunTUIParentCancellationWinsAfterActiveEOF(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- runTUI(ctx, engine, Options{Input: reader, Output: &output}, -1, 80, 24)
+		_, err := runTUI(ctx, engine, Options{Input: reader, Output: &output}, -1, 80, 24)
+		done <- err
 	}()
 	if _, err := io.WriteString(writer, "wait\r"); err != nil {
 		t.Fatal(err)
@@ -93,20 +94,21 @@ func TestRunTUIParentCancellationWinsAfterActiveEOF(t *testing.T) {
 func TestRunTUIRendersSubagentUpdatesWhileIdle(t *testing.T) {
 	reader, writer := io.Pipe()
 	defer reader.Close()
-	updates := make(chan agent.SubagentStatus, 1)
+	updates := make(chan SubagentStatus, 1)
 	output := newSignalingWriter("subagent-1")
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runTUI(context.Background(), &fakeEngine{}, Options{
+		_, err := runTUI(context.Background(), &fakeEngine{}, Options{
 			Input: reader, Output: output, SubagentUpdates: updates,
 		}, -1, 80, 24)
+		done <- err
 	}()
 
-	updates <- agent.SubagentStatus{
+	updates <- SubagentStatus{
 		Running: 1,
-		Jobs: []agent.SubagentJobStatus{{
-			ID: "subagent-1", Task: "inspect", State: agent.SubagentRunning, Started: time.Now(), GenerationLimit: 20,
+		Active: []SubagentJobStatus{{
+			ID: "subagent-1", Task: "inspect", State: SubagentRunning, Started: time.Now(), GenerationLimit: 20,
 		}},
 	}
 	select {
@@ -143,7 +145,8 @@ func TestRunTUILoadsProviderUsageAtStartupAndAfterTurn(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runTUI(context.Background(), &fakeEngine{}, options, -1, 80, 24)
+		_, err := runTUI(context.Background(), &fakeEngine{}, options, -1, 80, 24)
+		done <- err
 	}()
 
 	select {
@@ -193,7 +196,7 @@ func TestRunTUIWaitsForProviderUsageCleanup(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runTUI(context.Background(), &fakeEngine{}, Options{
+		_, err := runTUI(context.Background(), &fakeEngine{}, Options{
 			Input:  reader,
 			Output: io.Discard,
 			LoadUsage: func(ctx context.Context) (agent.ProviderUsage, error) {
@@ -204,6 +207,7 @@ func TestRunTUIWaitsForProviderUsageCleanup(t *testing.T) {
 				return agent.ProviderUsage{}, ctx.Err()
 			},
 		}, -1, 80, 24)
+		done <- err
 	}()
 
 	select {
@@ -310,7 +314,7 @@ func TestLoadProviderUsageCancelsActiveRequest(t *testing.T) {
 func TestRunTUIReturnsInputReadFailure(t *testing.T) {
 	readErr := errors.New("read failed")
 	var output bytes.Buffer
-	err := runTUI(context.Background(), &fakeEngine{}, Options{
+	_, err := runTUI(context.Background(), &fakeEngine{}, Options{
 		Input: terminalErrorReader{err: readErr}, Output: &output,
 	}, -1, 80, 24)
 	if !errors.Is(err, readErr) {
@@ -549,8 +553,7 @@ func TestHandleKeyCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	exit, err := handleKey(context.Background(), model, engine, keyEvent{code: keyEnter}, messages, stopped, &cancel)
-	var request *NewSessionRequest
-	if !errors.As(err, &request) || exit {
+	if err != nil || !exit {
 		t.Fatalf("new command exit=%v err=%v", exit, err)
 	}
 	if len(model.blocks) != 2 {

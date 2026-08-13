@@ -22,10 +22,11 @@ import (
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/terminal"
+	"github.com/eul-ai/eul/tool/subagent"
 )
 
 const (
-	sessionRecordVersion       = 1
+	sessionRecordVersion       = 2
 	maxSessionBytes            = int64(64 * 1024 * 1024)
 	maxSessionDescriptionBytes = 120
 )
@@ -53,6 +54,7 @@ type sessionRecord struct {
 	FastMode         bool                `json:"fast_mode,omitempty"`
 	Description      string              `json:"description,omitempty"`
 	Agent            agent.Checkpoint    `json:"agent"`
+	Subagent         subagent.Checkpoint `json:"subagent"`
 	Terminal         terminal.Checkpoint `json:"terminal"`
 }
 
@@ -88,6 +90,7 @@ func (store *sessionStore) Create(
 	models modelSelection,
 	thinkingLevel agent.ThinkingLevel,
 	agentCheckpoint agent.Checkpoint,
+	subagentCheckpoint subagent.Checkpoint,
 	terminalCheckpoint terminal.Checkpoint,
 	fastMode bool,
 ) (*sessionHandle, error) {
@@ -129,6 +132,7 @@ func (store *sessionStore) Create(
 			FastMode:         fastMode,
 			Description:      terminalCheckpoint.Description(),
 			Agent:            agentCheckpoint,
+			Subagent:         subagentCheckpoint,
 			Terminal:         terminalCheckpoint,
 		},
 	}
@@ -279,6 +283,7 @@ func (handle *sessionHandle) Record() sessionRecord {
 
 func (handle *sessionHandle) Save(
 	agentCheckpoint agent.Checkpoint,
+	subagentCheckpoint subagent.Checkpoint,
 	terminalCheckpoint terminal.Checkpoint,
 	active bool,
 	thinkingLevel agent.ThinkingLevel,
@@ -297,6 +302,7 @@ func (handle *sessionHandle) Save(
 	next.ThinkingLevel = thinkingLevel
 	next.FastMode = fastMode
 	next.Agent = agentCheckpoint
+	next.Subagent = subagentCheckpoint
 	next.Terminal = terminalCheckpoint
 	if next.Description == "" {
 		next.Description = terminalCheckpoint.Description()
@@ -430,7 +436,7 @@ func readSessionSummary(path string) (terminal.SessionSummary, string, error) {
 					Active:      record.Status == sessionActive,
 				}, record.WorkingDirectory, nil
 			}
-		case "agent", "terminal":
+		case "agent", "subagent", "terminal":
 			if err := validateSessionSummaryMetadata(record); err != nil {
 				return terminal.SessionSummary{}, "", err
 			}
@@ -559,7 +565,7 @@ func validateSessionRecord(record sessionRecord) error {
 		return errors.New("session balanced model is invalid")
 	case !record.ThinkingLevel.Valid():
 		return errors.New("session thinking level is invalid")
-	case !record.Agent.Initialized() || !record.Terminal.Initialized():
+	case !record.Agent.Initialized() || !record.Subagent.Initialized() || !record.Terminal.Initialized():
 		return errors.New("session checkpoints are missing")
 	case !utf8.ValidString(record.Description) || len(record.Description) > maxSessionDescriptionBytes || strings.IndexFunc(record.Description, unicode.IsControl) >= 0:
 		return errors.New("session description is invalid")

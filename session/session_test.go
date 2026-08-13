@@ -10,10 +10,12 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/tool"
+	"github.com/eul-ai/eul/tool/subagent"
 )
 
 type closeRecordingTool struct {
@@ -78,12 +80,12 @@ func TestModelSelectionSelectsSubagentProfiles(t *testing.T) {
 		fast:     "fast-model",
 	}
 	for _, test := range []struct {
-		profile tool.SubagentModelProfile
+		profile subagent.Profile
 		want    string
 	}{
-		{profile: tool.SubagentModelFast, want: "fast-model"},
-		{profile: tool.SubagentModelBalanced, want: "balanced-model"},
-		{profile: tool.SubagentModelPowerful, want: "powerful-model"},
+		{profile: subagent.ProfileFast, want: "fast-model"},
+		{profile: subagent.ProfileBalanced, want: "balanced-model"},
+		{profile: subagent.ProfilePowerful, want: "powerful-model"},
 	} {
 		if got := models.subagent(test.profile); got != test.want {
 			t.Fatalf("profile %q selected %q, want %q", test.profile, got, test.want)
@@ -390,6 +392,135 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	}
 }
 
+func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
+	cwd := t.TempDir()
+	runtime := runtime{
+		stdin:  strings.NewReader(""),
+		stdout: io.Discard,
+		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error) {
+			return tool.NewRegistry(nil)
+		},
+	}
+	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
+		return providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
+			return agent.Response{Text: "result for " + request.Inputs[0].Text}, nil
+		}), nil
+	}}
+	config := resolvedConfig{provider: "test", models: modelSelection{main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
+	store := newSessionStore(t.TempDir())
+	session, err := newStoredAgentSession(config, runtime, backendRuntime, store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.finish(nil)
+	if err := session.terminalOptions.SaveCheckpoint(sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "prompt"), false); err != nil {
+		t.Fatal(err)
+	}
+	launch := subagent.NewLaunchTool(session.subagents)
+	if _, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		record, err := readSessionRecord(session.persistence.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(record.Subagent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(encoded), `"status":"complete"`) && strings.Contains(string(encoded), "result for inspect") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("idle completion was not persisted: %s", encoded)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testing.T) {
+	cwd := t.TempDir()
+	runtime := runtime{
+		stdin:  strings.NewReader(""),
+		stdout: io.Discard,
+		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error) {
+			return tool.NewRegistry(nil)
+		},
+	}
+	newBackendRuntime := func() *fakeBackendRuntime {
+		return &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
+			return providerFunction(func(ctx context.Context, _ agent.Request, _ agent.TextSink) (agent.Response, error) {
+				<-ctx.Done()
+				return agent.Response{}, ctx.Err()
+			}), nil
+		}}
+	}
+	config := resolvedConfig{provider: "test", models: modelSelection{main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
+	store := newSessionStore(t.TempDir())
+
+	first, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launch := subagent.NewLaunchTool(first.subagents)
+	if _, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"running","prompt":"running"}]}`), nil); err != nil {
+		t.Fatal(err)
+	}
+	terminalCheckpoint := sessionStoreTestTerminalCheckpoint(t, "active prompt")
+	if err := first.terminalOptions.SaveCheckpoint(sessionStoreTestAgentCheckpoint(t), terminalCheckpoint, true); err != nil {
+		t.Fatal(err)
+	}
+	sessionID := first.persistence.record.ID
+	first.checkpoints.Stop()
+	if err := first.subagents.Close(); err != nil {
+		t.Fatal(err)
+	}
+	<-first.checkpointDone
+	if err := first.tools.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.checkpoints.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := closeBackendRuntime(first.backendRuntime); err != nil {
+		t.Fatal(err)
+	}
+
+	handle, err := store.Open(context.Background(), cwd, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.terminalOptions.PreviousTurnActive {
+		t.Fatal("previous active turn was not reported")
+	}
+	if err := second.finish(nil); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := store.Open(context.Background(), cwd, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if reopened.record.Status != sessionIdle {
+		t.Fatalf("restored status = %q", reopened.record.Status)
+	}
+	encoded, err := json.Marshal(reopened.record.Subagent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"status":"interrupted"`) || strings.Contains(string(encoded), `"active"`) {
+		t.Fatalf("restored subagents = %s", encoded)
+	}
+}
+
 func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	cwd := t.TempDir()
 	var stdout, stderr bytes.Buffer
@@ -464,7 +595,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	cwd := t.TempDir()
 	store := newSessionStore(t.TempDir())
-	corrupt, err := store.Create("test", cwd, modelSelection{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "corrupt"), false)
+	corrupt, err := store.Create("test", cwd, modelSelection{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "corrupt"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -475,7 +606,7 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	if err := os.WriteFile(corruptPath, []byte(`{"version":99}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	valid, err := store.Create("test", cwd, modelSelection{main: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "valid"), false)
+	valid, err := store.Create("test", cwd, modelSelection{main: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "valid"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
