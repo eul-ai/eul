@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -55,21 +54,6 @@ type Manager struct {
 	callbackAddress string
 	now             func() time.Time
 	sleep           func(context.Context, time.Duration) error
-}
-
-func DefaultCredentialPath(eulHome string) (string, error) {
-	if eulHome != "" && !filepath.IsAbs(eulHome) {
-		return "", errors.New("oauth: EUL_HOME must be an absolute path")
-	}
-	if eulHome != "" {
-		return filepath.Join(filepath.Clean(eulHome), "auth.json"), nil
-	}
-
-	config, err := os.UserConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("oauth: resolve user config directory: %w", err)
-	}
-	return filepath.Join(config, "eul", "auth.json"), nil
 }
 
 func NewManager(path string, options Options) *Manager {

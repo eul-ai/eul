@@ -41,6 +41,77 @@ func TestTerminalTransitionQueuesCompletionAndFreesCapacity(t *testing.T) {
 	}
 }
 
+func TestStartValidatesLaunchPolicyBeforeMutation(t *testing.T) {
+	manager := NewManager(Config{
+		Runner: RunFunc(func(context.Context, RunRequest, func(Progress)) (agent.RunResult, error) {
+			return agent.RunResult{}, nil
+		}),
+		SupportedThinkingLevels: func(Profile) []agent.ThinkingLevel {
+			return []agent.ThinkingLevel{agent.ThinkingMedium}
+		},
+	})
+	defer manager.Close()
+
+	tests := []struct {
+		name    string
+		tasks   []Task
+		profile Profile
+		level   agent.ThinkingLevel
+	}{
+		{name: "no tasks", profile: ProfileBalanced, level: agent.ThinkingMedium},
+		{name: "too many tasks", tasks: testTasks(maxActive + 1), profile: ProfileBalanced, level: agent.ThinkingMedium},
+		{name: "blank description", tasks: []Task{{Prompt: "task"}}, profile: ProfileBalanced, level: agent.ThinkingMedium},
+		{name: "blank prompt", tasks: []Task{{Description: "task"}}, profile: ProfileBalanced, level: agent.ThinkingMedium},
+		{name: "unknown profile", tasks: testTasks(1), profile: Profile("unknown"), level: agent.ThinkingMedium},
+		{name: "invalid thinking", tasks: testTasks(1), profile: ProfileBalanced, level: agent.ThinkingLevel("invalid")},
+		{name: "disallowed thinking", tasks: testTasks(1), profile: ProfileBalanced, level: agent.ThinkingMax},
+		{name: "unsupported thinking", tasks: testTasks(1), profile: ProfileBalanced, level: agent.ThinkingLow},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := manager.Start(test.tasks, test.profile, test.level); err == nil {
+				t.Fatal("invalid launch accepted")
+			}
+			checkpoint := manager.Checkpoint()
+			if checkpoint.data.NextID != 0 || len(checkpoint.data.Active) != 0 {
+				t.Fatalf("manager mutated after rejection: %+v", checkpoint.data)
+			}
+		})
+	}
+}
+
+func TestCancelValidatesIDsAtomically(t *testing.T) {
+	release := make(chan struct{})
+	manager := NewManager(Config{Runner: RunFunc(func(context.Context, RunRequest, func(Progress)) (agent.RunResult, error) {
+		<-release
+		return agent.RunResult{}, nil
+	})})
+	defer manager.Close()
+
+	jobs, err := manager.Start(testTasks(2), ProfileBalanced, agent.ThinkingLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ids := range [][]string{
+		nil,
+		{""},
+		{jobs[0].ID, jobs[0].ID},
+		{"missing"},
+		{jobs[0].ID, "missing"},
+		{"1", "2", "3", "4", "5"},
+	} {
+		if _, err := manager.Cancel(ids); err == nil {
+			t.Fatalf("invalid IDs accepted: %v", ids)
+		}
+		status := manager.Checkpoint().data.Active
+		if len(status) != 2 || status[0].State != StateRunning || status[1].State != StateRunning {
+			t.Fatalf("cancel partially mutated jobs for %v: %+v", ids, status)
+		}
+	}
+
+	close(release)
+}
+
 func TestCompleteFailedAndCanceledChildrenQueueTerminalNotifications(t *testing.T) {
 	canceled := make(chan struct{})
 	manager := NewManager(Config{Runner: RunFunc(func(ctx context.Context, request RunRequest, _ func(Progress)) (agent.RunResult, error) {

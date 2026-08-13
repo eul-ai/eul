@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"path/filepath"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
@@ -39,11 +40,7 @@ var (
 
 func New() *Driver {
 	return &Driver{
-		newManager: func(home string) (oauthManager, error) {
-			path, err := oauth.DefaultCredentialPath(home)
-			if err != nil {
-				return nil, err
-			}
+		newManager: func(path string) (oauthManager, error) {
 			return oauth.NewManager(path, oauth.Options{}), nil
 		},
 		newClient: func(source client.TokenSource) (*client.Client, error) {
@@ -65,7 +62,7 @@ func (*Driver) Descriptor() backend.Descriptor {
 }
 
 func (driver *Driver) Open(options backend.Options) (backend.Runtime, error) {
-	manager, err := driver.newManager(options.Home)
+	manager, err := driver.newManager(filepath.Join(options.Home, "auth.json"))
 	if err != nil {
 		return nil, err
 	}

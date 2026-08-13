@@ -3,9 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -14,7 +12,6 @@ import (
 )
 
 const (
-	maxActiveSubagents   = 4
 	launchToolName       = "subagent"
 	waitToolName         = "subagent_wait"
 	cancelToolName       = "subagent_cancel"
@@ -149,16 +146,15 @@ func (launch *launchTool) Execute(ctx context.Context, arguments json.RawMessage
 	if err != nil {
 		return errorResult(launchToolName, err), nil
 	}
-	if err := validateTasks(args.Tasks); err != nil {
-		return errorResult(launchToolName, err), nil
+	profile := subagent.ProfileBalanced
+	if args.ModelProfile != nil {
+		profile = subagent.Profile(*args.ModelProfile)
 	}
-	profile, err := resolveSubagentProfile(args.ModelProfile)
-	if err != nil {
-		return errorResult(launchToolName, err), nil
-	}
-	thinkingLevel, err := resolveSubagentThinkingLevel(launch.manager, profile, args.ThinkingLevel)
-	if err != nil {
-		return errorResult(launchToolName, err), nil
+	thinkingLevel := agent.ThinkingLow
+	if args.ThinkingLevel == nil {
+		thinkingLevel = agent.ClampThinkingLevel(thinkingLevel, launch.manager.SupportedThinkingLevels(profile))
+	} else {
+		thinkingLevel = agent.ThinkingLevel(*args.ThinkingLevel)
 	}
 
 	jobs, err := launch.manager.Start(toSubagentTasks(args.Tasks), profile, thinkingLevel)
@@ -274,32 +270,11 @@ func (cancel *cancelTool) Execute(ctx context.Context, arguments json.RawMessage
 	if err != nil {
 		return errorResult(cancelToolName, err), nil
 	}
-	if err := validateIDs(args.IDs); err != nil {
-		return errorResult(cancelToolName, err), nil
-	}
 	canceled, err := cancel.manager.Cancel(args.IDs)
 	if err != nil {
 		return errorResult(cancelToolName, err), nil
 	}
 	return successResult("Canceling subagents:\n- " + strings.Join(canceled, "\n- ")), nil
-}
-
-func validateTasks(tasks []subagentTask) error {
-	if len(tasks) == 0 {
-		return errors.New("at least one task is required")
-	}
-	if len(tasks) > maxActiveSubagents {
-		return fmt.Errorf("tasks must not exceed %d", maxActiveSubagents)
-	}
-	for _, task := range tasks {
-		if strings.TrimSpace(task.Description) == "" {
-			return errors.New("task descriptions must be nonempty")
-		}
-		if strings.TrimSpace(task.Prompt) == "" {
-			return errors.New("task prompts must be nonempty")
-		}
-	}
-	return nil
 }
 
 func toSubagentTasks(tasks []subagentTask) []subagent.Task {
@@ -308,59 +283,4 @@ func toSubagentTasks(tasks []subagentTask) []subagent.Task {
 		converted[index] = subagent.Task{Description: task.Description, Prompt: task.Prompt}
 	}
 	return converted
-}
-
-func resolveSubagentProfile(value *string) (subagent.Profile, error) {
-	profile := subagent.ProfileBalanced
-	if value != nil {
-		profile = subagent.Profile(*value)
-	}
-	switch profile {
-	case subagent.ProfileFast, subagent.ProfileBalanced, subagent.ProfilePowerful:
-		return profile, nil
-	default:
-		return "", errors.New("model profile must be one of fast, balanced, or powerful")
-	}
-}
-
-func resolveSubagentThinkingLevel(manager *subagent.Manager, profile subagent.Profile, value *string) (agent.ThinkingLevel, error) {
-	supported := manager.SupportedThinkingLevels(profile)
-	level := agent.ThinkingLow
-	if value == nil {
-		level = agent.ClampThinkingLevel(level, supported)
-	} else {
-		level = agent.ThinkingLevel(*value)
-	}
-
-	switch level {
-	case agent.ThinkingOff, agent.ThinkingMinimal, agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh:
-	case agent.ThinkingXHigh, agent.ThinkingMax:
-		return "", fmt.Errorf("thinking level %q is not available to subagents; use off, minimal, low, medium, or high", level)
-	default:
-		return "", errors.New("thinking level must be one of off, minimal, low, medium, or high")
-	}
-	if !slices.Contains(supported, level) {
-		return "", fmt.Errorf("thinking level %q is not supported by the %s model", level, profile)
-	}
-	return level, nil
-}
-
-func validateIDs(ids []string) error {
-	if len(ids) == 0 {
-		return errors.New("at least one subagent ID is required")
-	}
-	if len(ids) > maxActiveSubagents {
-		return fmt.Errorf("subagent IDs must not exceed %d", maxActiveSubagents)
-	}
-	seen := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		if strings.TrimSpace(id) == "" {
-			return errors.New("subagent IDs must be nonempty")
-		}
-		if _, ok := seen[id]; ok {
-			return fmt.Errorf("duplicate subagent ID %q", id)
-		}
-		seen[id] = struct{}{}
-	}
-	return nil
 }

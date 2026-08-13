@@ -22,6 +22,7 @@ type ModelDefaults struct {
 }
 
 type Options struct {
+	// Home is the resolved absolute Eul application directory.
 	Home string
 }
 

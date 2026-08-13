@@ -52,9 +52,9 @@ func (manager *fakeManager) Logout(context.Context) error {
 func TestDriverOpensRuntimeWithAuthenticationAndProviderCreation(t *testing.T) {
 	manager := &fakeManager{credential: oauth.AccessCredential{AccessToken: "access", AccountID: "account"}}
 	driver := New()
-	var managerHome string
-	driver.newManager = func(home string) (oauthManager, error) {
-		managerHome = home
+	var managerPath string
+	driver.newManager = func(path string) (oauthManager, error) {
+		managerPath = path
 		return manager, nil
 	}
 	driver.newClient = func(source client.TokenSource) (*client.Client, error) {
@@ -89,8 +89,8 @@ func TestDriverOpensRuntimeWithAuthenticationAndProviderCreation(t *testing.T) {
 	if err := backendRuntime.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if managerHome != "/config/eul" || manager.resolveCalls != 2 {
-		t.Fatalf("home=%q resolveCalls=%d", managerHome, manager.resolveCalls)
+	if managerPath != "/config/eul/auth.json" || manager.resolveCalls != 2 {
+		t.Fatalf("path=%q resolveCalls=%d", managerPath, manager.resolveCalls)
 	}
 }
 

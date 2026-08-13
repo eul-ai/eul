@@ -53,10 +53,8 @@ func (inbox *fakeInbox) InboxEmpty() bool {
 	return len(inbox.messages) == 0
 }
 
-func (inbox *fakeInbox) decorate(request *Request) {
-	if inbox.active != "" {
-		request.Instructions = strings.TrimSpace(request.Instructions) + "\n\n" + inbox.active
-	}
+func (inbox *fakeInbox) additionalInstructions() string {
+	return inbox.active
 }
 
 func TestEngineDeliversAndAcknowledgesInbox(t *testing.T) {
@@ -73,7 +71,7 @@ func TestEngineDeliversAndAcknowledgesInbox(t *testing.T) {
 		}
 		return Response{Text: "answer", State: []byte("state")}, nil
 	})
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, DecorateRequest: inbox.decorate})
+	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, AdditionalInstructions: inbox.additionalInstructions})
 
 	result, err := engine.Run(context.Background(), "start", discardEvents)
 	if err != nil || result.Text != "answer" {
@@ -89,7 +87,7 @@ func TestEngineAcknowledgesInboxOnlyAfterCheckpointSucceeds(t *testing.T) {
 	provider := inboxProvider(func(context.Context, Request, StreamObserver) (Response, error) {
 		return Response{Text: "answer", State: []byte("delivered")}, nil
 	})
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, DecorateRequest: inbox.decorate, Checkpointing: true})
+	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, AdditionalInstructions: inbox.additionalInstructions, Checkpointing: true})
 	persistErr := errors.New("persist failed")
 
 	_, err := engine.Run(context.Background(), "start", func(event Event) error {
@@ -108,7 +106,7 @@ func TestEngineLeavesInboxPendingAfterGenerationFailure(t *testing.T) {
 	provider := inboxProvider(func(context.Context, Request, StreamObserver) (Response, error) {
 		return Response{}, errors.New("failed")
 	})
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, DecorateRequest: inbox.decorate})
+	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, AdditionalInstructions: inbox.additionalInstructions})
 
 	if _, err := engine.Run(context.Background(), "start", discardEvents); err == nil {
 		t.Fatal("generation succeeded")
@@ -154,7 +152,7 @@ func TestEngineAutomaticallyCompactsOrdinaryStateBeforeDeliveringInbox(t *testin
 			return CompactResponse{State: []byte("compacted")}, nil
 		},
 	}
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, DecorateRequest: inbox.decorate})
+	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, AdditionalInstructions: inbox.additionalInstructions})
 	engine.conversation.state = []byte("full")
 
 	result, err := engine.Run(context.Background(), "start", discardEvents)
@@ -203,7 +201,7 @@ func TestEngineReattachesInboxAfterErrorCompaction(t *testing.T) {
 			return CompactResponse{State: []byte("compacted")}, nil
 		},
 	}
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, DecorateRequest: inbox.decorate})
+	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, AdditionalInstructions: inbox.additionalInstructions})
 	engine.conversation.state = []byte("full")
 
 	result, err := engine.Run(context.Background(), "start", discardEvents)
@@ -242,7 +240,7 @@ func TestEngineCompletionAfterSettlementRemainsForNextUserTurn(t *testing.T) {
 		}
 		return Response{Text: "answer", State: []byte("state")}, nil
 	})
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, DecorateRequest: inbox.decorate})
+	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, AdditionalInstructions: inbox.additionalInstructions})
 
 	if _, err := engine.Run(context.Background(), "first", discardEvents); err != nil {
 		t.Fatal(err)
@@ -294,7 +292,7 @@ func TestEngineSettlementDeliversCompletionThatRacesFinalAnswer(t *testing.T) {
 			return Response{}, nil
 		}
 	})
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, DecorateRequest: inbox.decorate})
+	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, AdditionalInstructions: inbox.additionalInstructions})
 
 	result, err := engine.Run(context.Background(), "start", discardEvents)
 	if err != nil || result.Text != "final" || calls != 2 {

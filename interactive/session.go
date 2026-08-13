@@ -115,6 +115,7 @@ func newAgentSessionComponents(
 		settings,
 		checkpointing,
 		tools.subagents,
+		subagentInstructions(tools.subagents),
 	))
 	session := &agentSession{
 		engine:         engine,

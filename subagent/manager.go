@@ -116,6 +116,10 @@ func (m *Manager) Close() error {
 }
 
 func (m *Manager) Start(tasks []Task, profile Profile, thinkingLevel agent.ThinkingLevel) ([]Job, error) {
+	if err := m.validateStart(tasks, profile, thinkingLevel); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -157,6 +161,44 @@ func (m *Manager) Start(tasks []Task, profile Profile, thinkingLevel agent.Think
 		go m.runJob(job)
 	}
 	return startedJobs, nil
+}
+
+func (m *Manager) validateStart(tasks []Task, profile Profile, thinkingLevel agent.ThinkingLevel) error {
+	if len(tasks) == 0 {
+		return errors.New("at least one task is required")
+	}
+	if len(tasks) > maxActive {
+		return fmt.Errorf("tasks must not exceed %d", maxActive)
+	}
+	for _, task := range tasks {
+		if strings.TrimSpace(task.Description) == "" {
+			return errors.New("task descriptions must be nonempty")
+		}
+		if strings.TrimSpace(task.Prompt) == "" {
+			return errors.New("task prompts must be nonempty")
+		}
+	}
+	if !profile.valid() {
+		return errors.New("model profile must be one of fast, balanced, or powerful")
+	}
+	if err := validateThinkingLevel(thinkingLevel); err != nil {
+		return err
+	}
+	if !slices.Contains(m.supportedThinkingLevels(profile), thinkingLevel) {
+		return fmt.Errorf("thinking level %q is not supported by the %s model", thinkingLevel, profile)
+	}
+	return nil
+}
+
+func validateThinkingLevel(level agent.ThinkingLevel) error {
+	switch level {
+	case agent.ThinkingOff, agent.ThinkingMinimal, agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh:
+		return nil
+	case agent.ThinkingXHigh, agent.ThinkingMax:
+		return fmt.Errorf("thinking level %q is not available to subagents; use off, minimal, low, medium, or high", level)
+	default:
+		return errors.New("thinking level must be one of off, minimal, low, medium, or high")
+	}
 }
 
 func (m *Manager) runJob(job *job) {
@@ -279,6 +321,10 @@ func lineEnd(text string, maxLines int) int {
 }
 
 func (m *Manager) Cancel(ids []string) ([]string, error) {
+	if err := validateCancellationIDs(ids); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -307,6 +353,26 @@ func (m *Manager) Cancel(ids []string) ([]string, error) {
 		m.publishLocked()
 	}
 	return canceled, nil
+}
+
+func validateCancellationIDs(ids []string) error {
+	if len(ids) == 0 {
+		return errors.New("at least one subagent ID is required")
+	}
+	if len(ids) > maxActive {
+		return fmt.Errorf("subagent IDs must not exceed %d", maxActive)
+	}
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" {
+			return errors.New("subagent IDs must be nonempty")
+		}
+		if _, ok := seen[id]; ok {
+			return fmt.Errorf("duplicate subagent ID %q", id)
+		}
+		seen[id] = struct{}{}
+	}
+	return nil
 }
 
 func (m *Manager) Wait(ctx context.Context) (WaitOutcome, error) {
@@ -401,6 +467,9 @@ func (m *Manager) AcknowledgeInbox(batch agent.InboxBatch) error {
 }
 
 func (m *Manager) SupportedThinkingLevels(profile Profile) []agent.ThinkingLevel {
+	if !profile.valid() {
+		return nil
+	}
 	return slices.Clone(m.supportedThinkingLevels(profile))
 }
 

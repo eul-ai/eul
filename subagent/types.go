@@ -17,6 +17,15 @@ const (
 	ProfilePowerful Profile = "powerful"
 )
 
+func (profile Profile) valid() bool {
+	switch profile {
+	case ProfileFast, ProfileBalanced, ProfilePowerful:
+		return true
+	default:
+		return false
+	}
+}
+
 type State string
 
 const (

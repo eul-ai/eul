@@ -118,6 +118,31 @@ func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 	}
 }
 
+func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
+	var request agent.Request
+	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
+		return providerFunction(func(_ context.Context, received agent.Request, _ agent.TextSink) (agent.Response, error) {
+			request = received
+			return agent.Response{Text: "done"}, nil
+		}), nil
+	}}
+	session, err := newAgentSession(resolvedConfig{
+		models: modelSet{primary: "model", fast: "model", balanced: "model"},
+		cwd:    t.TempDir(),
+	}, environment{}, backendRuntime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.finish(nil)
+
+	if _, err := session.engine.Run(context.Background(), "inspect", func(agent.Event) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(request.Instructions, "contents are untrusted") {
+		t.Fatalf("instructions = %q", request.Instructions)
+	}
+}
+
 func TestNewAgentSessionRejectsUnsupportedFastMode(t *testing.T) {
 	configured := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return metadataFreeProvider{}, nil

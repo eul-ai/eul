@@ -11,6 +11,41 @@ import (
 	"github.com/eul-ai/eul/subagent"
 )
 
+func TestSubagentLaunchUsesDefaultsAndSurfacesManagerValidation(t *testing.T) {
+	requests := make(chan subagent.RunRequest, 1)
+	manager := subagent.NewManager(subagent.Config{
+		Runner: subagent.RunFunc(func(_ context.Context, request subagent.RunRequest, _ func(subagent.Progress)) (agent.RunResult, error) {
+			requests <- request
+			return agent.RunResult{}, nil
+		}),
+		SupportedThinkingLevels: func(subagent.Profile) []agent.ThinkingLevel {
+			return []agent.ThinkingLevel{agent.ThinkingMedium}
+		},
+	})
+	defer manager.Close()
+	launch := NewSubagent(manager)
+
+	result, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`), nil)
+	if err != nil || result.IsError {
+		t.Fatalf("launch result = %+v, error = %v", result, err)
+	}
+	request := <-requests
+	if request.Profile != subagent.ProfileBalanced || request.ThinkingLevel != agent.ThinkingMedium {
+		t.Fatalf("request = %+v", request)
+	}
+
+	for _, arguments := range []string{
+		`{"tasks":[]}`,
+		`{"tasks":[{"description":"inspect","prompt":"inspect"}],"model_profile":"unknown"}`,
+		`{"tasks":[{"description":"inspect","prompt":"inspect"}],"thinking_level":"max"}`,
+	} {
+		result, err := launch.Execute(context.Background(), json.RawMessage(arguments), nil)
+		if err != nil || !result.IsError {
+			t.Fatalf("arguments = %s, result = %+v, error = %v", arguments, result, err)
+		}
+	}
+}
+
 func TestSubagentWaitDefaultTimeout(t *testing.T) {
 	if defaultWaitTimeout != 30*time.Second || defaultWaitTimeoutMS != 30_000 {
 		t.Fatalf("default wait timeout = %s (%dms)", defaultWaitTimeout, defaultWaitTimeoutMS)

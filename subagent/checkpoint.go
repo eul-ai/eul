@@ -90,6 +90,12 @@ func validateCheckpointData(data checkpointData) error {
 		if _, exists := seenJobs[active.ID]; exists {
 			return fmt.Errorf("subagent: duplicate active job %q", active.ID)
 		}
+		if !active.ModelProfile.valid() {
+			return fmt.Errorf("subagent: invalid model profile %q", active.ModelProfile)
+		}
+		if err := validateThinkingLevel(active.ThinkingLevel); err != nil {
+			return fmt.Errorf("subagent: invalid active thinking level: %w", err)
+		}
 		seenJobs[active.ID] = struct{}{}
 		switch active.State {
 		case StateRunning, StateCanceling:

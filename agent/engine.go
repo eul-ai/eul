@@ -14,16 +14,16 @@ import (
 var errEngineBusy = errors.New("agent: engine is busy")
 
 type Options struct {
-	Model               string
-	ThinkingLevel       ThinkingLevel
-	FastMode            bool
-	WorkingDirectory    string
-	ProjectInstructions string
-	Skills              []skill.Skill
-	Checkpointing       bool
-	Inbox               InboxSource
-	DecorateRequest     func(*Request)
-	Settings            *Settings
+	Model                  string
+	ThinkingLevel          ThinkingLevel
+	FastMode               bool
+	WorkingDirectory       string
+	ProjectInstructions    string
+	Skills                 []skill.Skill
+	Checkpointing          bool
+	Inbox                  InboxSource
+	AdditionalInstructions func() string
+	Settings               *Settings
 }
 
 type RunResult struct {
@@ -32,18 +32,18 @@ type RunResult struct {
 }
 
 type Engine struct {
-	mu              sync.Mutex
-	provider        Provider
-	tools           Toolbox
-	model           string
-	settings        *Settings
-	instructions    string
-	conversation    conversationState
-	continuations   continuationArbiter
-	skills          []skill.Skill
-	checkpointing   bool
-	inbox           InboxSource
-	decorateRequest func(*Request)
+	mu                     sync.Mutex
+	provider               Provider
+	tools                  Toolbox
+	model                  string
+	settings               *Settings
+	instructions           string
+	conversation           conversationState
+	continuations          continuationArbiter
+	skills                 []skill.Skill
+	checkpointing          bool
+	inbox                  InboxSource
+	additionalInstructions func() string
 }
 
 func New(provider Provider, tools Toolbox, options Options) *Engine {
@@ -55,15 +55,15 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 	instructions := buildSystemPrompt(tools.Definitions(), options.WorkingDirectory, options.ProjectInstructions, options.Skills)
 
 	return &Engine{
-		provider:        provider,
-		tools:           tools,
-		model:           options.Model,
-		settings:        settings,
-		instructions:    instructions,
-		skills:          skills,
-		checkpointing:   options.Checkpointing,
-		inbox:           options.Inbox,
-		decorateRequest: options.DecorateRequest,
+		provider:               provider,
+		tools:                  tools,
+		model:                  options.Model,
+		settings:               settings,
+		instructions:           instructions,
+		skills:                 skills,
+		checkpointing:          options.Checkpointing,
+		inbox:                  options.Inbox,
+		additionalInstructions: options.AdditionalInstructions,
 	}
 }
 
@@ -265,10 +265,10 @@ func (e *Engine) prepareGeneration(ctx context.Context, sink EventSink, current 
 	ordinaryRequest := e.request(current)
 	inboxBatch := e.snapshotInbox()
 	sizingRequest := attachInbox(ordinaryRequest, inboxBatch)
-	sizingRequest = e.decorate(sizingRequest)
+	sizingRequest = e.withAdditionalInstructions(sizingRequest)
 	ordinaryRequest, current, compactedUsage, err := e.compactSized(ctx, sink, ordinaryRequest, sizingRequest, current)
 	request := attachInbox(ordinaryRequest, inboxBatch)
-	request = e.decorate(request)
+	request = e.withAdditionalInstructions(request)
 	return generationPreparation{
 		request:         request,
 		ordinaryRequest: ordinaryRequest,
@@ -308,7 +308,7 @@ func (e *Engine) generateWithRecovery(
 	outcome.compactedUsage = compactedUsage
 	outcome.err = err
 	if err == nil && compacted {
-		request = e.decorate(request)
+		request = e.withAdditionalInstructions(request)
 		request = attachInbox(request, inboxBatch)
 		outcome.response, outcome.toolEvents, _, outcome.err = e.generateResponse(ctx, request, sink)
 	}
@@ -368,10 +368,15 @@ func (e *Engine) snapshotInbox() InboxBatch {
 	return e.inbox.SnapshotInbox()
 }
 
-func (e *Engine) decorate(request Request) Request {
-	if e.decorateRequest != nil {
-		e.decorateRequest(&request)
+func (e *Engine) withAdditionalInstructions(request Request) Request {
+	if e.additionalInstructions == nil {
+		return request
 	}
+	additional := strings.TrimSpace(e.additionalInstructions())
+	if additional == "" {
+		return request
+	}
+	request.Instructions = strings.TrimSpace(request.Instructions) + "\n\n" + additional
 	return request
 }
 

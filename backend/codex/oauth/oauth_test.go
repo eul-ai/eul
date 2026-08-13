@@ -461,16 +461,7 @@ func TestPreCanceledOperationsDoNotTouchcredentials(t *testing.T) {
 	}
 }
 
-func TestDefaultCredentialPathAndInvalidStorage(t *testing.T) {
-	home := t.TempDir()
-	path, err := DefaultCredentialPath(home)
-	if err != nil || path != filepath.Join(home, "auth.json") {
-		t.Fatalf("path=%q error=%v", path, err)
-	}
-	if _, err := DefaultCredentialPath("relative"); err == nil {
-		t.Fatal("relative EUL_HOME accepted")
-	}
-
+func TestInvalidCredentialStorage(t *testing.T) {
 	credentialPath := filepath.Join(t.TempDir(), "auth.json")
 	if err := os.Symlink("target", credentialPath); err != nil {
 		t.Fatal(err)

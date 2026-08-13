@@ -8,6 +8,33 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
+func TestCheckpointRejectsInvalidActivePolicy(t *testing.T) {
+	base := checkpointData{
+		Version: checkpointVersion,
+		NextID:  1,
+		Active: []activeCheckpoint{{
+			ID:            "subagent-1",
+			Order:         1,
+			Description:   "task",
+			ModelProfile:  ProfileBalanced,
+			ThinkingLevel: agent.ThinkingLow,
+			State:         StateRunning,
+		}},
+	}
+
+	invalidProfile := cloneCheckpointData(base)
+	invalidProfile.Active[0].ModelProfile = Profile("unknown")
+	if err := validateCheckpointData(invalidProfile); err == nil {
+		t.Fatal("invalid profile accepted")
+	}
+
+	invalidThinking := cloneCheckpointData(base)
+	invalidThinking.Active[0].ThinkingLevel = agent.ThinkingMax
+	if err := validateCheckpointData(invalidThinking); err == nil {
+		t.Fatal("invalid thinking level accepted")
+	}
+}
+
 func TestCheckpointRoundTripRestoresPendingAndInterruptsActive(t *testing.T) {
 	block := make(chan struct{})
 	manager := NewManager(Config{Runner: RunFunc(func(ctx context.Context, request RunRequest, _ func(Progress)) (agent.RunResult, error) {
