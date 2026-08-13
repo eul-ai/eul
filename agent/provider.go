@@ -18,25 +18,63 @@ type Image struct {
 	Data      []byte
 }
 
-type ImageAttachments struct {
-	Items []Image
+type ContentPartKind string
+
+const (
+	ContentPartText  ContentPartKind = "text"
+	ContentPartImage ContentPartKind = "image"
+)
+
+type ContentPart struct {
+	Kind  ContentPartKind
+	Text  string `json:",omitempty"`
+	Image *Image `json:",omitempty"`
 }
 
-func cloneImages(images []Image) *ImageAttachments {
-	if len(images) == 0 {
+type Content struct {
+	Parts []ContentPart
+}
+
+func cloneContentParts(parts []ContentPart) []ContentPart {
+	if len(parts) == 0 {
 		return nil
 	}
-	cloned := make([]Image, len(images))
-	for index, image := range images {
-		cloned[index] = Image{MediaType: image.MediaType, Data: append([]byte(nil), image.Data...)}
+
+	cloned := make([]ContentPart, len(parts))
+	for index, part := range parts {
+		cloned[index] = part
+		if part.Image != nil {
+			image := *part.Image
+			image.Data = append([]byte(nil), image.Data...)
+			cloned[index].Image = &image
+		}
 	}
-	return &ImageAttachments{Items: cloned}
+	return cloned
+}
+
+func cloneContent(content *Content) *Content {
+	if content == nil {
+		return nil
+	}
+	return &Content{Parts: cloneContentParts(content.Parts)}
+}
+
+func cloneInputs(inputs []Input) []Input {
+	if len(inputs) == 0 {
+		return nil
+	}
+
+	cloned := append([]Input(nil), inputs...)
+	for index := range cloned {
+		cloned[index].Content = cloneContent(cloned[index].Content)
+	}
+	return cloned
 }
 
 type Input struct {
 	Kind    InputKind
 	Text    string
-	Images  *ImageAttachments `json:",omitempty"`
+	Content *Content `json:",omitempty"`
 	CallID  string
 	Tool    string
 	IsError bool

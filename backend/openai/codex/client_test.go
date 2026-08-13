@@ -374,8 +374,9 @@ func TestClientCompactBoundsCancellationAndOptionalUsage(t *testing.T) {
 		defer server.Close()
 		client := newTestClient(t, "key", server.URL, Options{})
 		client.maxStateBytes = 100
+		client.stateOutputHeadroom = 1
 		_, err := client.Compact(context.Background(), baseRequest())
-		if err == nil || !strings.Contains(err.Error(), "continuation state exceeds 100 bytes") {
+		if err == nil || !strings.Contains(err.Error(), "continuation state exceeds 99 bytes") {
 			t.Fatalf("Compact() error = %v", err)
 		}
 	})
@@ -730,6 +731,87 @@ func TestClientCompactsContextLimitErrorThroughEngine(t *testing.T) {
 	}
 }
 
+func TestClientCompactsBeforeContinuationStateConsumesOutputHeadroom(t *testing.T) {
+	state, err := encodeState(nil, nil, []json.RawMessage{json.RawMessage(`{"type":"reasoning","encrypted_content":"` + strings.Repeat("x", 55) + `"}`)}, 180)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requests := 0
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests++
+		var wire createResponseRequest
+		if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+
+		var last struct {
+			Type string `json:"type"`
+		}
+		if len(wire.Input) > 0 {
+			_ = json.Unmarshal(wire.Input[len(wire.Input)-1], &last)
+		}
+		if last.Type == "compaction_trigger" {
+			if len(wire.Input) != 3 {
+				t.Errorf("compact input count = %d, want 3", len(wire.Input))
+			} else {
+				assertInputItem(t, wire.Input, 1, map[string]string{"role": "user", "content": strings.Repeat("y", 20)})
+			}
+			writeCompactSSE(t, writer, map[string]any{
+				"status": "completed",
+				"output": []any{map[string]any{"type": "compaction", "encrypted_content": "short"}},
+			})
+			return
+		}
+
+		writeJSON(t, writer, map[string]any{
+			"status": "completed",
+			"output": []any{map[string]any{
+				"type": "message", "content": []any{map[string]any{"type": "output_text", "text": "ok"}},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, "key", server.URL, Options{})
+	client.maxStateBytes = 220
+	client.stateOutputHeadroom = 90
+	withoutHeadroom := *client
+	withoutHeadroom.stateOutputHeadroom = 1
+	if withoutHeadroom.ShouldCompact(agent.Request{State: state, Inputs: []agent.Input{{Kind: agent.InputUser, Text: strings.Repeat("y", 20)}}}, agent.Usage{}) {
+		t.Fatal("test request requires compaction without response headroom")
+	}
+	engine := agent.New(client, emptyToolbox{}, agent.Options{Model: "test-model"})
+	engineCheckpoint := agent.Checkpoint{}
+	checkpointJSON, err := json.Marshal(map[string]any{
+		"version":       1,
+		"state":         state,
+		"context_usage": agent.Usage{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(checkpointJSON, &engineCheckpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.RestoreCheckpoint(engineCheckpoint); err != nil {
+		t.Fatal(err)
+	}
+
+	var events []agent.EventKind
+	result, err := engine.Run(context.Background(), strings.Repeat("y", 20), func(event agent.Event) error {
+		events = append(events, event.Kind)
+		return nil
+	})
+	if err != nil || result.Text != "ok" || requests != 2 {
+		t.Fatalf("result = %+v, error = %v, requests = %d", result, err, requests)
+	}
+	if !slices.Contains(events, agent.EventCompactionStart) || !slices.Contains(events, agent.EventCompactionEnd) {
+		t.Fatalf("events = %v", events)
+	}
+}
+
 func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 	t.Run("SSE server error", func(t *testing.T) {
 		server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -868,12 +950,13 @@ func TestClientRejectsOversizedReturnedStateBeforeTextSink(t *testing.T) {
 	defer server.Close()
 	client := newTestClient(t, "key", server.URL, Options{})
 	client.maxStateBytes = 100
+	client.stateOutputHeadroom = 1
 	sinkCalled := false
 	_, err := generate(client, context.Background(), baseRequest(), func(string) error {
 		sinkCalled = true
 		return nil
 	}, nil, nil)
-	if err == nil || !strings.Contains(err.Error(), "continuation state exceeds 100 bytes") || sinkCalled {
+	if err == nil || !strings.Contains(err.Error(), "response output cannot fit continuation state") || sinkCalled {
 		t.Fatalf("Generate() error = %v, sink called = %v", err, sinkCalled)
 	}
 }

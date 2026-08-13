@@ -93,7 +93,7 @@ func TestCommandPickerEnterCompletesAndSubmits(t *testing.T) {
 		t.Fatal(err)
 	}
 	if action.kind != tuiActionHelp || len(model.input) != 0 || len(model.history) != 1 || len(model.blocks) != 0 {
-		t.Fatalf("submission action=%+v input=%q history=%q blocks=%+v", action, model.input, model.history, model.blocks)
+		t.Fatalf("submission action=%+v input=%q history=%q blocks=%+v", action, model.inputText(), model.history, model.blocks)
 	}
 	controller := tuiController{model: model}
 	if _, err := controller.applyAction(context.Background(), action); err != nil {
@@ -115,7 +115,7 @@ func TestCommandPickerLetsExactCommandSubmit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if action.kind != tuiActionNewSession || len(model.input) != 0 || len(model.history) != 1 {
-		t.Fatalf("action=%+v input=%q history=%q", action, model.input, model.history)
+		t.Fatalf("action=%+v input=%q history=%q", action, model.inputText(), model.history)
 	}
 }
 
@@ -133,7 +133,7 @@ func TestCommandPickerEnterExecutesArrowSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	if action.kind != tuiActionCompact || len(model.input) != 0 || len(model.history) != 1 || model.history[0] != "/compact" {
-		t.Fatalf("action=%+v input=%q history=%q", action, model.input, model.history)
+		t.Fatalf("action=%+v input=%q history=%q", action, model.inputText(), model.history)
 	}
 }
 
@@ -151,8 +151,28 @@ func TestCommandPickerNavigationAndTabReplaceCommandFragment(t *testing.T) {
 	if _, err := reduceKey(model, keyEvent{code: keyTab}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(model.input), "/goal clear existing"; got != want {
+	if got, want := model.inputText(), "/goal clear existing"; got != want {
 		t.Fatalf("input = %q, want %q", got, want)
+	}
+}
+
+func TestCommandPickerReplacementStopsBeforeImage(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	if err := model.insertInput("/he"); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("image")}); err != nil {
+		t.Fatal(err)
+	}
+	model.cursor = len(editorItemsFromText("/he"))
+	model.refreshCommandPicker(true)
+
+	if err := model.applyCommandPickerSelection(); err != nil {
+		t.Fatal(err)
+	}
+	content := editorContent(model.input)
+	if len(content) != 2 || content[0].Text != "/help" || content[1].Kind != agent.ContentPartImage {
+		t.Fatalf("content = %+v", content)
 	}
 }
 

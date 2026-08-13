@@ -17,15 +17,18 @@ func readImage(ctx context.Context) (agent.Image, error) {
 		{"xclip", "-selection", "clipboard", "-t", "image/png", "-o"},
 	}
 	var commandFound bool
+	var lastErr error
 	for _, arguments := range commands {
 		command := exec.CommandContext(ctx, arguments[0], arguments[1:]...)
 		stdout, err := command.StdoutPipe()
 		if err != nil {
+			lastErr = err
 			continue
 		}
 		if err := command.Start(); err != nil {
 			if !errors.Is(err, exec.ErrNotFound) {
 				commandFound = true
+				lastErr = err
 			}
 			continue
 		}
@@ -44,9 +47,18 @@ func readImage(ctx context.Context) (agent.Image, error) {
 		if err := ctx.Err(); err != nil {
 			return agent.Image{}, fmt.Errorf("read clipboard image: %w", err)
 		}
+		switch {
+		case waitErr != nil:
+			lastErr = waitErr
+		case !errors.Is(readErr, errImageUnavailable):
+			lastErr = readErr
+		}
 	}
 	if !commandFound {
 		return agent.Image{}, errors.New("clipboard images require wl-paste or xclip")
+	}
+	if lastErr != nil {
+		return agent.Image{}, fmt.Errorf("read clipboard image: %w", lastErr)
 	}
 	return agent.Image{}, errImageUnavailable
 }

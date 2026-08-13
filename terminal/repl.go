@@ -30,7 +30,7 @@ var (
 
 type Engine interface {
 	Run(context.Context, string, agent.EventSink) (agent.RunResult, error)
-	RunWithImages(context.Context, string, []agent.Image, agent.EventSink) (agent.RunResult, error)
+	RunContent(context.Context, []agent.ContentPart, agent.EventSink) (agent.RunResult, error)
 	Compact(context.Context, agent.EventSink) error
 	Steer(string) bool
 	ClearSteering() []string

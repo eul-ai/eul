@@ -2451,22 +2451,106 @@ func TestEngineRejectsPreCanceledContext(t *testing.T) {
 	}
 }
 
-func TestEngineRunWithImages(t *testing.T) {
+func TestEngineRunContent(t *testing.T) {
 	provider := &scriptedProvider{t: t, steps: []providerStep{
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if len(request.Inputs) != 1 || request.Inputs[0].Images == nil || len(request.Inputs[0].Images.Items) != 1 {
+			if len(request.Inputs) != 1 || request.Inputs[0].Content == nil || len(request.Inputs[0].Content.Parts) != 3 {
 				t.Fatalf("inputs = %+v", request.Inputs)
 			}
-			image := request.Inputs[0].Images.Items[0]
-			if request.Inputs[0].Text != "describe" || image.MediaType != "image/png" || string(image.Data) != "png" {
+			parts := request.Inputs[0].Content.Parts
+			image := parts[1].Image
+			if parts[0].Text != "describe " || image == nil || image.MediaType != "image/png" || string(image.Data) != "png" || parts[2].Text != " please" {
 				t.Fatalf("input = %+v", request.Inputs[0])
 			}
 			return Response{Text: "done"}, nil
 		},
 	}}
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+	image := &Image{MediaType: "image/png", Data: []byte("png")}
 
-	if _, err := engine.RunWithImages(context.Background(), "describe", []Image{{MediaType: "image/png", Data: []byte("png")}}, discardEvents); err != nil {
+	if _, err := engine.RunContent(context.Background(), []ContentPart{
+		{Kind: ContentPartText, Text: "describe "},
+		{Kind: ContentPartImage, Image: image},
+		{Kind: ContentPartText, Text: " please"},
+	}, discardEvents); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEngineCoalescesTextOnlyContent(t *testing.T) {
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if len(request.Inputs) != 1 || request.Inputs[0].Text != "beforeafter" || request.Inputs[0].Content != nil {
+				t.Fatalf("input = %+v", request.Inputs)
+			}
+			return Response{Text: "done"}, nil
+		},
+	}}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+	if _, err := engine.RunContent(context.Background(), []ContentPart{
+		{Kind: ContentPartText, Text: "before"},
+		{Kind: ContentPartText, Text: "after"},
+	}, discardEvents); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProviderRetryOwnsContent(t *testing.T) {
+	attempt := 0
+	provider := &retryingProvider{
+		generate: func(_ context.Context, request Request, _ TextSink, _ TextSink, _ ToolCallSink) (Response, error) {
+			parts := request.Inputs[0].Content.Parts
+			if parts[0].Text != "before" || string(parts[1].Image.Data) != "png" {
+				t.Fatalf("retry content = %+v", parts)
+			}
+			attempt++
+			if attempt == 1 {
+				parts[0].Text = "changed"
+				parts[1].Image.Data[0] = 'X'
+				return Response{}, errors.New("retry")
+			}
+			return Response{Text: "done"}, nil
+		},
+		retry: func(_ error, failedAttempts int) (time.Duration, bool) {
+			return 0, failedAttempts == 1
+		},
+	}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+	content := []ContentPart{
+		{Kind: ContentPartText, Text: "before"},
+		{Kind: ContentPartImage, Image: &Image{MediaType: "image/png", Data: []byte("png")}},
+	}
+
+	if _, err := engine.RunContent(context.Background(), content, discardEvents); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProviderRequestOwnsContent(t *testing.T) {
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			request.Inputs[0].Content.Parts[0].Text = "changed"
+			request.Inputs[0].Content.Parts[1].Image.Data[0] = 'X'
+			return Response{}, errors.New("failed")
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			parts := request.Inputs[0].Content.Parts
+			if parts[0].Text != "before" || string(parts[1].Image.Data) != "png" {
+				t.Fatalf("content was mutated through provider request: %+v", parts)
+			}
+			return Response{Text: "done"}, nil
+		},
+	}}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+	content := []ContentPart{
+		{Kind: ContentPartText, Text: "before"},
+		{Kind: ContentPartImage, Image: &Image{MediaType: "image/png", Data: []byte("png")}},
+	}
+
+	if _, err := engine.RunContent(context.Background(), content, discardEvents); err == nil {
+		t.Fatal("first run succeeded")
+	}
+	if _, err := engine.RunContent(context.Background(), content, discardEvents); err != nil {
 		t.Fatal(err)
 	}
 }

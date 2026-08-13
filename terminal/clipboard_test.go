@@ -17,12 +17,19 @@ func TestClipboardImageLimitFitsRequestLimit(t *testing.T) {
 
 func TestAttachImageEnforcesLimits(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
-	model.images = make([]agent.Image, maxAttachedImages)
+	for range maxAttachedImages {
+		if err := model.attachImage(agent.Image{Data: []byte("png")}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := model.attachImage(agent.Image{Data: []byte("png")}); !errors.Is(err, errTooManyImages) {
 		t.Fatalf("image count error = %v", err)
 	}
 
-	model.images = []agent.Image{{Data: make([]byte, maxAttachedImagesTotalBytes)}}
+	model.clearInput()
+	if err := model.attachImage(agent.Image{Data: make([]byte, maxAttachedImagesTotalBytes)}); err != nil {
+		t.Fatal(err)
+	}
 	if err := model.attachImage(agent.Image{Data: []byte("png")}); !errors.Is(err, errImagesTooLarge) {
 		t.Fatalf("image size error = %v", err)
 	}

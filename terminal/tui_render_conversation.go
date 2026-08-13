@@ -63,18 +63,33 @@ func wrapConversationText(text string, width int) []formattedLine {
 	return lines
 }
 
+func contentDisplaySpans(content []agent.ContentPart) []inlineSpan {
+	var spans []inlineSpan
+	for _, part := range content {
+		switch part.Kind {
+		case agent.ContentPartText:
+			for _, span := range parseInlineMarkdown(part.Text) {
+				appendInlineSpan(&spans, span.text, span.style)
+			}
+		case agent.ContentPartImage:
+			spans = append(spans, inlineSpan{text: imageAttachmentLabel, atomic: true})
+		}
+	}
+	return spans
+}
+
+func displayContent(content []agent.ContentPart) string {
+	return inlineSpanText(contentDisplaySpans(content))
+}
+
 func conversationBlockLines(block conversationBlock, width int) []styledLine {
 	style := blockPresentation(block.kind)
 	text := block.text
 	if block.kind == blockReasoning {
 		text = strings.Trim(text, "\n")
 	}
-	if block.kind == blockUser && block.imageCount > 0 {
-		label := "[image attached]"
-		if block.imageCount > 1 {
-			label = fmt.Sprintf("[%d images attached]", block.imageCount)
-		}
-		text = label + "\n" + text
+	if block.kind == blockUser && len(block.content) > 0 {
+		text = displayContent(block.content)
 	}
 
 	padding := conversationPadding
@@ -89,6 +104,10 @@ func conversationBlockLines(block conversationBlock, width int) []styledLine {
 		lines = append(lines, styledLine{style: style, padding: padding})
 		lines = append(lines, toolConversationLines(block, contentWidth, style, padding)...)
 		lines = append(lines, styledLine{style: style, padding: padding})
+	case block.kind == blockUser && len(block.content) > 0:
+		for _, line := range wrapInlineSpans(contentDisplaySpans(block.content), contentWidth) {
+			lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding, continuation: line.continuation})
+		}
 	case isInlineMarkdownBlock(block.kind):
 		for _, line := range wrapInlineMarkdown(text, contentWidth) {
 			lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding, continuation: line.continuation})

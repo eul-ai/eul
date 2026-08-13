@@ -54,7 +54,7 @@ func TestRunTUIParentCancellationWinsAfterActiveEOF(t *testing.T) {
 	started := make(chan struct{})
 	turnCanceled := make(chan struct{})
 	release := make(chan struct{})
-	engine := &fakeEngine{runFunction: func(ctx context.Context, _ string, _ agent.EventSink) (agent.RunResult, error) {
+	engine := &fakeEngine{runContentFunction: func(ctx context.Context, _ []agent.ContentPart, _ agent.EventSink) (agent.RunResult, error) {
 		close(started)
 		<-ctx.Done()
 		close(turnCanceled)
@@ -319,8 +319,8 @@ func TestRunTUIReturnsInputReadFailure(t *testing.T) {
 }
 
 func TestHandleKeyRunsTurnAndAppliesOrderedEvents(t *testing.T) {
-	engine := &fakeEngine{runFunction: func(_ context.Context, prompt string, sink agent.EventSink) (agent.RunResult, error) {
-		if prompt != "hello" {
+	engine := &fakeEngine{runContentFunction: func(_ context.Context, content []agent.ContentPart, sink agent.EventSink) (agent.RunResult, error) {
+		if prompt := contentText(content); prompt != "hello" {
 			t.Fatalf("prompt = %q", prompt)
 		}
 		if err := sink(agent.Event{Kind: agent.EventAssistantText, Text: "answer"}); err != nil {
@@ -369,7 +369,7 @@ func TestHandleKeyRunsTurnAndAppliesOrderedEvents(t *testing.T) {
 func TestHandleKeyCancelsIncompleteToolTurnWithoutResettingConversation(t *testing.T) {
 	started := make(chan struct{})
 	engine := &fakeEngine{}
-	engine.runFunction = func(ctx context.Context, _ string, sink agent.EventSink) (agent.RunResult, error) {
+	engine.runContentFunction = func(ctx context.Context, _ []agent.ContentPart, sink agent.EventSink) (agent.RunResult, error) {
 		if err := sink(agent.Event{Kind: agent.EventContextUsage, Usage: agent.Usage{TotalTokens: 456}}); err != nil {
 			return agent.RunResult{}, err
 		}
@@ -465,7 +465,7 @@ func TestHandleKeyCtrlCClearsInputBeforeExiting(t *testing.T) {
 
 	exit, err := handleKey(context.Background(), model, &fakeEngine{}, keyEvent{code: keyCtrlC}, messages, stopped, &cancel)
 	if err != nil || exit || len(model.input) != 0 {
-		t.Fatalf("first Ctrl-C: exit=%v err=%v input=%q", exit, err, model.input)
+		t.Fatalf("first Ctrl-C: exit=%v err=%v input=%q", exit, err, model.inputText())
 	}
 	exit, err = handleKey(context.Background(), model, &fakeEngine{}, keyEvent{code: keyCtrlC}, messages, stopped, &cancel)
 	if exit || !errors.Is(err, ErrInterrupted) {

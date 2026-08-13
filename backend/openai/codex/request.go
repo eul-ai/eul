@@ -10,7 +10,10 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-const continuationStateVersion = 1
+const (
+	continuationStateVersion       = 1
+	continuationStateEnvelopeBytes = len(`{"version":1,"items":[]}`)
+)
 
 type createResponseRequest struct {
 	Model             string             `json:"model"`
@@ -67,6 +70,21 @@ type continuationState struct {
 }
 
 func buildCreateRequest(request agent.Request, maxStateBytes int) (createResponseRequest, []json.RawMessage, error) {
+	return buildCreateRequestWithLimit(request, maxStateBytes, maxStateBytes)
+}
+
+func buildCreateRequestWithLimit(request agent.Request, maxStateBytes, generationStateBytes int) (createResponseRequest, []json.RawMessage, error) {
+	created, newItems, err := buildCreateRequestUnchecked(request, maxStateBytes)
+	if err != nil {
+		return createResponseRequest{}, nil, err
+	}
+	if _, err := encodeState(created.Input[:len(created.Input)-len(newItems)], newItems, nil, generationStateBytes); err != nil {
+		return createResponseRequest{}, nil, err
+	}
+	return created, newItems, nil
+}
+
+func buildCreateRequestUnchecked(request agent.Request, maxStateBytes int) (createResponseRequest, []json.RawMessage, error) {
 	history, err := decodeState(request.State, maxStateBytes)
 	if err != nil {
 		return createResponseRequest{}, nil, err
@@ -105,7 +123,7 @@ func buildCreateRequest(request agent.Request, maxStateBytes int) (createRespons
 }
 
 func buildCompactRequest(request agent.Request, maxStateBytes int) (createResponseRequest, error) {
-	compactRequest, _, err := buildCreateRequest(request, maxStateBytes)
+	compactRequest, _, err := buildCreateRequestUnchecked(request, maxStateBytes)
 	if err != nil {
 		return createResponseRequest{}, err
 	}
@@ -153,19 +171,25 @@ func encodeInputs(inputs []agent.Input) []json.RawMessage {
 }
 
 func encodeUserContent(input agent.Input) any {
-	if input.Images == nil || len(input.Images.Items) == 0 {
+	if input.Content == nil {
 		return input.Text
 	}
 
-	parts := make([]inputContentPart, 0, len(input.Images.Items)+1)
-	if input.Text != "" {
-		parts = append(parts, inputContentPart{Type: "input_text", Text: input.Text})
-	}
-	for _, image := range input.Images.Items {
-		parts = append(parts, inputContentPart{
-			Type:     "input_image",
-			ImageURL: "data:" + image.MediaType + ";base64," + base64.StdEncoding.EncodeToString(image.Data),
-		})
+	parts := make([]inputContentPart, 0, len(input.Content.Parts))
+	for _, part := range input.Content.Parts {
+		switch part.Kind {
+		case agent.ContentPartText:
+			parts = append(parts, inputContentPart{Type: "input_text", Text: part.Text})
+		case agent.ContentPartImage:
+			image := part.Image
+			if image == nil {
+				continue
+			}
+			parts = append(parts, inputContentPart{
+				Type:     "input_image",
+				ImageURL: "data:" + image.MediaType + ";base64," + base64.StdEncoding.EncodeToString(image.Data),
+			})
+		}
 	}
 	return parts
 }
@@ -190,10 +214,7 @@ func decodeState(encoded []byte, maxStateBytes int) ([]json.RawMessage, error) {
 }
 
 func encodeState(history, newInputs, output []json.RawMessage, maxStateBytes int) ([]byte, error) {
-	items := make([]json.RawMessage, 0, len(history)+len(newInputs)+len(output))
-	items = append(items, history...)
-	items = append(items, newInputs...)
-	items = append(items, output...)
+	items := continuationStateItems(history, newInputs, output)
 
 	encoded, err := json.Marshal(continuationState{Version: continuationStateVersion, Items: items})
 	if err != nil {
@@ -204,6 +225,26 @@ func encodeState(history, newInputs, output []json.RawMessage, maxStateBytes int
 	}
 
 	return encoded, nil
+}
+
+func continuationStateItems(groups ...[]json.RawMessage) []json.RawMessage {
+	total := 0
+	for _, group := range groups {
+		total += len(group)
+	}
+	items := make([]json.RawMessage, 0, total)
+	for _, group := range groups {
+		items = append(items, group...)
+	}
+	return items
+}
+
+func encodedStateSize(groups ...[]json.RawMessage) (int, error) {
+	encoded, err := json.Marshal(continuationState{Version: continuationStateVersion, Items: continuationStateItems(groups...)})
+	if err != nil {
+		return 0, fmt.Errorf("encode continuation state: %w", err)
+	}
+	return len(encoded), nil
 }
 
 func validateRawObject(value json.RawMessage) error {

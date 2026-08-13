@@ -165,7 +165,7 @@ func runTUIWithKeys(
 	defer fileSearch.close()
 	fileSearchMessages := make(chan fileSearchResult, 64)
 	engineMessages := make(chan engineMessage, 256)
-	clipboardImages := make(chan tuiEvent, 1)
+	clipboardImages := make(chan tuiEvent, maxAttachedImages)
 
 	usageContext, cancelUsage := context.WithCancel(ctx)
 	var usageDone <-chan struct{}
@@ -229,8 +229,10 @@ func runTUIWithKeys(
 		listSessions:       options.ListSessions,
 		readClipboardImage: clipboardImageReader,
 		clipboardImages:    clipboardImages,
+		clipboardRequests:  make(map[uint64]context.CancelFunc),
 		dirty:              true,
 	}
+	defer controller.cancelClipboardRequests()
 	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventRender}); err != nil {
 		return err
 	}
@@ -364,13 +366,9 @@ func renderIfDirty(renderer *tuiRenderer, model *tuiModel, output io.Writer, dir
 	return nil
 }
 
-func runEngineTurn(ctx context.Context, engine Engine, prompt string, images []agent.Image, messages chan<- engineMessage, stopped <-chan struct{}) {
+func runEngineTurn(ctx context.Context, engine Engine, content []agent.ContentPart, messages chan<- engineMessage, stopped <-chan struct{}) {
 	runEngineOperation(ctx, messages, stopped, func(sink agent.EventSink) error {
-		if len(images) == 0 {
-			_, err := engine.Run(ctx, prompt, sink)
-			return err
-		}
-		_, err := engine.RunWithImages(ctx, prompt, images, sink)
+		_, err := engine.RunContent(ctx, content, sink)
 		return err
 	})
 }

@@ -31,8 +31,8 @@ func TestPermissionKeysTakePriority(t *testing.T) {
 			if err != nil || action.kind != test.want {
 				t.Fatalf("action = %+v, error = %v", action, err)
 			}
-			if string(model.input) != "queued steering" {
-				t.Fatalf("permission key changed input to %q", model.input)
+			if model.inputText() != "queued steering" {
+				t.Fatalf("permission key changed input to %q", model.inputText())
 			}
 		})
 	}
@@ -77,7 +77,7 @@ func TestFilePickerKeysTakePriorityOverEditorActions(t *testing.T) {
 	if action, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil || action.kind != tuiActionNone {
 		t.Fatalf("enter action = %+v, err = %v", action, err)
 	}
-	if got := string(model.input); got != "@b.go " {
+	if got := model.inputText(); got != "@b.go " {
 		t.Fatalf("input = %q", got)
 	}
 	if model.running || len(model.history) != 0 {
@@ -91,7 +91,7 @@ func TestFilePickerKeysTakePriorityOverEditorActions(t *testing.T) {
 	if _, err := reduceKey(model, keyEvent{code: keyEscape}); err != nil {
 		t.Fatal(err)
 	}
-	if got := string(model.input); got != "@" || model.filePickerVisible() {
+	if got := model.inputText(); got != "@" || model.filePickerVisible() {
 		t.Fatalf("escape left input=%q picker=%+v", got, model.filePicker)
 	}
 }
@@ -111,7 +111,7 @@ func TestFilePickerRemainsUsableWhileRunning(t *testing.T) {
 	if _, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil {
 		t.Fatal(err)
 	}
-	if got := string(model.input); got != "@b.go " || !model.running {
+	if got := model.inputText(); got != "@b.go " || !model.running {
 		t.Fatalf("input=%q running=%v", got, model.running)
 	}
 }
@@ -134,7 +134,7 @@ func TestFilePickerKeepsResultsButCannotApplyThemDuringSearch(t *testing.T) {
 	if action, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil || action.kind != tuiActionNone {
 		t.Fatalf("enter action = %+v, err = %v", action, err)
 	}
-	if got := string(model.input); got != "@a" {
+	if got := model.inputText(); got != "@a" {
 		t.Fatalf("stale selection changed input to %q", got)
 	}
 }
@@ -172,8 +172,8 @@ func TestReduceKeyActions(t *testing.T) {
 			name: "none",
 			key:  keyEvent{code: keyText, text: "draft"},
 			check: func(t *testing.T, model *tuiModel) {
-				if string(model.input) != "draft" {
-					t.Fatalf("input = %q", model.input)
+				if model.inputText() != "draft" {
+					t.Fatalf("input = %q", model.inputText())
 				}
 			},
 		},
@@ -288,8 +288,8 @@ func TestReduceKeyActions(t *testing.T) {
 			wantKind:   tuiActionSubmit,
 			wantPrompt: " hello ",
 			check: func(t *testing.T, model *tuiModel) {
-				if model.running || len(model.history) != 1 || len(model.blocks) != 0 {
-					t.Fatalf("running=%v history=%q blocks=%+v", model.running, model.history, model.blocks)
+				if model.running || len(model.history) != 0 || len(model.blocks) != 0 || model.inputText() != " hello " {
+					t.Fatalf("running=%v history=%q blocks=%+v input=%q", model.running, model.history, model.blocks, model.inputText())
 				}
 			},
 		},
@@ -347,8 +347,8 @@ func TestReduceKeyActions(t *testing.T) {
 			},
 			key: keyEvent{code: keyText, text: "draft"},
 			check: func(t *testing.T, model *tuiModel) {
-				if string(model.input) != "draft" {
-					t.Fatalf("input = %q", model.input)
+				if model.inputText() != "draft" {
+					t.Fatalf("input = %q", model.inputText())
 				}
 			},
 		},
@@ -365,7 +365,7 @@ func TestReduceKeyActions(t *testing.T) {
 			wantPrompt: "steer",
 			check: func(t *testing.T, model *tuiModel) {
 				if len(model.input) != 0 || len(model.history) != 1 || len(model.blocks) != 0 {
-					t.Fatalf("input=%q history=%q blocks=%+v", model.input, model.history, model.blocks)
+					t.Fatalf("input=%q history=%q blocks=%+v", model.inputText(), model.history, model.blocks)
 				}
 			},
 		},
@@ -381,7 +381,7 @@ func TestReduceKeyActions(t *testing.T) {
 			wantKind: tuiActionHelp,
 			check: func(t *testing.T, model *tuiModel) {
 				if len(model.input) != 0 || len(model.history) != 1 {
-					t.Fatalf("input=%q history=%q", model.input, model.history)
+					t.Fatalf("input=%q history=%q", model.inputText(), model.history)
 				}
 			},
 		},
@@ -397,7 +397,7 @@ func TestReduceKeyActions(t *testing.T) {
 			wantKind: tuiActionShowGoal,
 			check: func(t *testing.T, model *tuiModel) {
 				if len(model.input) != 0 || len(model.history) != 1 {
-					t.Fatalf("input=%q history=%q", model.input, model.history)
+					t.Fatalf("input=%q history=%q", model.inputText(), model.history)
 				}
 			},
 		},
@@ -414,7 +414,7 @@ func TestReduceKeyActions(t *testing.T) {
 			wantPrompt: "finish migration",
 			check: func(t *testing.T, model *tuiModel) {
 				if len(model.input) != 0 || len(model.history) != 1 {
-					t.Fatalf("input=%q history=%q", model.input, model.history)
+					t.Fatalf("input=%q history=%q", model.inputText(), model.history)
 				}
 			},
 		},
@@ -430,7 +430,7 @@ func TestReduceKeyActions(t *testing.T) {
 			wantKind: tuiActionClearGoal,
 			check: func(t *testing.T, model *tuiModel) {
 				if len(model.input) != 0 || len(model.history) != 1 {
-					t.Fatalf("input=%q history=%q", model.input, model.history)
+					t.Fatalf("input=%q history=%q", model.inputText(), model.history)
 				}
 			},
 		},
@@ -444,8 +444,8 @@ func TestReduceKeyActions(t *testing.T) {
 			},
 			key: keyEvent{code: keyEnter},
 			check: func(t *testing.T, model *tuiModel) {
-				if string(model.input) != "/new" || model.activity.kind != activityError {
-					t.Fatalf("input=%q activity=%+v", model.input, model.activity)
+				if model.inputText() != "/new" || model.activity.kind != activityError {
+					t.Fatalf("input=%q activity=%+v", model.inputText(), model.activity)
 				}
 			},
 		},
@@ -498,6 +498,37 @@ func TestReduceKeyActions(t *testing.T) {
 	}
 }
 
+func TestImageTerminatesFilePickerToken(t *testing.T) {
+	model := newTUIModel(80, 24, Options{WorkingDirectory: t.TempDir()})
+	if err := model.insertInput("@"); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("png")}); err != nil {
+		t.Fatal(err)
+	}
+	if model.filePickerVisible() {
+		t.Fatal("file picker remained visible across image token")
+	}
+}
+
+func TestImageTerminatesSlashCommand(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	if err := model.insertInput("/help"); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("png")}); err != nil {
+		t.Fatal(err)
+	}
+
+	action, err := reduceKey(model, keyEvent{code: keyEnter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action.kind != tuiActionSubmit || len(action.content) != 2 || action.content[0].Text != "/help" || action.content[1].Kind != agent.ContentPartImage {
+		t.Fatalf("action = %+v", action)
+	}
+}
+
 func TestImageAttachmentCanBeSubmittedWithoutText(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("png")}); err != nil {
@@ -508,7 +539,7 @@ func TestImageAttachmentCanBeSubmittedWithoutText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if action.kind != tuiActionSubmit || len(action.images) != 1 || action.images[0].MediaType != "image/png" {
+	if action.kind != tuiActionSubmit || len(action.content) != 1 || action.content[0].Kind != agent.ContentPartImage || action.content[0].Image == nil || action.content[0].Image.MediaType != "image/png" {
 		t.Fatalf("action = %+v", action)
 	}
 }

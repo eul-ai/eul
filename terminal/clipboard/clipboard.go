@@ -1,9 +1,11 @@
 package clipboard
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
 	"time"
 
@@ -17,6 +19,7 @@ const (
 
 var (
 	errImageUnavailable = errors.New("clipboard does not contain an image")
+	errImageInvalid     = errors.New("clipboard image is not a valid PNG")
 	errImageTooLarge    = fmt.Errorf("clipboard image exceeds %d MiB", maxImageBytes/(1024*1024))
 )
 
@@ -24,6 +27,16 @@ func ReadImage(ctx context.Context) (agent.Image, error) {
 	ctx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
 	return readImage(ctx)
+}
+
+func ValidateImage(image agent.Image) error {
+	if image.MediaType != "image/png" {
+		return errImageInvalid
+	}
+	if _, err := png.Decode(bytes.NewReader(image.Data)); err != nil {
+		return errImageInvalid
+	}
+	return nil
 }
 
 func readPNG(reader io.Reader) (agent.Image, error) {
@@ -36,7 +49,10 @@ func readPNG(reader io.Reader) (agent.Image, error) {
 		return agent.Image{}, errImageUnavailable
 	case len(data) > maxImageBytes:
 		return agent.Image{}, errImageTooLarge
-	default:
-		return agent.Image{MediaType: "image/png", Data: data}, nil
 	}
+	image := agent.Image{MediaType: "image/png", Data: data}
+	if err := ValidateImage(image); err != nil {
+		return agent.Image{}, err
+	}
+	return image, nil
 }

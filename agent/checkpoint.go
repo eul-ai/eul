@@ -71,12 +71,32 @@ func validateCheckpointData(data checkpointData) error {
 			if input.CallID != "" || input.Tool != "" || input.IsError {
 				return fmt.Errorf("agent: checkpoint input %d has invalid user metadata", index)
 			}
+			if input.Content == nil {
+				break
+			}
+			if input.Text != "" {
+				return fmt.Errorf("agent: checkpoint input %d has both text and content", index)
+			}
+			for partIndex, part := range input.Content.Parts {
+				switch part.Kind {
+				case ContentPartText:
+					if part.Image != nil {
+						return fmt.Errorf("agent: checkpoint input %d content part %d has an image on text", index, partIndex)
+					}
+				case ContentPartImage:
+					if part.Image == nil {
+						return fmt.Errorf("agent: checkpoint input %d content part %d is missing an image", index, partIndex)
+					}
+				default:
+					return fmt.Errorf("agent: checkpoint input %d content part %d has unknown kind %q", index, partIndex, part.Kind)
+				}
+			}
 		case InputToolResult:
 			if input.CallID == "" || input.Tool == "" {
 				return fmt.Errorf("agent: checkpoint input %d has incomplete tool metadata", index)
 			}
-			if input.Images != nil {
-				return fmt.Errorf("agent: checkpoint input %d has images on a tool result", index)
+			if input.Content != nil {
+				return fmt.Errorf("agent: checkpoint input %d has content on a tool result", index)
 			}
 		default:
 			return fmt.Errorf("agent: checkpoint input %d has unknown kind %q", index, input.Kind)

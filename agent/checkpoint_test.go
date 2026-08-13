@@ -15,7 +15,10 @@ func TestEngineCheckpointRoundTrip(t *testing.T) {
 	engine.conversation.state = []byte("provider-state")
 	engine.conversation.usage = Usage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}
 	engine.conversation.inputs = []Input{
-		{Kind: InputUser, Text: "pending user", Images: &ImageAttachments{Items: []Image{{MediaType: "image/png", Data: []byte("png")}}}},
+		{Kind: InputUser, Content: &Content{Parts: []ContentPart{
+			{Kind: ContentPartText, Text: "pending user"},
+			{Kind: ContentPartImage, Image: &Image{MediaType: "image/png", Data: []byte("png")}},
+		}}},
 		{Kind: InputToolResult, Text: "result", CallID: "call", Tool: "read"},
 	}
 	if err := engine.SetGoal("finish migration"); err != nil {
@@ -30,8 +33,8 @@ func TestEngineCheckpointRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	engine.conversation.state[0] = 'X'
-	engine.conversation.inputs[0].Text = "changed"
-	engine.conversation.inputs[0].Images.Items[0].Data[0] = 'X'
+	engine.conversation.inputs[0].Content.Parts[0].Text = "changed"
+	engine.conversation.inputs[0].Content.Parts[1].Image.Data[0] = 'X'
 
 	encoded, err := json.Marshal(checkpoint)
 	if err != nil {
@@ -50,7 +53,10 @@ func TestEngineCheckpointRoundTrip(t *testing.T) {
 		t.Fatalf("state = %q", restored.conversation.state)
 	}
 	wantInputs := []Input{
-		{Kind: InputUser, Text: "pending user", Images: &ImageAttachments{Items: []Image{{MediaType: "image/png", Data: []byte("png")}}}},
+		{Kind: InputUser, Content: &Content{Parts: []ContentPart{
+			{Kind: ContentPartText, Text: "pending user"},
+			{Kind: ContentPartImage, Image: &Image{MediaType: "image/png", Data: []byte("png")}},
+		}}},
 		{Kind: InputToolResult, Text: "result", CallID: "call", Tool: "read"},
 	}
 	if !reflect.DeepEqual(restored.conversation.inputs, wantInputs) || restored.conversation.usage.TotalTokens != 12 {
@@ -59,6 +65,21 @@ func TestEngineCheckpointRoundTrip(t *testing.T) {
 	goal, ok := restored.Goal()
 	if !ok || goal.Objective != "finish migration" || !goal.Complete {
 		t.Fatalf("goal=%+v exists=%v", goal, ok)
+	}
+}
+
+func TestCheckpointRejectsContentOnToolResult(t *testing.T) {
+	checkpoint := Checkpoint{data: checkpointData{
+		Version: checkpointVersion,
+		PendingInputs: []Input{{
+			Kind:    InputToolResult,
+			CallID:  "call",
+			Tool:    "read",
+			Content: &Content{Parts: []ContentPart{{Kind: ContentPartText, Text: "invalid"}}},
+		}},
+	}}
+	if _, err := json.Marshal(checkpoint); err == nil {
+		t.Fatal("checkpoint accepted content on a tool result")
 	}
 }
 

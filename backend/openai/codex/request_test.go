@@ -37,23 +37,79 @@ func TestBuildCreateRequest(t *testing.T) {
 	}
 }
 
-func TestEncodeInputImages(t *testing.T) {
+func TestEncodeInputContentInOrder(t *testing.T) {
 	items := encodeInputs([]agent.Input{{
 		Kind: agent.InputUser,
-		Text: "describe this",
-		Images: &agent.ImageAttachments{Items: []agent.Image{{
-			MediaType: "image/png",
-			Data:      []byte("png"),
-		}}},
+		Content: &agent.Content{Parts: []agent.ContentPart{
+			{Kind: agent.ContentPartText, Text: "before"},
+			{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("one")}},
+			{Kind: agent.ContentPartText, Text: "after"},
+			{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("two")}},
+		}},
 	}})
 	if len(items) != 1 {
 		t.Fatalf("items = %d", len(items))
 	}
 
-	encoded := string(items[0])
-	if !strings.Contains(encoded, `"type":"input_text","text":"describe this"`) ||
-		!strings.Contains(encoded, `"type":"input_image","image_url":"data:image/png;base64,cG5n"`) {
-		t.Fatalf("input = %s", encoded)
+	var message struct {
+		Content []inputContentPart `json:"content"`
+	}
+	if err := json.Unmarshal(items[0], &message); err != nil {
+		t.Fatal(err)
+	}
+	if len(message.Content) != 4 ||
+		message.Content[0] != (inputContentPart{Type: "input_text", Text: "before"}) ||
+		message.Content[1] != (inputContentPart{Type: "input_image", ImageURL: "data:image/png;base64,b25l"}) ||
+		message.Content[2] != (inputContentPart{Type: "input_text", Text: "after"}) ||
+		message.Content[3] != (inputContentPart{Type: "input_image", ImageURL: "data:image/png;base64,dHdv"}) {
+		t.Fatalf("content = %+v", message.Content)
+	}
+}
+
+func TestOrderedInputContentSurvivesContinuationState(t *testing.T) {
+	parts := []agent.ContentPart{
+		{Kind: agent.ContentPartText, Text: "before"},
+		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("one")}},
+		{Kind: agent.ContentPartText, Text: "after"},
+	}
+	request, newItems, err := buildCreateRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputUser, Content: &agent.Content{Parts: parts}}}}, defaultMaxStateBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := encodeState(nil, newItems, nil, defaultMaxStateBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := decodeState(state, defaultMaxStateBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Input) != 1 || len(restored) != 1 || string(request.Input[0]) != string(restored[0]) {
+		t.Fatalf("request = %s, restored = %s", request.Input, restored)
+	}
+}
+
+func TestEncodeTextAndImageOnlyContent(t *testing.T) {
+	text := encodeInputs([]agent.Input{{Kind: agent.InputUser, Text: "hello"}})
+	var textMessage struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(text[0], &textMessage); err != nil || textMessage.Content != "hello" {
+		t.Fatalf("text input = %s, error = %v", text[0], err)
+	}
+
+	image := encodeInputs([]agent.Input{{
+		Kind: agent.InputUser,
+		Content: &agent.Content{Parts: []agent.ContentPart{{
+			Kind:  agent.ContentPartImage,
+			Image: &agent.Image{MediaType: "image/png", Data: []byte("png")},
+		}}},
+	}})
+	var imageMessage struct {
+		Content []inputContentPart `json:"content"`
+	}
+	if err := json.Unmarshal(image[0], &imageMessage); err != nil || len(imageMessage.Content) != 1 || imageMessage.Content[0].Type != "input_image" {
+		t.Fatalf("image input = %s, error = %v", image[0], err)
 	}
 }
 
@@ -89,6 +145,39 @@ func TestCompactedStateItems(t *testing.T) {
 	items := compactedStateItems(input, output)
 	if len(items) != 3 || !strings.Contains(string(items[0]), `"role":"user"`) || !strings.Contains(string(items[1]), `"type":"agent_message"`) || !strings.Contains(string(items[2]), `"type":"compaction"`) {
 		t.Fatalf("compacted items = %s", items)
+	}
+}
+
+func TestBuildCreateRequestReservesResponseOutput(t *testing.T) {
+	state, err := encodeState(nil, nil, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"` + strings.Repeat("x", 40) + `"}`)}, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := agent.Request{State: state, Inputs: []agent.Input{{Kind: agent.InputUser, Text: strings.Repeat("y", 30)}}}
+
+	if _, _, err := buildCreateRequest(request, 200); err != nil {
+		t.Fatalf("request did not fit full state limit: %v", err)
+	}
+	if _, _, err := buildCreateRequestWithLimit(request, 200, 100); err == nil || !strings.Contains(err.Error(), "continuation state exceeds 100 bytes") {
+		t.Fatalf("reserved request error = %v", err)
+	}
+	if _, err := buildCompactRequest(request, 200); err != nil {
+		t.Fatalf("compact request could not decode full state: %v", err)
+	}
+}
+
+func TestBuildCreateRequestRejectsInputsThatCannotFitState(t *testing.T) {
+	_, _, err := buildCreateRequest(agent.Request{
+		Inputs: []agent.Input{{
+			Kind: agent.InputUser,
+			Content: &agent.Content{Parts: []agent.ContentPart{{
+				Kind:  agent.ContentPartImage,
+				Image: &agent.Image{MediaType: "image/png", Data: make([]byte, 100)},
+			}}},
+		}},
+	}, 100)
+	if err == nil || !strings.Contains(err.Error(), "continuation state exceeds") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

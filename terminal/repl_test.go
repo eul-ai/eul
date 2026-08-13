@@ -12,16 +12,16 @@ import (
 )
 
 type fakeEngine struct {
-	mu                    sync.Mutex
-	calls                 []string
-	compactions           int
-	setGoalErr            error
-	goal                  *agent.GoalState
-	runFunction           func(context.Context, string, agent.EventSink) (agent.RunResult, error)
-	runWithImagesFunction func(context.Context, string, []agent.Image, agent.EventSink) (agent.RunResult, error)
-	compactFunction       func(context.Context, agent.EventSink) error
-	steerFunction         func(string) bool
-	clearFunction         func() []string
+	mu                 sync.Mutex
+	calls              []string
+	compactions        int
+	setGoalErr         error
+	goal               *agent.GoalState
+	runFunction        func(context.Context, string, agent.EventSink) (agent.RunResult, error)
+	runContentFunction func(context.Context, []agent.ContentPart, agent.EventSink) (agent.RunResult, error)
+	compactFunction    func(context.Context, agent.EventSink) error
+	steerFunction      func(string) bool
+	clearFunction      func() []string
 }
 
 func (e *fakeEngine) Run(ctx context.Context, prompt string, sink agent.EventSink) (agent.RunResult, error) {
@@ -36,16 +36,16 @@ func (e *fakeEngine) Run(ctx context.Context, prompt string, sink agent.EventSin
 	return function(ctx, prompt, sink)
 }
 
-func (e *fakeEngine) RunWithImages(ctx context.Context, prompt string, images []agent.Image, sink agent.EventSink) (agent.RunResult, error) {
+func (e *fakeEngine) RunContent(ctx context.Context, content []agent.ContentPart, sink agent.EventSink) (agent.RunResult, error) {
 	e.mu.Lock()
-	e.calls = append(e.calls, prompt)
-	function := e.runWithImagesFunction
+	e.calls = append(e.calls, contentText(content))
+	function := e.runContentFunction
 	e.mu.Unlock()
 
 	if function == nil {
 		return agent.RunResult{}, nil
 	}
-	return function(ctx, prompt, images, sink)
+	return function(ctx, content, sink)
 }
 
 func (e *fakeEngine) Compact(ctx context.Context, sink agent.EventSink) error {

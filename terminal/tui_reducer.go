@@ -37,7 +37,7 @@ type tuiAction struct {
 	kind          tuiActionKind
 	prompt        string
 	text          string
-	images        []agent.Image
+	content       []agent.ContentPart
 	thinkingLevel agent.ThinkingLevel
 }
 
@@ -77,7 +77,7 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 		if model.running {
 			return reduceInterrupt(model)
 		}
-		if len(model.input) > 0 || len(model.images) > 0 {
+		if len(model.input) > 0 {
 			model.clearInput()
 			return tuiAction{}, nil
 		}
@@ -125,11 +125,7 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 	case keyEnd:
 		model.moveEnd()
 	case keyBackspace:
-		if model.cursor == 0 && len(model.input) == 0 && len(model.images) > 0 {
-			model.images = model.images[:len(model.images)-1]
-		} else {
-			model.backspace()
-		}
+		model.backspace()
 	case keyDelete:
 		model.delete()
 	case keyUp:
@@ -141,7 +137,7 @@ func reduceKeyWithFrame(model *tuiModel, key keyEvent, frame terminalFrame) (tui
 			model.historyDown()
 		}
 	case keyCtrlD:
-		if !model.running && len(model.input) == 0 && len(model.images) == 0 {
+		if !model.running && len(model.input) == 0 {
 			return tuiAction{kind: tuiActionExit}, nil
 		}
 	case keyEnter:
@@ -297,7 +293,7 @@ func reduceInterrupt(model *tuiModel) (tuiAction, error) {
 }
 
 func reduceSteeringPrompt(model *tuiModel) tuiAction {
-	prompt := string(model.input)
+	prompt := model.inputText()
 	trimmed := strings.TrimSpace(prompt)
 	if trimmed == "" {
 		return tuiAction{}
@@ -317,24 +313,36 @@ func reduceSteeringPrompt(model *tuiModel) tuiAction {
 }
 
 func reducePrompt(model *tuiModel) tuiAction {
-	prompt, images, ok := model.takeSubmission()
+	content, ok := model.submittingContent()
 	if !ok {
 		return tuiAction{}
 	}
 
+	prompt := contentText(content)
 	trimmed := strings.TrimSpace(prompt)
-	if len(images) == 0 {
+	if !contentHasImage(content) {
 		if action, _, matched := matchSlashCommand(prompt, trimmed, model.fastModeAvailable); matched {
+			model.finishSubmission(content)
 			return action
 		}
 		if strings.HasPrefix(trimmed, "/") {
+			model.finishSubmission(content)
 			model.appendBlock(blockError, "Unknown command "+diagnostic(trimmed, 120))
 			model.activity = activity{kind: activityError, detail: "unknown command"}
 			return tuiAction{}
 		}
 	}
 
-	return tuiAction{kind: tuiActionSubmit, prompt: prompt, images: images}
+	return tuiAction{kind: tuiActionSubmit, prompt: prompt, content: content}
+}
+
+func contentHasImage(content []agent.ContentPart) bool {
+	for _, part := range content {
+		if part.Kind == agent.ContentPartImage {
+			return true
+		}
+	}
+	return false
 }
 
 func setInputError(model *tuiModel, err error) {

@@ -155,6 +155,30 @@ func TestExpandSkillCommandLoadsCurrentBodyAndArguments(t *testing.T) {
 	}
 }
 
+func TestEngineExpandsSkillCommandWithoutMovingImage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "review", "SKILL.md")
+	writeTestSkill(t, path, "review", "Review code", false, "Follow the review process.")
+	skills, _ := LoadSkills(filepath.Dir(filepath.Dir(path)))
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			parts := request.Inputs[0].Content.Parts
+			if len(parts) != 4 || parts[0].Text != "  " || !strings.Contains(parts[1].Text, "Follow the review process.") || parts[2].Kind != ContentPartImage || parts[2].Image == nil || parts[3].Text != " after" {
+				t.Fatalf("content = %+v", parts)
+			}
+			return Response{Text: "done"}, nil
+		},
+	}}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{Skills: skills})
+	if _, err := engine.RunContent(context.Background(), []ContentPart{
+		{Kind: ContentPartText, Text: "  "},
+		{Kind: ContentPartText, Text: "/skill:review before"},
+		{Kind: ContentPartImage, Image: &Image{MediaType: "image/png", Data: []byte("png")}},
+		{Kind: ContentPartText, Text: " after"},
+	}, discardEvents); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writeTestSkill(t *testing.T, path, name, description string, disabled bool, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
