@@ -392,6 +392,26 @@ func TestClientCompactBoundsCancellationAndOptionalUsage(t *testing.T) {
 	})
 }
 
+func TestResponsesSSEOrdersCompletedItemsByOutputIndex(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.output_item.done","output_index":1,"item":{"type":"message","content":[{"type":"output_text","text":"second"}]}}`,
+		`data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","content":[{"type":"output_text","text":"first"}]}}`,
+		`data: {"type":"response.completed","response":{"status":"completed"}}`,
+	}, "\n\n") + "\n\n"
+
+	response, err := readResponsesSSE(strings.NewReader(body), 1<<20, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, _, _, err := normalizeResponse(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "firstsecond" {
+		t.Fatalf("text = %q, want %q", text, "firstsecond")
+	}
+}
+
 func TestClientStreamsTextDeltas(t *testing.T) {
 	releaseTerminal := make(chan struct{})
 	released := false

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/eul-ai/eul/agent"
 )
@@ -46,9 +47,14 @@ type streamedToolCall struct {
 	complete  bool
 }
 
+type streamedOutputItem struct {
+	index int
+	item  json.RawMessage
+}
+
 type responseStreamDecoder struct {
 	observer    *streamObserver
-	output      []json.RawMessage
+	output      []streamedOutputItem
 	toolStreams map[int]streamedToolCall
 }
 
@@ -148,7 +154,7 @@ func (decoder *responseStreamDecoder) handle(data []byte) (createResponseEnvelop
 		if err := decoder.finishToolCall(event); err != nil {
 			return createResponseEnvelope{}, false, err
 		}
-		decoder.output = append(decoder.output, event.Item)
+		decoder.output = append(decoder.output, streamedOutputItem{index: event.OutputIndex, item: event.Item})
 		return createResponseEnvelope{}, false, nil
 	case "response.completed", "response.done", "response.incomplete", "response.failed":
 		response, err := decoder.terminal(event)
@@ -291,7 +297,13 @@ func (decoder *responseStreamDecoder) terminal(event responseStreamEvent) (creat
 
 	switch {
 	case len(response.Output) == 0 && len(decoder.output) != 0:
-		response.Output = decoder.output
+		sort.SliceStable(decoder.output, func(i, j int) bool {
+			return decoder.output[i].index < decoder.output[j].index
+		})
+		response.Output = make([]json.RawMessage, len(decoder.output))
+		for index, item := range decoder.output {
+			response.Output[index] = item.item
+		}
 	case response.Output == nil:
 		response.Output = []json.RawMessage{}
 	}
