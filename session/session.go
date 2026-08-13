@@ -295,17 +295,7 @@ func (session *agentSession) attachPersistence(handle *sessionHandle, restore bo
 		return handle.Save(agentCheckpoint, terminalCheckpoint, active, session.thinkingLevel, session.fastMode)
 	}
 	session.terminalOptions.ListSessions = func(context.Context) ([]terminal.SessionSummary, []string, error) {
-		summaries, warnings, err := handle.store.List(handle.record.WorkingDirectory)
-		if err != nil {
-			return nil, nil, err
-		}
-		visible := summaries[:0]
-		for _, summary := range summaries {
-			if summary.ID != handle.record.ID {
-				visible = append(visible, summary)
-			}
-		}
-		return visible, warnings, nil
+		return handle.store.List(handle.record.WorkingDirectory)
 	}
 	return nil
 }

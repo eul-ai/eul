@@ -30,6 +30,8 @@ const (
 	maxSessionDescriptionBytes = 120
 )
 
+var errSessionInUse = errors.New("session is already in use")
+
 type sessionStatus string
 
 const (
@@ -194,7 +196,17 @@ func (store *sessionStore) List(cwd string) ([]terminal.SessionSummary, []string
 			continue
 		}
 		path := filepath.Join(directory, entry.Name())
+		lock, err := acquireSessionLock(sessionLockPath(path))
+		if errors.Is(err, errSessionInUse) {
+			continue
+		}
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("Skipped session %s: %v", filepath.ToSlash(path), err))
+			continue
+		}
+
 		summary, workingDirectory, err := readSessionSummary(path)
+		err = errors.Join(err, releaseSessionLock(lock))
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("Skipped session %s: %v", filepath.ToSlash(path), err))
 			continue
@@ -658,7 +670,7 @@ func acquireSessionLock(path string) (*os.File, error) {
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = lock.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-			return nil, errors.New("session is already in use")
+			return nil, errSessionInUse
 		}
 		return nil, fmt.Errorf("lock session: %w", err)
 	}
