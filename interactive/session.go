@@ -407,9 +407,6 @@ func (session *agentSession) attachPersistence(handle *sessionHandle, restore bo
 		}
 		visible := make([]terminal.SessionSummary, 0, len(summaries))
 		for _, summary := range summaries {
-			if summary.ID == record.ID {
-				continue
-			}
 			visible = append(visible, terminal.SessionSummary{
 				ID:          summary.ID,
 				Description: summary.Description,

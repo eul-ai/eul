@@ -76,6 +76,10 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 		t.Fatalf("session permissions = %o", fileInfo.Mode().Perm())
 	}
 
+	locked, err := store.Open(context.Background(), cwd, secondID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	summaries, warnings, err := store.List(cwd)
 	if err != nil {
 		t.Fatal(err)
@@ -83,11 +87,11 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 	if len(warnings) != 0 {
 		t.Fatalf("warnings = %v", warnings)
 	}
-	if len(summaries) != 2 || summaries[0].ID != secondID || summaries[0].Description != "second prompt" {
+	if len(summaries) != 1 || summaries[0].ID != firstID || summaries[0].Description != "first prompt" || !summaries[0].Active {
 		t.Fatalf("summaries = %+v", summaries)
 	}
-	if summaries[1].ID != firstID || summaries[1].Description != "first prompt" || !summaries[1].Active {
-		t.Fatalf("first summary = %+v", summaries[1])
+	if err := locked.Close(); err != nil {
+		t.Fatal(err)
 	}
 
 	mostRecent, err := store.Open(context.Background(), cwd, "")
