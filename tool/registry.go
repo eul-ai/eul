@@ -9,7 +9,6 @@ import (
 	"io"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/eul-ai/eul/agent"
 )
@@ -37,27 +36,15 @@ type presenter interface {
 	Presentation(PresentationSnapshot) agent.ToolPresentation
 }
 
-type ToolSet interface {
-	Tools() []Tool
-	Close() error
-}
-
 type Registry struct {
 	definitions []agent.ToolDefinition
 	tools       map[string]Tool
-	resources   []ToolSet
-	closeOnce   sync.Once
-	closeErr    error
 }
 
-func NewRegistry(tools []Tool, sets ...ToolSet) (*Registry, error) {
-	for _, set := range sets {
-		tools = append(tools, set.Tools()...)
-	}
+func NewRegistry(tools []Tool) (*Registry, error) {
 	registry := &Registry{
 		definitions: make([]agent.ToolDefinition, 0, len(tools)),
 		tools:       make(map[string]Tool, len(tools)),
-		resources:   append([]ToolSet(nil), sets...),
 	}
 
 	for _, registered := range tools {
@@ -126,19 +113,6 @@ func (r *Registry) Execute(ctx context.Context, call agent.ToolCall, updates age
 	result.CallID = call.ID
 	result.Tool = call.Name
 	return result, err
-}
-
-func (r *Registry) Close() error {
-	r.closeOnce.Do(func() {
-		var closeErrors []error
-		for index := len(r.resources) - 1; index >= 0; index-- {
-			if err := r.resources[index].Close(); err != nil {
-				closeErrors = append(closeErrors, err)
-			}
-		}
-		r.closeErr = errors.Join(closeErrors...)
-	})
-	return r.closeErr
 }
 
 func cloneToolDefinition(definition agent.ToolDefinition) agent.ToolDefinition {

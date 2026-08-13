@@ -44,9 +44,7 @@ func newSessionToolset(
 ) (sessionToolset, error) {
 	newToolset := env.newToolset
 	if newToolset == nil {
-		newToolset = func(cwd string, access toolAccess, noSandbox bool, authorizeNetwork tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
-			return buildToolsetWithHomeAndNetworkAuthorizer(cwd, "", access, noSandbox, authorizeNetwork, additional...)
-		}
+		newToolset = buildToolset
 	}
 	manager := subagent.NewManager(subagent.Config{
 		Runner: subagent.RunFunc(func(ctx context.Context, request subagent.RunRequest, update func(subagent.Progress)) (agent.RunResult, error) {
@@ -151,7 +149,6 @@ func (session *agentSession) finish(runErr error) error {
 	if session.persistence != nil {
 		finalCheckpointErr = session.persistence.saveFinal()
 	}
-	toolErr := finishRegistry(nil, session.tools, "close tools")
 	var persistenceErr error
 	if session.persistence != nil {
 		persistenceErr = session.persistence.close()
@@ -161,7 +158,7 @@ func (session *agentSession) finish(runErr error) error {
 	}
 	backendErr := closeBackendRuntime(session.backendRuntime)
 	session.backendRuntime = nil
-	return errors.Join(runErr, subagentErr, finalCheckpointErr, toolErr, persistenceErr, backendErr)
+	return errors.Join(runErr, subagentErr, finalCheckpointErr, persistenceErr, backendErr)
 }
 
 func closeBackendRuntime(backendRuntime backend.Runtime) error {

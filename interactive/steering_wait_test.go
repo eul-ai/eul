@@ -36,8 +36,6 @@ func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer registry.Close()
-
 	calls := 0
 	provider := steeringWaitProvider(func(_ context.Context, request agent.Request) (agent.Response, error) {
 		calls++

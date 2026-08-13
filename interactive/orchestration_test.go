@@ -13,46 +13,29 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-func TestBuildToolsWithoutLSPConfig(t *testing.T) {
-	cwd := t.TempDir()
+func TestBuildToolset(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		access toolAccess
+		want   []string
+	}{
+		{name: "full access", access: fullToolAccess, want: []string{"bash", "edit", "read", "write"}},
+		{name: "read only", access: readOnlyToolAccess, want: []string{"read"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			registry, err := buildToolset(t.TempDir(), test.access, true, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	registry, err := buildToolsetWithHome(cwd, t.TempDir(), fullToolAccess)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer registry.Close()
-
-	names := make([]string, len(registry.Definitions()))
-	for index, definition := range registry.Definitions() {
-		names[index] = definition.Name
-	}
-	want := []string{"bash", "edit", "read", "write"}
-	if !slices.Equal(names, want) {
-		t.Fatalf("tools = %v, want %v", names, want)
-	}
-}
-
-func TestBuildSubagentToolsUsesReadOnlyLSP(t *testing.T) {
-	directory := t.TempDir()
-	if err := os.WriteFile(filepath.Join(directory, "gopls"), nil, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", directory)
-	cwd := t.TempDir()
-	writeTestLSPConfig(t, cwd)
-
-	registry, err := buildToolset(cwd, readOnlyToolAccess)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer registry.Close()
-	names := make([]string, len(registry.Definitions()))
-	for index, definition := range registry.Definitions() {
-		names[index] = definition.Name
-	}
-	want := []string{"lsp_definition", "lsp_diagnostics", "lsp_hover", "lsp_references", "lsp_symbols", "read"}
-	if !slices.Equal(names, want) {
-		t.Fatalf("tools = %v, want %v", names, want)
+			names := make([]string, len(registry.Definitions()))
+			for index, definition := range registry.Definitions() {
+				names[index] = definition.Name
+			}
+			if !slices.Equal(names, test.want) {
+				t.Fatalf("tools = %v, want %v", names, test.want)
+			}
+		})
 	}
 }
 

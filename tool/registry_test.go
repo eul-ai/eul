@@ -6,7 +6,6 @@ import (
 	"errors"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
@@ -34,14 +33,6 @@ type presentingTool struct {
 func (t presentingTool) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
 	return t.present(snapshot)
 }
-
-type testToolSet struct {
-	tools []Tool
-	close func() error
-}
-
-func (set testToolSet) Tools() []Tool { return set.tools }
-func (set testToolSet) Close() error  { return set.close() }
 
 func mustRegistry(t *testing.T, tools ...Tool) *Registry {
 	t.Helper()
@@ -126,44 +117,6 @@ func TestRegistryDispatchesAndCorrelatesResult(t *testing.T) {
 	}
 	if result.CallID != "call-1" || result.Tool != "read" || result.Output != "contents" {
 		t.Fatalf("result = %+v", result)
-	}
-}
-
-func TestRegistryCloseIsReverseOrderedIdempotentAndConcurrentSafe(t *testing.T) {
-	closeErr := errors.New("close failed")
-	var mu sync.Mutex
-	var closed []string
-	newSet := func(name string, err error) testToolSet {
-		return testToolSet{close: func() error {
-			mu.Lock()
-			defer mu.Unlock()
-			closed = append(closed, name)
-			return err
-		}}
-	}
-	registry, err := NewRegistry(nil, newSet("one", nil), newSet("two", closeErr))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var wait sync.WaitGroup
-	errorsSeen := make(chan error, 4)
-	for range 4 {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			errorsSeen <- registry.Close()
-		}()
-	}
-	wait.Wait()
-	close(errorsSeen)
-	for err := range errorsSeen {
-		if !errors.Is(err, closeErr) {
-			t.Fatalf("Close() error = %v", err)
-		}
-	}
-	if !slices.Equal(closed, []string{"two", "one"}) {
-		t.Fatalf("close order = %v", closed)
 	}
 }
 

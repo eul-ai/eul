@@ -11,8 +11,6 @@ import (
 	"time"
 	"unicode"
 
-	"golang.org/x/term"
-
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/terminal/clipboard"
 )
@@ -43,7 +41,7 @@ type Runner struct {
 	output    io.Writer
 	inputFD   int
 	outputFD  int
-	state     *term.State
+	state     *terminalState
 	keys      chan keyEvent
 	stopped   chan struct{}
 	closeOnce sync.Once
@@ -53,19 +51,19 @@ type Runner struct {
 func NewRunner(input io.Reader, output io.Writer) (*Runner, error) {
 	inputFD, inputOK := descriptor(input)
 	outputFD, outputOK := descriptor(output)
-	if !inputOK || !outputOK || !term.IsTerminal(inputFD) || !term.IsTerminal(outputFD) {
+	if !inputOK || !outputOK || !isTerminal(inputFD) || !isTerminal(outputFD) {
 		return nil, ErrNotTerminal
 	}
-	if _, _, err := term.GetSize(outputFD); err != nil {
+	if _, _, err := terminalSize(outputFD); err != nil {
 		return nil, fmt.Errorf("terminal: get size: %w", err)
 	}
-	state, err := term.MakeRaw(inputFD)
+	state, err := makeRaw(inputFD)
 	if err != nil {
 		return nil, fmt.Errorf("terminal: enter raw mode: %w", err)
 	}
 	if err := writeOutput(output, "%s", enterScreen); err != nil {
 		leaveErr := writeOutput(output, "%s", leaveScreen)
-		restoreErr := term.Restore(inputFD, state)
+		restoreErr := restoreTerminal(inputFD, state)
 		return nil, errors.Join(err, leaveErr, wrapRestoreError(restoreErr))
 	}
 
@@ -83,7 +81,7 @@ func NewRunner(input io.Reader, output io.Writer) (*Runner, error) {
 }
 
 func (runner *Runner) Run(ctx context.Context, options Options) (RunOutcome, error) {
-	width, height, err := term.GetSize(runner.outputFD)
+	width, height, err := terminalSize(runner.outputFD)
 	if err != nil {
 		return RunOutcome{}, fmt.Errorf("terminal: get size: %w", err)
 	}
@@ -113,7 +111,7 @@ func (runner *Runner) Close() error {
 	runner.closeOnce.Do(func() {
 		close(runner.stopped)
 		leaveErr := writeOutput(runner.output, "%s", leaveScreen)
-		restoreErr := term.Restore(runner.inputFD, runner.state)
+		restoreErr := restoreTerminal(runner.inputFD, runner.state)
 		runner.closeErr = errors.Join(leaveErr, wrapRestoreError(restoreErr))
 	})
 	return runner.closeErr

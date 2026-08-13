@@ -3,7 +3,6 @@ package interactive
 import (
 	"bytes"
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -135,20 +134,4 @@ func resolveTestConfig(options Options, env environment) (resolvedConfig, error)
 
 func stringPointer(value string) *string {
 	return &value
-}
-
-func writeTestLSPConfig(t *testing.T, cwd string) {
-	t.Helper()
-	content := `[{"name":"gopls","command":"gopls","languageID":"go","extensions":[".go"]}]`
-	if err := os.WriteFile(filepath.Join(cwd, "lsp.json"), []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func buildToolset(cwd string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
-	return buildToolsetWithHomeAndNetworkAuthorizer(cwd, "", access, false, nil, additional...)
-}
-
-func buildToolsetWithHome(cwd, home string, access toolAccess, additional ...tool.Tool) (*tool.Registry, error) {
-	return buildToolsetWithHomeAndNetworkAuthorizer(cwd, home, access, false, nil, additional...)
 }

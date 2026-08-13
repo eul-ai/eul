@@ -19,20 +19,6 @@ import (
 	"github.com/eul-ai/eul/tool"
 )
 
-type closeRecordingTool struct {
-	closeErr error
-	closed   int
-}
-
-type closeRecordingToolSet struct {
-	tool *closeRecordingTool
-}
-
-func (set closeRecordingToolSet) Tools() []tool.Tool { return []tool.Tool{set.tool} }
-func (set closeRecordingToolSet) Close() error {
-	return set.tool.Close()
-}
-
 type metadataFreeProvider struct{}
 
 func (metadataFreeProvider) Generate(context.Context, agent.Request, agent.StreamObserver) (agent.Response, error) {
@@ -48,19 +34,6 @@ type profileMetadataProvider struct {
 func (provider *profileMetadataProvider) metadataFor(model string) backend.ModelMetadata {
 	provider.requested = append(provider.requested, model)
 	return provider.metadata[model]
-}
-
-func (*closeRecordingTool) Definition() agent.ToolDefinition {
-	return agent.ToolDefinition{Name: "close-recording"}
-}
-
-func (*closeRecordingTool) Execute(context.Context, json.RawMessage, agent.ToolUpdateSink) (agent.ToolResult, error) {
-	return agent.ToolResult{}, nil
-}
-
-func (current *closeRecordingTool) Close() error {
-	current.closed++
-	return current.closeErr
 }
 
 func TestModelSelectionSelectsSubagentProfiles(t *testing.T) {
@@ -111,7 +84,6 @@ func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 		},
 	}
 	cwd := t.TempDir()
-	writeTestLSPConfig(t, cwd)
 	skills := []skill.Skill{{Name: "review", Description: "Review code"}}
 	warnings := []string{"Skipped skill invalid: malformed"}
 	session, err := newAgentSession(resolvedConfig{models: modelSelection{main: "model"}, thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills, warnings: warnings}, environment{}, backendRuntime)
@@ -224,7 +196,6 @@ func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 		}), nil
 	}}
 	cwd := t.TempDir()
-	writeTestLSPConfig(t, cwd)
 	session, err := newAgentSession(resolvedConfig{models: modelSelection{main: "model"}, cwd: cwd}, runtime, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
@@ -406,9 +377,6 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 		t.Fatal(err)
 	}
 	<-first.persistence.changesDone
-	if err := first.tools.Close(); err != nil {
-		t.Fatal(err)
-	}
 	if err := first.persistence.checkpoints.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -568,38 +536,5 @@ func TestNewAgentSessionReportsToolsetConfigurationFailure(t *testing.T) {
 	}
 	if backendRuntime.closeCalls != 1 {
 		t.Fatalf("backend close calls = %d, want 1", backendRuntime.closeCalls)
-	}
-}
-
-func TestFinishRegistryClosesToolsAndPreservesRunError(t *testing.T) {
-	runErr := context.Canceled
-	closeErr := errors.New("close failed")
-	closer := &closeRecordingTool{closeErr: closeErr}
-	registry, err := tool.NewRegistry(nil, closeRecordingToolSet{tool: closer})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = finishRegistry(runErr, registry, "close subagent tools")
-	if closer.closed != 1 {
-		t.Fatalf("close calls = %d, want 1", closer.closed)
-	}
-	if !errors.Is(err, runErr) || !errors.Is(err, closeErr) || !strings.Contains(err.Error(), "close subagent tools") {
-		t.Fatalf("joined error = %v", err)
-	}
-}
-
-func TestAgentSessionFinishClosesOwnedRegistry(t *testing.T) {
-	closer := &closeRecordingTool{}
-	registry, err := tool.NewRegistry(nil, closeRecordingToolSet{tool: closer})
-	if err != nil {
-		t.Fatal(err)
-	}
-	session := &agentSession{tools: registry}
-	if err := session.finish(nil); err != nil {
-		t.Fatal(err)
-	}
-	if closer.closed != 1 {
-		t.Fatalf("close calls = %d, want 1", closer.closed)
 	}
 }

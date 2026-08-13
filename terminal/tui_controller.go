@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 
-	"golang.org/x/term"
-
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/subagent"
 )
@@ -184,7 +182,7 @@ func (c *tuiController) handleInterrupt() (bool, error) {
 }
 
 func (c *tuiController) handleResize() (bool, error) {
-	width, height, err := term.GetSize(c.outputFD)
+	width, height, err := terminalSize(c.outputFD)
 	if err != nil {
 		return false, fmt.Errorf("terminal: get size: %w", err)
 	}

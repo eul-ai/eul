@@ -1,11 +1,12 @@
 # Eul
 
 Eul is a focused coding agent for the terminal. It can explore a codebase, edit
-files, run commands, use language-server features, and work through multi-step
-tasks in an interactive conversation.
+files, run commands, and work through multi-step tasks in an interactive
+conversation.
 
 Eul is heavily inspired by [Pi](https://pi.dev/), with *some*
-batteries included while still staying deliberately minimal.
+batteries included while still staying deliberately minimal. It is implemented
+using only the Go standard library, with zero external dependencies.
 
 Eul is intended for trusted local use on macOS and Linux. Conversations are
 persisted locally, and tools run directly on your machine with your permissions.
@@ -15,7 +16,6 @@ persisted locally, and tools run directly on your machine with your permissions.
 - Full-screen terminal interface with streaming responses and tool activity
 - File reading, writing, and targeted editing with visible diffs
 - Shell command execution with streamed output
-- Optional language-server diagnostics, navigation, symbol lookup, and rename
 - Adjustable model thinking levels, reasoning summaries, and provider-dependent fast inference
 - File search and references from the prompt with `@`
 - Steering messages that can be queued while the agent is working
@@ -86,7 +86,7 @@ subagents default to `gpt-5.6-terra`, and fast subagents default to
 `gpt-5.6-luna`. Use `--model`, `--balanced-model`, and `--fast-model` to
 override them for a new session.
 
-`EUL_HOME` overrides the credential, session, and global LSP configuration directory.
+`EUL_HOME` overrides the credential and session directory.
 
 ## Interactive mode
 
@@ -135,8 +135,8 @@ native macOS support; Linux requires `wl-paste` or `xclip`. Windows is unsupport
 
 ## Tool access
 
-Eul can read and edit files, run Bash commands, navigate code with configured
-language servers, and delegate research to read-only subagents.
+Eul can read and edit files, run Bash commands, and delegate research to
+read-only subagents.
 
 Bash commands run without network access by default. Commands that need network
 access pause for one-time user approval. `--no-sandbox` disables Bash network

@@ -9,7 +9,6 @@ import (
 
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/terminal"
-	"github.com/eul-ai/eul/tool"
 )
 
 type runnerFactory func(io.Reader, io.Writer) (sessionRunner, io.Closer, error)
@@ -31,9 +30,7 @@ func run(ctx context.Context, options Options, dependencies Dependencies, newRun
 		backends:    dependencies.Backends,
 	}
 	home := dependencies.Home
-	env.newToolset = func(cwd string, access toolAccess, noSandbox bool, authorizeNetwork tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
-		return buildToolsetWithHomeAndNetworkAuthorizer(cwd, home, access, noSandbox, authorizeNetwork, additional...)
-	}
+	env.newToolset = buildToolset
 	store := newSessionStore(home)
 	factory := sessionFactory{env: env, store: store, home: home}
 

@@ -57,5 +57,5 @@ func runChildAgent(
 		}
 		return nil
 	})
-	return result, finishRegistry(runErr, registry, "close subagent tools")
+	return result, runErr
 }
