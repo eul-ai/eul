@@ -1,4 +1,4 @@
-package interactive
+package app
 
 import (
 	"encoding/json"

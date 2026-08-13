@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/interactive"
+	"github.com/eul-ai/eul/app"
 )
 
 type reportedFlagError struct {
@@ -47,7 +47,7 @@ func (*resumeValue) IsBoolFlag() bool {
 	return true
 }
 
-func parseAgentArguments(arguments []string, runtime appRuntime) (interactive.Options, error) {
+func parseAgentArguments(arguments []string, runtime appRuntime) (app.Options, error) {
 	flags := flag.NewFlagSet("eul", flag.ContinueOnError)
 	flags.SetOutput(runtime.stderr)
 	provider := flags.String("provider", "", "provider backend")
@@ -62,16 +62,16 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (interactive.Op
 	flags.Var(resume, "resume", "resume the most recent session or a session selected with --resume=<id>")
 
 	if err := flags.Parse(arguments); err != nil {
-		return interactive.Options{}, reportedFlagError{error: err}
+		return app.Options{}, reportedFlagError{error: err}
 	}
 	if flags.NArg() != 0 {
-		return interactive.Options{}, errors.New("usage error: eul accepts no prompt arguments")
+		return app.Options{}, errors.New("usage error: eul accepts no prompt arguments")
 	}
 
 	explicit := make(map[string]bool)
 	flags.Visit(func(current *flag.Flag) { explicit[current.Name] = true })
 	if resume.enabled && (explicit["provider"] || explicit["model"] || explicit["fast-model"] || explicit["balanced-model"] || explicit["thinking"] || explicit["fast"] || explicit["cwd"]) {
-		return interactive.Options{}, errors.New("usage error: --resume cannot be combined with --provider, --model, --fast-model, --balanced-model, --thinking, --fast, or --cwd")
+		return app.Options{}, errors.New("usage error: --resume cannot be combined with --provider, --model, --fast-model, --balanced-model, --thinking, --fast, or --cwd")
 	}
 
 	thinkingLevel := agent.DefaultThinkingLevel
@@ -79,11 +79,11 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (interactive.Op
 		var err error
 		thinkingLevel, err = agent.ParseThinkingLevel(*thinking)
 		if err != nil {
-			return interactive.Options{}, err
+			return app.Options{}, err
 		}
 	}
 
-	return interactive.Options{
+	return app.Options{
 		Provider:         *provider,
 		Model:            optionalFlagValue(*model, explicit["model"]),
 		FastModel:        optionalFlagValue(*fastModel, explicit["fast-model"]),

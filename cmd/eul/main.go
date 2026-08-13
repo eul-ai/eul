@@ -9,9 +9,9 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/eul-ai/eul/app"
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/backend/codex"
-	"github.com/eul-ai/eul/interactive"
 	"github.com/eul-ai/eul/terminal"
 )
 
@@ -98,7 +98,7 @@ func runSession(arguments []string, runtime appRuntime) int {
 		return exitFailure
 	}
 	ctx := context.Background()
-	runErr := interactive.Run(ctx, parsed, interactive.Dependencies{
+	runErr := app.Run(ctx, parsed, app.Dependencies{
 		Input:       runtime.stdin,
 		Output:      runtime.stdout,
 		Home:        home,

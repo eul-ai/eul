@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/interactive"
+	"github.com/eul-ai/eul/app"
 )
 
 func stringPointer(value string) *string {
@@ -33,7 +33,7 @@ func TestParseAgentArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := interactive.Options{
+	want := app.Options{
 		Provider:         "test",
 		Model:            stringPointer("gpt-5.6-sol"),
 		FastModel:        stringPointer("gpt-5.6-luna"),
