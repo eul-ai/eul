@@ -153,20 +153,23 @@ func conversationBlocksEqual(left, right conversationBlock) bool {
 		left.tool.Equal(right.tool)
 }
 
-func (r *tuiRenderer) normalizeViewport(model *tuiModel) {
-	prepared := r.prepare(model)
+func viewportTop(model *tuiModel, prepared renderPreparation) int {
 	bottom := max(0, len(prepared.conversationLines)-prepared.layout.conversationHeight)
 	if model.following {
-		model.scrollTop = bottom
-		return
+		return bottom
 	}
-	model.scrollTop = max(0, min(model.scrollTop, bottom))
+	return max(0, min(model.scrollTop, bottom))
+}
+
+func normalizeViewport(model *tuiModel, renderer *tuiRenderer) {
+	model.scrollTop = viewportTop(model, renderer.prepare(model))
 }
 
 func buildTerminalFrame(model *tuiModel) terminalFrame {
 	renderer := &tuiRenderer{}
-	renderer.normalizeViewport(model)
-	return projectTerminalFrame(model, renderer.prepare(model))
+	prepared := renderer.prepare(model)
+	prepared.scrollTop = viewportTop(model, prepared)
+	return projectTerminalFrame(model, prepared)
 }
 
 func projectTerminalFrame(model *tuiModel, prepared renderPreparation) terminalFrame {

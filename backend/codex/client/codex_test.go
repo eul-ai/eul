@@ -80,7 +80,7 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 	}
 
 	var delivered, reasoning string
-	response, err := generate(client, context.Background(), agent.Request{Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, Inputs: []agent.Input{{Kind: agent.InputUser, Text: "hello"}}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, func(text string) error {
+	response, err := generate(client, context.Background(), agent.Request{Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, Inputs: []agent.Input{agent.NewTextInput("hello")}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, func(text string) error {
 		delivered += text
 		return nil
 	}, func(text string) error {
@@ -170,7 +170,7 @@ func TestCodexSSEToolCallAndReasoningReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first, err := generate(client, context.Background(), agent.Request{Model: "model", Inputs: []agent.Input{{Kind: agent.InputUser, Text: "inspect"}}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, nil, nil, nil)
+	first, err := generate(client, context.Background(), agent.Request{Model: "model", Inputs: []agent.Input{agent.NewTextInput("inspect")}, Tools: []agent.ToolDefinition{strictTestTool("read")}}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

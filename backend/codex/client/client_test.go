@@ -137,7 +137,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 		Model:         "test-model",
 		ThinkingLevel: agent.ThinkingHigh,
 		Instructions:  "system instructions",
-		Inputs:        []agent.Input{{Kind: agent.InputUser, Text: "inspect"}},
+		Inputs:        []agent.Input{agent.NewTextInput("inspect")},
 		Tools:         tools,
 	}, func(text string) error {
 		sinkText = append(sinkText, text)
@@ -184,7 +184,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 		Instructions:  "system instructions",
 		State:         second.State,
 		Tools:         tools,
-		Inputs:        []agent.Input{{Kind: agent.InputUser, Text: "next"}},
+		Inputs:        []agent.Input{agent.NewTextInput("next")},
 	}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("third Generate() error = %v", err)
@@ -281,7 +281,7 @@ func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
 		ThinkingLevel: agent.ThinkingHigh,
 		Instructions:  "system",
 		State:         state,
-		Inputs:        []agent.Input{{Kind: agent.InputUser, Text: "pending user"}},
+		Inputs:        []agent.Input{agent.NewTextInput("pending user")},
 		Tools:         []agent.ToolDefinition{strictTestTool("read")},
 	})
 	if err != nil {
@@ -299,7 +299,7 @@ func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
 		Model:         "gpt-5.6-sol",
 		ThinkingLevel: agent.ThinkingHigh,
 		State:         compacted.State,
-		Inputs:        []agent.Input{{Kind: agent.InputUser, Text: "after compact"}},
+		Inputs:        []agent.Input{agent.NewTextInput("after compact")},
 	}, nil, nil, nil)
 	if err != nil || response.Text != "continued" || calls != 2 {
 		t.Fatalf("response = %+v, error = %v, calls = %d", response, err, calls)
@@ -362,7 +362,7 @@ func TestClientCompactBoundsCancellationAndOptionalUsage(t *testing.T) {
 		client := newTestClient(t, "key", server.URL, Options{})
 		client.maxRequestBytes = 100
 		request := baseRequest()
-		request.Inputs[0].Text = strings.Repeat("x", 200)
+		request.Inputs[0].Content[0].Text = strings.Repeat("x", 200)
 		_, err := client.Compact(context.Background(), request)
 		if err == nil || !strings.Contains(err.Error(), "compact request exceeds 100 bytes") || calls.Load() != 0 {
 			t.Fatalf("Compact() error = %v, HTTP calls = %d", err, calls.Load())
@@ -775,17 +775,17 @@ func TestClientCompactsBeforeContinuationStateConsumesOutputHeadroom(t *testing.
 	defer server.Close()
 
 	client := newTestClient(t, "key", server.URL, Options{})
-	client.maxStateBytes = 220
+	client.maxStateBytes = 280
 	client.stateOutputHeadroom = 90
 	withoutHeadroom := *client
 	withoutHeadroom.stateOutputHeadroom = 1
-	if withoutHeadroom.ShouldCompact(agent.Request{State: state, Inputs: []agent.Input{{Kind: agent.InputUser, Text: strings.Repeat("y", 20)}}}, agent.Usage{}) {
+	if withoutHeadroom.ShouldCompact(agent.Request{State: state, Inputs: []agent.Input{agent.NewTextInput(strings.Repeat("y", 20))}}, agent.Usage{}) {
 		t.Fatal("test request requires compaction without response headroom")
 	}
 	engine := agent.New(client, emptyToolbox{}, agent.Options{Model: "test-model"})
 	engineCheckpoint := agent.Checkpoint{}
 	checkpointJSON, err := json.Marshal(map[string]any{
-		"version":       1,
+		"version":       2,
 		"state":         state,
 		"context_usage": agent.Usage{},
 	})
@@ -937,7 +937,7 @@ func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
 		client := newTestClient(t, "key", server.URL, Options{})
 		client.maxRequestBytes = 100
 		request := baseRequest()
-		request.Inputs[0].Text = strings.Repeat("x", 200)
+		request.Inputs[0].Content[0].Text = strings.Repeat("x", 200)
 		_, err := generate(client, context.Background(), request, nil, nil, nil)
 		if err == nil || !strings.Contains(err.Error(), "request exceeds 100 bytes") || calls.Load() != 0 {
 			t.Fatalf("Generate() error = %v, HTTP calls = %d", err, calls.Load())
@@ -1179,7 +1179,7 @@ func baseRequest() agent.Request {
 	return agent.Request{
 		Model:        "test-model",
 		Instructions: "instructions",
-		Inputs:       []agent.Input{{Kind: agent.InputUser, Text: "hello"}},
+		Inputs:       []agent.Input{agent.NewTextInput("hello")},
 		Tools:        []agent.ToolDefinition{strictTestTool("read")},
 	}
 }
@@ -1270,7 +1270,15 @@ func assertInputItem(t *testing.T, items []json.RawMessage, index int, fields ma
 	}
 
 	for name, want := range fields {
-		if got, _ := item[name].(string); got != want {
+		got, _ := item[name].(string)
+		if name == "content" && got == "" {
+			parts, _ := item[name].([]any)
+			if len(parts) == 1 {
+				part, _ := parts[0].(map[string]any)
+				got, _ = part["text"].(string)
+			}
+		}
+		if got != want {
 			t.Errorf("input item %d field %q = %q, want %q; item=%s", index, name, got, want, items[index])
 		}
 	}

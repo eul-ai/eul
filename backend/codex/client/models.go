@@ -141,13 +141,8 @@ func estimateInputTokens(inputs []agent.Input) int64 {
 	var total int64
 	for _, input := range inputs {
 		textBytes := len(input.Text)
-		if input.Content != nil {
-			textBytes = 0
-			for _, part := range input.Content.Parts {
-				if part.Kind == agent.ContentPartText {
-					textBytes += len(part.Text)
-				}
-			}
+		if input.Kind == agent.InputUser {
+			textBytes = len(input.PlainText())
 		}
 		bytes := int64(textBytes)
 		total += bytes / 4

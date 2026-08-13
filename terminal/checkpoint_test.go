@@ -241,24 +241,25 @@ func TestResumePickerUsesNewestSessionAndReturnsSelection(t *testing.T) {
 	}
 }
 
-func TestEngineCheckpointEventWaitsForAcknowledgement(t *testing.T) {
+func TestEngineSnapshotWaitsForTerminalState(t *testing.T) {
 	messages := make(chan engineMessage, 2)
 	stopped := make(chan struct{})
 	defer close(stopped)
-	go runEngineOperation(context.Background(), messages, stopped, func(sink agent.EventSink) error {
-		return sink(agent.Event{Kind: agent.EventCheckpoint})
+	go runEngineOperation(context.Background(), messages, stopped, func(stream EventStream) error {
+		_, err := stream.Snapshot()
+		return err
 	})
 
-	checkpoint := <-messages
-	if checkpoint.ack == nil || checkpoint.done {
-		t.Fatalf("checkpoint message = %+v", checkpoint)
+	snapshot := <-messages
+	if snapshot.snapshot == nil || snapshot.done {
+		t.Fatalf("snapshot message = %+v", snapshot)
 	}
 	select {
 	case message := <-messages:
-		t.Fatalf("operation completed before acknowledgement: %+v", message)
+		t.Fatalf("operation completed before snapshot: %+v", message)
 	default:
 	}
-	checkpoint.ack <- nil
+	snapshot.snapshot <- EmptyCheckpoint()
 	completed := <-messages
 	if !completed.done || completed.err != nil {
 		t.Fatalf("completion = %+v", completed)
@@ -271,15 +272,15 @@ func TestResumeCommandListsSessionsWithoutStoreDependency(t *testing.T) {
 		t.Fatal(err)
 	}
 	controller := tuiController{
-		model:          model,
-		renderer:       &tuiRenderer{},
-		engine:         &fakeEngine{},
+		model:      model,
+		renderer:   &tuiRenderer{},
+		operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}),
 		output:         io.Discard,
 		engineMessages: make(chan engineMessage, 1),
 		stopped:        make(chan struct{}),
-		listSessions: func(context.Context) ([]SessionSummary, []string, error) {
+		sessions: Sessions{List: func(context.Context) ([]SessionSummary, []string, error) {
 			return []SessionSummary{{ID: "session", Description: "prompt"}}, []string{"Skipped session broken.json: invalid"}, nil
-		},
+		}},
 	}
 
 	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {

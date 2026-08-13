@@ -9,7 +9,6 @@ import (
 )
 
 func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool, error) {
-	c.prepareCallbacks()
 	switch action.kind {
 	case tuiActionNone:
 		return false, nil
@@ -20,11 +19,11 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		}
 		return false, c.saveCurrentCheckpoint(false)
 	case tuiActionOpenResume:
-		if c.listSessions == nil {
+		if c.sessions.List == nil {
 			setInputError(c.model, errors.New("session resumption is unavailable"))
 			return false, nil
 		}
-		summaries, warnings, err := c.listSessions(ctx)
+		summaries, warnings, err := c.sessions.List(ctx)
 		if err != nil {
 			setInputError(c.model, err)
 			return false, nil
@@ -52,11 +51,11 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 	case tuiActionCompact:
 		return false, c.startCompaction(ctx)
 	case tuiActionToggleFast:
-		if !c.model.fastModeAvailable || c.setFastMode == nil {
+		if !c.model.fastModeAvailable || c.controls.SetFastMode == nil {
 			setInputError(c.model, errors.New("fast mode is unavailable for this model"))
 			return false, nil
 		}
-		if err := c.setFastMode(!c.model.fastMode); err != nil {
+		if err := c.controls.SetFastMode(!c.model.fastMode); err != nil {
 			setInputError(c.model, err)
 			return false, nil
 		}
@@ -85,8 +84,11 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		c.cancelClipboardRequests()
 		c.model.finishSubmission(action.content)
 	case tuiActionSteer:
-		c.steering.enqueue(c.controls.Steer, action.prompt)
-		c.model.conversationVersion++
+		accepted := false
+		if len(c.model.steering.deferred) == 0 && c.controls.Steer != nil {
+			accepted = c.controls.Steer(action.prompt)
+		}
+		c.model.enqueueSteering(action.prompt, accepted)
 	case tuiActionShowGoal:
 		if c.controls.Goal == nil {
 			setInputError(c.model, errors.New("goal inspection is unavailable"))
@@ -137,11 +139,11 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 	case tuiActionDequeue:
 		c.restoreQueuedInput()
 	case tuiActionSetThinking:
-		if c.setThinkingLevel == nil {
+		if c.controls.SetThinkingLevel == nil {
 			setInputError(c.model, errors.New("thinking level selection is unavailable"))
 			return false, nil
 		}
-		if err := c.setThinkingLevel(action.thinkingLevel); err != nil {
+		if err := c.controls.SetThinkingLevel(action.thinkingLevel); err != nil {
 			setInputError(c.model, err)
 			return false, nil
 		}
@@ -184,7 +186,6 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 }
 
 func (c *tuiController) startTurn(ctx context.Context, content []agent.ContentPart) error {
-	c.prepareCallbacks()
 	if c.operations.RunTurn == nil {
 		return errors.New("agent turns are unavailable")
 	}
@@ -202,7 +203,6 @@ func (c *tuiController) startTurn(ctx context.Context, content []agent.ContentPa
 }
 
 func (c *tuiController) startCompaction(ctx context.Context) error {
-	c.prepareCallbacks()
 	if c.operations.Compact == nil {
 		return errors.New("compaction is unavailable")
 	}
@@ -218,25 +218,19 @@ func (c *tuiController) startCompaction(ctx context.Context) error {
 }
 
 func (c *tuiController) startDeferredTurn(ctx context.Context) error {
-	prompt, ok := c.steering.nextDeferred()
+	prompt, ok := c.model.nextDeferredSteering()
 	if !ok {
 		return nil
 	}
-	c.model.conversationVersion++
 	if err := c.startTurn(ctx, []agent.ContentPart{{Kind: agent.ContentPartText, Text: prompt}}); err != nil {
-		c.steering.restoreDeferred(prompt)
-		c.model.conversationVersion++
+		c.model.restoreDeferredSteering(prompt)
 		return err
 	}
 	return nil
 }
 
 func (c *tuiController) restoreQueuedInput() {
-	messages := c.steering.restore(c.controls.ClearSteering)
-	c.model.restoreSteering(messages)
-	if len(messages) > 0 {
-		c.model.conversationVersion++
-	}
+	c.model.restoreSteering(c.model.clearSteering(c.controls.ClearSteering))
 }
 
 func (c *tuiController) interruptTurn() {
@@ -254,8 +248,8 @@ func (c *tuiController) cancelTurn() {
 }
 
 func (c *tuiController) saveCurrentCheckpoint(active bool) error {
-	if c.saveCheckpoint == nil {
+	if c.stateChanges.Notify == nil {
 		return nil
 	}
-	return c.saveCheckpoint(checkpointModel(c.model, c.steering.pending()), active)
+	return c.stateChanges.Notify(checkpointModel(c.model, c.model.pendingSteering()), active)
 }

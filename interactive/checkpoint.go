@@ -48,8 +48,28 @@ func (coordinator *checkpointCoordinator) SaveSessionCheckpoint(agentCheckpoint 
 
 	coordinator.agent = agentCheckpoint
 	coordinator.terminal = terminalCheckpoint
+	return coordinator.saveStateLocked(active)
+}
+
+func (coordinator *checkpointCoordinator) SaveTerminalCheckpoint(terminalCheckpoint terminal.Checkpoint, active bool) error {
+	coordinator.mu.Lock()
+	defer coordinator.mu.Unlock()
+	if coordinator.closed {
+		return errors.New("session is closed")
+	}
+
+	agentCheckpoint, err := coordinator.engine.Checkpoint()
+	if err != nil {
+		return err
+	}
+	coordinator.agent = agentCheckpoint
+	coordinator.terminal = terminalCheckpoint
+	return coordinator.saveStateLocked(active)
+}
+
+func (coordinator *checkpointCoordinator) saveStateLocked(active bool) error {
 	coordinator.active = active
-	if err := coordinator.saveLocked(agentCheckpoint); err != nil {
+	if err := coordinator.saveLocked(coordinator.agent); err != nil {
 		return err
 	}
 	if !active {

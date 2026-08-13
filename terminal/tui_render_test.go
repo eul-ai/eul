@@ -15,6 +15,11 @@ import (
 
 func renderFrame(model *tuiModel) string {
 	var renderer tuiRenderer
+	return renderModel(&renderer, model)
+}
+
+func renderModel(renderer *tuiRenderer, model *tuiModel) string {
+	normalizeViewport(model, renderer)
 	return renderer.render(model)
 }
 
@@ -612,7 +617,7 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 		{Kind: agent.ContentPartText, Text: "before "},
 		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("one")}},
 	}
-	model.conversationVersion++
+	model.conversationChanged()
 	assertCachedConversationMatchesUncached(t, renderer, model)
 	if !strings.Contains(renderer.conversationBlocks[0].plain[0], imageAttachmentLabel) {
 		t.Fatalf("content change did not invalidate cached block: %q", renderer.conversationBlocks[0].plain)
@@ -634,7 +639,7 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 	model.blocks[1].tool.Lines[0] = "after"
 	model.blocks[1].tool.Diff[0].Text = "new diff"
 	model.blocks[1].toolOutcome = "ok"
-	model.conversationVersion++
+	model.conversationChanged()
 	if renderer.conversationBlocks[1].block.tool.Lines[0] != "before" || renderer.conversationBlocks[1].block.tool.Diff[0].Text != "old diff" {
 		t.Fatal("cached block shares tool presentation slices with the model")
 	}
@@ -647,12 +652,11 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 		t.Fatal("width change did not invalidate cached blocks")
 	}
 
-	steering := &steeringCoordinator{accepted: []string{"inspect another file"}}
-	model.steeringView = steering
-	model.conversationVersion++
+	model.steering.accepted = []string{"inspect another file"}
+	model.conversationChanged()
 	assertCachedConversationMatchesUncached(t, renderer, model)
-	steering.accepted = nil
-	model.conversationVersion++
+	model.steering.accepted = nil
+	model.conversationChanged()
 	assertCachedConversationMatchesUncached(t, renderer, model)
 
 	model.selection = textSelection{
@@ -948,8 +952,8 @@ func TestPendingSteeringRendersAndDeliversInTranscriptOrder(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
 	model.beginTurn("initial")
 	model.appendStream(blockAssistant, "answer")
-	controller := tuiController{model: model, engine: &fakeEngine{}, steering: steeringCoordinator{accepted: []string{"redirect"}}}
-	model.steeringView = &controller.steering
+	model.steering.accepted = []string{"redirect"}
+	controller := tuiController{model: model}
 	model.appendStream(blockAssistant, " continues")
 
 	lines := modelConversationLines(model, 40)
@@ -967,8 +971,8 @@ func TestPendingSteeringRendersAndDeliversInTranscriptOrder(t *testing.T) {
 	if _, err := controller.handleAgentEvent(engineMessage{event: &agent.Event{Kind: agent.EventSteering, Text: "redirect"}}); err != nil {
 		t.Fatal(err)
 	}
-	if len(controller.steering.pending()) != 0 || len(model.blocks) != 3 || model.blocks[2].kind != blockUser || model.blocks[2].text != "redirect" {
-		t.Fatalf("steering=%q blocks=%+v", controller.steering.pending(), model.blocks)
+	if len(controller.model.steering.pending()) != 0 || len(model.blocks) != 3 || model.blocks[2].kind != blockUser || model.blocks[2].text != "redirect" {
+		t.Fatalf("steering=%q blocks=%+v", controller.model.steering.pending(), model.blocks)
 	}
 }
 
@@ -976,12 +980,11 @@ func TestGoalContinuationHasDistinctTranscriptBlock(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
 	model.beginTurn("initial")
 	model.appendStream(blockAssistant, "first response")
-	steering := &steeringCoordinator{accepted: []string{"same text"}}
-	model.steeringView = steering
+	model.steering.accepted = []string{"same text"}
 
 	model.applyAgentEvent(agent.Event{Kind: agent.EventGoalContinuation, Text: "same text"})
-	if len(steering.pending()) != 1 || len(model.blocks) != 3 || model.blocks[2].kind != blockInfo || model.blocks[2].text != "Goal continuing" {
-		t.Fatalf("steering=%q blocks=%+v", steering.pending(), model.blocks)
+	if len(model.steering.pending()) != 1 || len(model.blocks) != 3 || model.blocks[2].kind != blockInfo || model.blocks[2].text != "Goal continuing" {
+		t.Fatalf("steering=%q blocks=%+v", model.steering.pending(), model.blocks)
 	}
 	model.appendStream(blockAssistant, "second response")
 	if len(model.blocks) != 4 || model.blocks[3].kind != blockAssistant {
@@ -995,19 +998,19 @@ func TestRendererOnlyWritesChangedRows(t *testing.T) {
 	model.activity = activity{kind: activityThinking}
 	var renderer tuiRenderer
 
-	first := renderer.render(model)
+	first := renderModel(&renderer, model)
 	for row := 1; row <= model.height; row++ {
 		position := "\x1b[" + strconv.Itoa(row) + ";1H"
 		if !strings.Contains(first, position) {
 			t.Fatalf("initial frame omits row %d: %q", row, first)
 		}
 	}
-	if unchanged := renderer.render(model); unchanged != "" {
+	if unchanged := renderModel(&renderer, model); unchanged != "" {
 		t.Fatalf("unchanged frame = %q", unchanged)
 	}
 
 	model.spinner++
-	update := renderer.render(model)
+	update := renderModel(&renderer, model)
 	statusPosition := "\x1b[8;1H"
 	if !strings.Contains(update, statusPosition) || strings.Count(update, "\x1b[8;") != 1 {
 		t.Fatalf("spinner update does not paint the status row once: %q", update)
@@ -1024,12 +1027,12 @@ func TestRendererUsesScrollRegionForSingleConversationRow(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
 	model.appendBlock(blockAssistant, "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten")
 	var renderer tuiRenderer
-	_ = renderer.render(model)
+	_ = renderModel(&renderer, model)
 
 	height := renderer.frame.layout.conversationHeight
 	region := "\x1b[1;" + strconv.Itoa(height) + "r"
 	scrollConversationBy(model, -1, renderer.frame)
-	up := renderer.render(model)
+	up := renderModel(&renderer, model)
 	if !strings.Contains(up, region+ansiScrollDown+ansiResetScrollRegion) {
 		t.Fatalf("scroll up did not shift the terminal region: %q", up)
 	}
@@ -1044,7 +1047,7 @@ func TestRendererUsesScrollRegionForSingleConversationRow(t *testing.T) {
 	}
 
 	scrollConversationBy(model, 1, renderer.frame)
-	down := renderer.render(model)
+	down := renderModel(&renderer, model)
 	if !strings.Contains(down, region+ansiScrollUp+ansiResetScrollRegion) {
 		t.Fatalf("scroll down did not shift the terminal region: %q", down)
 	}
@@ -1064,11 +1067,11 @@ func TestRendererDoesNotScrollRegionWhenConversationChanges(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
 	model.appendBlock(blockAssistant, "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten")
 	var renderer tuiRenderer
-	_ = renderer.render(model)
+	_ = renderModel(&renderer, model)
 
 	scrollConversationBy(model, -1, renderer.frame)
 	model.appendBlock(blockInfo, "dynamic output")
-	update := renderer.render(model)
+	update := renderModel(&renderer, model)
 	if strings.Contains(update, ansiScrollUp) || strings.Contains(update, ansiScrollDown) {
 		t.Fatalf("dynamic conversation update used terminal scrolling: %q", update)
 	}
@@ -1077,10 +1080,10 @@ func TestRendererDoesNotScrollRegionWhenConversationChanges(t *testing.T) {
 func TestRendererForcesFullRedrawAfterResizeOrCtrlL(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
 	var renderer tuiRenderer
-	_ = renderer.render(model)
+	_ = renderModel(&renderer, model)
 
 	model.width++
-	resized := renderer.render(model)
+	resized := renderModel(&renderer, model)
 	if !strings.Contains(resized, ansiClearScreen) {
 		t.Fatalf("resize did not clear the screen: %q", resized)
 	}
@@ -1255,20 +1258,20 @@ func TestConversationDividerIndicatesTextBelow(t *testing.T) {
 	}
 
 	var renderer tuiRenderer
-	_ = renderer.render(model)
+	_ = renderModel(&renderer, model)
 	ruleRow := renderer.frame.layout.topRuleRow - 1
 	if strings.Contains(renderer.frame.plainRows[ruleRow], "↓ more") {
 		t.Fatalf("divider shows text below while following: %q", renderer.frame.plainRows[ruleRow])
 	}
 
 	scrollConversation(model, -1, renderer.frame)
-	_ = renderer.render(model)
+	_ = renderModel(&renderer, model)
 	if renderer.frame.plainRows[ruleRow] != "───────↓ more───────" {
 		t.Fatalf("scrolled divider = %q", renderer.frame.plainRows[ruleRow])
 	}
 
 	scrollConversation(model, 1, renderer.frame)
-	_ = renderer.render(model)
+	_ = renderModel(&renderer, model)
 	if strings.Contains(renderer.frame.plainRows[ruleRow], "↓ more") {
 		t.Fatalf("divider still shows text below at bottom: %q", renderer.frame.plainRows[ruleRow])
 	}
@@ -1280,7 +1283,7 @@ func TestConversationScrollingStopsAndResumesFollowing(t *testing.T) {
 		model.appendBlock(blockInfo, strings.Repeat(string(rune('a'+index)), 20))
 	}
 	var renderer tuiRenderer
-	_ = renderer.render(model)
+	_ = renderModel(&renderer, model)
 	bottom := model.scrollTop
 	if bottom == 0 {
 		t.Fatal("conversation did not overflow")
@@ -1292,7 +1295,7 @@ func TestConversationScrollingStopsAndResumesFollowing(t *testing.T) {
 	}
 	oldTop := model.scrollTop
 	model.appendBlock(blockInfo, "new output")
-	_ = renderer.render(model)
+	_ = renderModel(&renderer, model)
 	if model.scrollTop != oldTop {
 		t.Fatalf("scrolled viewport moved from %d to %d", oldTop, model.scrollTop)
 	}

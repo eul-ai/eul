@@ -7,8 +7,8 @@ type steeringCoordinator struct {
 	deferred []string
 }
 
-func (coordinator *steeringCoordinator) enqueue(steer func(string) bool, prompt string) {
-	if len(coordinator.deferred) == 0 && steer != nil && steer(prompt) {
+func (coordinator *steeringCoordinator) enqueue(prompt string, accepted bool) {
+	if len(coordinator.deferred) == 0 && accepted {
 		coordinator.accepted = append(coordinator.accepted, prompt)
 		return
 	}

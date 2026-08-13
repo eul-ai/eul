@@ -9,20 +9,17 @@ import (
 	"github.com/eul-ai/eul/subagent"
 )
 
-func (models modelSelection) subagent(profile subagent.Profile) string {
-	var selected string
+func (models modelSet) forProfile(profile subagent.Profile) string {
 	switch profile {
 	case subagent.ProfileFast:
-		selected = models.fast
+		return models.fast
 	case subagent.ProfileBalanced:
-		selected = models.balanced
+		return models.balanced
 	case subagent.ProfilePowerful:
-		selected = models.main
+		return models.primary
+	default:
+		return models.primary
 	}
-	if selected == "" {
-		return models.main
-	}
-	return selected
 }
 
 func runChildAgent(

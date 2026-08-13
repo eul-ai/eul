@@ -27,7 +27,8 @@ func TestMouseWheelScrollsConversationWithoutNavigatingHistory(t *testing.T) {
 	}
 	frame := buildTerminalFrame(model)
 	model.running = true
-	bottom := model.scrollTop
+	bottom := frame.conversationTop
+	model.scrollTop = bottom
 	if bottom == 0 {
 		t.Fatal("conversation did not overflow the viewport")
 	}
@@ -196,7 +197,7 @@ func handleModelMouse(model *tuiModel, output *bytes.Buffer, frame terminalFrame
 	stopped := make(chan struct{})
 	defer close(stopped)
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{frame: frame}, engine: &fakeEngine{}, output: output,
+		model: model, renderer: &tuiRenderer{frame: frame}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: output,
 		engineMessages: messages, stopped: stopped,
 	}
 	return controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyMouse, mouse: mouse}})

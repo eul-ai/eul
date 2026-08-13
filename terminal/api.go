@@ -25,9 +25,14 @@ var (
 	errOutput       = errors.New("terminal: write output")
 )
 
+type EventStream interface {
+	Emit(agent.Event) error
+	Snapshot() (Checkpoint, error)
+}
+
 type Operations struct {
-	RunTurn func(context.Context, []agent.ContentPart, agent.EventSink) error
-	Compact func(context.Context, agent.EventSink) error
+	RunTurn func(context.Context, []agent.ContentPart, EventStream) error
+	Compact func(context.Context, EventStream) error
 }
 
 type Controls struct {
@@ -89,8 +94,8 @@ type Sessions struct {
 	List func(context.Context) ([]SessionSummary, []string, error)
 }
 
-type Checkpoints struct {
-	Save func(Checkpoint, bool) error
+type StateChanges struct {
+	Notify func(Checkpoint, bool) error
 }
 
 type Events struct {
@@ -105,15 +110,15 @@ type Services struct {
 }
 
 type Options struct {
-	Input       io.Reader
-	Output      io.Writer
-	Config      Config
-	Operations  Operations
-	Controls    Controls
-	Sessions    Sessions
-	Checkpoints Checkpoints
-	Events      Events
-	Services    Services
+	Input        io.Reader
+	Output       io.Writer
+	Config       Config
+	Operations   Operations
+	Controls     Controls
+	Sessions     Sessions
+	StateChanges StateChanges
+	Events       Events
+	Services     Services
 }
 
 type fileDescriptor interface {

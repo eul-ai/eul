@@ -26,7 +26,7 @@ func BenchmarkTUIRenderStreamingTranscript(b *testing.B) {
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
 				model.blocks[len(model.blocks)-1].text = variants[index%len(variants)]
-				model.conversationVersion++
+				model.conversationChanged()
 				_, frame = renderer.renderPending(model, false)
 				renderer.commit(frame)
 			}

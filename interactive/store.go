@@ -50,8 +50,8 @@ type sessionRecord struct {
 	Provider         string              `json:"provider"`
 	WorkingDirectory string              `json:"working_directory"`
 	Model            string              `json:"model"`
-	FastModel        string              `json:"fast_model,omitempty"`
-	BalancedModel    string              `json:"balanced_model,omitempty"`
+	FastModel        string              `json:"fast_model"`
+	BalancedModel    string              `json:"balanced_model"`
 	ThinkingLevel    agent.ThinkingLevel `json:"thinking_level"`
 	FastMode         bool                `json:"fast_mode,omitempty"`
 	Description      string              `json:"description,omitempty"`
@@ -60,9 +60,9 @@ type sessionRecord struct {
 	Terminal         terminal.Checkpoint `json:"terminal"`
 }
 
-func (record sessionRecord) models() modelSelection {
-	return modelSelection{
-		main:     record.Model,
+func (record sessionRecord) models() modelSet {
+	return modelSet{
+		primary:  record.Model,
 		fast:     record.FastModel,
 		balanced: record.BalancedModel,
 	}
@@ -89,13 +89,17 @@ func newSessionStore(home string) *sessionStore {
 func (store *sessionStore) Create(
 	provider string,
 	cwd string,
-	models modelSelection,
+	models modelSet,
 	thinkingLevel agent.ThinkingLevel,
 	agentCheckpoint agent.Checkpoint,
 	subagentCheckpoint subagent.Checkpoint,
 	terminalCheckpoint terminal.Checkpoint,
 	fastMode bool,
 ) (*sessionHandle, error) {
+	if err := models.validate(); err != nil {
+		return nil, err
+	}
+
 	workspaceDirectory := store.workspaceDirectory(cwd)
 	if err := secureSessionDirectory(store.root); err != nil {
 		return nil, err
@@ -127,7 +131,7 @@ func (store *sessionStore) Create(
 			Status:           sessionIdle,
 			Provider:         provider,
 			WorkingDirectory: cwd,
-			Model:            models.main,
+			Model:            models.primary,
 			FastModel:        models.fast,
 			BalancedModel:    models.balanced,
 			ThinkingLevel:    thinkingLevel,
@@ -504,10 +508,10 @@ func validateSessionSummaryMetadata(record sessionRecord) error {
 		return errors.New("session working directory is not canonical")
 	case strings.TrimSpace(record.Model) == "":
 		return errors.New("session model is empty")
-	case record.FastModel != "" && strings.TrimSpace(record.FastModel) == "":
-		return errors.New("session fast model is invalid")
-	case record.BalancedModel != "" && strings.TrimSpace(record.BalancedModel) == "":
-		return errors.New("session balanced model is invalid")
+	case strings.TrimSpace(record.FastModel) == "":
+		return errors.New("session fast model is empty")
+	case strings.TrimSpace(record.BalancedModel) == "":
+		return errors.New("session balanced model is empty")
 	case !record.ThinkingLevel.Valid():
 		return errors.New("session thinking level is invalid")
 	}
@@ -578,10 +582,10 @@ func validateSessionRecord(record sessionRecord) error {
 		return errors.New("session working directory is not canonical")
 	case strings.TrimSpace(record.Model) == "":
 		return errors.New("session model is empty")
-	case record.FastModel != "" && strings.TrimSpace(record.FastModel) == "":
-		return errors.New("session fast model is invalid")
-	case record.BalancedModel != "" && strings.TrimSpace(record.BalancedModel) == "":
-		return errors.New("session balanced model is invalid")
+	case strings.TrimSpace(record.FastModel) == "":
+		return errors.New("session fast model is empty")
+	case strings.TrimSpace(record.BalancedModel) == "":
+		return errors.New("session balanced model is empty")
 	case !record.ThinkingLevel.Valid():
 		return errors.New("session thinking level is invalid")
 	case !record.Agent.Initialized() || !record.Subagent.Initialized() || !record.Terminal.Initialized():

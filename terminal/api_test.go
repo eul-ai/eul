@@ -126,11 +126,13 @@ type fakeEngineAPI interface {
 
 func operationsFor(engine fakeEngineAPI) Operations {
 	return Operations{
-		RunTurn: func(ctx context.Context, content []agent.ContentPart, sink agent.EventSink) error {
-			_, err := engine.RunContent(ctx, content, sink)
+		RunTurn: func(ctx context.Context, content []agent.ContentPart, stream EventStream) error {
+			_, err := engine.RunContent(ctx, content, stream.Emit)
 			return err
 		},
-		Compact: engine.Compact,
+		Compact: func(ctx context.Context, stream EventStream) error {
+			return engine.Compact(ctx, stream.Emit)
+		},
 	}
 }
 

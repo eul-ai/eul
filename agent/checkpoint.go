@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const checkpointVersion = 1
+const checkpointVersion = 2
 
 type Checkpoint struct {
 	data checkpointData
@@ -66,42 +66,11 @@ func validateCheckpointData(data checkpointData) error {
 		return errors.New("agent: checkpoint usage contains negative token counts")
 	}
 	for index, input := range data.PendingInputs {
-		switch input.Kind {
-		case InputUser:
-			if input.CallID != "" || input.Tool != "" || input.IsError {
-				return fmt.Errorf("agent: checkpoint input %d has invalid user metadata", index)
-			}
-			if input.Content == nil {
-				break
-			}
-			if input.Text != "" {
-				return fmt.Errorf("agent: checkpoint input %d has both text and content", index)
-			}
-			for partIndex, part := range input.Content.Parts {
-				switch part.Kind {
-				case ContentPartText:
-					if part.Image != nil {
-						return fmt.Errorf("agent: checkpoint input %d content part %d has an image on text", index, partIndex)
-					}
-				case ContentPartImage:
-					if part.Image == nil {
-						return fmt.Errorf("agent: checkpoint input %d content part %d is missing an image", index, partIndex)
-					}
-				default:
-					return fmt.Errorf("agent: checkpoint input %d content part %d has unknown kind %q", index, partIndex, part.Kind)
-				}
-			}
-		case InputToolResult:
-			if input.CallID == "" || input.Tool == "" {
-				return fmt.Errorf("agent: checkpoint input %d has incomplete tool metadata", index)
-			}
-			if input.Content != nil {
-				return fmt.Errorf("agent: checkpoint input %d has content on a tool result", index)
-			}
-		case InputInbox:
+		if input.Kind == InputInbox {
 			return fmt.Errorf("agent: checkpoint input %d contains transient inbox data", index)
-		default:
-			return fmt.Errorf("agent: checkpoint input %d has unknown kind %q", index, input.Kind)
+		}
+		if err := input.Validate(); err != nil {
+			return fmt.Errorf("agent: checkpoint input %d: %w", index, err)
 		}
 	}
 	if data.Goal != nil && strings.TrimSpace(data.Goal.Objective) == "" {

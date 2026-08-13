@@ -32,7 +32,7 @@ func TestSteeringSignalInterruptsToolWaitAndDeliversContinuation(t *testing.T) {
 		case 1:
 			return Response{ToolCalls: []ToolCall{{ID: "wait", Name: "wait", Arguments: []byte(`{}`)}}}, nil
 		case 2:
-			if len(request.Inputs) != 2 || request.Inputs[0].Kind != InputToolResult || request.Inputs[1].Kind != InputUser || request.Inputs[1].Text != "redirect" {
+			if len(request.Inputs) != 2 || request.Inputs[0].Kind != InputToolResult || request.Inputs[1].Kind != InputUser || request.Inputs[1].PlainText() != "redirect" {
 				return Response{}, fmt.Errorf("steering inputs = %+v", request.Inputs)
 			}
 			return Response{Text: "redirected"}, nil

@@ -12,7 +12,6 @@ import (
 	"unicode"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/terminal/clipboard"
 )
 
 const (
@@ -25,10 +24,10 @@ const (
 )
 
 type engineMessage struct {
-	event *agent.Event
-	err   error
-	done  bool
-	ack   chan error
+	event    *agent.Event
+	snapshot chan Checkpoint
+	err      error
+	done     bool
 }
 
 type providerUsageMessage struct {
@@ -201,31 +200,8 @@ func runTUIWithKeys(
 		usageClock = usageTicker.C
 	}
 
-	clipboardImageReader := options.Services.ReadClipboardImage
-	if clipboardImageReader == nil {
-		clipboardImageReader = clipboard.ReadImage
-	}
-	var setThinkingLevel func(agent.ThinkingLevel) error
-	if options.Controls.SetThinkingLevel != nil {
-		setThinkingLevel = options.Controls.SetThinkingLevel
-	}
-	var setFastMode func(bool) error
-	if options.Controls.SetFastMode != nil {
-		setFastMode = options.Controls.SetFastMode
-	}
-	var saveCheckpoint func(Checkpoint, bool) error
-	if options.Checkpoints.Save != nil {
-		saveCheckpoint = options.Checkpoints.Save
-	}
-	var listSessions func(context.Context) ([]SessionSummary, []string, error)
-	if options.Sessions.List != nil {
-		listSessions = options.Sessions.List
-	}
-	controller := &tuiController{
+	controller := newTUIController(controllerOptions{
 		model:              model,
-		renderer:           &tuiRenderer{},
-		operations:         options.Operations,
-		controls:           options.Controls,
 		output:             options.Output,
 		outputFD:           outputFD,
 		engineMessages:     engineMessages,
@@ -233,16 +209,13 @@ func runTUIWithKeys(
 		fileSearch:         fileSearch,
 		fileSearchMessages: fileSearchMessages,
 		usageRequests:      usageRequests,
-		setThinkingLevel:   setThinkingLevel,
-		setFastMode:        setFastMode,
-		saveCheckpoint:     saveCheckpoint,
-		listSessions:       listSessions,
-		readClipboardImage: clipboardImageReader,
 		clipboardImages:    clipboardImages,
-		clipboardRequests:  make(map[uint64]context.CancelFunc),
-		dirty:              true,
-	}
-	model.steeringView = &controller.steering
+		operations:         options.Operations,
+		controls:           options.Controls,
+		stateChanges:       options.StateChanges,
+		sessions:           options.Sessions,
+		readClipboardImage: options.Services.ReadClipboardImage,
+	})
 	defer controller.cancelClipboardRequests()
 	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventRender}); err != nil {
 		return RunOutcome{}, err
@@ -365,7 +338,6 @@ func renderIfDirty(renderer *tuiRenderer, model *tuiModel, output io.Writer, dir
 		return nil
 	}
 
-	renderer.normalizeViewport(model)
 	outputFrame, next := renderer.renderPending(model, forceRedraw)
 	if outputFrame != "" {
 		if err := writeOutput(output, "%s", outputFrame); err != nil {
@@ -377,43 +349,57 @@ func renderIfDirty(renderer *tuiRenderer, model *tuiModel, output io.Writer, dir
 	return nil
 }
 
-func runEngineTurn(ctx context.Context, operation func(context.Context, []agent.ContentPart, agent.EventSink) error, content []agent.ContentPart, messages chan<- engineMessage, stopped <-chan struct{}) {
-	runEngineOperation(ctx, messages, stopped, func(sink agent.EventSink) error {
-		return operation(ctx, content, sink)
+type tuiEventStream struct {
+	ctx      context.Context
+	messages chan<- engineMessage
+	stopped  <-chan struct{}
+}
+
+func (stream tuiEventStream) Emit(event agent.Event) error {
+	select {
+	case stream.messages <- engineMessage{event: &event}:
+		return nil
+	case <-stream.ctx.Done():
+		return stream.ctx.Err()
+	case <-stream.stopped:
+		return context.Canceled
+	}
+}
+
+func (stream tuiEventStream) Snapshot() (Checkpoint, error) {
+	response := make(chan Checkpoint, 1)
+	select {
+	case stream.messages <- engineMessage{snapshot: response}:
+	case <-stream.ctx.Done():
+		return Checkpoint{}, stream.ctx.Err()
+	case <-stream.stopped:
+		return Checkpoint{}, context.Canceled
+	}
+
+	select {
+	case checkpoint := <-response:
+		return checkpoint, nil
+	case <-stream.ctx.Done():
+		return Checkpoint{}, stream.ctx.Err()
+	case <-stream.stopped:
+		return Checkpoint{}, context.Canceled
+	}
+}
+
+func runEngineTurn(ctx context.Context, operation func(context.Context, []agent.ContentPart, EventStream) error, content []agent.ContentPart, messages chan<- engineMessage, stopped <-chan struct{}) {
+	runEngineOperation(ctx, messages, stopped, func(stream EventStream) error {
+		return operation(ctx, content, stream)
 	})
 }
 
-func runEngineCompaction(ctx context.Context, operation func(context.Context, agent.EventSink) error, messages chan<- engineMessage, stopped <-chan struct{}) {
-	runEngineOperation(ctx, messages, stopped, func(sink agent.EventSink) error {
-		return operation(ctx, sink)
+func runEngineCompaction(ctx context.Context, operation func(context.Context, EventStream) error, messages chan<- engineMessage, stopped <-chan struct{}) {
+	runEngineOperation(ctx, messages, stopped, func(stream EventStream) error {
+		return operation(ctx, stream)
 	})
 }
 
-func runEngineOperation(ctx context.Context, messages chan<- engineMessage, stopped <-chan struct{}, operation func(agent.EventSink) error) {
-	err := operation(func(event agent.Event) error {
-		message := engineMessage{event: &event}
-		if event.Kind == agent.EventCheckpoint {
-			message.ack = make(chan error, 1)
-		}
-		select {
-		case messages <- message:
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-stopped:
-			return context.Canceled
-		}
-		if message.ack == nil {
-			return nil
-		}
-		select {
-		case err := <-message.ack:
-			return err
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-stopped:
-			return context.Canceled
-		}
-	})
+func runEngineOperation(ctx context.Context, messages chan<- engineMessage, stopped <-chan struct{}, operation func(EventStream) error) {
+	err := operation(tuiEventStream{ctx: ctx, messages: messages, stopped: stopped})
 	select {
 	case messages <- engineMessage{err: err, done: true}:
 	case <-stopped:

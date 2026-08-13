@@ -160,42 +160,31 @@ func compactedStateItems(input, output []json.RawMessage) []json.RawMessage {
 func encodeInputs(inputs []agent.Input) ([]json.RawMessage, error) {
 	items := make([]json.RawMessage, len(inputs))
 	for index, input := range inputs {
+		if err := input.Validate(); err != nil {
+			return nil, fmt.Errorf("input %d: %w", index, err)
+		}
+
 		var value any
 		switch input.Kind {
 		case agent.InputUser:
-			if input.CallID != "" || input.Tool != "" || input.IsError || input.Content != nil && input.Text != "" {
-				return nil, fmt.Errorf("input %d has invalid user metadata", index)
-			}
-			value = inputMessage{Role: "user", Content: encodeUserContent(input)}
+			value = inputMessage{Role: "user", Content: encodeUserContent(input.Content)}
 		case agent.InputInbox:
-			if input.Text == "" || input.Content != nil || input.CallID != "" || input.Tool != "" || input.IsError {
-				return nil, fmt.Errorf("input %d has invalid inbox metadata", index)
-			}
 			value = inputMessage{Role: "user", Content: input.Text}
 		case agent.InputToolResult:
-			if input.CallID == "" || input.Content != nil {
-				return nil, fmt.Errorf("input %d has invalid tool result metadata", index)
-			}
 			output := input.Text
 			if input.IsError {
 				output = "[tool error]\n" + output
 			}
 			value = functionCallOutput{Type: "function_call_output", CallID: input.CallID, Output: output}
-		default:
-			return nil, fmt.Errorf("input %d has unknown kind %q", index, input.Kind)
 		}
 		items[index], _ = json.Marshal(value)
 	}
 	return items, nil
 }
 
-func encodeUserContent(input agent.Input) any {
-	if input.Content == nil {
-		return input.Text
-	}
-
-	parts := make([]inputContentPart, 0, len(input.Content.Parts))
-	for _, part := range input.Content.Parts {
+func encodeUserContent(content []agent.ContentPart) any {
+	parts := make([]inputContentPart, 0, len(content))
+	for _, part := range content {
 		switch part.Kind {
 		case agent.ContentPartText:
 			parts = append(parts, inputContentPart{Type: "input_text", Text: part.Text})

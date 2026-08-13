@@ -3,6 +3,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -32,10 +35,6 @@ type ContentPart struct {
 	Image *Image `json:",omitempty"`
 }
 
-type Content struct {
-	Parts []ContentPart
-}
-
 func cloneContentParts(parts []ContentPart) []ContentPart {
 	if len(parts) == 0 {
 		return nil
@@ -53,13 +52,6 @@ func cloneContentParts(parts []ContentPart) []ContentPart {
 	return cloned
 }
 
-func cloneContent(content *Content) *Content {
-	if content == nil {
-		return nil
-	}
-	return &Content{Parts: cloneContentParts(content.Parts)}
-}
-
 func cloneInputs(inputs []Input) []Input {
 	if len(inputs) == 0 {
 		return nil
@@ -67,7 +59,7 @@ func cloneInputs(inputs []Input) []Input {
 
 	cloned := append([]Input(nil), inputs...)
 	for index := range cloned {
-		cloned[index].Content = cloneContent(cloned[index].Content)
+		cloned[index].Content = cloneContentParts(cloned[index].Content)
 	}
 	return cloned
 }
@@ -75,10 +67,96 @@ func cloneInputs(inputs []Input) []Input {
 type Input struct {
 	Kind    InputKind
 	Text    string
-	Content *Content `json:",omitempty"`
+	Content []ContentPart `json:",omitempty"`
 	CallID  string
 	Tool    string
 	IsError bool
+}
+
+func (input Input) Validate() error {
+	switch input.Kind {
+	case InputUser:
+		if input.Text != "" || input.CallID != "" || input.Tool != "" || input.IsError {
+			return errors.New("user input has invalid metadata")
+		}
+		if len(input.Content) == 0 {
+			return errors.New("user input has no content")
+		}
+		for index, part := range input.Content {
+			if err := part.validate(); err != nil {
+				return fmt.Errorf("user content part %d: %w", index, err)
+			}
+		}
+	case InputToolResult:
+		if input.CallID == "" || input.Tool == "" {
+			return errors.New("tool result has incomplete metadata")
+		}
+		if len(input.Content) > 0 {
+			return errors.New("tool result has user content")
+		}
+	case InputInbox:
+		if input.Text == "" || len(input.Content) > 0 || input.CallID != "" || input.Tool != "" || input.IsError {
+			return errors.New("inbox input has invalid metadata")
+		}
+	default:
+		return fmt.Errorf("unknown input kind %q", input.Kind)
+	}
+	return nil
+}
+
+func NewUserInput(parts ...ContentPart) Input {
+	return Input{Kind: InputUser, Content: cloneContentParts(parts)}
+}
+
+func NewTextInput(text string) Input {
+	return NewUserInput(ContentPart{Kind: ContentPartText, Text: text})
+}
+
+func NewInboxInput(text string) Input {
+	return Input{Kind: InputInbox, Text: text}
+}
+
+func NewToolResultInput(result ToolResult) Input {
+	return Input{
+		Kind:    InputToolResult,
+		Text:    result.Output,
+		CallID:  result.CallID,
+		Tool:    result.Tool,
+		IsError: result.IsError,
+	}
+}
+
+func (input Input) PlainText() string {
+	if input.Kind != InputUser {
+		return input.Text
+	}
+
+	var text strings.Builder
+	for _, part := range input.Content {
+		if part.Kind == ContentPartText {
+			text.WriteString(part.Text)
+		}
+	}
+	return text.String()
+}
+
+func (part ContentPart) validate() error {
+	switch part.Kind {
+	case ContentPartText:
+		if part.Image != nil {
+			return errors.New("text content has an image")
+		}
+	case ContentPartImage:
+		if part.Image == nil {
+			return errors.New("image content is missing an image")
+		}
+		if part.Text != "" {
+			return errors.New("image content has text")
+		}
+	default:
+		return fmt.Errorf("unknown content kind %q", part.Kind)
+	}
+	return nil
 }
 
 type ToolCall struct {

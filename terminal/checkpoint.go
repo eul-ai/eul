@@ -250,7 +250,7 @@ func restoreModelCheckpoint(model *tuiModel, checkpoint Checkpoint) {
 		model.input = editorItemsFromText(queued)
 		model.cursor = len(model.input)
 	}
-	model.conversationVersion++
+	model.conversationChanged()
 	model.running = false
 	model.interrupted = false
 	model.activity = activity{kind: activityReady}

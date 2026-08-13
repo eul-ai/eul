@@ -135,12 +135,12 @@ func TestParseReasoningSummary(t *testing.T) {
 
 func TestEstimateInputTokensUsesOrderedTextParts(t *testing.T) {
 	inputs := []agent.Input{{
-		Text: "ignored",
-		Content: &agent.Content{Parts: []agent.ContentPart{
+		Kind: agent.InputUser,
+		Content: []agent.ContentPart{
 			{Kind: agent.ContentPartText, Text: "12345"},
 			{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("image")}},
 			{Kind: agent.ContentPartText, Text: "678"},
-		}},
+		},
 	}}
 	if got := estimateInputTokens(inputs); got != 2 {
 		t.Fatalf("tokens = %d, want 2", got)
@@ -153,7 +153,7 @@ func TestClientShouldCompactForContinuationStateHeadroom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := agent.Request{State: state, Inputs: []agent.Input{{Kind: agent.InputUser, Text: strings.Repeat("y", 25)}}}
+	request := agent.Request{State: state, Inputs: []agent.Input{agent.NewTextInput(strings.Repeat("y", 25))}}
 
 	if !client.ShouldCompact(request, agent.Usage{}) {
 		t.Fatal("near-limit state did not trigger compaction")
@@ -181,7 +181,7 @@ func TestClientShouldCompact(t *testing.T) {
 		{name: "below limit", request: agent.Request{Model: ModelGPT56Sol, State: []byte("state")}, usage: agent.Usage{TotalTokens: solLimit - 1}, want: false},
 		{name: "sol at limit", request: agent.Request{Model: ModelGPT56Sol, State: []byte("state")}, usage: agent.Usage{TotalTokens: solLimit}, want: true},
 		{name: "terra at limit", request: agent.Request{Model: ModelGPT56Terra, State: []byte("state")}, usage: agent.Usage{TotalTokens: terraLimit}, want: true},
-		{name: "pending input crosses luna limit", request: agent.Request{Model: ModelGPT56Luna, State: []byte("state"), Inputs: []agent.Input{{Text: "12345678"}}}, usage: agent.Usage{TotalTokens: lunaLimit - 2}, want: true},
+		{name: "pending input crosses luna limit", request: agent.Request{Model: ModelGPT56Luna, State: []byte("state"), Inputs: []agent.Input{agent.NewTextInput("12345678")}}, usage: agent.Usage{TotalTokens: lunaLimit - 2}, want: true},
 	}
 
 	for _, test := range tests {

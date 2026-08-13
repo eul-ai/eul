@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -197,7 +198,7 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 				t.Fatalf("tool result inputs = %d, want 1", len(request.Inputs))
 			}
 			input := request.Inputs[0]
-			if input.Kind != InputToolResult || input.CallID != "call-1" || input.Tool != "read" || input.Text != "file contents" || input.IsError {
+			if input.Kind != InputToolResult || input.CallID != "call-1" || input.Tool != "read" || input.PlainText() != "file contents" || input.IsError {
 				t.Fatalf("unexpected tool result input: %+v", input)
 			}
 			if err := onText(" done"); err != nil {
@@ -762,12 +763,12 @@ func TestEngineGenerationFailurePreservesPriorContextAndUserInput(t *testing.T) 
 		calls++
 		switch calls {
 		case 1:
-			if string(request.State) != "stable" || len(request.Inputs) != 1 || request.Inputs[0].Text != "first question" {
+			if string(request.State) != "stable" || len(request.Inputs) != 1 || request.Inputs[0].PlainText() != "first question" {
 				t.Fatalf("failed request = %+v", request)
 			}
 			return Response{}, failure
 		case 2:
-			if string(request.State) != "stable" || len(request.Inputs) != 2 || request.Inputs[0].Text != "first question" || request.Inputs[1].Text != "second question" {
+			if string(request.State) != "stable" || len(request.Inputs) != 2 || request.Inputs[0].PlainText() != "first question" || request.Inputs[1].PlainText() != "second question" {
 				t.Fatalf("continued request = %+v", request)
 			}
 			return Response{Text: "continued", State: []byte("continued")}, nil
@@ -803,8 +804,8 @@ func TestEngineCompactionSinkFailuresPreservePhaseContinuation(t *testing.T) {
 			wantState: "stable",
 			wantUsage: Usage{TotalTokens: 100},
 			wantInputs: []Input{
-				{Kind: InputUser, Text: "first"},
-				{Kind: InputUser, Text: "continue"},
+				NewTextInput("first"),
+				NewTextInput("continue"),
 			},
 		},
 		{
@@ -812,7 +813,7 @@ func TestEngineCompactionSinkFailuresPreservePhaseContinuation(t *testing.T) {
 			failKind:  EventCompactionEnd,
 			wantState: "compact",
 			wantInputs: []Input{
-				{Kind: InputUser, Text: "continue"},
+				NewTextInput("continue"),
 			},
 		},
 	} {
@@ -820,7 +821,7 @@ func TestEngineCompactionSinkFailuresPreservePhaseContinuation(t *testing.T) {
 			generateCalls := 0
 			provider := streamingProviderFunc(func(_ context.Context, request Request, _ TextSink, _ TextSink, _ ToolCallSink) (Response, error) {
 				generateCalls++
-				if string(request.State) != test.wantState || !slices.Equal(request.Inputs, test.wantInputs) {
+				if string(request.State) != test.wantState || !reflect.DeepEqual(request.Inputs, test.wantInputs) {
 					t.Fatalf("continued request = %+v", request)
 				}
 				return Response{Text: "recovered", State: []byte("recovered")}, nil
@@ -981,8 +982,8 @@ func TestEngineEventSinkFailuresPreserveResponseContinuation(t *testing.T) {
 				}
 
 				wantInputs := append([]Input(nil), test.wantPending...)
-				wantInputs = append(wantInputs, Input{Kind: InputUser, Text: "continue"})
-				if string(request.State) != string(test.response.State) || !slices.Equal(request.Inputs, wantInputs) {
+				wantInputs = append(wantInputs, NewTextInput("continue"))
+				if string(request.State) != string(test.response.State) || !reflect.DeepEqual(request.Inputs, wantInputs) {
 					t.Fatalf("continued request = %+v, want state %q and inputs %+v", request, test.response.State, wantInputs)
 				}
 				return Response{Text: "recovered", State: []byte("recovered")}, nil
@@ -1016,9 +1017,9 @@ func TestEngineCancellationAfterCompletedToolRoundPreservesResult(t *testing.T) 
 		}
 		wantInputs := []Input{
 			{Kind: InputToolResult, CallID: "one", Tool: "write", Text: "changed"},
-			{Kind: InputUser, Text: "continue"},
+			NewTextInput("continue"),
 		}
-		if string(request.State) != "calls" || !slices.Equal(request.Inputs, wantInputs) {
+		if string(request.State) != "calls" || !reflect.DeepEqual(request.Inputs, wantInputs) {
 			t.Fatalf("continued request = %+v", request)
 		}
 		return Response{Text: "recovered", State: []byte("recovered")}, nil
@@ -1122,7 +1123,7 @@ func TestEngineCompactsToolContinuation(t *testing.T) {
 			return string(request.State) == "tool call state" && usage.TotalTokens == 100
 		},
 		compact: func(_ context.Context, request Request) (CompactResponse, error) {
-			if len(request.Inputs) != 1 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].Text != "contents" {
+			if len(request.Inputs) != 1 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].PlainText() != "contents" {
 				t.Fatalf("compact tool request = %+v", request)
 			}
 			return CompactResponse{State: []byte("compact tool state")}, nil
@@ -1153,7 +1154,7 @@ func TestEngineCompactsToolContinuationAfterGenerationError(t *testing.T) {
 				Usage:     Usage{InputTokens: 70, OutputTokens: 10, TotalTokens: 80},
 			}, nil
 		case 2:
-			if string(request.State) != "tool state" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].Text != "large tool output" {
+			if string(request.State) != "tool state" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].PlainText() != "large tool output" {
 				t.Fatalf("failed tool continuation = %+v", request)
 			}
 			return Response{}, contextLimit
@@ -1185,7 +1186,7 @@ func TestEngineCompactsToolContinuationAfterGenerationError(t *testing.T) {
 		},
 		compact: func(_ context.Context, request Request) (CompactResponse, error) {
 			compactCalls++
-			if string(request.State) != "tool state" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].Text != "large tool output" {
+			if string(request.State) != "tool state" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].PlainText() != "large tool output" {
 				t.Fatalf("error compaction request = %+v", request)
 			}
 			return CompactResponse{
@@ -1271,7 +1272,7 @@ func TestEngineErrorCompactionFailurePreservesContinuation(t *testing.T) {
 	if !errors.Is(err, compactFailure) || !strings.Contains(err.Error(), "agent: compact context") {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if string(engine.conversation.state) != "stable" || engine.conversation.usage.TotalTokens != 100 || len(engine.conversation.inputs) != 1 || engine.conversation.inputs[0].Text != "hello" {
+	if string(engine.conversation.state) != "stable" || engine.conversation.usage.TotalTokens != 100 || len(engine.conversation.inputs) != 1 || engine.conversation.inputs[0].PlainText() != "hello" {
 		t.Fatalf("checkpoint = state %q, usage %+v, pending %+v", engine.conversation.state, engine.conversation.usage, engine.conversation.inputs)
 	}
 }
@@ -1290,7 +1291,7 @@ func TestEngineCompactionFailureAfterToolPreservesContinuation(t *testing.T) {
 			}, nil
 		},
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if string(request.State) != "tool call state" || len(request.Inputs) != 2 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].Text != "changed file" || request.Inputs[1].Kind != InputUser || request.Inputs[1].Text != "continue" {
+			if string(request.State) != "tool call state" || len(request.Inputs) != 2 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].PlainText() != "changed file" || request.Inputs[1].Kind != InputUser || request.Inputs[1].PlainText() != "continue" {
 				t.Fatalf("preserved continuation request = %+v", request)
 			}
 			return Response{Text: "recovered", State: []byte("recovered")}, nil
@@ -1329,7 +1330,7 @@ func TestEngineCompactsOnDemand(t *testing.T) {
 	provider := &compactingProvider{
 		compact: func(_ context.Context, request Request) (CompactResponse, error) {
 			compactCalls++
-			if string(request.State) != "stable" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].Text != "large output" {
+			if string(request.State) != "stable" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].PlainText() != "large output" {
 				t.Fatalf("compact request = %+v", request)
 			}
 			return CompactResponse{
@@ -1427,7 +1428,7 @@ func TestEngineExecutesMultipleCallsConcurrentlyAndReturnsResultsInProviderOrder
 				{Kind: InputToolResult, CallID: "call-b", Tool: "second", Text: "second result"},
 				{Kind: InputToolResult, CallID: "call-a", Tool: "first", Text: "first result"},
 			}
-			if !slices.Equal(request.Inputs, want) {
+			if !reflect.DeepEqual(request.Inputs, want) {
 				t.Errorf("tool results = %+v, want %+v", request.Inputs, want)
 			}
 			return Response{Text: "done", State: []byte("done")}, nil
@@ -1517,10 +1518,10 @@ func TestEngineCancelsParallelCallsOnUpdateFailureAndPreservesResults(t *testing
 			if results[1].CallID != "wait" || !results[1].IsError || !strings.Contains(results[1].Text, context.Canceled.Error()) {
 				t.Errorf("wait result = %+v", results[1])
 			}
-			if results[2] != (Input{Kind: InputToolResult, CallID: "done", Tool: "done", Text: "completed"}) {
+			if !reflect.DeepEqual(results[2], Input{Kind: InputToolResult, CallID: "done", Tool: "done", Text: "completed"}) {
 				t.Errorf("completed result = %+v", results[2])
 			}
-			if request.Inputs[3] != (Input{Kind: InputUser, Text: "continue"}) {
+			if !reflect.DeepEqual(request.Inputs[3], NewTextInput("continue")) {
 				t.Errorf("user input = %+v", request.Inputs[3])
 			}
 			return Response{Text: "recovered", State: []byte("recovered")}, nil
@@ -1600,7 +1601,7 @@ func TestEngineReturnsUnknownToolsToProvider(t *testing.T) {
 			}, nil
 		},
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if len(request.Inputs) != 1 || !request.Inputs[0].IsError || request.Inputs[0].CallID != "unknown" || !strings.Contains(request.Inputs[0].Text, "unknown tool") {
+			if len(request.Inputs) != 1 || !request.Inputs[0].IsError || request.Inputs[0].CallID != "unknown" || !strings.Contains(request.Inputs[0].PlainText(), "unknown tool") {
 				t.Fatalf("unknown result = %+v", request.Inputs)
 			}
 			return Response{Text: "recovered", State: []byte("done")}, nil
@@ -1666,7 +1667,7 @@ func TestEngineHonorsCancellationDuringToolExecution(t *testing.T) {
 			return Response{ToolCalls: []ToolCall{{ID: "wait", Name: "wait", Arguments: json.RawMessage(`{}`)}}, State: []byte("waiting")}, nil
 		},
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if string(request.State) != "waiting" || len(request.Inputs) != 2 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].CallID != "wait" || !request.Inputs[0].IsError || !strings.Contains(request.Inputs[0].Text, "canceled") || request.Inputs[1].Kind != InputUser || request.Inputs[1].Text != "continue" {
+			if string(request.State) != "waiting" || len(request.Inputs) != 2 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].CallID != "wait" || !request.Inputs[0].IsError || !strings.Contains(request.Inputs[0].PlainText(), "canceled") || request.Inputs[1].Kind != InputUser || request.Inputs[1].PlainText() != "continue" {
 				t.Fatalf("state after cancellation = %+v", request)
 			}
 			return Response{Text: "recovered", State: []byte("recovered")}, nil
@@ -1730,7 +1731,7 @@ func TestEngineResetDiscardsProviderState(t *testing.T) {
 			return Response{Text: "first", State: []byte("saved")}, nil
 		},
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if len(request.State) != 0 || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputUser || request.Inputs[0].Text != "second" {
+			if len(request.State) != 0 || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputUser || request.Inputs[0].PlainText() != "second" {
 				t.Fatalf("request after reset = %+v", request)
 			}
 			return Response{Text: "second"}, nil
@@ -1754,7 +1755,7 @@ func TestEngineTreatsToolLocalDeadlineAsRecoverable(t *testing.T) {
 			return Response{ToolCalls: []ToolCall{{ID: "timeout", Name: "bash", Arguments: json.RawMessage(`{}`)}}, State: []byte("timeout")}, nil
 		},
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if len(request.Inputs) != 1 || !request.Inputs[0].IsError || !strings.Contains(request.Inputs[0].Text, context.DeadlineExceeded.Error()) {
+			if len(request.Inputs) != 1 || !request.Inputs[0].IsError || !strings.Contains(request.Inputs[0].PlainText(), context.DeadlineExceeded.Error()) {
 				t.Fatalf("tool-local deadline result = %+v", request.Inputs)
 			}
 			return Response{Text: "recovered", State: []byte("done")}, nil
@@ -1857,9 +1858,9 @@ func TestEngineDeliversSteeringAfterCompleteToolBatch(t *testing.T) {
 			want := []Input{
 				{Kind: InputToolResult, CallID: "one", Tool: "tool", Text: "result one"},
 				{Kind: InputToolResult, CallID: "two", Tool: "tool", Text: "result two"},
-				{Kind: InputUser, Text: "redirect"},
+				NewTextInput("redirect"),
 			}
-			if string(request.State) != "tools" || !slices.Equal(request.Inputs, want) {
+			if string(request.State) != "tools" || !reflect.DeepEqual(request.Inputs, want) {
 				t.Fatalf("steered tool continuation = %+v", request)
 			}
 			return Response{Text: "redirected", State: []byte("done")}, nil
@@ -1972,9 +1973,9 @@ func TestEnginePreservesToolResultsWhenSteeringDeliveryEventFails(t *testing.T) 
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
 			want := []Input{
 				{Kind: InputToolResult, CallID: "tool", Tool: "tool", Text: "result"},
-				{Kind: InputUser, Text: "steer"},
+				NewTextInput("steer"),
 			}
-			if string(request.State) != "tools" || !slices.Equal(request.Inputs, want) {
+			if string(request.State) != "tools" || !reflect.DeepEqual(request.Inputs, want) {
 				t.Fatalf("recovery request = %+v", request)
 			}
 			return Response{Text: "recovered", State: []byte("recovered")}, nil
@@ -2055,8 +2056,8 @@ func TestEngineClearsQueuedSteeringAfterFailure(t *testing.T) {
 			<-release
 			return Response{}, failure
 		}
-		want := []Input{{Kind: InputUser, Text: "start"}, {Kind: InputUser, Text: "next"}}
-		if !slices.Equal(request.Inputs, want) {
+		want := []Input{NewTextInput("start"), NewTextInput("next")}
+		if !reflect.DeepEqual(request.Inputs, want) {
 			t.Fatalf("recovery inputs = %+v", request.Inputs)
 		}
 		return Response{Text: "recovered"}, nil
@@ -2249,10 +2250,10 @@ func TestEngineRejectsPreCanceledContext(t *testing.T) {
 func TestEngineRunContent(t *testing.T) {
 	provider := &scriptedProvider{t: t, steps: []providerStep{
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if len(request.Inputs) != 1 || request.Inputs[0].Content == nil || len(request.Inputs[0].Content.Parts) != 3 {
+			if len(request.Inputs) != 1 || request.Inputs[0].Content == nil || len(request.Inputs[0].Content) != 3 {
 				t.Fatalf("inputs = %+v", request.Inputs)
 			}
-			parts := request.Inputs[0].Content.Parts
+			parts := request.Inputs[0].Content
 			image := parts[1].Image
 			if parts[0].Text != "describe " || image == nil || image.MediaType != "image/png" || string(image.Data) != "png" || parts[2].Text != " please" {
 				t.Fatalf("input = %+v", request.Inputs[0])
@@ -2272,10 +2273,10 @@ func TestEngineRunContent(t *testing.T) {
 	}
 }
 
-func TestEngineCoalescesTextOnlyContent(t *testing.T) {
+func TestEnginePreservesTextOnlyContent(t *testing.T) {
 	provider := &scriptedProvider{t: t, steps: []providerStep{
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if len(request.Inputs) != 1 || request.Inputs[0].Text != "beforeafter" || request.Inputs[0].Content != nil {
+			if len(request.Inputs) != 1 || request.Inputs[0].PlainText() != "beforeafter" || len(request.Inputs[0].Content) != 2 {
 				t.Fatalf("input = %+v", request.Inputs)
 			}
 			return Response{Text: "done"}, nil
@@ -2294,7 +2295,7 @@ func TestProviderRetryOwnsContent(t *testing.T) {
 	attempt := 0
 	provider := &retryingProvider{
 		generate: func(_ context.Context, request Request, _ TextSink, _ TextSink, _ ToolCallSink) (Response, error) {
-			parts := request.Inputs[0].Content.Parts
+			parts := request.Inputs[0].Content
 			if parts[0].Text != "before" || string(parts[1].Image.Data) != "png" {
 				t.Fatalf("retry content = %+v", parts)
 			}
@@ -2324,12 +2325,12 @@ func TestProviderRetryOwnsContent(t *testing.T) {
 func TestProviderRequestOwnsContent(t *testing.T) {
 	provider := &scriptedProvider{t: t, steps: []providerStep{
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			request.Inputs[0].Content.Parts[0].Text = "changed"
-			request.Inputs[0].Content.Parts[1].Image.Data[0] = 'X'
+			request.Inputs[0].Content[0].Text = "changed"
+			request.Inputs[0].Content[1].Image.Data[0] = 'X'
 			return Response{}, errors.New("failed")
 		},
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			parts := request.Inputs[0].Content.Parts
+			parts := request.Inputs[0].Content
 			if parts[0].Text != "before" || string(parts[1].Image.Data) != "png" {
 				t.Fatalf("content was mutated through provider request: %+v", parts)
 			}
@@ -2359,7 +2360,7 @@ func discardEvents(Event) error { return nil }
 
 func assertUserInput(t *testing.T, request Request, text string) {
 	t.Helper()
-	if len(request.Inputs) != 1 || request.Inputs[0].Kind != InputUser || request.Inputs[0].Text != text {
+	if len(request.Inputs) != 1 || request.Inputs[0].Kind != InputUser || request.Inputs[0].PlainText() != text {
 		t.Fatalf("user inputs = %+v, want one user input %q", request.Inputs, text)
 	}
 }

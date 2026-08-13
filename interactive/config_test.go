@@ -20,7 +20,7 @@ func TestResolveConfigLoadsDefaultAndExplicitModels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if defaults.models != (modelSelection{main: "gpt-5.6-sol", fast: "gpt-5.6-luna", balanced: "gpt-5.6-terra"}) || defaults.thinkingLevel != agent.DefaultThinkingLevel {
+	if defaults.models != (modelSet{primary: "gpt-5.6-sol", fast: "gpt-5.6-luna", balanced: "gpt-5.6-terra"}) || defaults.thinkingLevel != agent.DefaultThinkingLevel {
 		t.Fatalf("resolved defaults = %+v", defaults)
 	}
 
@@ -32,7 +32,7 @@ func TestResolveConfigLoadsDefaultAndExplicitModels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if explicit.models != (modelSelection{main: "primary-model", fast: "fast-model", balanced: "balanced-model"}) {
+	if explicit.models != (modelSet{primary: "primary-model", fast: "fast-model", balanced: "balanced-model"}) {
 		t.Fatalf("config = %+v", explicit)
 	}
 
@@ -42,12 +42,12 @@ func TestResolveConfigLoadsDefaultAndExplicitModels(t *testing.T) {
 	}
 }
 
-func TestResolveModelSelectionFallsBackToMain(t *testing.T) {
-	models, err := resolveModelSelection(Options{}, backend.ModelDefaults{Main: "main-model"})
+func TestResolveModelSetFallsBackToPrimary(t *testing.T) {
+	models, err := resolveModelSet(Options{}, backend.ModelDefaults{Main: "main-model"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if models != (modelSelection{main: "main-model", fast: "main-model", balanced: "main-model"}) {
+	if models != (modelSet{primary: "main-model", fast: "main-model", balanced: "main-model"}) {
 		t.Fatalf("models = %+v", models)
 	}
 }
@@ -148,7 +148,7 @@ func TestResolveConfigLoadsProjectAndResolvesWorkingDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.models.main != "gpt-5.6-sol" || config.thinkingLevel != agent.ThinkingMax || config.cwd != cwd || config.projectInstructions != "Project rules." {
+	if config.models.primary != "gpt-5.6-sol" || config.thinkingLevel != agent.ThinkingMax || config.cwd != cwd || config.projectInstructions != "Project rules." {
 		t.Fatalf("config = %+v", config)
 	}
 }

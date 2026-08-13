@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "state": "cHJvdmlkZXItc3RhdGUtdjE=",
   "context_usage": {
     "InputTokens": 10,
@@ -9,10 +9,16 @@
   "pending_inputs": [
     {
       "Kind": "user",
-      "Text": "continue",
+      "Text": "",
       "CallID": "",
       "Tool": "",
-      "IsError": false
+      "IsError": false,
+      "Content": [
+        {
+          "Kind": "text",
+          "Text": "continue"
+        }
+      ]
     },
     {
       "Kind": "tool_result",

@@ -21,7 +21,7 @@ func newStoredAgentSession(
 	store *sessionStore,
 	handle *sessionHandle,
 ) (*agentSession, error) {
-	session, err := newAgentSessionWithCheckpointing(config, env, backendRuntime, true)
+	session, options, err := newAgentSessionComponents(config, env, backendRuntime, true)
 	if err != nil {
 		if handle != nil {
 			_ = handle.Close()
@@ -50,19 +50,18 @@ func newStoredAgentSession(
 			return nil, session.finish(err)
 		}
 	}
-	if err := session.attachPersistence(handle, restore); err != nil {
-		return nil, session.finish(err)
-	}
-	return session, nil
-}
 
-func (session *agentSession) attachPersistence(handle *sessionHandle, restore bool) error {
-	checkpoints := newCheckpointCoordinator(
-		handle,
-		session.engine,
-		session.subagents,
-		session.settings,
-	)
+	record := handle.Record()
+	if restore {
+		if err := session.engine.RestoreCheckpoint(record.Agent); err != nil {
+			return nil, session.finish(fmt.Errorf("restore agent session: %w", err))
+		}
+		if err := session.subagents.RestoreCheckpoint(record.Subagent); err != nil {
+			return nil, session.finish(fmt.Errorf("restore subagents: %w", err))
+		}
+	}
+
+	checkpoints := newCheckpointCoordinator(handle, session.engine, session.subagents, session.settings)
 	persistence := &sessionPersistence{
 		handle:      handle,
 		checkpoints: checkpoints,
@@ -70,25 +69,32 @@ func (session *agentSession) attachPersistence(handle *sessionHandle, restore bo
 	}
 	session.persistence = persistence
 
-	record := handle.Record()
-	session.terminalOptions.Config.SessionID = record.ID
 	if restore {
-		if err := session.engine.RestoreCheckpoint(record.Agent); err != nil {
-			return fmt.Errorf("restore agent session: %w", err)
-		}
-		if err := session.subagents.RestoreCheckpoint(record.Subagent); err != nil {
-			return fmt.Errorf("restore subagents: %w", err)
+		if err := checkpoints.RestoreIdle(record.Agent); err != nil {
+			return nil, session.finish(fmt.Errorf("save restored subagents: %w", err))
 		}
 		checkpoint := record.Terminal
-		session.terminalOptions.Config.InitialCheckpoint = &checkpoint
-		session.terminalOptions.Config.PreviousTurnActive = record.Status == sessionActive
-		if err := checkpoints.RestoreIdle(record.Agent); err != nil {
-			return fmt.Errorf("save restored subagents: %w", err)
-		}
+		options.initialCheckpoint = &checkpoint
+		options.previousTurnActive = record.Status == sessionActive
 	}
+	options.checkpoints = checkpoints
+	options.sessionID = record.ID
+	options.sessions.List = sessionList(handle)
+	session.terminalOptions = options.options()
 
-	session.terminalCallbacks.attachPersistence(checkpoints, func(context.Context) ([]terminal.SessionSummary, []string, error) {
-		summaries, warnings, err := handle.store.List(record.WorkingDirectory)
+	go func() {
+		defer close(persistence.changesDone)
+		for range session.subagents.CheckpointChanges() {
+			checkpoints.SaveIdle()
+		}
+	}()
+
+	return session, nil
+}
+
+func sessionList(handle *sessionHandle) func(context.Context) ([]terminal.SessionSummary, []string, error) {
+	return func(context.Context) ([]terminal.SessionSummary, []string, error) {
+		summaries, warnings, err := handle.store.List(handle.record.WorkingDirectory)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -102,17 +108,7 @@ func (session *agentSession) attachPersistence(handle *sessionHandle, restore bo
 			})
 		}
 		return visible, warnings, nil
-	})
-	session.terminalOptions.Sessions = session.terminalCallbacks.sessions
-	session.terminalOptions.Checkpoints = session.terminalCallbacks.checkpointsPort
-	go func() {
-		defer close(persistence.changesDone)
-		for range session.subagents.CheckpointChanges() {
-			checkpoints.SaveIdle()
-		}
-	}()
-
-	return nil
+	}
 }
 
 func (persistence *sessionPersistence) stop() {

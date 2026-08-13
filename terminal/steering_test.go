@@ -23,8 +23,8 @@ func TestSteeringCoordinatorTracksAcceptedAndDeferredMessages(t *testing.T) {
 	}
 	var coordinator steeringCoordinator
 
-	coordinator.enqueue(engine.Steer, "accepted")
-	coordinator.enqueue(engine.Steer, "deferred")
+	coordinator.enqueue("accepted", engine.Steer("accepted"))
+	coordinator.enqueue("deferred", engine.Steer("deferred"))
 	if !slices.Equal(coordinator.pending(), []string{"accepted", "deferred"}) {
 		t.Fatalf("pending = %q", coordinator.pending())
 	}

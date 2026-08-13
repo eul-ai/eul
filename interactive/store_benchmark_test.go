@@ -23,7 +23,7 @@ func BenchmarkSessionStoreSave(b *testing.B) {
 			handle, err := store.Create(
 				"test",
 				b.TempDir(),
-				modelSelection{main: "main-model", fast: "fast-model", balanced: "balanced-model"},
+				modelSet{primary: "main-model", fast: "fast-model", balanced: "balanced-model"},
 				agent.ThinkingHigh,
 				agentCheckpoint,
 				subagent.EmptyCheckpoint(),
@@ -64,7 +64,7 @@ func BenchmarkSessionStoreRead(b *testing.B) {
 			handle, err := store.Create(
 				"test",
 				b.TempDir(),
-				modelSelection{main: "main-model", fast: "fast-model", balanced: "balanced-model"},
+				modelSet{primary: "main-model", fast: "fast-model", balanced: "balanced-model"},
 				agent.ThinkingHigh,
 				agentCheckpoint,
 				subagent.EmptyCheckpoint(),

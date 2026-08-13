@@ -7,6 +7,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/subagent"
+	"github.com/eul-ai/eul/terminal/clipboard"
 )
 
 type tuiEventKind uint8
@@ -40,20 +41,52 @@ type tuiEvent struct {
 	err            error
 }
 
-type controllerEngine interface {
-	RunContent(context.Context, []agent.ContentPart, agent.EventSink) (agent.RunResult, error)
-	Compact(context.Context, agent.EventSink) error
-	Steer(string) bool
-	ClearSteering() []string
-	SetGoal(string) error
-	Goal() (agent.GoalState, bool)
-	ClearGoal()
+type controllerOptions struct {
+	model              *tuiModel
+	output             io.Writer
+	outputFD           int
+	engineMessages     chan<- engineMessage
+	stopped            <-chan struct{}
+	fileSearch         *fileSearchRunner
+	fileSearchMessages chan<- fileSearchResult
+	usageRequests      chan<- struct{}
+	clipboardImages    chan<- tuiEvent
+	operations         Operations
+	controls           Controls
+	stateChanges       StateChanges
+	sessions           Sessions
+	readClipboardImage func(context.Context) (agent.Image, error)
+}
+
+func newTUIController(config controllerOptions) *tuiController {
+	readClipboardImage := config.readClipboardImage
+	if readClipboardImage == nil {
+		readClipboardImage = clipboard.ReadImage
+	}
+	return &tuiController{
+		model:              config.model,
+		renderer:           &tuiRenderer{},
+		operations:         config.operations,
+		controls:           config.controls,
+		output:             config.output,
+		outputFD:           config.outputFD,
+		engineMessages:     config.engineMessages,
+		stopped:            config.stopped,
+		fileSearch:         config.fileSearch,
+		fileSearchMessages: config.fileSearchMessages,
+		usageRequests:      config.usageRequests,
+		stateChanges:       config.stateChanges,
+		sessions:           config.sessions,
+		readClipboardImage: readClipboardImage,
+		clipboardImages:    config.clipboardImages,
+		clipboardRequests:  make(map[uint64]context.CancelFunc),
+		dirty:              true,
+	}
 }
 
 type tuiController struct {
 	model              *tuiModel
 	renderer           *tuiRenderer
-	engine             controllerEngine
 	operations         Operations
 	controls           Controls
 	output             io.Writer
@@ -63,10 +96,8 @@ type tuiController struct {
 	fileSearch         *fileSearchRunner
 	fileSearchMessages chan<- fileSearchResult
 	usageRequests      chan<- struct{}
-	setThinkingLevel   func(agent.ThinkingLevel) error
-	setFastMode        func(bool) error
-	saveCheckpoint     func(Checkpoint, bool) error
-	listSessions       func(context.Context) ([]SessionSummary, []string, error)
+	stateChanges       StateChanges
+	sessions           Sessions
 	readClipboardImage func(context.Context) (agent.Image, error)
 	clipboardImages    chan<- tuiEvent
 	clipboardRequests  map[uint64]context.CancelFunc
@@ -75,7 +106,6 @@ type tuiController struct {
 	exitAfterTurn      bool
 	exitAfterTurnErr   error
 	outcome            RunOutcome
-	steering           steeringCoordinator
 	permission         *PermissionRequest
 	queuedPermissions  []PermissionRequest
 	dirty              bool
@@ -83,9 +113,6 @@ type tuiController struct {
 }
 
 func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, error) {
-	c.prepareCallbacks()
-	c.model.steeringView = &c.steering
-
 	switch event.kind {
 	case tuiEventParentCanceled:
 		return c.handleParentCanceled(event.err)
@@ -117,36 +144,6 @@ func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, e
 
 	c.dirty = true
 	return false, nil
-}
-
-func (c *tuiController) prepareCallbacks() {
-	if c.engine == nil {
-		return
-	}
-	if c.operations.RunTurn == nil {
-		c.operations.RunTurn = func(ctx context.Context, content []agent.ContentPart, sink agent.EventSink) error {
-			_, err := c.engine.RunContent(ctx, content, sink)
-			return err
-		}
-	}
-	if c.operations.Compact == nil {
-		c.operations.Compact = c.engine.Compact
-	}
-	if c.controls.Steer == nil {
-		c.controls.Steer = c.engine.Steer
-	}
-	if c.controls.ClearSteering == nil {
-		c.controls.ClearSteering = c.engine.ClearSteering
-	}
-	if c.controls.SetGoal == nil {
-		c.controls.SetGoal = c.engine.SetGoal
-	}
-	if c.controls.Goal == nil {
-		c.controls.Goal = c.engine.Goal
-	}
-	if c.controls.ClearGoal == nil {
-		c.controls.ClearGoal = c.engine.ClearGoal
-	}
 }
 
 func (c *tuiController) handleParentCanceled(parentErr error) (bool, error) {
@@ -231,6 +228,10 @@ func (c *tuiController) handleKey(ctx context.Context, key keyEvent) (bool, erro
 }
 
 func (c *tuiController) handleEngineMessage(ctx context.Context, message engineMessage) (bool, error) {
+	if message.snapshot != nil {
+		message.snapshot <- checkpointModel(c.model, c.model.pendingSteering())
+		return false, nil
+	}
 	if !message.done {
 		return c.handleAgentEvent(message)
 	}
@@ -249,7 +250,7 @@ func (c *tuiController) handleEngineMessage(ctx context.Context, message engineM
 
 	interrupted := c.model.interrupted
 	if interrupted || message.err != nil {
-		c.model.restoreSteering(c.steering.restore(c.controls.ClearSteering))
+		c.model.restoreSteering(c.model.clearSteering(c.controls.ClearSteering))
 	}
 	c.model.finishTurn(message.err)
 	if err := c.saveCurrentCheckpoint(false); err != nil {
@@ -268,7 +269,7 @@ func (c *tuiController) handleEngineMessage(ctx context.Context, message engineM
 
 func (c *tuiController) handleAgentEvent(message engineMessage) (bool, error) {
 	if message.event.Kind == agent.EventSteering {
-		if c.steering.delivered(message.event.Text) {
+		if c.model.deliverSteering(message.event.Text) {
 			c.model.appendBlock(blockUser, message.event.Text)
 			c.model.setActiveActivity(activity{kind: activityThinking})
 		}
@@ -278,14 +279,6 @@ func (c *tuiController) handleAgentEvent(message engineMessage) (bool, error) {
 	if c.model.permission.active() {
 		c.model.activity = activity{kind: activityPermission}
 	}
-	if message.ack != nil {
-		err := c.saveCurrentCheckpoint(true)
-		message.ack <- err
-		if err != nil {
-			return false, err
-		}
-	}
-
 	c.dirty = true
 	return false, nil
 }
@@ -360,6 +353,7 @@ func (c *tuiController) handleUsageClock() (bool, error) {
 }
 
 func (c *tuiController) handleRender() (bool, error) {
+	normalizeViewport(c.model, c.renderer)
 	if err := renderIfDirty(c.renderer, c.model, c.output, &c.dirty, c.forceRedraw); err != nil {
 		return false, err
 	}

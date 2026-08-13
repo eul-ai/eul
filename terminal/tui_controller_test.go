@@ -17,7 +17,7 @@ func TestTUIControllerRejectsInvalidClipboardImage(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	clipboardImages := make(chan tuiEvent, 1)
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		readClipboardImage: func(context.Context) (agent.Image, error) {
 			return agent.Image{MediaType: "image/png", Data: []byte("png")}, nil
 		},
@@ -41,7 +41,7 @@ func TestTUIControllerPastesClipboardImage(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	clipboardImages := make(chan tuiEvent, 1)
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 		readClipboardImage: func(context.Context) (agent.Image, error) {
 			return agent.Image{MediaType: "image/png", Data: validTestPNG(t)}, nil
@@ -66,14 +66,10 @@ func TestTUIControllerPastesClipboardImage(t *testing.T) {
 	}
 }
 
-type checkpointingFakeEngine struct {
-	*fakeEngine
-}
-
 func TestTUIControllerSerializesPermissions(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.running = true
-	controller := tuiController{model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard}
+	controller := tuiController{model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard}
 	first := make(chan bool, 1)
 	second := make(chan bool, 1)
 
@@ -119,7 +115,7 @@ func TestTUIControllerPreservesClipboardInsertionPoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		readClipboardImage: func(context.Context) (agent.Image, error) {
 			close(started)
 			<-release
@@ -153,7 +149,7 @@ func TestTUIControllerDiscardsClearedClipboardRead(t *testing.T) {
 	finished := make(chan struct{})
 	model := newTUIModel(80, 24, Options{})
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
 			close(started)
 			<-ctx.Done()
@@ -182,7 +178,7 @@ func TestTUIControllerDeletingPendingImageCancelsRead(t *testing.T) {
 	canceled := make(chan struct{})
 	model := newTUIModel(80, 24, Options{})
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
 			close(started)
 			<-ctx.Done()
@@ -210,7 +206,7 @@ func TestTUIControllerDeleteCancelsPendingImage(t *testing.T) {
 	canceled := make(chan struct{})
 	model := newTUIModel(80, 24, Options{})
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
 			close(started)
 			<-ctx.Done()
@@ -245,7 +241,7 @@ func TestTUIControllerHistoryCancelsPendingImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
 			close(started)
 			<-ctx.Done()
@@ -280,14 +276,15 @@ func TestTUIControllerSubmittingCancelsPendingImage(t *testing.T) {
 	if err := model.insertInput("before"); err != nil {
 		t.Fatal(err)
 	}
+	engine := &fakeEngine{runContentFunction: func(_ context.Context, content []agent.ContentPart, _ agent.EventSink) (agent.RunResult, error) {
+		if len(content) != 1 || content[0].Text != "before" {
+			t.Fatalf("content = %+v", content)
+		}
+		close(launched)
+		return agent.RunResult{}, nil
+	}}
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{runContentFunction: func(_ context.Context, content []agent.ContentPart, _ agent.EventSink) (agent.RunResult, error) {
-			if len(content) != 1 || content[0].Text != "before" {
-				t.Fatalf("content = %+v", content)
-			}
-			close(launched)
-			return agent.RunResult{}, nil
-		}}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1),
 		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
 			close(started)
@@ -317,7 +314,7 @@ func TestTUIControllerExitCancelsClipboardRead(t *testing.T) {
 	canceled := make(chan struct{})
 	model := newTUIModel(80, 24, Options{})
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
 			close(started)
 			<-ctx.Done()
@@ -344,7 +341,7 @@ func TestTUIControllerReadsClipboardImageWithoutBlocking(t *testing.T) {
 	clipboardImages := make(chan tuiEvent, 1)
 	model := newTUIModel(80, 24, Options{})
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		readClipboardImage: func(context.Context) (agent.Image, error) {
 			close(started)
 			<-release
@@ -382,9 +379,9 @@ func TestTUIControllerKeepsDraftWhenActiveCheckpointFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &checkpointingFakeEngine{fakeEngine: &fakeEngine{}}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		saveCheckpoint: func(Checkpoint, bool) error { return checkpointErr },
+		stateChanges: StateChanges{Notify: func(Checkpoint, bool) error { return checkpointErr }},
 	}
 
 	action, err := reduceKey(model, keyEvent{code: keyEnter})
@@ -407,14 +404,14 @@ func TestTUIControllerActiveCheckpointOmitsUncommittedSubmission(t *testing.T) {
 	}
 	model := newTUIModel(80, 24, Options{})
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &checkpointingFakeEngine{fakeEngine: &fakeEngine{}}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		saveCheckpoint: func(terminalCheckpoint Checkpoint, active bool) error {
+		stateChanges: StateChanges{Notify: func(terminalCheckpoint Checkpoint, active bool) error {
 			if !active || len(terminalCheckpoint.data.Blocks) != 0 {
 				t.Fatalf("active=%v terminal=%+v", active, terminalCheckpoint.data)
 			}
 			return errors.New("stop before launch")
-		},
+		}},
 	}
 
 	if err := controller.startTurn(context.Background(), content); err == nil {
@@ -437,15 +434,15 @@ func TestTUIControllerSubmitsClipboardImageAfterCheckpoint(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	messages := make(chan engineMessage, 1)
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &checkpointingFakeEngine{fakeEngine: engine}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: messages, stopped: make(chan struct{}),
-		saveCheckpoint: func(checkpoint Checkpoint, active bool) error {
+		stateChanges: StateChanges{Notify: func(checkpoint Checkpoint, active bool) error {
 			if !active || len(checkpoint.data.Blocks) != 0 {
 				t.Fatalf("active=%v checkpoint=%+v", active, checkpoint.data)
 			}
 			events <- "checkpoint"
 			return nil
-		},
+		}},
 	}
 
 	image := &agent.Image{MediaType: "image/png", Data: validTestPNG(t)}
@@ -477,13 +474,13 @@ func TestTUIControllerEOFWhileRunningDefersCheckpoint(t *testing.T) {
 	canceled := false
 	saveCalls := 0
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 		turnCancel: func() { canceled = true },
-		saveCheckpoint: func(Checkpoint, bool) error {
+		stateChanges: StateChanges{Notify: func(Checkpoint, bool) error {
 			saveCalls++
 			return nil
-		},
+		}},
 	}
 
 	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEOF}})
@@ -541,7 +538,7 @@ func TestTUIControllerStartsOperationsAfterActiveCheckpoint(t *testing.T) {
 			activity:      activityThinking,
 			wantUserBlock: true,
 			prepare: func(controller *tuiController) {
-				controller.steering.deferred = []string{"deferred prompt"}
+				controller.model.steering.deferred = []string{"deferred prompt"}
 			},
 			start: func(ctx context.Context, controller *tuiController) error {
 				return controller.startDeferredTurn(ctx)
@@ -566,15 +563,15 @@ func TestTUIControllerStartsOperationsAfterActiveCheckpoint(t *testing.T) {
 			messages := make(chan engineMessage, 2)
 			stopped := make(chan struct{})
 			controller := tuiController{
-				model: model, renderer: &tuiRenderer{}, engine: &checkpointingFakeEngine{fakeEngine: engine}, output: io.Discard,
+				model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 				engineMessages: messages, stopped: stopped,
-				saveCheckpoint: func(_ Checkpoint, active bool) error {
+				stateChanges: StateChanges{Notify: func(_ Checkpoint, active bool) error {
 					if !active || !model.running || model.activity.kind != test.activity {
 						t.Fatalf("checkpoint active=%v running=%v activity=%+v", active, model.running, model.activity)
 					}
 					events <- "checkpoint"
 					return nil
-				},
+				}},
 			}
 			if test.prepare != nil {
 				test.prepare(&controller)
@@ -648,7 +645,7 @@ func TestTUIControllerDoesNotLaunchAfterActiveCheckpointFailure(t *testing.T) {
 			name:     "deferred replay",
 			activity: activityThinking,
 			prepare: func(controller *tuiController) {
-				controller.steering.deferred = []string{"deferred prompt"}
+				controller.model.steering.deferred = []string{"deferred prompt"}
 			},
 			start: func(ctx context.Context, controller *tuiController) error {
 				return controller.startDeferredTurn(ctx)
@@ -671,9 +668,9 @@ func TestTUIControllerDoesNotLaunchAfterActiveCheckpointFailure(t *testing.T) {
 			}
 			model := newTUIModel(80, 24, Options{})
 			controller := tuiController{
-				model: model, renderer: &tuiRenderer{}, engine: &checkpointingFakeEngine{fakeEngine: engine}, output: io.Discard,
+				model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 				engineMessages: make(chan engineMessage, 2), stopped: make(chan struct{}),
-				saveCheckpoint: func(Checkpoint, bool) error { return checkpointErr },
+				stateChanges: StateChanges{Notify: func(Checkpoint, bool) error { return checkpointErr }},
 			}
 			if test.prepare != nil {
 				test.prepare(&controller)
@@ -707,7 +704,7 @@ func TestTUIControllerNewSessionKeepsCurrentConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 	}
 
@@ -737,7 +734,7 @@ func TestTUIControllerCompactsConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: messages, stopped: stopped,
 	}
 	ctx := context.Background()
@@ -773,7 +770,7 @@ func TestTUIControllerSetsShowsAndClearsGoal(t *testing.T) {
 	defer close(stopped)
 	model := newTUIModel(80, 24, Options{})
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: messages, stopped: stopped,
 	}
 	ctx := context.Background()
@@ -823,12 +820,12 @@ func TestTUIControllerShowsHelpAndGoalWhileRunning(t *testing.T) {
 	model.running = true
 	checkpointCalls := 0
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		saveCheckpoint: func(Checkpoint, bool) error {
+		stateChanges: StateChanges{Notify: func(Checkpoint, bool) error {
 			checkpointCalls++
 			return nil
-		},
+		}},
 	}
 
 	for _, command := range []string{"/help", "/goal"} {
@@ -855,7 +852,7 @@ func TestTUIControllerSetsGoalWhileRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 	}
 
@@ -880,7 +877,7 @@ func TestTUIControllerClearsGoalWhileRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 	}
 
@@ -901,7 +898,7 @@ func TestTUIControllerDoesNotStartGoalWhenSetFails(t *testing.T) {
 	engine := &fakeEngine{setGoalErr: setErr}
 	model := newTUIModel(80, 24, Options{})
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 	}
 
@@ -918,7 +915,7 @@ func TestTUIControllerNewSessionLeavesCurrentGoal(t *testing.T) {
 	engine := &fakeEngine{goal: &agent.GoalState{Objective: "goal"}}
 	model := newTUIModel(80, 24, Options{})
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 	}
 
@@ -933,7 +930,7 @@ func TestTUIControllerNewSessionLeavesCurrentGoal(t *testing.T) {
 
 func TestTUIControllerAppliesSubagentStatus(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
-	controller := tuiController{model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard}
+	controller := tuiController{model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard}
 
 	_, err := controller.transition(context.Background(), tuiEvent{
 		kind: tuiEventSubagentStatus,
@@ -1032,7 +1029,7 @@ func TestTUIControllerEventDirtiness(t *testing.T) {
 			if test.prepare != nil {
 				test.prepare(model)
 			}
-			controller := tuiController{model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard}
+			controller := tuiController{model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard}
 
 			exit, err := controller.transition(context.Background(), test.event)
 			if err != nil || exit || controller.dirty != test.wantDirty {
@@ -1074,7 +1071,7 @@ func TestMouseSelectionUsesCommittedFrame(t *testing.T) {
 	model := newTUIModel(20, 10, Options{})
 	model.appendBlock(blockAssistant, "alpha")
 	renderer := &tuiRenderer{}
-	_ = renderer.render(model)
+	_ = renderModel(renderer, model)
 	committed := renderer.frame
 
 	model.clearConversation()
@@ -1092,7 +1089,7 @@ func TestMouseWheelUsesCommittedConversationBounds(t *testing.T) {
 		model.appendBlock(blockInfo, "visible line")
 	}
 	renderer := &tuiRenderer{}
-	_ = renderer.render(model)
+	_ = renderModel(renderer, model)
 	committedTop := renderer.frame.conversationTop
 	if committedTop < mouseWheelScrollLines {
 		t.Fatalf("committed top = %d", committedTop)
@@ -1123,7 +1120,7 @@ func TestTUIControllerQueuesAndDequeuesSteering(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.running = true
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 	}
 
@@ -1133,8 +1130,8 @@ func TestTUIControllerQueuesAndDequeuesSteering(t *testing.T) {
 	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(queued, []string{"steer"}) || !slices.Equal(controller.steering.pending(), []string{"steer"}) {
-		t.Fatalf("engine queue=%q coordinator queue=%q", queued, controller.steering.pending())
+	if !slices.Equal(queued, []string{"steer"}) || !slices.Equal(controller.model.steering.pending(), []string{"steer"}) {
+		t.Fatalf("engine queue=%q coordinator queue=%q", queued, controller.model.steering.pending())
 	}
 	if calls := engine.snapshot(); len(calls) != 0 {
 		t.Fatalf("steering started runs: %q", calls)
@@ -1146,8 +1143,8 @@ func TestTUIControllerQueuesAndDequeuesSteering(t *testing.T) {
 	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyAltUp}}); err != nil {
 		t.Fatal(err)
 	}
-	if len(queued) != 0 || len(controller.steering.pending()) != 0 || model.inputText() != "steer\n\ndraft" {
-		t.Fatalf("engine queue=%q coordinator queue=%q input=%q", queued, controller.steering.pending(), model.inputText())
+	if len(queued) != 0 || len(controller.model.steering.pending()) != 0 || model.inputText() != "steer\n\ndraft" {
+		t.Fatalf("engine queue=%q coordinator queue=%q input=%q", queued, controller.model.steering.pending(), model.inputText())
 	}
 }
 
@@ -1155,22 +1152,22 @@ func TestTUIControllerCancelRestoresQueuedAndDeferredSteering(t *testing.T) {
 	engine := &fakeEngine{clearFunction: func() []string { return []string{"accepted"} }}
 	model := newTUIModel(80, 24, Options{})
 	model.running = true
+	model.steering = steeringCoordinator{accepted: []string{"accepted"}, deferred: []string{"deferred"}}
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)
 	}
 	canceled := false
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		steering:   steeringCoordinator{accepted: []string{"accepted"}, deferred: []string{"deferred"}},
 		turnCancel: func() { canceled = true },
 	}
 
 	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEscape}}); err != nil {
 		t.Fatal(err)
 	}
-	if !canceled || !model.interrupted || model.activity.kind != activityCanceling || len(controller.steering.pending()) != 0 {
-		t.Fatalf("canceled=%v interrupted=%v activity=%+v pending=%q", canceled, model.interrupted, model.activity, controller.steering.pending())
+	if !canceled || !model.interrupted || model.activity.kind != activityCanceling || len(controller.model.steering.pending()) != 0 {
+		t.Fatalf("canceled=%v interrupted=%v activity=%+v pending=%q", canceled, model.interrupted, model.activity, controller.model.steering.pending())
 	}
 	if model.inputText() != "accepted\n\ndeferred\n\ndraft" {
 		t.Fatalf("restored input = %q", model.inputText())
@@ -1191,7 +1188,7 @@ func TestTUIControllerRunsRejectedSteeringSequentially(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.running = true
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: messages, stopped: stopped,
 	}
 	ctx := context.Background()
@@ -1204,15 +1201,15 @@ func TestTUIControllerRunsRejectedSteeringSequentially(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if steerCalls != 1 || !slices.Equal(controller.steering.deferred, []string{"one", "two"}) {
-		t.Fatalf("steer calls=%d deferred=%q", steerCalls, controller.steering.deferred)
+	if steerCalls != 1 || !slices.Equal(controller.model.steering.deferred, []string{"one", "two"}) {
+		t.Fatalf("steer calls=%d deferred=%q", steerCalls, controller.model.steering.deferred)
 	}
 
 	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventEngine, engine: engineMessage{done: true}}); err != nil {
 		t.Fatal(err)
 	}
-	if !model.running || !slices.Equal(controller.steering.deferred, []string{"two"}) {
-		t.Fatalf("first replay running=%v deferred=%q", model.running, controller.steering.deferred)
+	if !model.running || !slices.Equal(controller.model.steering.deferred, []string{"two"}) {
+		t.Fatalf("first replay running=%v deferred=%q", model.running, controller.model.steering.deferred)
 	}
 	var firstDone engineMessage
 	select {
@@ -1233,18 +1230,18 @@ func TestTUIControllerRunsRejectedSteeringSequentially(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := engine.snapshot()
-	if !slices.Equal(calls, []string{"one", "two"}) || model.running || len(controller.steering.pending()) != 0 {
-		t.Fatalf("calls=%q running=%v pending=%q", calls, model.running, controller.steering.pending())
+	if !slices.Equal(calls, []string{"one", "two"}) || model.running || len(controller.model.steering.pending()) != 0 {
+		t.Fatalf("calls=%q running=%v pending=%q", calls, model.running, controller.model.steering.pending())
 	}
 }
 
 func TestTUIControllerIgnoresSteeringDeliveredAfterRestoration(t *testing.T) {
 	engine := &fakeEngine{clearFunction: func() []string { return []string{"accepted"} }}
 	model := newTUIModel(80, 24, Options{})
+	model.steering.accepted = []string{"accepted"}
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		steering: steeringCoordinator{accepted: []string{"accepted"}},
 	}
 
 	controller.restoreQueuedInput()
@@ -1259,19 +1256,19 @@ func TestTUIControllerIgnoresSteeringDeliveredAfterRestoration(t *testing.T) {
 func TestTUIControllerRestoresSteeringAfterRunError(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.running = true
+	model.steering.accepted = []string{"retry this"}
 	engine := &fakeEngine{clearFunction: func() []string { return []string{"retry this"} }}
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: engine, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		steering: steeringCoordinator{accepted: []string{"retry this"}},
 	}
 
 	failure := errors.New("failed")
 	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventEngine, engine: engineMessage{done: true, err: failure}}); err != nil {
 		t.Fatal(err)
 	}
-	if model.inputText() != "retry this" || len(controller.steering.pending()) != 0 || model.activity.kind != activityError {
-		t.Fatalf("input=%q steering=%q activity=%+v", model.inputText(), controller.steering.pending(), model.activity)
+	if model.inputText() != "retry this" || len(controller.model.steering.pending()) != 0 || model.activity.kind != activityError {
+		t.Fatalf("input=%q steering=%q activity=%+v", model.inputText(), controller.model.steering.pending(), model.activity)
 	}
 }
 
@@ -1279,13 +1276,13 @@ func TestTUIControllerTogglesFastMode(t *testing.T) {
 	var configured []bool
 	model := newTUIModel(80, 24, Options{Config: Config{FastModeAvailable: true}, Controls: Controls{SetFastMode: func(bool) error { return nil }}})
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		setFastMode: func(enabled bool) error {
+		controls: Controls{SetFastMode: func(enabled bool) error {
 			configured = append(configured, enabled)
 			return nil
-		},
-		saveCheckpoint: nil,
+		}},
+		stateChanges: StateChanges{Notify: nil},
 	}
 	for _, want := range []bool{true, false} {
 		if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionToggleFast}); err != nil {
@@ -1308,16 +1305,16 @@ func TestTUIControllerTogglesFastModeWhileRunning(t *testing.T) {
 	model := newTUIModel(80, 24, Options{Config: Config{FastModeAvailable: true}, Controls: Controls{SetFastMode: func(bool) error { return nil }}})
 	model.running = true
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		setFastMode: func(enabled bool) error {
+		controls: Controls{SetFastMode: func(enabled bool) error {
 			configured = enabled
 			return nil
-		},
-		saveCheckpoint: func(Checkpoint, bool) error {
+		}},
+		stateChanges: StateChanges{Notify: func(Checkpoint, bool) error {
 			t.Fatal("checkpoint saved while running")
 			return nil
-		},
+		}},
 	}
 	if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionToggleFast}); err != nil {
 		t.Fatal(err)
@@ -1334,16 +1331,16 @@ func TestTUIControllerAppliesThinkingLevelWhileRunning(t *testing.T) {
 	model.running = true
 	model.activity = activity{kind: activityThinking}
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		setThinkingLevel: func(level agent.ThinkingLevel) error {
+		controls: Controls{SetThinkingLevel: func(level agent.ThinkingLevel) error {
 			configured = level
 			return nil
-		},
-		saveCheckpoint: func(Checkpoint, bool) error {
+		}},
+		stateChanges: StateChanges{Notify: func(Checkpoint, bool) error {
 			checkpointCalls++
 			return nil
-		},
+		}},
 	}
 	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyShiftTab}}); err != nil {
 		t.Fatal(err)
@@ -1357,12 +1354,12 @@ func TestTUIControllerAppliesThinkingLevelOutsideModel(t *testing.T) {
 	var configured agent.ThinkingLevel
 	model := newTUIModel(80, 24, Options{Controls: Controls{SetThinkingLevel: func(agent.ThinkingLevel) error { return nil }}})
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		setThinkingLevel: func(level agent.ThinkingLevel) error {
+		controls: Controls{SetThinkingLevel: func(level agent.ThinkingLevel) error {
 			configured = level
 			return nil
-		},
+		}},
 	}
 	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyShiftTab}}); err != nil {
 		t.Fatal(err)

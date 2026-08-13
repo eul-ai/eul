@@ -47,15 +47,31 @@ type environment struct {
 	newToolset  toolsetFactory
 }
 
-type modelSelection struct {
-	main     string
+type modelSet struct {
+	primary  string
 	fast     string
 	balanced string
 }
 
+func (models modelSet) validate() error {
+	for _, value := range []struct {
+		name  string
+		model string
+	}{
+		{name: "primary", model: models.primary},
+		{name: "fast", model: models.fast},
+		{name: "balanced", model: models.balanced},
+	} {
+		if err := validateModel(value.model); err != nil {
+			return fmt.Errorf("%s model: %w", value.name, err)
+		}
+	}
+	return nil
+}
+
 type resolvedConfig struct {
 	provider            string
-	models              modelSelection
+	models              modelSet
 	thinkingLevel       agent.ThinkingLevel
 	fastMode            bool
 	cwd                 string
@@ -71,7 +87,7 @@ func resolveConfig(options Options, env environment, descriptor backend.Descript
 		thinkingLevel = agent.DefaultThinkingLevel
 	}
 
-	models, err := resolveModelSelection(options, descriptor.DefaultModels)
+	models, err := resolveModelSet(options, descriptor.DefaultModels)
 	if err != nil {
 		return resolvedConfig{}, err
 	}
@@ -103,20 +119,20 @@ func resolveConfig(options Options, env environment, descriptor backend.Descript
 	}, nil
 }
 
-func resolveModelSelection(options Options, defaults backend.ModelDefaults) (modelSelection, error) {
+func resolveModelSet(options Options, defaults backend.ModelDefaults) (modelSet, error) {
 	main, err := resolveConfiguredModel(options.Model, defaults.Main, "", "")
 	if err != nil {
-		return modelSelection{}, err
+		return modelSet{}, err
 	}
 	fast, err := resolveConfiguredModel(options.FastModel, defaults.Fast, main, "fast model")
 	if err != nil {
-		return modelSelection{}, err
+		return modelSet{}, err
 	}
 	balanced, err := resolveConfiguredModel(options.BalancedModel, defaults.Balanced, main, "balanced model")
 	if err != nil {
-		return modelSelection{}, err
+		return modelSet{}, err
 	}
-	return modelSelection{main: main, fast: fast, balanced: balanced}, nil
+	return modelSet{primary: main, fast: fast, balanced: balanced}, nil
 }
 
 func resolveConfiguredModel(override *string, providerDefault, fallback, name string) (string, error) {

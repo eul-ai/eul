@@ -24,6 +24,11 @@ type terminalOptionsBuilder struct {
 	subagentUpdates    <-chan subagent.Status
 	permissionRequests <-chan terminal.PermissionRequest
 	engine             *agent.Engine
+	checkpoints        *checkpointCoordinator
+	sessions           terminal.Sessions
+	initialCheckpoint  *terminal.Checkpoint
+	sessionID          string
+	previousTurnActive bool
 }
 
 func runtimeModelMetadata(backendRuntime backend.Runtime, model string) backend.ModelMetadata {
@@ -49,19 +54,19 @@ func resolveSessionModelMetadata(backendRuntime backend.Runtime, config resolved
 		return metadata
 	}
 
-	main := resolve(config.models.main)
+	main := resolve(config.models.primary)
 	return sessionModelMetadata{
 		main: main,
 		subagent: map[subagent.Profile]backend.ModelMetadata{
-			subagent.ProfileFast:     resolve(config.models.subagent(subagent.ProfileFast)),
-			subagent.ProfileBalanced: resolve(config.models.subagent(subagent.ProfileBalanced)),
-			subagent.ProfilePowerful: resolve(config.models.subagent(subagent.ProfilePowerful)),
+			subagent.ProfileFast:     resolve(config.models.forProfile(subagent.ProfileFast)),
+			subagent.ProfileBalanced: resolve(config.models.forProfile(subagent.ProfileBalanced)),
+			subagent.ProfilePowerful: resolve(config.models.forProfile(subagent.ProfilePowerful)),
 		},
 		thinkingLevel: main.ClampThinkingLevel(config.thinkingLevel),
 	}
 }
 
-func (source terminalOptionsBuilder) options() (terminal.Options, *terminalCallbacks) {
+func (source terminalOptionsBuilder) options() terminal.Options {
 	var loadUsage func(context.Context) (terminal.ProviderUsage, error)
 	if source.loadUsage != nil {
 		loadUsage = func(ctx context.Context) (terminal.ProviderUsage, error) {
@@ -77,7 +82,7 @@ func (source terminalOptionsBuilder) options() (terminal.Options, *terminalCallb
 			return terminal.ProviderUsage{Windows: windows}, err
 		}
 	}
-	callbacks := newTerminalCallbacks(source.engine)
+	callbacks := newTerminalCallbacks(source.engine, source.checkpoints)
 	return terminal.Options{
 		Input:      source.runtime.stdin,
 		Output:     source.runtime.stdout,
@@ -94,18 +99,21 @@ func (source terminalOptionsBuilder) options() (terminal.Options, *terminalCallb
 				return nil
 			},
 		},
-		Sessions:    callbacks.sessions,
-		Checkpoints: callbacks.checkpointsPort,
+		Sessions:     source.sessions,
+		StateChanges: terminalStateChanges(source.checkpoints),
 		Config: terminal.Config{
-			Model:             source.config.models.main,
-			WorkingDirectory:  source.config.cwd,
-			ThinkingLevel:     source.metadata.thinkingLevel,
-			ThinkingLevels:    source.metadata.main.ThinkingLevels,
-			FastMode:          source.config.fastMode,
-			FastModeAvailable: source.metadata.main.FastMode,
-			ContextWindow:     source.metadata.main.ContextWindow,
-			Skills:            source.config.skills,
-			Warnings:          source.warnings,
+			Model:              source.config.models.primary,
+			WorkingDirectory:   source.config.cwd,
+			ThinkingLevel:      source.metadata.thinkingLevel,
+			ThinkingLevels:     source.metadata.main.ThinkingLevels,
+			FastMode:           source.config.fastMode,
+			FastModeAvailable:  source.metadata.main.FastMode,
+			ContextWindow:      source.metadata.main.ContextWindow,
+			Skills:             source.config.skills,
+			Warnings:           source.warnings,
+			InitialCheckpoint:  source.initialCheckpoint,
+			SessionID:          source.sessionID,
+			PreviousTurnActive: source.previousTurnActive,
 		},
 		Events: terminal.Events{
 			Interrupts:         source.runtime.interrupts,
@@ -113,7 +121,14 @@ func (source terminalOptionsBuilder) options() (terminal.Options, *terminalCallb
 			PermissionRequests: source.permissionRequests,
 		},
 		Services: terminal.Services{LoadUsage: loadUsage},
-	}, callbacks
+	}
+}
+
+func terminalStateChanges(checkpoints *checkpointCoordinator) terminal.StateChanges {
+	if checkpoints == nil {
+		return terminal.StateChanges{}
+	}
+	return terminal.StateChanges{Notify: checkpoints.SaveTerminalCheckpoint}
 }
 
 func runtimeUsageLoader(backendRuntime backend.Runtime) func(context.Context) (backend.AccountUsage, error) {

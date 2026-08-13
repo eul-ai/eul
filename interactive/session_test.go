@@ -36,9 +36,9 @@ func (provider *profileMetadataProvider) metadataFor(model string) backend.Model
 	return provider.metadata[model]
 }
 
-func TestModelSelectionSelectsSubagentProfiles(t *testing.T) {
-	models := modelSelection{
-		main:     "powerful-model",
+func TestModelSetSelectsSubagentProfiles(t *testing.T) {
+	models := modelSet{
+		primary:  "powerful-model",
 		balanced: "balanced-model",
 		fast:     "fast-model",
 	}
@@ -50,7 +50,7 @@ func TestModelSelectionSelectsSubagentProfiles(t *testing.T) {
 		{profile: subagent.ProfileBalanced, want: "balanced-model"},
 		{profile: subagent.ProfilePowerful, want: "powerful-model"},
 	} {
-		if got := models.subagent(test.profile); got != test.want {
+		if got := models.forProfile(test.profile); got != test.want {
 			t.Fatalf("profile %q selected %q, want %q", test.profile, got, test.want)
 		}
 	}
@@ -86,7 +86,7 @@ func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 	cwd := t.TempDir()
 	skills := []skill.Skill{{Name: "review", Description: "Review code"}}
 	warnings := []string{"Skipped skill invalid: malformed"}
-	session, err := newAgentSession(resolvedConfig{models: modelSelection{main: "model"}, thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills, warnings: warnings}, environment{}, backendRuntime)
+	session, err := newAgentSession(resolvedConfig{models: modelSet{primary: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills, warnings: warnings}, environment{}, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestNewAgentSessionRejectsUnsupportedFastMode(t *testing.T) {
 	}}
 	backendRuntime := metadataFreeBackendRuntime{Runtime: configured}
 	session, err := newAgentSession(resolvedConfig{
-		models:   modelSelection{main: "model"},
+		models:   modelSet{primary: "model", fast: "model", balanced: "model"},
 		fastMode: true,
 		cwd:      t.TempDir(),
 	}, environment{}, backendRuntime)
@@ -157,7 +157,7 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 		return tool.NewRegistry(additional)
 	}}
 	session, err := newAgentSession(resolvedConfig{
-		models:        modelSelection{main: "main", fast: "fast", balanced: "balanced"},
+		models:        modelSet{primary: "main", fast: "fast", balanced: "balanced"},
 		thinkingLevel: agent.ThinkingHigh,
 		cwd:           t.TempDir(),
 	}, runtime, backendRuntime)
@@ -196,7 +196,7 @@ func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 		}), nil
 	}}
 	cwd := t.TempDir()
-	session, err := newAgentSession(resolvedConfig{models: modelSelection{main: "model"}, cwd: cwd}, runtime, backendRuntime)
+	session, err := newAgentSession(resolvedConfig{models: modelSet{primary: "model", fast: "model", balanced: "model"}, cwd: cwd}, runtime, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 			}), nil
 		}}
 	}
-	config := resolvedConfig{provider: "test", models: modelSelection{main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
+	config := resolvedConfig{provider: "test", models: modelSet{primary: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
 	store := newSessionStore(t.TempDir())
 
 	first, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, nil)
@@ -249,7 +249,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 		t.Fatal(err)
 	}
 	terminalCheckpoint := sessionStoreTestTerminalCheckpoint(t, "first prompt")
-	if err := first.terminalOptions.Checkpoints.Save(terminalCheckpoint, false); err != nil {
+	if err := first.terminalOptions.StateChanges.Notify(terminalCheckpoint, false); err != nil {
 		t.Fatal(err)
 	}
 	sessionID := first.persistence.handle.record.ID
@@ -285,7 +285,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(requests) != 2 || string(requests[1].State) != "saved-state" || len(requests[1].Inputs) != 1 || requests[1].Inputs[0].Text != "next prompt" {
+	if len(requests) != 2 || string(requests[1].State) != "saved-state" || len(requests[1].Inputs) != 1 || requests[1].Inputs[0].PlainText() != "next prompt" {
 		t.Fatalf("requests = %+v", requests)
 	}
 }
@@ -301,17 +301,17 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 	}
 	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
-			return agent.Response{Text: "result for " + request.Inputs[0].Text}, nil
+			return agent.Response{Text: "result for " + request.Inputs[0].PlainText()}, nil
 		}), nil
 	}}
-	config := resolvedConfig{provider: "test", models: modelSelection{main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
+	config := resolvedConfig{provider: "test", models: modelSet{primary: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
 	store := newSessionStore(t.TempDir())
 	session, err := newStoredAgentSession(config, runtime, backendRuntime, store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer session.finish(nil)
-	if err := session.terminalOptions.Checkpoints.Save(sessionStoreTestTerminalCheckpoint(t, "prompt"), false); err != nil {
+	if err := session.terminalOptions.StateChanges.Notify(sessionStoreTestTerminalCheckpoint(t, "prompt"), false); err != nil {
 		t.Fatal(err)
 	}
 	launch := tool.NewSubagent(session.subagents)
@@ -356,7 +356,7 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 			}), nil
 		}}
 	}
-	config := resolvedConfig{provider: "test", models: modelSelection{main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
+	config := resolvedConfig{provider: "test", models: modelSet{primary: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
 	store := newSessionStore(t.TempDir())
 
 	first, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, nil)
@@ -368,7 +368,7 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 		t.Fatal(err)
 	}
 	terminalCheckpoint := sessionStoreTestTerminalCheckpoint(t, "active prompt")
-	if err := first.terminalOptions.Checkpoints.Save(terminalCheckpoint, true); err != nil {
+	if err := first.terminalOptions.StateChanges.Notify(terminalCheckpoint, true); err != nil {
 		t.Fatal(err)
 	}
 	sessionID := first.persistence.handle.record.ID
@@ -458,7 +458,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.terminalOptions.Checkpoints.Save(sessionStoreTestTerminalCheckpoint(t, "saved prompt"), false); err != nil {
+	if err := session.terminalOptions.StateChanges.Notify(sessionStoreTestTerminalCheckpoint(t, "saved prompt"), false); err != nil {
 		t.Fatal(err)
 	}
 	sessionID := session.persistence.handle.record.ID
@@ -474,7 +474,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer handle.Close()
-	if restored.provider != "alternate" || restored.models != (modelSelection{main: "selected-model", fast: "selected-fast-model", balanced: "selected-balanced-model"}) || selected.Descriptor().ID != "alternate" {
+	if restored.provider != "alternate" || restored.models != (modelSet{primary: "selected-model", fast: "selected-fast-model", balanced: "selected-balanced-model"}) || selected.Descriptor().ID != "alternate" {
 		t.Fatalf("restored=%+v provider=%q", restored, selected.Descriptor().ID)
 	}
 }
@@ -482,7 +482,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	cwd := t.TempDir()
 	store := newSessionStore(t.TempDir())
-	corrupt, err := store.Create("test", cwd, modelSelection{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "corrupt"), false)
+	corrupt, err := store.Create("test", cwd, modelSet{primary: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "corrupt"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +493,7 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	if err := os.WriteFile(corruptPath, []byte(`{"version":99}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	valid, err := store.Create("test", cwd, modelSelection{main: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "valid"), false)
+	valid, err := store.Create("test", cwd, modelSet{primary: "model", fast: "persisted-fast", balanced: "persisted-balanced"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "valid"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,8 +512,8 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	if len(config.warnings) != 1 || !strings.Contains(config.warnings[0], "Skipped session") || !strings.Contains(config.warnings[0], "unsupported session version") {
 		t.Fatalf("warnings = %v", config.warnings)
 	}
-	if config.models != (modelSelection{main: "model", fast: "gpt-5.6-luna", balanced: "gpt-5.6-terra"}) {
-		t.Fatalf("restored default models = %+v", config)
+	if config.models != (modelSet{primary: "model", fast: "persisted-fast", balanced: "persisted-balanced"}) {
+		t.Fatalf("restored models = %+v", config)
 	}
 }
 
@@ -530,7 +530,7 @@ func TestNewAgentSessionReportsToolsetConfigurationFailure(t *testing.T) {
 			return agent.Response{}, nil
 		}), nil
 	}}
-	_, err := newAgentSession(resolvedConfig{models: modelSelection{main: "model"}, cwd: t.TempDir()}, runtime, backendRuntime)
+	_, err := newAgentSession(resolvedConfig{models: modelSet{primary: "model", fast: "model", balanced: "model"}, cwd: t.TempDir()}, runtime, backendRuntime)
 	if !errors.Is(err, configureErr) || !strings.Contains(err.Error(), "configure tools") {
 		t.Fatalf("newAgentSession error = %v", err)
 	}

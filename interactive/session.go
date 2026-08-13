@@ -23,14 +23,13 @@ type sessionToolset struct {
 }
 
 type agentSession struct {
-	engine            *agent.Engine
-	tools             *tool.Registry
-	subagents         *subagent.Manager
-	backendRuntime    backend.Runtime
-	terminalOptions   terminal.Options
-	terminalCallbacks *terminalCallbacks
-	settings          *agent.Settings
-	persistence       *sessionPersistence
+	engine          *agent.Engine
+	tools           *tool.Registry
+	subagents       *subagent.Manager
+	backendRuntime  backend.Runtime
+	terminalOptions terminal.Options
+	settings        *agent.Settings
+	persistence     *sessionPersistence
 }
 
 func newSessionToolset(
@@ -73,22 +72,27 @@ func newSessionToolset(
 }
 
 func newAgentSession(config resolvedConfig, env environment, backendRuntime backend.Runtime) (*agentSession, error) {
-	return newAgentSessionWithCheckpointing(config, env, backendRuntime, false)
+	session, options, err := newAgentSessionComponents(config, env, backendRuntime, false)
+	if err != nil {
+		return nil, err
+	}
+	session.terminalOptions = options.options()
+	return session, nil
 }
 
-func newAgentSessionWithCheckpointing(
+func newAgentSessionComponents(
 	config resolvedConfig,
 	env environment,
 	backendRuntime backend.Runtime,
 	checkpointing bool,
-) (*agentSession, error) {
+) (*agentSession, terminalOptionsBuilder, error) {
 	provider, err := backendRuntime.NewProvider()
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("configure provider: %w", err), closeBackendRuntime(backendRuntime))
+		return nil, terminalOptionsBuilder{}, errors.Join(fmt.Errorf("configure provider: %w", err), closeBackendRuntime(backendRuntime))
 	}
 	metadata := resolveSessionModelMetadata(backendRuntime, config)
 	if config.fastMode && !metadata.main.FastMode {
-		return nil, errors.Join(fmt.Errorf("fast mode is unavailable for model %q", config.models.main), closeBackendRuntime(backendRuntime))
+		return nil, terminalOptionsBuilder{}, errors.Join(fmt.Errorf("fast mode is unavailable for model %q", config.models.primary), closeBackendRuntime(backendRuntime))
 	}
 	loadUsage := runtimeUsageLoader(backendRuntime)
 	warnings := append([]string(nil), config.warnings...)
@@ -103,11 +107,11 @@ func newAgentSessionWithCheckpointing(
 		return engine.CompleteGoal()
 	})
 	if err != nil {
-		return nil, errors.Join(err, closeBackendRuntime(backendRuntime))
+		return nil, terminalOptionsBuilder{}, errors.Join(err, closeBackendRuntime(backendRuntime))
 	}
 	engine = agent.New(provider, tools.registry, engineOptions(
 		config,
-		config.models.main,
+		config.models.primary,
 		settings,
 		checkpointing,
 		tools.subagents,
@@ -119,7 +123,7 @@ func newAgentSessionWithCheckpointing(
 		backendRuntime: backendRuntime,
 		settings:       settings,
 	}
-	session.terminalOptions, session.terminalCallbacks = terminalOptionsBuilder{
+	options := terminalOptionsBuilder{
 		config:             config,
 		runtime:            env,
 		metadata:           metadata,
@@ -128,8 +132,8 @@ func newAgentSessionWithCheckpointing(
 		subagentUpdates:    tools.subagentUpdates,
 		permissionRequests: permissionRequests,
 		engine:             engine,
-	}.options()
-	return session, nil
+	}
+	return session, options, nil
 }
 
 func (session *agentSession) run(ctx context.Context, runner sessionRunner) (terminal.RunOutcome, error) {

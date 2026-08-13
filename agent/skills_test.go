@@ -61,7 +61,7 @@ func TestEngineExpandsSkillCommandWithoutMovingImage(t *testing.T) {
 	skills, _ := skill.Load(filepath.Dir(filepath.Dir(path)))
 	provider := &scriptedProvider{t: t, steps: []providerStep{
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			parts := request.Inputs[0].Content.Parts
+			parts := request.Inputs[0].Content
 			if len(parts) != 4 || parts[0].Text != "  " || !strings.Contains(parts[1].Text, "Follow the review process.") || parts[2].Kind != ContentPartImage || parts[2].Image == nil || parts[3].Text != " after" {
 				t.Fatalf("content = %+v", parts)
 			}
@@ -118,7 +118,7 @@ func TestEngineExpandsSkillCommandsBeforeProviderRequest(t *testing.T) {
 			if len(request.Inputs) != 1 || request.Inputs[0].Kind != InputUser {
 				t.Fatalf("inputs = %+v", request.Inputs)
 			}
-			input := request.Inputs[0].Text
+			input := request.Inputs[0].PlainText()
 			if !strings.Contains(input, "Follow the review process.") || !strings.HasSuffix(input, "</skill>\n\ncheck tests") {
 				t.Fatalf("skill input = %q", input)
 			}

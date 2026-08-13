@@ -68,7 +68,7 @@ func TestEngineDeliversAndAcknowledgesInbox(t *testing.T) {
 		if strings.Count(request.Instructions, "subagent-2: inspect") != 1 {
 			t.Fatalf("instructions = %q", request.Instructions)
 		}
-		if len(request.Inputs) != 2 || request.Inputs[1].Kind != InputInbox || !strings.Contains(request.Inputs[1].Text, "result") {
+		if len(request.Inputs) != 2 || request.Inputs[1].Kind != InputInbox || !strings.Contains(request.Inputs[1].PlainText(), "result") {
 			t.Fatalf("inputs = %+v", request.Inputs)
 		}
 		return Response{Text: "answer", State: []byte("state")}, nil
@@ -127,7 +127,7 @@ func TestEngineAutomaticallyCompactsOrdinaryStateBeforeDeliveringInbox(t *testin
 	provider := &compactingProvider{
 		Provider: inboxProvider(func(_ context.Context, request Request, _ StreamObserver) (Response, error) {
 			generateCalls++
-			if string(request.State) != "compacted" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputInbox || request.Inputs[0].Text != "completion" {
+			if string(request.State) != "compacted" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputInbox || request.Inputs[0].PlainText() != "completion" {
 				t.Fatalf("generation request = %+v", request)
 			}
 			if strings.Count(request.Instructions, "subagent-4: inspect") != 1 {
@@ -145,7 +145,7 @@ func TestEngineAutomaticallyCompactsOrdinaryStateBeforeDeliveringInbox(t *testin
 			return true
 		},
 		compact: func(_ context.Context, request Request) (CompactResponse, error) {
-			if len(request.Inputs) != 1 || request.Inputs[0].Kind != InputUser || request.Inputs[0].Text != "start" {
+			if len(request.Inputs) != 1 || request.Inputs[0].Kind != InputUser || request.Inputs[0].PlainText() != "start" {
 				t.Fatalf("compaction request included inbox: %+v", request)
 			}
 			if strings.Contains(request.Instructions, "subagent-4: inspect") {
@@ -177,12 +177,12 @@ func TestEngineReattachesInboxAfterErrorCompaction(t *testing.T) {
 				t.Fatalf("active context count in %q", request.Instructions)
 			}
 			if generateCalls == 1 {
-				if len(request.Inputs) != 2 || request.Inputs[1].Kind != InputInbox || request.Inputs[1].Text != "completion" {
+				if len(request.Inputs) != 2 || request.Inputs[1].Kind != InputInbox || request.Inputs[1].PlainText() != "completion" {
 					t.Fatalf("initial generation request = %+v", request)
 				}
 				return Response{}, contextLimit
 			}
-			if string(request.State) != "compacted" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputInbox || request.Inputs[0].Text != "completion" {
+			if string(request.State) != "compacted" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputInbox || request.Inputs[0].PlainText() != "completion" {
 				t.Fatalf("retry request = %+v", request)
 			}
 			return Response{Text: "synthesized", State: []byte("delivered")}, nil
@@ -236,7 +236,7 @@ func TestEngineCompletionAfterSettlementRemainsForNextUserTurn(t *testing.T) {
 	provider := inboxProvider(func(_ context.Context, request Request, _ StreamObserver) (Response, error) {
 		calls++
 		if calls == 2 {
-			if len(request.Inputs) != 2 || request.Inputs[0].Kind != InputUser || request.Inputs[1].Kind != InputInbox || request.Inputs[1].Text != "after settlement" {
+			if len(request.Inputs) != 2 || request.Inputs[0].Kind != InputUser || request.Inputs[1].Kind != InputInbox || request.Inputs[1].PlainText() != "after settlement" {
 				t.Fatalf("second turn inputs = %+v", request.Inputs)
 			}
 		}
@@ -285,7 +285,7 @@ func TestEngineSettlementDeliversCompletionThatRacesFinalAnswer(t *testing.T) {
 		case 1:
 			return Response{Text: "premature", State: []byte("first")}, nil
 		case 2:
-			if len(request.Inputs) != 1 || request.Inputs[0].Kind != InputInbox || request.Inputs[0].Text != "late completion" {
+			if len(request.Inputs) != 1 || request.Inputs[0].Kind != InputInbox || request.Inputs[0].PlainText() != "late completion" {
 				t.Fatalf("second inputs = %+v", request.Inputs)
 			}
 			return Response{Text: "final", State: []byte("second")}, nil

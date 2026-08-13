@@ -18,7 +18,7 @@ func TestBuildCreateRequest(t *testing.T) {
 		Model:    "model",
 		FastMode: true,
 		State:    state,
-		Inputs:   []agent.Input{{Kind: agent.InputToolResult, CallID: "call_1", Text: "failed", IsError: true}},
+		Inputs:   []agent.Input{{Kind: agent.InputToolResult, CallID: "call_1", Tool: "read", Text: "failed", IsError: true}},
 		Tools:    []agent.ToolDefinition{strictTestTool("read")},
 	}, defaultMaxStateBytes)
 	if err != nil {
@@ -75,7 +75,7 @@ func TestInboxInputSurvivesContinuationState(t *testing.T) {
 func TestBuildCreateRequestRejectsInvalidInputKinds(t *testing.T) {
 	for _, input := range []agent.Input{
 		{Kind: "unknown", Text: "value"},
-		{Kind: agent.InputInbox, Content: &agent.Content{}},
+		{Kind: agent.InputInbox, Content: []agent.ContentPart{{Kind: agent.ContentPartText, Text: "invalid"}}},
 	} {
 		if _, _, err := buildCreateRequest(agent.Request{Inputs: []agent.Input{input}}, defaultMaxStateBytes); err == nil {
 			t.Fatalf("input %+v was accepted", input)
@@ -86,12 +86,12 @@ func TestBuildCreateRequestRejectsInvalidInputKinds(t *testing.T) {
 func TestEncodeInputContentInOrder(t *testing.T) {
 	items, err := encodeInputs([]agent.Input{{
 		Kind: agent.InputUser,
-		Content: &agent.Content{Parts: []agent.ContentPart{
+		Content: []agent.ContentPart{
 			{Kind: agent.ContentPartText, Text: "before"},
 			{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("one")}},
 			{Kind: agent.ContentPartText, Text: "after"},
 			{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("two")}},
-		}},
+		},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func TestOrderedInputContentSurvivesContinuationState(t *testing.T) {
 		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("one")}},
 		{Kind: agent.ContentPartText, Text: "after"},
 	}
-	request, newItems, err := buildCreateRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputUser, Content: &agent.Content{Parts: parts}}}}, defaultMaxStateBytes)
+	request, newItems, err := buildCreateRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputUser, Content: parts}}}, defaultMaxStateBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,23 +139,23 @@ func TestOrderedInputContentSurvivesContinuationState(t *testing.T) {
 }
 
 func TestEncodeTextAndImageOnlyContent(t *testing.T) {
-	text, err := encodeInputs([]agent.Input{{Kind: agent.InputUser, Text: "hello"}})
+	text, err := encodeInputs([]agent.Input{agent.NewTextInput("hello")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var textMessage struct {
-		Content string `json:"content"`
+		Content []inputContentPart `json:"content"`
 	}
-	if err := json.Unmarshal(text[0], &textMessage); err != nil || textMessage.Content != "hello" {
+	if err := json.Unmarshal(text[0], &textMessage); err != nil || len(textMessage.Content) != 1 || textMessage.Content[0] != (inputContentPart{Type: "input_text", Text: "hello"}) {
 		t.Fatalf("text input = %s, error = %v", text[0], err)
 	}
 
 	image, err := encodeInputs([]agent.Input{{
 		Kind: agent.InputUser,
-		Content: &agent.Content{Parts: []agent.ContentPart{{
+		Content: []agent.ContentPart{{
 			Kind:  agent.ContentPartImage,
 			Image: &agent.Image{MediaType: "image/png", Data: []byte("png")},
-		}}},
+		}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -171,7 +171,7 @@ func TestEncodeTextAndImageOnlyContent(t *testing.T) {
 func TestBuildCompactRequest(t *testing.T) {
 	request, err := buildCompactRequest(agent.Request{
 		Model:  "model",
-		Inputs: []agent.Input{{Kind: agent.InputUser, Text: "hello"}},
+		Inputs: []agent.Input{agent.NewTextInput("hello")},
 	}, defaultMaxStateBytes)
 	if err != nil {
 		t.Fatal(err)
@@ -204,19 +204,19 @@ func TestCompactedStateItems(t *testing.T) {
 }
 
 func TestBuildCreateRequestReservesResponseOutput(t *testing.T) {
-	state, err := encodeState(nil, nil, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"` + strings.Repeat("x", 40) + `"}`)}, 200)
+	state, err := encodeState(nil, nil, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"` + strings.Repeat("x", 40) + `"}`)}, 240)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := agent.Request{State: state, Inputs: []agent.Input{{Kind: agent.InputUser, Text: strings.Repeat("y", 30)}}}
+	request := agent.Request{State: state, Inputs: []agent.Input{agent.NewTextInput(strings.Repeat("y", 30))}}
 
-	if _, _, err := buildCreateRequest(request, 200); err != nil {
+	if _, _, err := buildCreateRequest(request, 240); err != nil {
 		t.Fatalf("request did not fit full state limit: %v", err)
 	}
-	if _, _, err := buildCreateRequestWithLimit(request, 200, 100); err == nil || !strings.Contains(err.Error(), "continuation state exceeds 100 bytes") {
+	if _, _, err := buildCreateRequestWithLimit(request, 240, 100); err == nil || !strings.Contains(err.Error(), "continuation state exceeds 100 bytes") {
 		t.Fatalf("reserved request error = %v", err)
 	}
-	if _, err := buildCompactRequest(request, 200); err != nil {
+	if _, err := buildCompactRequest(request, 240); err != nil {
 		t.Fatalf("compact request could not decode full state: %v", err)
 	}
 }
@@ -225,10 +225,10 @@ func TestBuildCreateRequestRejectsInputsThatCannotFitState(t *testing.T) {
 	_, _, err := buildCreateRequest(agent.Request{
 		Inputs: []agent.Input{{
 			Kind: agent.InputUser,
-			Content: &agent.Content{Parts: []agent.ContentPart{{
+			Content: []agent.ContentPart{{
 				Kind:  agent.ContentPartImage,
 				Image: &agent.Image{MediaType: "image/png", Data: make([]byte, 100)},
-			}}},
+			}},
 		}},
 	}, 100)
 	if err == nil || !strings.Contains(err.Error(), "continuation state exceeds") {

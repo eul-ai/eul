@@ -34,7 +34,6 @@ type tuiRenderer struct {
 }
 
 func (r *tuiRenderer) render(model *tuiModel) string {
-	r.normalizeViewport(model)
 	output, next := r.renderPending(model, false)
 	r.commit(next)
 	return output

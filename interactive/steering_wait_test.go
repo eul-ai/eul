@@ -53,7 +53,7 @@ func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) 
 				Arguments: json.RawMessage(`{"timeout_ms":1000}`),
 			}}}, nil
 		case 3:
-			if len(request.Inputs) != 2 || request.Inputs[0].Kind != agent.InputToolResult || !strings.Contains(request.Inputs[0].Text, "then continue the original task") || request.Inputs[1].Kind != agent.InputUser || request.Inputs[1].Text != "redirect" || !strings.Contains(request.Instructions, "Do not finish while required delegated work is still active") {
+			if len(request.Inputs) != 2 || request.Inputs[0].Kind != agent.InputToolResult || !strings.Contains(request.Inputs[0].PlainText(), "then continue the original task") || request.Inputs[1].Kind != agent.InputUser || request.Inputs[1].PlainText() != "redirect" || !strings.Contains(request.Instructions, "Do not finish while required delegated work is still active") {
 				return agent.Response{}, fmt.Errorf("steering request = %+v", request)
 			}
 			return agent.Response{Text: "redirected"}, nil

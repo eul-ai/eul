@@ -431,8 +431,8 @@ func handleModelKey(model *tuiModel, key keyEvent, setThinkingLevel func(agent.T
 	stopped := make(chan struct{})
 	defer close(stopped)
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, engine: &fakeEngine{}, output: io.Discard,
-		engineMessages: messages, stopped: stopped, setThinkingLevel: setThinkingLevel,
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: Controls{SetThinkingLevel: setThinkingLevel}, output: io.Discard,
+		engineMessages: messages, stopped: stopped,
 	}
 	return controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: key})
 }

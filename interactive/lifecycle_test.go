@@ -112,7 +112,7 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 			if options.Config.Model != "main-model" || options.Config.ThinkingLevel != agent.ThinkingLow || !options.Config.FastMode {
 				t.Fatalf("new options = model %q, thinking %q, fast %v", options.Config.Model, options.Config.ThinkingLevel, options.Config.FastMode)
 			}
-			if err := options.Checkpoints.Save(sessionStoreTestTerminalCheckpoint(t, "new session prompt"), false); err != nil {
+			if err := options.StateChanges.Notify(sessionStoreTestTerminalCheckpoint(t, "new session prompt"), false); err != nil {
 				t.Fatal(err)
 			}
 			return terminal.RunOutcome{Action: terminal.RunExit}, nil
@@ -129,7 +129,7 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 	if len(runner.options) != 2 {
 		t.Fatalf("runner calls = %d, want 2", len(runner.options))
 	}
-	if err := runner.options[1].Checkpoints.Save(terminal.EmptyCheckpoint(), false); err == nil || !strings.Contains(err.Error(), "session is closed") {
+	if err := runner.options[1].StateChanges.Notify(terminal.EmptyCheckpoint(), false); err == nil || !strings.Contains(err.Error(), "session is closed") {
 		t.Fatalf("save after new session cleanup = %v", err)
 	}
 	newRecord, err := store.Open(ctx, cwd, runner.options[1].Config.SessionID)
@@ -158,7 +158,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 	target, err := store.Create(
 		"test",
 		targetCWD,
-		modelSelection{main: "resume-main", fast: "resume-fast", balanced: "resume-balanced"},
+		modelSet{primary: "resume-main", fast: "resume-fast", balanced: "resume-balanced"},
 		agent.ThinkingMedium,
 		sessionStoreTestAgentCheckpoint(t),
 		subagent.EmptyCheckpoint(),
@@ -224,7 +224,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 	if len(runner.options) != 2 {
 		t.Fatalf("runner calls = %d, want 2", len(runner.options))
 	}
-	if err := runner.options[1].Checkpoints.Save(targetTerminal, false); err == nil || !strings.Contains(err.Error(), "session is closed") {
+	if err := runner.options[1].StateChanges.Notify(targetTerminal, false); err == nil || !strings.Contains(err.Error(), "session is closed") {
 		t.Fatalf("save after resumed session cleanup = %v", err)
 	}
 

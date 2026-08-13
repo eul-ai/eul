@@ -122,7 +122,7 @@ func (permission permissionModel) active() bool {
 }
 
 type operationModel struct {
-	steeringView     *steeringCoordinator
+	steering         steeringCoordinator
 	permission       permissionModel
 	turnExecutedTool bool
 	running          bool
@@ -201,10 +201,41 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 }
 
 func (m *tuiModel) pendingSteering() []string {
-	if m.steeringView == nil {
-		return nil
+	return m.steering.pending()
+}
+
+func (m *tuiModel) enqueueSteering(prompt string, accepted bool) {
+	m.steering.enqueue(prompt, accepted)
+	m.conversationChanged()
+}
+
+func (m *tuiModel) deliverSteering(prompt string) bool {
+	if !m.steering.delivered(prompt) {
+		return false
 	}
-	return m.steeringView.pending()
+	m.conversationChanged()
+	return true
+}
+
+func (m *tuiModel) nextDeferredSteering() (string, bool) {
+	prompt, ok := m.steering.nextDeferred()
+	if ok {
+		m.conversationChanged()
+	}
+	return prompt, ok
+}
+
+func (m *tuiModel) restoreDeferredSteering(prompt string) {
+	m.steering.restoreDeferred(prompt)
+	m.conversationChanged()
+}
+
+func (m *tuiModel) clearSteering(clear func() []string) []string {
+	messages := m.steering.restore(clear)
+	if len(messages) > 0 {
+		m.conversationChanged()
+	}
+	return messages
 }
 
 func (m *tuiModel) appendStream(kind blockKind, text string) {
@@ -215,13 +246,13 @@ func (m *tuiModel) appendStream(kind blockKind, text string) {
 
 	if m.streamOpen && m.streamKind == kind && len(m.blocks) > 0 {
 		m.blocks[len(m.blocks)-1].text += text
-		m.conversationVersion++
+		m.conversationChanged()
 		return
 	}
 
 	m.closeStream()
 	m.blocks = append(m.blocks, conversationBlock{kind: kind, text: text})
-	m.conversationVersion++
+	m.conversationChanged()
 	m.streamKind = kind
 	m.streamOpen = true
 }
@@ -229,6 +260,10 @@ func (m *tuiModel) appendStream(kind blockKind, text string) {
 func (m *tuiModel) appendBlock(kind blockKind, text string) {
 	m.closeStream()
 	m.blocks = append(m.blocks, conversationBlock{kind: kind, text: sanitizeAssistantText(text)})
+	m.conversationChanged()
+}
+
+func (m *tuiModel) conversationChanged() {
 	m.conversationVersion++
 }
 
@@ -284,7 +319,7 @@ func (m *tuiModel) startTool(call agent.ToolCall, presentation agent.ToolPresent
 		toolName:   call.Name,
 		tool:       sanitizeToolPresentation(call, presentation),
 	})
-	m.conversationVersion++
+	m.conversationChanged()
 	m.setActiveActivity(activity{kind: activityTool, detail: toolActivityDetail(call, m.blocks[len(m.blocks)-1].tool)})
 }
 
@@ -298,7 +333,7 @@ func (m *tuiModel) updateTool(call agent.ToolCall, presentation agent.ToolPresen
 		m.blocks[index].toolName = call.Name
 	}
 	m.blocks[index].tool = sanitizeToolPresentation(call, presentation)
-	m.conversationVersion++
+	m.conversationChanged()
 }
 
 func (m *tuiModel) finishTool(call agent.ToolCall, presentation agent.ToolPresentation, result agent.ToolResult) {
@@ -322,7 +357,7 @@ func (m *tuiModel) finishTool(call agent.ToolCall, presentation agent.ToolPresen
 	}
 	block.tool = sanitizeToolPresentation(call, presentation)
 	block.toolOutcome = sanitizeAssistantText(toolResultOutcome(result, presentation))
-	m.conversationVersion++
+	m.conversationChanged()
 }
 
 func (m *tuiModel) toolBlockIndex(callID string) int {
@@ -392,7 +427,7 @@ func (m *tuiModel) clearPermission() {
 
 func (m *tuiModel) clearConversation() {
 	m.blocks = nil
-	m.conversationVersion++
+	m.conversationChanged()
 	m.closeStream()
 	m.contextTokens = 0
 	m.clearPermission()
@@ -410,7 +445,7 @@ func (m *tuiModel) finishPendingTools(outcome string) {
 		}
 		m.blocks[index].kind = blockToolError
 		m.blocks[index].toolOutcome = outcome
-		m.conversationVersion++
+		m.conversationChanged()
 	}
 }
 
@@ -427,7 +462,7 @@ func (m *tuiModel) appendUserContent(content []agent.ContentPart) {
 	m.closeStream()
 	content = sanitizeContent(content)
 	m.blocks = append(m.blocks, conversationBlock{kind: blockUser, text: contentText(content), content: content})
-	m.conversationVersion++
+	m.conversationChanged()
 }
 
 func (m *tuiModel) beginTurnOperation() {

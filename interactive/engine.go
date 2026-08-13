@@ -36,5 +36,5 @@ func engineOptions(config resolvedConfig, model string, settings *agent.Settings
 }
 
 func childEngineOptions(config resolvedConfig, profile subagent.Profile, thinkingLevel agent.ThinkingLevel, fastMode bool) agent.Options {
-	return engineOptions(config, config.models.subagent(profile), agent.NewSettings(thinkingLevel, fastMode), false, nil)
+	return engineOptions(config, config.models.forProfile(profile), agent.NewSettings(thinkingLevel, fastMode), false, nil)
 }

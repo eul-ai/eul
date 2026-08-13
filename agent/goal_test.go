@@ -21,7 +21,7 @@ func TestEngineContinuesActiveGoalBeforeSettling(t *testing.T) {
 			if string(request.State) != "partial-state" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputUser {
 				t.Fatalf("goal continuation request = %+v", request)
 			}
-			prompt := request.Inputs[0].Text
+			prompt := request.Inputs[0].PlainText()
 			if prompt != goalContinuationPrompt+"\n\nGoal: finish the migration" {
 				t.Fatalf("goal continuation prompt = %q", prompt)
 			}
@@ -114,7 +114,7 @@ func TestEngineDrainsSteeringBeforeGoalContinuation(t *testing.T) {
 			return Response{Text: "second steering", State: []byte("steer-two")}, nil
 		},
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if string(request.State) != "steer-two" || len(request.Inputs) != 1 || request.Inputs[0].Text != goalContinuationPrompt+"\n\nGoal: keep going" {
+			if string(request.State) != "steer-two" || len(request.Inputs) != 1 || request.Inputs[0].PlainText() != goalContinuationPrompt+"\n\nGoal: keep going" {
 				t.Fatalf("goal request = %+v", request)
 			}
 			engine.ClearGoal()

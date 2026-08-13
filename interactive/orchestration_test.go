@@ -82,7 +82,7 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 	if driver.runtime.closeCalls != 1 {
 		t.Fatalf("backend close calls = %d, want 1", driver.runtime.closeCalls)
 	}
-	if factoryCalls != 1 || gotRequest.Model != "gpt-5.6-sol" || gotRequest.ThinkingLevel != agent.ThinkingXHigh || !gotRequest.FastMode || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].Text != "test prompt" {
+	if factoryCalls != 1 || gotRequest.Model != "gpt-5.6-sol" || gotRequest.ThinkingLevel != agent.ThinkingXHigh || !gotRequest.FastMode || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].PlainText() != "test prompt" {
 		t.Fatalf("factory calls=%d request=%+v", factoryCalls, gotRequest)
 	}
 	if result.Text != "answer" {
@@ -150,7 +150,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "subagent" {
 						t.Fatalf("launch continuation inputs = %+v", request.Inputs)
 					}
-					output := request.Inputs[0].Text
+					output := request.Inputs[0].PlainText()
 					if !strings.Contains(output, "Started subagents (model: balanced, thinking: low)") || !strings.Contains(output, "subagent-1: review alpha") || !strings.Contains(output, "subagent-2: review beta") || strings.Contains(output, "finding for") {
 						t.Fatalf("launch output = %q", output)
 					}
@@ -160,7 +160,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 						Arguments: []byte(`{"path":"AGENTS.md"}`),
 					}}}, nil
 				case 3:
-					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "read" || !strings.Contains(request.Inputs[0].Text, projectInstructions) {
+					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "read" || !strings.Contains(request.Inputs[0].PlainText(), projectInstructions) {
 						t.Fatalf("independent continuation inputs = %+v", request.Inputs)
 					}
 					close(releaseChildren)
@@ -170,7 +170,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 						Arguments: []byte(`{}`),
 					}}}, nil
 				case 4:
-					if len(request.Inputs) != 2 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "subagent_wait" || !strings.Contains(request.Inputs[0].Text, "completion is available") || request.Inputs[1].Kind != agent.InputInbox || !strings.Contains(request.Inputs[1].Text, "finding for review") {
+					if len(request.Inputs) != 2 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "subagent_wait" || !strings.Contains(request.Inputs[0].PlainText(), "completion is available") || request.Inputs[1].Kind != agent.InputInbox || !strings.Contains(request.Inputs[1].PlainText(), "finding for review") {
 						t.Fatalf("wait continuation inputs = %+v", request.Inputs)
 					}
 					if err := sink("combined answer"); err != nil {
@@ -178,7 +178,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 					}
 					return agent.Response{Text: "combined answer"}, nil
 				case 5:
-					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputInbox || !strings.Contains(request.Inputs[0].Text, "finding for review") {
+					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputInbox || !strings.Contains(request.Inputs[0].PlainText(), "finding for review") {
 						t.Fatalf("late completion inputs = %+v", request.Inputs)
 					}
 					return agent.Response{Text: "combined answer"}, nil
@@ -197,7 +197,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 				t.Fatalf("child inputs = %+v", request.Inputs)
 			}
 			<-releaseChildren
-			return agent.Response{Text: "finding for " + request.Inputs[0].Text}, nil
+			return agent.Response{Text: "finding for " + request.Inputs[0].PlainText()}, nil
 		}), nil
 	}
 
@@ -244,7 +244,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 		if !slices.Equal(names, wantNames) {
 			t.Fatalf("child tools = %v, want %v", names, wantNames)
 		}
-		tasks = append(tasks, request.Inputs[0].Text)
+		tasks = append(tasks, request.Inputs[0].PlainText())
 	}
 	slices.Sort(tasks)
 	if !slices.Equal(tasks, []string{"review alpha", "review beta"}) {
