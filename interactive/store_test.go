@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -118,20 +117,6 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 	}
 	if err := explicit.Close(); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func assertSessionSemanticJSON(t *testing.T, got, want []byte) {
-	t.Helper()
-	var gotValue, wantValue any
-	if err := json.Unmarshal(got, &gotValue); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(want, &wantValue); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(gotValue, wantValue) {
-		t.Fatalf("JSON mismatch:\ngot:  %s\nwant: %s", got, want)
 	}
 }
 

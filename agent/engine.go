@@ -404,10 +404,6 @@ func waitForRetry(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-func (e *Engine) compact(ctx context.Context, sink EventSink, request Request, current conversationState) (Request, conversationState, Usage, error) {
-	return e.compactSized(ctx, sink, request, request, current)
-}
-
 func (e *Engine) compactSized(ctx context.Context, sink EventSink, compactRequest, sizingRequest Request, current conversationState) (Request, conversationState, Usage, error) {
 	compactor, canCompact := e.provider.(Compactor)
 	if !canCompact || !compactor.ShouldCompact(sizingRequest, current.usage) {
