@@ -194,28 +194,16 @@ func (store *sessionStore) List(cwd string) ([]terminal.SessionSummary, []string
 			continue
 		}
 		path := filepath.Join(directory, entry.Name())
-		record, err := readSessionRecord(path)
+		summary, workingDirectory, err := readSessionSummary(path)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("Skipped session %s: %v", filepath.ToSlash(path), err))
 			continue
 		}
-		if record.WorkingDirectory != cwd {
+		if workingDirectory != cwd {
 			warnings = append(warnings, fmt.Sprintf("Skipped session %s: stored working directory does not match", filepath.ToSlash(path)))
 			continue
 		}
-		description := record.Description
-		if description == "" {
-			description = record.Terminal.Description()
-		}
-		if description == "" {
-			continue
-		}
-		summaries = append(summaries, terminal.SessionSummary{
-			ID:          record.ID,
-			Description: description,
-			UpdatedAt:   record.UpdatedAt,
-			Active:      record.Status == sessionActive,
-		})
+		summaries = append(summaries, summary)
 	}
 	slices.SortFunc(summaries, func(left, right terminal.SessionSummary) int {
 		if order := right.UpdatedAt.Compare(left.UpdatedAt); order != 0 {
@@ -359,6 +347,146 @@ func (handle *sessionHandle) Close() error {
 
 func sessionLockPath(path string) string {
 	return strings.TrimSuffix(path, ".json") + ".lock"
+}
+
+func readSessionSummary(path string) (terminal.SessionSummary, string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return terminal.SessionSummary{}, "", fmt.Errorf("inspect session: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return terminal.SessionSummary{}, "", errors.New("session path is not a regular file")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return terminal.SessionSummary{}, "", errors.New("session file permissions must be 0600")
+	}
+	if info.Size() > maxSessionBytes {
+		return terminal.SessionSummary{}, "", fmt.Errorf("session exceeds %d bytes", maxSessionBytes)
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return terminal.SessionSummary{}, "", fmt.Errorf("open session: %w", err)
+	}
+	defer file.Close()
+
+	decoder := json.NewDecoder(io.LimitReader(file, maxSessionBytes+1))
+	opening, err := decoder.Token()
+	if err != nil {
+		return terminal.SessionSummary{}, "", fmt.Errorf("decode session: %w", err)
+	}
+	if opening != json.Delim('{') {
+		return terminal.SessionSummary{}, "", errors.New("decode session: expected object")
+	}
+
+	var record sessionRecord
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return terminal.SessionSummary{}, "", fmt.Errorf("decode session: %w", err)
+		}
+		name, ok := key.(string)
+		if !ok {
+			return terminal.SessionSummary{}, "", errors.New("decode session: expected field name")
+		}
+
+		switch name {
+		case "version":
+			err = decoder.Decode(&record.Version)
+		case "id":
+			err = decoder.Decode(&record.ID)
+		case "revision":
+			err = decoder.Decode(&record.Revision)
+		case "created_at":
+			err = decoder.Decode(&record.CreatedAt)
+		case "updated_at":
+			err = decoder.Decode(&record.UpdatedAt)
+		case "status":
+			err = decoder.Decode(&record.Status)
+		case "provider":
+			err = decoder.Decode(&record.Provider)
+		case "working_directory":
+			err = decoder.Decode(&record.WorkingDirectory)
+		case "model":
+			err = decoder.Decode(&record.Model)
+		case "fast_model":
+			err = decoder.Decode(&record.FastModel)
+		case "balanced_model":
+			err = decoder.Decode(&record.BalancedModel)
+		case "thinking_level":
+			err = decoder.Decode(&record.ThinkingLevel)
+		case "fast_mode":
+			err = decoder.Decode(&record.FastMode)
+		case "description":
+			err = decoder.Decode(&record.Description)
+			if err == nil {
+				if err := validateSessionSummary(record); err != nil {
+					return terminal.SessionSummary{}, "", err
+				}
+				return terminal.SessionSummary{
+					ID:          record.ID,
+					Description: record.Description,
+					UpdatedAt:   record.UpdatedAt,
+					Active:      record.Status == sessionActive,
+				}, record.WorkingDirectory, nil
+			}
+		case "agent", "terminal":
+			if err := validateSessionSummaryMetadata(record); err != nil {
+				return terminal.SessionSummary{}, "", err
+			}
+			return terminal.SessionSummary{}, "", errors.New("session description is missing")
+		default:
+			return terminal.SessionSummary{}, "", fmt.Errorf("decode session: unknown field %q before description", name)
+		}
+		if err != nil {
+			return terminal.SessionSummary{}, "", fmt.Errorf("decode session: %w", err)
+		}
+	}
+
+	if err := validateSessionSummaryMetadata(record); err != nil {
+		return terminal.SessionSummary{}, "", err
+	}
+	return terminal.SessionSummary{}, "", errors.New("session description is missing")
+}
+
+func validateSessionSummary(record sessionRecord) error {
+	if err := validateSessionSummaryMetadata(record); err != nil {
+		return err
+	}
+	if !utf8.ValidString(record.Description) || record.Description == "" || len(record.Description) > maxSessionDescriptionBytes || strings.IndexFunc(record.Description, unicode.IsControl) >= 0 {
+		return errors.New("session description is invalid")
+	}
+	return nil
+}
+
+func validateSessionSummaryMetadata(record sessionRecord) error {
+	switch {
+	case record.Version != sessionRecordVersion:
+		return fmt.Errorf("unsupported session version %d", record.Version)
+	case !validSessionID(record.ID):
+		return errors.New("session has an invalid ID")
+	case record.Revision == 0:
+		return errors.New("session has no revision")
+	case record.CreatedAt.IsZero() || record.UpdatedAt.IsZero():
+		return errors.New("session timestamps are missing")
+	case record.UpdatedAt.Before(record.CreatedAt):
+		return errors.New("session timestamps are inconsistent")
+	case record.Status != sessionIdle && record.Status != sessionActive:
+		return fmt.Errorf("session has invalid status %q", record.Status)
+	case !backend.ValidID(record.Provider):
+		return fmt.Errorf("session provider %q is invalid", record.Provider)
+	case !filepath.IsAbs(record.WorkingDirectory) || filepath.Clean(record.WorkingDirectory) != record.WorkingDirectory:
+		return errors.New("session working directory is not canonical")
+	case strings.TrimSpace(record.Model) == "":
+		return errors.New("session model is empty")
+	case record.FastModel != "" && strings.TrimSpace(record.FastModel) == "":
+		return errors.New("session fast model is invalid")
+	case record.BalancedModel != "" && strings.TrimSpace(record.BalancedModel) == "":
+		return errors.New("session balanced model is invalid")
+	case !record.ThinkingLevel.Valid():
+		return errors.New("session thinking level is invalid")
+	}
+	return nil
 }
 
 func readSessionRecord(path string) (sessionRecord, error) {

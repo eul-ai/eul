@@ -4,6 +4,8 @@
 
 - Implement only the requested behavior and the minimum code needed to support it.
 - Do not add speculative hardening, compatibility layers, abstractions, validation, configuration, or tests for unrequested scenarios.
+- This project is in active development. Prefer clean breaks and remove obsolete code, schemas, APIs, configuration, and assumptions rather than supporting old and new forms in parallel.
+- Do not add backward compatibility, migrations, or fallback handling for superseded behavior, data, formats, or interfaces unless explicitly requested.
 - Prefer the standard library and existing project patterns over custom infrastructure.
 - Keep functions small and focused, but refactor only when it clearly improves readability or removes duplication.
 - Preserve existing behavior unless the request requires changing it.

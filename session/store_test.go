@@ -244,6 +244,40 @@ func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 	}
 }
 
+func TestSessionStoreListsMetadataWithoutDecodingCheckpoints(t *testing.T) {
+	store := newSessionStore(t.TempDir())
+	cwd := t.TempDir()
+	handle, err := store.Create("test", cwd, modelSelection{main: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := handle.path
+	id := handle.record.ID
+	if err := handle.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = []byte(strings.Replace(string(body), `"agent": {`, `"agent": "invalid", "unused": {`, 1))
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, warnings, err := store.List(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 || len(summaries) != 1 || summaries[0].ID != id || summaries[0].Description != "prompt" {
+		t.Fatalf("summaries = %+v, warnings = %v", summaries, warnings)
+	}
+	if _, err := store.Open(context.Background(), cwd, id); err == nil {
+		t.Fatal("full session load accepted invalid checkpoint data")
+	}
+}
+
 func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
