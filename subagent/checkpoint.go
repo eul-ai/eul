@@ -92,7 +92,7 @@ func validateCheckpointData(data checkpointData) error {
 		}
 		seenJobs[active.ID] = struct{}{}
 		switch active.State {
-		case StateRunning, StateFinalizing, StateCanceling:
+		case StateRunning, StateCanceling:
 		default:
 			return fmt.Errorf("subagent: invalid active state %q", active.State)
 		}

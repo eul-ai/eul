@@ -7,10 +7,7 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-const (
-	maxActive       = 4
-	generationLimit = 20
-)
+const maxActive = 4
 
 type Profile string
 
@@ -24,7 +21,6 @@ type State string
 
 const (
 	StateRunning     State = "running"
-	StateFinalizing  State = "finalizing"
 	StateCanceling   State = "canceling"
 	StateComplete    State = "complete"
 	StateFailed      State = "failed"
@@ -33,9 +29,7 @@ const (
 )
 
 type Progress struct {
-	Usage       agent.Usage
-	Generations int
-	Finalizing  bool
+	Usage agent.Usage
 }
 
 type Task struct {
@@ -78,15 +72,13 @@ type Config struct {
 }
 
 type JobStatus struct {
-	ID              string
-	Task            string
-	ModelProfile    Profile
-	ThinkingLevel   agent.ThinkingLevel
-	State           State
-	Started         time.Time
-	Usage           agent.Usage
-	Generations     int
-	GenerationLimit int
+	ID            string
+	Task          string
+	ModelProfile  Profile
+	ThinkingLevel agent.ThinkingLevel
+	State         State
+	Started       time.Time
+	Usage         agent.Usage
 }
 
 type Completion struct {
@@ -101,7 +93,6 @@ type Completion struct {
 
 type Status struct {
 	Running            int
-	Finalizing         int
 	Active             []JobStatus
 	PendingCompletions []Completion
 }

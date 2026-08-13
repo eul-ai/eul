@@ -5,10 +5,17 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/subagent"
 )
+
+func TestSubagentWaitDefaultTimeout(t *testing.T) {
+	if defaultWaitTimeout != 30*time.Second || defaultWaitTimeoutMS != 30_000 {
+		t.Fatalf("default wait timeout = %s (%dms)", defaultWaitTimeout, defaultWaitTimeoutMS)
+	}
+}
 
 func TestSubagentWaitIsSynchronizationOnly(t *testing.T) {
 	manager := subagent.NewManager(subagent.Config{Runner: subagent.RunFunc(func(context.Context, subagent.RunRequest, func(subagent.Progress)) (agent.RunResult, error) {

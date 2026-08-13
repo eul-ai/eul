@@ -1,7 +1,6 @@
 package terminal
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -40,10 +39,6 @@ func appendSubagentSection(lines []styledLine, category string, jobs []subagentR
 		case job.Usage.TotalTokens > 0:
 			details = append(details, formatTokens(job.Usage.TotalTokens)+" processed")
 		}
-		if job.GenerationLimit > 0 {
-			details = append(details, fmt.Sprintf("%d/%d generations", job.Generations, job.GenerationLimit))
-		}
-
 		spans := []inlineSpan{
 			{text: category + " · ", style: inlineStyle{foreground: inlineForegroundDefault}},
 			{text: job.ID, style: inlineStyle{bold: true}},
@@ -67,7 +62,7 @@ func subagentStateForeground(state subagent.State) inlineForeground {
 	switch state {
 	case subagent.StateRunning:
 		return inlineForegroundAccent
-	case subagent.StateFinalizing, subagent.StateCanceling, subagent.StateCanceled:
+	case subagent.StateCanceling, subagent.StateCanceled:
 		return inlineForegroundOrange
 	case subagent.StateComplete:
 		return inlineForegroundSuccess

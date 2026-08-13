@@ -134,22 +134,20 @@ func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 		{
 			ID: "subagent-1", Task: "inspect layout", ModelProfile: "balanced", ThinkingLevel: agent.ThinkingLow,
 			State: subagent.StateRunning, Started: started, Usage: agent.Usage{InputTokens: 1_200, OutputTokens: 34},
-			Generations: 3, GenerationLimit: 20,
 		},
 		{
-			ID: "subagent-2", Task: "review progress", State: subagent.StateFinalizing, Started: started,
-			Generations: 20, GenerationLimit: 20,
+			ID: "subagent-2", Task: "review progress", State: subagent.StateCanceling, Started: started,
 		},
 	}}
 
 	lines := renderSubagentsAt(model, 2, started.Add(time.Minute+5*time.Second))
 	first := renderedLineText(lines[0], model.width)
 	second := renderedLineText(lines[1], model.width)
-	if !strings.Contains(first, "active · subagent-1  running (balanced, low thinking, 1m5s, 1.2k input, 34 output, 3/20 generations) — inspect layout") {
+	if !strings.Contains(first, "active · subagent-1  running (balanced, low thinking, 1m5s, 1.2k input, 34 output) — inspect layout") {
 		t.Fatalf("running line = %q", first)
 	}
-	if !strings.Contains(second, "active · subagent-2  finalizing (1m5s, 20/20 generations) — review progress") {
-		t.Fatalf("finalizing line = %q", second)
+	if !strings.Contains(second, "active · subagent-2  canceling (1m5s) — review progress") {
+		t.Fatalf("canceling line = %q", second)
 	}
 
 	_, layout := modelInputLayout(model)
@@ -168,7 +166,7 @@ func TestSubagentStatusesUseStateColorsAndFreezeCompletedElapsed(t *testing.T) {
 	model := newTUIModel(80, 10, Options{})
 	model.subagentStatus.Active = []subagent.JobStatus{
 		{ID: "running", State: subagent.StateRunning, Started: started},
-		{ID: "finalizing", State: subagent.StateFinalizing, Started: started},
+		{ID: "canceling", State: subagent.StateCanceling, Started: started},
 	}
 	model.subagentStatus.PendingCompletions = []subagent.Completion{
 		{SubagentID: "complete", Status: subagent.StateComplete, Started: started, Finished: finished},

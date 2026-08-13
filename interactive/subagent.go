@@ -47,28 +47,15 @@ func runChildAgent(
 	}
 	child := agent.New(provider, registry, childEngineOptions(config, modelProfile, thinkingLevel, fastMode))
 	var liveUsage agent.Usage
-	normalGenerations := 0
-	finalizing := false
-	policy := subagent.NewFinalizationPolicy(func() {
-		finalizing = true
-		update(subagent.Progress{
-			Usage:       liveUsage,
-			Generations: normalGenerations,
-			Finalizing:  true,
-		})
-	})
-	result, runErr := child.RunWithFinalization(ctx, task, func(event agent.Event) error {
+	result, runErr := child.Run(ctx, task, func(event agent.Event) error {
 		switch event.Kind {
 		case agent.EventCompactionEnd, agent.EventContextUsage:
 			liveUsage.InputTokens += event.Usage.InputTokens
 			liveUsage.OutputTokens += event.Usage.OutputTokens
 			liveUsage.TotalTokens += event.Usage.TotalTokens
-			if event.Kind == agent.EventContextUsage && !finalizing {
-				normalGenerations++
-			}
-			update(subagent.Progress{Usage: liveUsage, Generations: normalGenerations})
+			update(subagent.Progress{Usage: liveUsage})
 		}
 		return nil
-	}, policy)
+	})
 	return result, finishRegistry(runErr, registry, "close subagent tools")
 }

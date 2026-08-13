@@ -58,7 +58,6 @@ type job struct {
 	state         State
 	started       time.Time
 	usage         agent.Usage
-	generations   int
 }
 
 func NewManager(config Config) *Manager {
@@ -166,16 +165,8 @@ func (m *Manager) runJob(job *job) {
 	request := RunRequest{Task: job.task, Profile: job.modelProfile, ThinkingLevel: job.thinkingLevel}
 	result, runErr := m.runner.Run(job.ctx, request, func(progress Progress) {
 		m.mu.Lock()
-		if m.active[job.id] == job {
-			if progress.Usage != (agent.Usage{}) {
-				job.usage = progress.Usage
-			}
-			if progress.Generations > job.generations {
-				job.generations = progress.Generations
-			}
-			if progress.Finalizing && job.state == StateRunning {
-				job.state = StateFinalizing
-			}
+		if m.active[job.id] == job && progress.Usage != (agent.Usage{}) {
+			job.usage = progress.Usage
 			m.publishLocked()
 		}
 		m.mu.Unlock()
@@ -440,23 +431,16 @@ func (m *Manager) publishLocked() {
 	status := Status{PendingCompletions: append([]Completion(nil), m.inbox...)}
 	jobs := m.sortedJobsLocked()
 	status.Active = make([]JobStatus, len(jobs))
+	status.Running = len(jobs)
 	for index, job := range jobs {
-		switch job.state {
-		case StateFinalizing:
-			status.Finalizing++
-		default:
-			status.Running++
-		}
 		status.Active[index] = JobStatus{
-			ID:              job.id,
-			Task:            job.description,
-			ModelProfile:    job.modelProfile,
-			ThinkingLevel:   job.thinkingLevel,
-			State:           job.state,
-			Started:         job.started,
-			Usage:           job.usage,
-			Generations:     job.generations,
-			GenerationLimit: generationLimit,
+			ID:            job.id,
+			Task:          job.description,
+			ModelProfile:  job.modelProfile,
+			ThinkingLevel: job.thinkingLevel,
+			State:         job.state,
+			Started:       job.started,
+			Usage:         job.usage,
 		}
 	}
 

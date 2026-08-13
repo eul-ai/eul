@@ -99,7 +99,7 @@ func TestRunTUIRendersSubagentUpdatesWhileIdle(t *testing.T) {
 	updates <- subagent.Status{
 		Running: 1,
 		Active: []subagent.JobStatus{{
-			ID: "subagent-1", Task: "inspect", State: subagent.StateRunning, Started: time.Now(), GenerationLimit: 20,
+			ID: "subagent-1", Task: "inspect", State: subagent.StateRunning, Started: time.Now(),
 		}},
 	}
 	select {

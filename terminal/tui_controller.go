@@ -310,17 +310,14 @@ func (c *tuiController) handleSubagentStatus(status subagent.Status) (bool, erro
 func sanitizeSubagentStatus(status subagent.Status) subagent.Status {
 	sanitized := subagent.Status{
 		Running:            max(0, status.Running),
-		Finalizing:         max(0, status.Finalizing),
 		Active:             make([]subagent.JobStatus, 0, len(status.Active)),
 		PendingCompletions: make([]subagent.Completion, 0, len(status.PendingCompletions)),
 	}
 	for _, job := range status.Active {
 		switch job.State {
-		case subagent.StateRunning, subagent.StateFinalizing, subagent.StateCanceling:
+		case subagent.StateRunning, subagent.StateCanceling:
 			job.ID = singleLine(job.ID, 120)
 			job.Task = singleLine(job.Task, 120)
-			job.Generations = max(0, job.Generations)
-			job.GenerationLimit = max(0, job.GenerationLimit)
 			sanitized.Active = append(sanitized.Active, job)
 		}
 	}
@@ -345,7 +342,7 @@ func (c *tuiController) handleFileSearch(result fileSearchResult) (bool, error) 
 }
 
 func (c *tuiController) handleSpinner() (bool, error) {
-	if (c.model.activity.kind == activityReady || c.model.activity.kind == activityPermission || c.model.activity.kind == activityError) && c.model.subagentStatus.Running == 0 && c.model.subagentStatus.Finalizing == 0 {
+	if (c.model.activity.kind == activityReady || c.model.activity.kind == activityPermission || c.model.activity.kind == activityError) && c.model.subagentStatus.Running == 0 {
 		return false, nil
 	}
 

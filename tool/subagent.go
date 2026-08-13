@@ -18,7 +18,7 @@ const (
 	launchToolName       = "subagent"
 	waitToolName         = "subagent_wait"
 	cancelToolName       = "subagent_cancel"
-	defaultWaitTimeout   = 5 * time.Minute
+	defaultWaitTimeout   = 30 * time.Second
 	maximumWaitTimeout   = time.Hour
 	defaultWaitTimeoutMS = int(defaultWaitTimeout / time.Millisecond)
 	maximumWaitTimeoutMS = int(maximumWaitTimeout / time.Millisecond)

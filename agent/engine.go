@@ -26,20 +26,6 @@ type Options struct {
 	Settings            *Settings
 }
 
-type FinalizationReason string
-
-const (
-	FinalizationReasonDuration    FinalizationReason = "duration"
-	FinalizationReasonGenerations FinalizationReason = "generations"
-)
-
-type FinalizationPolicy struct {
-	AfterDuration    time.Duration
-	AfterGenerations int
-	Prompt           string
-	OnBegin          func(FinalizationReason)
-}
-
 type RunResult struct {
 	Text  string
 	Usage Usage
@@ -82,18 +68,14 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 }
 
 func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunResult, error) {
-	return e.run(ctx, []ContentPart{{Kind: ContentPartText, Text: userText}}, sink, FinalizationPolicy{})
+	return e.run(ctx, []ContentPart{{Kind: ContentPartText, Text: userText}}, sink)
 }
 
 func (e *Engine) RunContent(ctx context.Context, content []ContentPart, sink EventSink) (RunResult, error) {
-	return e.run(ctx, content, sink, FinalizationPolicy{})
+	return e.run(ctx, content, sink)
 }
 
-func (e *Engine) RunWithFinalization(ctx context.Context, userText string, sink EventSink, policy FinalizationPolicy) (RunResult, error) {
-	return e.run(ctx, []ContentPart{{Kind: ContentPartText, Text: userText}}, sink, policy)
-}
-
-func (e *Engine) run(ctx context.Context, content []ContentPart, sink EventSink, policy FinalizationPolicy) (RunResult, error) {
+func (e *Engine) run(ctx context.Context, content []ContentPart, sink EventSink) (RunResult, error) {
 	if !e.mu.TryLock() {
 		return RunResult{}, errEngineBusy
 	}
@@ -114,9 +96,6 @@ func (e *Engine) run(ctx context.Context, content []ContentPart, sink EventSink,
 	current := e.conversation.clone()
 	current.inputs = append(current.inputs, userInput(content))
 	var result RunResult
-	started := time.Now()
-	normalGenerations := 0
-	latestText := ""
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -124,40 +103,21 @@ func (e *Engine) run(ctx context.Context, content []ContentPart, sink EventSink,
 			return RunResult{}, err
 		}
 
-		prepared := e.prepareGeneration(ctx, sink, current, policy, started, normalGenerations)
+		prepared := e.prepareGeneration(ctx, sink, current)
 		current = prepared.current
 		addUsage(&result.Usage, prepared.compactedUsage)
 		if prepared.err != nil {
 			current.checkpoint(e)
-			if prepared.finalizing {
-				result.Text = latestText
-				return result, prepared.err
-			}
 			return RunResult{}, prepared.err
 		}
 
-		generationSink := sink
-		var finalText strings.Builder
-		if prepared.finalizing {
-			generationSink = func(event Event) error {
-				if event.Kind == EventAssistantText {
-					finalText.WriteString(event.Text)
-				}
-				return sink(event)
-			}
-		}
-
-		generated := e.generateWithRecovery(ctx, sink, generationSink, prepared.request, prepared.ordinaryRequest, prepared.inboxBatch, current)
+		generated := e.generateWithRecovery(ctx, sink, prepared.request, prepared.ordinaryRequest, prepared.inboxBatch, current)
 		current = generated.current
 		addUsage(&result.Usage, generated.compactedUsage)
 		if generated.err != nil {
 			current.checkpoint(e)
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return RunResult{}, ctxErr
-			}
-			if prepared.finalizing {
-				result.Text = bestFinalizationText(finalText.String(), latestText)
-				return result, generated.err
 			}
 			return RunResult{}, generated.err
 		}
@@ -166,45 +126,10 @@ func (e *Engine) run(ctx context.Context, content []ContentPart, sink EventSink,
 		toolEvents := generated.toolEvents
 		responseContinuation := conversationState{state: response.State, usage: response.Usage}
 		addUsage(&result.Usage, response.Usage)
-		if !prepared.finalizing {
-			normalGenerations++
-			if strings.TrimSpace(response.Text) != "" {
-				latestText = response.Text
-			}
-		}
-
-		if prepared.finalizing && len(response.ToolCalls) > 0 {
-			result.Text = bestFinalizationText(response.Text, finalText.String(), latestText)
-			protocolErr := errors.New("agent: provider returned tool calls during finalization")
-			if err := toolEvents.closeRemaining(protocolErr); err != nil {
-				current.checkpoint(e)
-				return result, err
-			}
-			current.checkpoint(e)
-			return result, protocolErr
-		}
 		if err := emit(sink, Event{Kind: EventContextUsage, Usage: response.Usage}); err != nil {
 			responseContinuation.inputs = unexecutedToolInputs(response.ToolCalls, err)
 			responseContinuation.checkpoint(e)
 			return RunResult{}, err
-		}
-		if prepared.finalizing {
-			result.Text = bestFinalizationText(response.Text, finalText.String(), latestText)
-			if err := toolEvents.closeRemaining(errors.New("tools are disabled during finalization")); err != nil {
-				current.checkpoint(e)
-				return result, err
-			}
-			if err := e.commitCheckpoint(responseContinuation, sink); err != nil {
-				return result, err
-			}
-			if err := e.acknowledgeInbox(prepared.inboxBatch); err != nil {
-				return result, err
-			}
-			if !e.settleInbox() {
-				current = responseContinuation
-				continue
-			}
-			return result, nil
 		}
 		if err := toolEvents.reconcileFinal(response.ToolCalls); err != nil {
 			responseContinuation.inputs = unexecutedToolInputs(response.ToolCalls, err)
@@ -276,59 +201,25 @@ type generationPreparation struct {
 	current         conversationState
 	inboxBatch      InboxBatch
 	compactedUsage  Usage
-	finalizing      bool
 	err             error
 }
 
-func (e *Engine) prepareGeneration(
-	ctx context.Context,
-	sink EventSink,
-	current conversationState,
-	policy FinalizationPolicy,
-	started time.Time,
-	normalGenerations int,
-) generationPreparation {
-	finalizationReason, finalizing := policy.shouldBegin(started, normalGenerations)
-	if finalizing && policy.OnBegin != nil {
-		policy.OnBegin(finalizationReason)
-	}
-
+func (e *Engine) prepareGeneration(ctx context.Context, sink EventSink, current conversationState) generationPreparation {
 	ordinaryRequest := e.request(current)
-	if finalizing {
-		ordinaryRequest.Tools = nil
-		ordinaryRequest.Instructions = appendFinalizationPrompt(ordinaryRequest.Instructions, policy.Prompt)
-	}
 	inboxBatch := e.snapshotInbox()
 	sizingRequest := attachInbox(ordinaryRequest, inboxBatch)
 	sizingRequest = e.decorate(sizingRequest)
 	ordinaryRequest, current, compactedUsage, err := e.compactSized(ctx, sink, ordinaryRequest, sizingRequest, current)
 	request := attachInbox(ordinaryRequest, inboxBatch)
 	request = e.decorate(request)
-	prepared := generationPreparation{
+	return generationPreparation{
 		request:         request,
 		ordinaryRequest: ordinaryRequest,
 		current:         current,
 		inboxBatch:      inboxBatch,
 		compactedUsage:  compactedUsage,
-		finalizing:      finalizing,
 		err:             err,
 	}
-	if err != nil || finalizing {
-		return prepared
-	}
-
-	finalizationReason, prepared.finalizing = policy.shouldBegin(started, normalGenerations)
-	if !prepared.finalizing {
-		return prepared
-	}
-	if policy.OnBegin != nil {
-		policy.OnBegin(finalizationReason)
-	}
-	prepared.ordinaryRequest.Tools = nil
-	prepared.ordinaryRequest.Instructions = appendFinalizationPrompt(prepared.ordinaryRequest.Instructions, policy.Prompt)
-	prepared.request.Tools = nil
-	prepared.request.Instructions = appendFinalizationPrompt(prepared.request.Instructions, policy.Prompt)
-	return prepared
 }
 
 type generationOutcome struct {
@@ -342,13 +233,12 @@ type generationOutcome struct {
 func (e *Engine) generateWithRecovery(
 	ctx context.Context,
 	sink EventSink,
-	generationSink EventSink,
 	request Request,
 	ordinaryRequest Request,
 	inboxBatch InboxBatch,
 	current conversationState,
 ) generationOutcome {
-	response, toolEvents, observed, err := e.generateResponse(ctx, request, generationSink)
+	response, toolEvents, observed, err := e.generateResponse(ctx, request, sink)
 	outcome := generationOutcome{response: response, toolEvents: toolEvents, current: current, err: err}
 
 	var generationErr *providerGenerationError
@@ -363,36 +253,9 @@ func (e *Engine) generateWithRecovery(
 	if err == nil && compacted {
 		request = e.decorate(request)
 		request = attachInbox(request, inboxBatch)
-		outcome.response, outcome.toolEvents, _, outcome.err = e.generateResponse(ctx, request, generationSink)
+		outcome.response, outcome.toolEvents, _, outcome.err = e.generateResponse(ctx, request, sink)
 	}
 	return outcome
-}
-
-func (policy FinalizationPolicy) shouldBegin(started time.Time, generations int) (FinalizationReason, bool) {
-	if policy.AfterDuration > 0 && time.Since(started) >= policy.AfterDuration {
-		return FinalizationReasonDuration, true
-	}
-	if policy.AfterGenerations > 0 && generations >= policy.AfterGenerations {
-		return FinalizationReasonGenerations, true
-	}
-	return "", false
-}
-
-func appendFinalizationPrompt(instructions, prompt string) string {
-	prompt = strings.TrimSpace(prompt)
-	if prompt == "" {
-		return instructions
-	}
-	return strings.TrimSpace(instructions) + "\n\n" + prompt
-}
-
-func bestFinalizationText(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func (e *Engine) expandSkillContent(content []ContentPart) ([]ContentPart, error) {
