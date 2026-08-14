@@ -120,7 +120,7 @@ diffs, errors, context usage, and model activity visible while you work.
 | Mouse wheel | Scroll the conversation |
 | Mouse drag | Select and copy conversation text |
 | Alt-Up | Restore queued steering messages to the editor |
-| Y / N | Allow once or deny an active permission request |
+| A / Y / N | Allow for the session, allow once, or deny an active permission request |
 | Escape | Close completions, deny a permission request, or cancel the active turn |
 | Ctrl-C | Clear the editor, cancel the active turn, or exit from an empty prompt |
 | Ctrl-D | Exit from an empty prompt |

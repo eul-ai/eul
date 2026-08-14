@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/eul-ai/eul/terminal"
 	"github.com/eul-ai/eul/tool"
@@ -13,8 +14,13 @@ func newNetworkPermissionBroker(noSandbox bool) (tool.NetworkAuthorizer, <-chan 
 	}
 
 	requests := make(chan terminal.PermissionRequest)
+	var sessionAllowed atomic.Bool
 	authorize := func(ctx context.Context, command string) (bool, error) {
-		response := make(chan bool, 1)
+		if sessionAllowed.Load() {
+			return true, nil
+		}
+
+		response := make(chan terminal.PermissionDecision, 1)
 		request := terminal.PermissionRequest{
 			Title:        "Network access requested",
 			Subject:      "bash",
@@ -32,8 +38,16 @@ func newNetworkPermissionBroker(noSandbox bool) (tool.NetworkAuthorizer, <-chan 
 		}
 
 		select {
-		case allowed := <-response:
-			return allowed, nil
+		case decision := <-response:
+			switch decision {
+			case terminal.PermissionAllowOnce:
+				return true, nil
+			case terminal.PermissionAllowSession:
+				sessionAllowed.Store(true)
+				return true, nil
+			default:
+				return false, nil
+			}
 		case <-ctx.Done():
 			return false, ctx.Err()
 		}

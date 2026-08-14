@@ -170,10 +170,8 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 		c.clipboardRequests[requestID] = cancel
 		c.model.reserveImage(requestID)
 		go loadClipboardImage(readContext, requestID, c.readClipboardImage, c.clipboardImages, c.stopped)
-	case tuiActionAllowPermission:
-		c.resolvePermission(true)
-	case tuiActionDenyPermission:
-		c.resolvePermission(false)
+	case tuiActionResolvePermission:
+		c.resolvePermission(action.permissionDecision)
 	case tuiActionCopy:
 		encoded := base64.StdEncoding.EncodeToString([]byte(action.text))
 		if err := writeOutput(c.output, "\x1b]52;c;%s\x07", encoded); err != nil {

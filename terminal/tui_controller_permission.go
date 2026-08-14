@@ -4,8 +4,12 @@ func (c *tuiController) handlePermission(request PermissionRequest) (bool, error
 	if request.Response == nil {
 		return false, nil
 	}
+	if c.permissionsAllowedForSession {
+		respondPermission(request, PermissionAllowSession)
+		return false, nil
+	}
 	if !c.model.running || c.model.interrupted || c.model.activity.kind == activityCanceling {
-		respondPermission(request, false)
+		respondPermission(request, PermissionDenyOnce)
 		return false, nil
 	}
 	if c.permission != nil {
@@ -21,13 +25,20 @@ func (c *tuiController) handlePermission(request PermissionRequest) (bool, error
 	return false, nil
 }
 
-func (c *tuiController) resolvePermission(allowed bool) {
+func (c *tuiController) resolvePermission(decision PermissionDecision) {
 	if c.permission == nil {
 		return
 	}
 
-	respondPermission(*c.permission, allowed)
+	respondPermission(*c.permission, decision)
 	c.permission = nil
+	if decision == PermissionAllowSession {
+		c.permissionsAllowedForSession = true
+		for _, request := range c.queuedPermissions {
+			respondPermission(request, decision)
+		}
+		c.queuedPermissions = nil
+	}
 	if len(c.queuedPermissions) == 0 {
 		c.model.clearPermission()
 		c.restoreActivityAfterPermission()
@@ -44,10 +55,10 @@ func (c *tuiController) resolvePermission(allowed bool) {
 
 func (c *tuiController) denyPermissions() {
 	if c.permission != nil {
-		respondPermission(*c.permission, false)
+		respondPermission(*c.permission, PermissionDenyOnce)
 	}
 	for _, request := range c.queuedPermissions {
-		respondPermission(request, false)
+		respondPermission(request, PermissionDenyOnce)
 	}
 	c.permission = nil
 	c.queuedPermissions = nil
@@ -62,9 +73,9 @@ func (c *tuiController) restoreActivityAfterPermission() {
 	c.model.activity = activity{kind: activityThinking}
 }
 
-func respondPermission(request PermissionRequest, allowed bool) {
+func respondPermission(request PermissionRequest, decision PermissionDecision) {
 	select {
-	case request.Response <- allowed:
+	case request.Response <- decision:
 	default:
 	}
 }

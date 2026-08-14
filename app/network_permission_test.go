@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/terminal"
 )
 
 func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
@@ -42,7 +43,7 @@ func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
 		if request.Title != "Network access requested" || request.Subject != "bash" || request.Description != "needs access to the network" || request.Detail != "printf approved" {
 			t.Fatalf("request = %+v", request)
 		}
-		request.Response <- true
+		request.Response <- terminal.PermissionAllowOnce
 	case <-time.After(time.Second):
 		t.Fatal("terminal did not receive network permission request")
 	}
@@ -80,10 +81,46 @@ func TestNetworkPermissionBrokerReturnsDecision(t *testing.T) {
 	if request.Title != "Network access requested" || request.Subject != "bash" || request.Description != "needs access to the network" || request.Detail != "git push" {
 		t.Fatalf("request = %+v", request)
 	}
-	request.Response <- true
+	request.Response <- terminal.PermissionAllowOnce
 	result := <-done
 	if !result.allowed || result.err != nil {
 		t.Fatalf("outcome = %+v", result)
+	}
+}
+
+func TestNetworkPermissionBrokerAllowsRemainingSession(t *testing.T) {
+	authorize, requests := newNetworkPermissionBroker(false)
+	type outcome struct {
+		allowed bool
+		err     error
+	}
+	authorizeAsync := func(command string) <-chan outcome {
+		done := make(chan outcome, 1)
+		go func() {
+			allowed, err := authorize(context.Background(), command)
+			done <- outcome{allowed: allowed, err: err}
+		}()
+		return done
+	}
+
+	first := authorizeAsync("git push")
+	request := <-requests
+	request.Response <- terminal.PermissionAllowSession
+	if result := <-first; !result.allowed || result.err != nil {
+		t.Fatalf("first outcome = %+v", result)
+	}
+
+	second := authorizeAsync("ssh host")
+	select {
+	case request := <-requests:
+		request.Response <- terminal.PermissionDenyOnce
+		t.Fatal("second authorization requested permission")
+	case result := <-second:
+		if !result.allowed || result.err != nil {
+			t.Fatalf("second outcome = %+v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second authorization did not finish")
 	}
 }
 

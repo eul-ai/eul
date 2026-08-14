@@ -65,6 +65,14 @@ type RunOutcome struct {
 	SessionID string
 }
 
+type PermissionDecision uint8
+
+const (
+	PermissionDenyOnce PermissionDecision = iota
+	PermissionAllowOnce
+	PermissionAllowSession
+)
+
 type PermissionRequest struct {
 	Title        string
 	Subject      string
@@ -72,7 +80,7 @@ type PermissionRequest struct {
 	Detail       string
 	DetailPrefix string
 	Notice       string
-	Response     chan<- bool
+	Response     chan<- PermissionDecision
 }
 
 type Config struct {

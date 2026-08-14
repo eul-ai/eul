@@ -83,8 +83,9 @@ func TestRenderFrameShowsPermission(t *testing.T) {
 		"bash needs access to the network",
 		"$ git push origin main",
 		"This command and its descendants will have network access.",
-		"[n] Deny",
+		"[n] Deny once",
 		"[y] Allow once",
+		"[a] Allow for session",
 		"waiting for permission",
 	} {
 		if !strings.Contains(joined, want) {
@@ -112,7 +113,7 @@ func TestRenderFrameShowsPermission(t *testing.T) {
 		t.Fatalf("permission notice spacing = %q", input.lines)
 	}
 	buttons := input.lines[noticeIndex+2]
-	if cellWidth(buttons[:strings.Index(buttons, "[n] Deny")]) != strings.Index(input.lines[descriptionIndex], "bash") {
+	if cellWidth(buttons[:strings.Index(buttons, "[n] Deny once")]) != strings.Index(input.lines[descriptionIndex], "bash") {
 		t.Fatalf("permission button alignment = %q, description = %q", buttons, input.lines[descriptionIndex])
 	}
 	if frame.cursorVisible || model.inputText() != "queued steering" {

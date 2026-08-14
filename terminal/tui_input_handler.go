@@ -27,18 +27,18 @@ const (
 	tuiActionDequeue
 	tuiActionSetThinking
 	tuiActionAttachImage
-	tuiActionAllowPermission
-	tuiActionDenyPermission
+	tuiActionResolvePermission
 	tuiActionCopy
 	tuiActionRedraw
 )
 
 type tuiAction struct {
-	kind          tuiActionKind
-	prompt        string
-	text          string
-	content       []agent.ContentPart
-	thinkingLevel agent.ThinkingLevel
+	kind               tuiActionKind
+	prompt             string
+	text               string
+	content            []agent.ContentPart
+	thinkingLevel      agent.ThinkingLevel
+	permissionDecision PermissionDecision
 }
 
 func handleKeyInput(model *tuiModel, key keyEvent, frame terminalFrame) (tuiAction, error) {
@@ -154,16 +154,24 @@ func reducePermissionKey(model *tuiModel, key keyEvent) tuiAction {
 	case keyText:
 		switch strings.ToLower(strings.TrimSpace(key.text)) {
 		case "y", "yes":
-			return tuiAction{kind: tuiActionAllowPermission}
+			return permissionAction(PermissionAllowOnce)
 		case "n", "no":
-			return tuiAction{kind: tuiActionDenyPermission}
+			return permissionAction(PermissionDenyOnce)
+		case "a":
+			return permissionAction(PermissionAllowSession)
 		}
 	case keyLeft:
-		model.permission.allowSelected = false
+		if model.permission.selected > PermissionDenyOnce {
+			model.permission.selected--
+		}
 	case keyRight:
-		model.permission.allowSelected = true
-	case keyTab, keyShiftTab:
-		model.permission.allowSelected = !model.permission.allowSelected
+		if model.permission.selected < PermissionAllowSession {
+			model.permission.selected++
+		}
+	case keyTab:
+		model.permission.selected = (model.permission.selected + 1) % permissionDecisionCount
+	case keyShiftTab:
+		model.permission.selected = (model.permission.selected + permissionDecisionCount - 1) % permissionDecisionCount
 	case keyUp:
 		scrollPermission(model, -1)
 	case keyDown:
@@ -173,18 +181,19 @@ func reducePermissionKey(model *tuiModel, key keyEvent) tuiAction {
 	case keyPageDown:
 		scrollPermission(model, permissionDetailCapacityForModel(model))
 	case keyEnter:
-		if model.permission.allowSelected {
-			return tuiAction{kind: tuiActionAllowPermission}
-		}
-		return tuiAction{kind: tuiActionDenyPermission}
+		return permissionAction(model.permission.selected)
 	case keyEscape:
-		return tuiAction{kind: tuiActionDenyPermission}
+		return permissionAction(PermissionDenyOnce)
 	case keyCtrlC:
 		return tuiAction{kind: tuiActionCancel}
 	case keyEOF, keyCtrlD:
 		return tuiAction{kind: tuiActionExit}
 	}
 	return tuiAction{}
+}
+
+func permissionAction(decision PermissionDecision) tuiAction {
+	return tuiAction{kind: tuiActionResolvePermission, permissionDecision: decision}
 }
 
 func scrollPermission(model *tuiModel, delta int) {

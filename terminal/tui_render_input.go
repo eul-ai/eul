@@ -173,7 +173,7 @@ func renderPermission(model *tuiModel, width, maximumHeight int) renderedInput {
 	}
 	description := styledLine{spans: descriptionSpans, style: panelStyle, padding: 2}
 	blank := styledLine{style: panelStyle}
-	buttons := permissionButtons(model.permission.allowSelected, panelStyle)
+	buttons := permissionButtons(model.permission.selected, panelStyle)
 
 	detailLines := wrappedPermissionDetail(model.permission, width)
 	capacity := permissionDetailCapacity(height)
@@ -226,15 +226,24 @@ func renderPermission(model *tuiModel, width, maximumHeight int) renderedInput {
 	return renderedInput{lines: lines, styledLines: styled}
 }
 
-func permissionButtons(allowSelected bool, style lineStyle) styledLine {
+func permissionButtons(selected PermissionDecision, style lineStyle) styledLine {
 	spans := []inlineSpan{
-		{text: "› [n] Deny", style: inlineStyle{bold: true, foreground: inlineForegroundError}},
+		{text: "› [n] Deny once", style: inlineStyle{bold: true, foreground: inlineForegroundError}},
 		{text: "     [y] Allow once"},
+		{text: "     [a] Allow for session"},
 	}
-	if allowSelected {
+	switch selected {
+	case PermissionAllowOnce:
 		spans = []inlineSpan{
-			{text: "  [n] Deny"},
+			{text: "  [n] Deny once"},
 			{text: "   › [y] Allow once", style: inlineStyle{bold: true, foreground: inlineForegroundSuccess}},
+			{text: "     [a] Allow for session"},
+		}
+	case PermissionAllowSession:
+		spans = []inlineSpan{
+			{text: "  [n] Deny once"},
+			{text: "     [y] Allow once"},
+			{text: "   › [a] Allow for session", style: inlineStyle{bold: true, foreground: inlineForegroundSuccess}},
 		}
 	}
 	style.foreground = currentTheme.muted

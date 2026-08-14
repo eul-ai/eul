@@ -85,31 +85,32 @@ func newTUIController(config controllerOptions) *tuiController {
 }
 
 type tuiController struct {
-	model              *tuiModel
-	renderer           *tuiRenderer
-	operations         Operations
-	controls           Controls
-	output             io.Writer
-	outputFD           int
-	engineMessages     chan<- engineMessage
-	stopped            <-chan struct{}
-	fileSearch         *fileSearchRunner
-	fileSearchMessages chan<- fileSearchResult
-	usageRequests      chan<- struct{}
-	stateChanges       StateChanges
-	sessions           Sessions
-	readClipboardImage func(context.Context) (agent.Image, error)
-	clipboardImages    chan<- tuiEvent
-	clipboardRequests  map[uint64]context.CancelFunc
-	nextClipboardID    uint64
-	turnCancel         context.CancelFunc
-	exitAfterTurn      bool
-	exitAfterTurnErr   error
-	outcome            RunOutcome
-	permission         *PermissionRequest
-	queuedPermissions  []PermissionRequest
-	dirty              bool
-	forceRedraw        bool
+	model                        *tuiModel
+	renderer                     *tuiRenderer
+	operations                   Operations
+	controls                     Controls
+	output                       io.Writer
+	outputFD                     int
+	engineMessages               chan<- engineMessage
+	stopped                      <-chan struct{}
+	fileSearch                   *fileSearchRunner
+	fileSearchMessages           chan<- fileSearchResult
+	usageRequests                chan<- struct{}
+	stateChanges                 StateChanges
+	sessions                     Sessions
+	readClipboardImage           func(context.Context) (agent.Image, error)
+	clipboardImages              chan<- tuiEvent
+	clipboardRequests            map[uint64]context.CancelFunc
+	nextClipboardID              uint64
+	turnCancel                   context.CancelFunc
+	exitAfterTurn                bool
+	exitAfterTurnErr             error
+	outcome                      RunOutcome
+	permission                   *PermissionRequest
+	queuedPermissions            []PermissionRequest
+	permissionsAllowedForSession bool
+	dirty                        bool
+	forceRedraw                  bool
 }
 
 func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, error) {

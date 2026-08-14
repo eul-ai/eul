@@ -70,8 +70,8 @@ func TestTUIControllerSerializesPermissions(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.running = true
 	controller := tuiController{model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard}
-	first := make(chan bool, 1)
-	second := make(chan bool, 1)
+	first := make(chan PermissionDecision, 1)
+	second := make(chan PermissionDecision, 1)
 
 	for _, request := range []PermissionRequest{
 		{Title: "Network access", Detail: "git push", Response: first},
@@ -85,24 +85,60 @@ func TestTUIControllerSerializesPermissions(t *testing.T) {
 		t.Fatalf("permission=%+v queued=%d", model.permission, len(controller.queuedPermissions))
 	}
 
-	if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionAllowPermission}); err != nil {
+	if _, err := controller.applyAction(context.Background(), permissionAction(PermissionAllowOnce)); err != nil {
 		t.Fatal(err)
 	}
-	if allowed := <-first; !allowed {
-		t.Fatal("first request was denied")
+	if decision := <-first; decision != PermissionAllowOnce {
+		t.Fatalf("first decision = %d", decision)
 	}
 	if model.permission.detail != "ssh host" || model.permission.index != 2 || model.permission.total != 2 {
 		t.Fatalf("next permission = %+v", model.permission)
 	}
 
-	if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionDenyPermission}); err != nil {
+	if _, err := controller.applyAction(context.Background(), permissionAction(PermissionDenyOnce)); err != nil {
 		t.Fatal(err)
 	}
-	if allowed := <-second; allowed {
-		t.Fatal("second request was allowed")
+	if decision := <-second; decision != PermissionDenyOnce {
+		t.Fatalf("second decision = %d", decision)
 	}
 	if model.permission.active() || controller.permission != nil {
 		t.Fatalf("permission remains active: model=%+v request=%+v", model.permission, controller.permission)
+	}
+}
+
+func TestTUIControllerAllowsPermissionsForSession(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.running = true
+	controller := tuiController{model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard}
+	first := make(chan PermissionDecision, 1)
+	second := make(chan PermissionDecision, 1)
+
+	for _, response := range []chan PermissionDecision{first, second} {
+		if _, err := controller.handlePermission(PermissionRequest{Title: "Network access", Response: response}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := controller.applyAction(context.Background(), permissionAction(PermissionAllowSession)); err != nil {
+		t.Fatal(err)
+	}
+	for index, response := range []chan PermissionDecision{first, second} {
+		if decision := <-response; decision != PermissionAllowSession {
+			t.Fatalf("decision %d = %d", index, decision)
+		}
+	}
+	if model.permission.active() || controller.permission != nil || len(controller.queuedPermissions) != 0 {
+		t.Fatalf("permission remains active: model=%+v request=%+v queued=%d", model.permission, controller.permission, len(controller.queuedPermissions))
+	}
+
+	future := make(chan PermissionDecision, 1)
+	if _, err := controller.handlePermission(PermissionRequest{Title: "Network access", Response: future}); err != nil {
+		t.Fatal(err)
+	}
+	if decision := <-future; decision != PermissionAllowSession {
+		t.Fatalf("future decision = %d", decision)
+	}
+	if model.permission.active() {
+		t.Fatalf("future permission was shown: %+v", model.permission)
 	}
 }
 

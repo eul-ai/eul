@@ -9,14 +9,16 @@ import (
 
 func TestPermissionKeysTakePriority(t *testing.T) {
 	for _, test := range []struct {
-		name string
-		key  keyEvent
-		want tuiActionKind
+		name         string
+		key          keyEvent
+		want         tuiActionKind
+		wantDecision PermissionDecision
 	}{
-		{name: "allow", key: keyEvent{code: keyText, text: "y"}, want: tuiActionAllowPermission},
-		{name: "deny", key: keyEvent{code: keyText, text: "n"}, want: tuiActionDenyPermission},
-		{name: "enter denies", key: keyEvent{code: keyEnter}, want: tuiActionDenyPermission},
-		{name: "escape denies", key: keyEvent{code: keyEscape}, want: tuiActionDenyPermission},
+		{name: "allow", key: keyEvent{code: keyText, text: "y"}, want: tuiActionResolvePermission, wantDecision: PermissionAllowOnce},
+		{name: "allow session", key: keyEvent{code: keyText, text: "a"}, want: tuiActionResolvePermission, wantDecision: PermissionAllowSession},
+		{name: "deny", key: keyEvent{code: keyText, text: "n"}, want: tuiActionResolvePermission, wantDecision: PermissionDenyOnce},
+		{name: "enter denies", key: keyEvent{code: keyEnter}, want: tuiActionResolvePermission, wantDecision: PermissionDenyOnce},
+		{name: "escape denies", key: keyEvent{code: keyEscape}, want: tuiActionResolvePermission, wantDecision: PermissionDenyOnce},
 		{name: "cancel", key: keyEvent{code: keyCtrlC}, want: tuiActionCancel},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -28,7 +30,7 @@ func TestPermissionKeysTakePriority(t *testing.T) {
 			}
 
 			action, err := reduceKey(model, test.key)
-			if err != nil || action.kind != test.want {
+			if err != nil || action.kind != test.want || action.permissionDecision != test.wantDecision {
 				t.Fatalf("action = %+v, error = %v", action, err)
 			}
 			if model.inputText() != "queued steering" {
@@ -46,13 +48,19 @@ func TestPermissionSelectionAndScrolling(t *testing.T) {
 		Detail: strings.Repeat("long command ", 30),
 	}, 1, 1)
 
-	if action, err := reduceKey(model, keyEvent{code: keyRight}); err != nil || action.kind != tuiActionNone || !model.permission.allowSelected {
+	if action, err := reduceKey(model, keyEvent{code: keyRight}); err != nil || action.kind != tuiActionNone || model.permission.selected != PermissionAllowOnce {
 		t.Fatalf("right action=%+v err=%v permission=%+v", action, err, model.permission)
 	}
-	if action, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil || action.kind != tuiActionAllowPermission {
+	if action, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil || action.kind != tuiActionResolvePermission || action.permissionDecision != PermissionAllowOnce {
 		t.Fatalf("enter action=%+v err=%v", action, err)
 	}
-	if action, err := reduceKey(model, keyEvent{code: keyLeft}); err != nil || action.kind != tuiActionNone || model.permission.allowSelected {
+	if action, err := reduceKey(model, keyEvent{code: keyRight}); err != nil || action.kind != tuiActionNone || model.permission.selected != PermissionAllowSession {
+		t.Fatalf("second right action=%+v err=%v permission=%+v", action, err, model.permission)
+	}
+	if action, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil || action.kind != tuiActionResolvePermission || action.permissionDecision != PermissionAllowSession {
+		t.Fatalf("session enter action=%+v err=%v", action, err)
+	}
+	if action, err := reduceKey(model, keyEvent{code: keyLeft}); err != nil || action.kind != tuiActionNone || model.permission.selected != PermissionAllowOnce {
 		t.Fatalf("left action=%+v err=%v permission=%+v", action, err, model.permission)
 	}
 	if action, err := reduceKey(model, keyEvent{code: keyDown}); err != nil || action.kind != tuiActionNone || model.permission.scroll == 0 {

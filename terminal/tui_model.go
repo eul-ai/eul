@@ -104,17 +104,19 @@ type editorModel struct {
 	historyDraftCursor int
 }
 
+const permissionDecisionCount PermissionDecision = PermissionAllowSession + 1
+
 type permissionModel struct {
-	title         string
-	subject       string
-	description   string
-	detail        string
-	detailPrefix  string
-	notice        string
-	allowSelected bool
-	scroll        int
-	index         int
-	total         int
+	title        string
+	subject      string
+	description  string
+	detail       string
+	detailPrefix string
+	notice       string
+	selected     PermissionDecision
+	scroll       int
+	index        int
+	total        int
 }
 
 func (permission permissionModel) active() bool {
