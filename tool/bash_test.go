@@ -70,6 +70,36 @@ func TestBashReportsCombinedOutputStatusCWDAndEnvironment(t *testing.T) {
 	}
 }
 
+func TestBashAcceptsIntegerAndNumericStringTimeout(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		arguments json.RawMessage
+		timeout   any
+	}{
+		{name: "integer", arguments: json.RawMessage(`{"command":"printf ok","timeout":1,"network":true}`), timeout: json.Number("1")},
+		{name: "numeric string", arguments: json.RawMessage(`{"command":"printf ok","timeout":"1","network":true}`), timeout: "1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			bashTool := newTestBash(t.TempDir())
+			updates := &recordingBashUpdates{}
+
+			result, err := bashTool.Execute(context.Background(), test.arguments, updates)
+			if err != nil || result.IsError || !strings.Contains(result.Output, "ok") {
+				t.Fatalf("result = %+v, err = %v", result, err)
+			}
+			presentation, finalCalls := updates.finalPresentation()
+			if finalCalls != 1 || presentation.Timeout != time.Second {
+				t.Fatalf("presentation = %+v, final calls = %d", presentation, finalCalls)
+			}
+
+			initial := bashTool.Presentation(PresentationSnapshot{Arguments: map[string]any{"command": "printf ok", "timeout": test.timeout}})
+			if initial.Timeout != time.Second {
+				t.Fatalf("initial presentation = %+v", initial)
+			}
+		})
+	}
+}
+
 func TestBashFinalPresentationShowsOutputTailAndDuration(t *testing.T) {
 	bashTool := newTestBash(t.TempDir())
 	arguments, err := json.Marshal(map[string]any{"command": `printf 'one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n'`, "network": true})

@@ -29,13 +29,17 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates a
 
 	timeout := b.defaultTimeout
 	if args.Timeout != nil {
-		if *args.Timeout <= 0 {
+		seconds, err := args.Timeout.Int64()
+		if err != nil {
+			return errorResult(bashToolName, fmt.Errorf("timeout must be an integer")), nil
+		}
+		if seconds <= 0 {
 			return errorResult(bashToolName, fmt.Errorf("timeout must be positive")), nil
 		}
-		if time.Duration(*args.Timeout) > b.maxTimeout/time.Second {
+		if time.Duration(seconds) > b.maxTimeout/time.Second {
 			return errorResult(bashToolName, fmt.Errorf("timeout must not exceed %s", b.maxTimeout)), nil
 		}
-		timeout = time.Duration(*args.Timeout) * time.Second
+		timeout = time.Duration(seconds) * time.Second
 	}
 
 	if b.noSandbox {

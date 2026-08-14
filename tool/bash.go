@@ -40,9 +40,9 @@ type Bash struct {
 }
 
 type bashArguments struct {
-	Command string `json:"command"`
-	Timeout *int   `json:"timeout"`
-	Network bool   `json:"network"`
+	Command string       `json:"command"`
+	Timeout *json.Number `json:"timeout"`
+	Network bool         `json:"network"`
 }
 
 func NewBash(cwd string) *Bash {
@@ -75,10 +75,15 @@ func (*Bash) Definition() agent.ToolDefinition {
 
 func (b *Bash) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
 	timeout := b.defaultTimeout
-	if number, ok := snapshot.Arguments["timeout"].(json.Number); ok {
-		if seconds, err := number.Int64(); err == nil {
-			timeout = time.Duration(seconds) * time.Second
-		}
+	var number json.Number
+	switch value := snapshot.Arguments["timeout"].(type) {
+	case json.Number:
+		number = value
+	case string:
+		number = json.Number(value)
+	}
+	if seconds, err := number.Int64(); err == nil {
+		timeout = time.Duration(seconds) * time.Second
 	}
 
 	return bashPresentation(snapshotString(snapshot, "command"), timeout)
