@@ -18,7 +18,7 @@
 - Avoid using `internal` packages.
 - Prefer early returns and keep the happy path left-aligned.
 - Prefer `switch` statements over chained `if`/`else` branches.
-- Use blank lines to separate distinct logical stages within a function, especially parsing and validation from setup and execution.
+- Use blank lines between distinct logical stages and successive operation/error-check blocks, especially parsing and validation versus setup and execution.
 - Avoid comments unless they are absolutely necessary; refactor for clarity instead.
 - Write necessary comments so they are understandable without project-wide knowledge or conversational context.
 - Do not export symbols unless they are used outside their package.
