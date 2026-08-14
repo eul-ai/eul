@@ -29,7 +29,7 @@ func TestRuntimeChecksCredentialsLoadsModelsAndCreatesProvider(t *testing.T) {
 			t.Errorf("headers = %v", request.Header)
 		}
 		switch request.URL.Path {
-		case "/auth/key":
+		case "/key":
 			if request.Header.Get("Authorization") != "Bearer secret" {
 				t.Errorf("authorization = %q", request.Header.Get("Authorization"))
 			}
@@ -120,7 +120,7 @@ func TestModelCatalogIsCached(t *testing.T) {
 	models := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
-		case "/auth/key":
+		case "/key":
 			fmt.Fprint(writer, `{"data":{}}`)
 		case "/models":
 			models++
@@ -147,6 +147,51 @@ func TestModelCatalogIsCached(t *testing.T) {
 	}
 	if models != 1 {
 		t.Fatalf("model catalog requests = %d", models)
+	}
+}
+
+func TestRuntimeLoadsAccountUsage(t *testing.T) {
+	limitedRemaining := 87.66
+	tests := []struct {
+		name          string
+		body          string
+		wantRemaining *float64
+	}{
+		{name: "limited key", body: `{"data":{"usage_monthly":12.34,"limit_remaining":87.66}}`, wantRemaining: &limitedRemaining},
+		{name: "unlimited key", body: `{"data":{"usage_monthly":12.34,"limit_remaining":null}}`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.Method != http.MethodGet || request.URL.Path != "/key" || request.Header.Get("Authorization") != "Bearer secret" {
+					t.Errorf("request = %s %s, authorization = %q", request.Method, request.URL.Path, request.Header.Get("Authorization"))
+				}
+				fmt.Fprint(writer, test.body)
+			}))
+			defer server.Close()
+
+			driver := New()
+			driver.getenv = func(string) string { return "secret" }
+			driver.baseURL = server.URL
+			opened, err := driver.Open(backend.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			usage, err := opened.(backend.UsageProvider).Usage(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if usage.MonthlyUsageUSD == nil || *usage.MonthlyUsageUSD != 12.34 {
+				t.Fatalf("monthly usage = %v", usage.MonthlyUsageUSD)
+			}
+			switch {
+			case test.wantRemaining == nil && usage.LimitRemainingUSD != nil:
+				t.Fatalf("limit remaining = %v, want nil", *usage.LimitRemainingUSD)
+			case test.wantRemaining != nil && (usage.LimitRemainingUSD == nil || *usage.LimitRemainingUSD != *test.wantRemaining):
+				t.Fatalf("limit remaining = %v, want %v", usage.LimitRemainingUSD, *test.wantRemaining)
+			}
+		})
 	}
 }
 

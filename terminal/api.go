@@ -113,7 +113,9 @@ type Events struct {
 }
 
 type ProviderUsage struct {
-	Windows []UsageWindow
+	Windows           []UsageWindow
+	MonthlyUsageUSD   *float64
+	LimitRemainingUSD *float64
 }
 
 type UsageWindow struct {

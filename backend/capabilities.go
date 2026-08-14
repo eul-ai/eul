@@ -34,7 +34,9 @@ type Authenticator interface {
 }
 
 type AccountUsage struct {
-	Windows []UsageWindow
+	Windows           []UsageWindow
+	MonthlyUsageUSD   *float64
+	LimitRemainingUSD *float64
 }
 
 type UsageWindow struct {

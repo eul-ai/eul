@@ -286,7 +286,11 @@ func (c *tuiController) handleAgentEvent(message engineMessage) (bool, error) {
 
 func (c *tuiController) handleProviderUsage(message providerUsageMessage) (bool, error) {
 	if message.err == nil {
-		c.model.providerUsage = ProviderUsage{Windows: append([]UsageWindow(nil), message.usage.Windows...)}
+		c.model.providerUsage = ProviderUsage{
+			Windows:           append([]UsageWindow(nil), message.usage.Windows...),
+			MonthlyUsageUSD:   message.usage.MonthlyUsageUSD,
+			LimitRemainingUSD: message.usage.LimitRemainingUSD,
+		}
 	}
 
 	c.dirty = true

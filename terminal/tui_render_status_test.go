@@ -62,6 +62,30 @@ func TestStatusUsesCompactContextAndSingleUsage(t *testing.T) {
 	}
 }
 
+func TestStatusShowsMonthlyUsageAndLimitRemaining(t *testing.T) {
+	monthlyUsage := 12.34
+	limitRemaining := 87.66
+	usage := ProviderUsage{
+		MonthlyUsageUSD:   &monthlyUsage,
+		LimitRemainingUSD: &limitRemaining,
+	}
+
+	long, short := providerUsageText(usage, time.Time{})
+	for _, text := range []string{long, short} {
+		if !strings.Contains(text, "$12.34") || !strings.Contains(text, "$87.66") {
+			t.Fatalf("provider usage = %q", text)
+		}
+	}
+
+	usage.LimitRemainingUSD = nil
+	long, short = providerUsageText(usage, time.Time{})
+	for _, text := range []string{long, short} {
+		if !strings.Contains(text, "$12.34") || strings.Contains(text, "$87.66") {
+			t.Fatalf("unlimited provider usage = %q", text)
+		}
+	}
+}
+
 func TestResetCountdownUsesTwoLargestUnits(t *testing.T) {
 	now := time.Date(2027, time.January, 2, 10, 0, 0, 0, time.UTC)
 	tests := []struct {

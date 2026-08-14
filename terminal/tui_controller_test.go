@@ -998,6 +998,24 @@ func TestTUIControllerAppliesSubagentStatus(t *testing.T) {
 	}
 }
 
+func TestTUIControllerStoresProviderUsage(t *testing.T) {
+	monthlyUsage := 12.34
+	limitRemaining := 87.66
+	model := newTUIModel(80, 24, Options{})
+	controller := tuiController{model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard}
+
+	_, err := controller.transition(context.Background(), tuiEvent{
+		kind: tuiEventProviderUsage,
+		providerUsage: providerUsageMessage{usage: ProviderUsage{
+			MonthlyUsageUSD:   &monthlyUsage,
+			LimitRemainingUSD: &limitRemaining,
+		}},
+	})
+	if err != nil || model.providerUsage.MonthlyUsageUSD == nil || *model.providerUsage.MonthlyUsageUSD != monthlyUsage || model.providerUsage.LimitRemainingUSD == nil || *model.providerUsage.LimitRemainingUSD != limitRemaining {
+		t.Fatalf("provider usage = %+v, error = %v", model.providerUsage, err)
+	}
+}
+
 func TestTUIControllerEventDirtiness(t *testing.T) {
 	tests := []struct {
 		name      string

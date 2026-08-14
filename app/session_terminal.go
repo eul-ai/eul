@@ -79,7 +79,11 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 					ResetsAt:    window.ResetsAt,
 				}
 			}
-			return terminal.ProviderUsage{Windows: windows}, err
+			return terminal.ProviderUsage{
+				Windows:           windows,
+				MonthlyUsageUSD:   usage.MonthlyUsageUSD,
+				LimitRemainingUSD: usage.LimitRemainingUSD,
+			}, err
 		}
 	}
 	callbacks := newTerminalCallbacks(source.engine, source.checkpoints)

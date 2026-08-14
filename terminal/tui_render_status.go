@@ -95,7 +95,21 @@ func providerUsageText(usage ProviderUsage, now time.Time) (string, string) {
 		long = append(long, longText)
 		short = append(short, shortText)
 	}
+	if usage.MonthlyUsageUSD != nil {
+		amount := formatUSD(*usage.MonthlyUsageUSD)
+		long = append(long, "monthly usage "+amount)
+		short = append(short, amount+"/mo")
+	}
+	if usage.LimitRemainingUSD != nil {
+		amount := formatUSD(*usage.LimitRemainingUSD)
+		long = append(long, "limit "+amount+" remaining")
+		short = append(short, amount+" left")
+	}
 	return strings.Join(long, " · "), strings.Join(short, " · ")
+}
+
+func formatUSD(amount float64) string {
+	return fmt.Sprintf("$%.2f", amount)
 }
 
 func resetCountdown(reset, now time.Time) string {

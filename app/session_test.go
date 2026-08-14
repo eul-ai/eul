@@ -62,6 +62,8 @@ func TestRuntimeModelMetadataDefaultsToThinkingOff(t *testing.T) {
 
 func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 	usageCalls := 0
+	monthlyUsage := 12.34
+	limitRemaining := 87.66
 	backendRuntime := &fakeBackendRuntime{
 		newProvider: func() (agent.Provider, error) {
 			return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
@@ -77,7 +79,11 @@ func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 		},
 		usage: func(context.Context) (backend.AccountUsage, error) {
 			usageCalls++
-			return backend.AccountUsage{Windows: []backend.UsageWindow{{UsedPercent: 25}}}, nil
+			return backend.AccountUsage{
+				Windows:           []backend.UsageWindow{{UsedPercent: 25}},
+				MonthlyUsageUSD:   &monthlyUsage,
+				LimitRemainingUSD: &limitRemaining,
+			}, nil
 		},
 	}
 	cwd := t.TempDir()
@@ -95,7 +101,7 @@ func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if usageCalls != 1 || len(usage.Windows) != 1 {
+	if usageCalls != 1 || len(usage.Windows) != 1 || usage.MonthlyUsageUSD == nil || *usage.MonthlyUsageUSD != monthlyUsage || usage.LimitRemainingUSD == nil || *usage.LimitRemainingUSD != limitRemaining {
 		t.Fatalf("usage calls=%d result=%+v", usageCalls, usage)
 	}
 	if session.terminalOptions.Events.SubagentUpdates == nil {

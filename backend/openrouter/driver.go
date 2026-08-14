@@ -35,6 +35,7 @@ var (
 	_ backend.Driver                = (*Driver)(nil)
 	_ backend.Runtime               = (*runtime)(nil)
 	_ backend.CredentialChecker     = (*runtime)(nil)
+	_ backend.UsageProvider         = (*runtime)(nil)
 	_ backend.ModelMetadataProvider = (*runtime)(nil)
 )
 
@@ -92,7 +93,7 @@ type runtime struct {
 }
 
 func (configured *runtime) CheckCredentials(ctx context.Context) error {
-	if err := configured.get(ctx, "/auth/key", nil); err != nil {
+	if err := configured.get(ctx, "/key", nil); err != nil {
 		return fmt.Errorf("openrouter: validate API key: %w", err)
 	}
 	var catalog modelCatalog
@@ -113,6 +114,27 @@ func (configured *runtime) CheckCredentials(ctx context.Context) error {
 	configured.models = models
 	configured.mu.Unlock()
 	return nil
+}
+
+type keyResponse struct {
+	Data keyUsage `json:"data"`
+}
+
+type keyUsage struct {
+	MonthlyUsage   float64  `json:"usage_monthly"`
+	LimitRemaining *float64 `json:"limit_remaining"`
+}
+
+func (configured *runtime) Usage(ctx context.Context) (backend.AccountUsage, error) {
+	var response keyResponse
+	if err := configured.get(ctx, "/key", &response); err != nil {
+		return backend.AccountUsage{}, fmt.Errorf("openrouter: load usage: %w", err)
+	}
+
+	return backend.AccountUsage{
+		MonthlyUsageUSD:   &response.Data.MonthlyUsage,
+		LimitRemainingUSD: response.Data.LimitRemaining,
+	}, nil
 }
 
 func (configured *runtime) NewProvider() (agent.Provider, error) {
