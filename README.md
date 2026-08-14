@@ -24,7 +24,7 @@ persisted locally, and tools run directly on your machine with your permissions.
 - Global and project-specific Agent Skills
 - Automatic context compaction
 - Resumable sessions
-- ChatGPT and OpenRouter support
+- OpenAI Codex and OpenRouter support
 
 ## Getting started
 
