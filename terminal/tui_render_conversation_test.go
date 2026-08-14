@@ -625,7 +625,7 @@ func TestConversationDividerIndicatesTextBelow(t *testing.T) {
 	if scrolledDivider == followingDivider {
 		t.Fatalf("divider did not change after scrolling: %q", scrolledDivider)
 	}
-	if !strings.Contains(scrolledDivider, "more (alt+↓)") {
+	if !strings.Contains(scrolledDivider, "↓ more (alt+↓)") {
 		t.Fatalf("divider does not show jump shortcut: %q", scrolledDivider)
 	}
 
