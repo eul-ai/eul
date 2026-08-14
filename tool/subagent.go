@@ -30,9 +30,15 @@ var taskSchema = StrictObject(map[string]agent.JSONSchema{
 		Type:        "string",
 		Description: "The complete task prompt. Include all context the subagent needs.",
 	},
-	"model_profile":  nullable("string", "fast, balanced, or main; null inherits the parent model."),
-	"thinking_level": nullable("string", subagentThinkingLevelDescription()),
-}, "description", "prompt", "model_profile", "thinking_level")
+	"model_profile": {
+		Type:        "string",
+		Description: "fast, balanced, or main (default; the main agent's model).",
+	},
+	"thinking_level": {
+		Type:        "string",
+		Description: subagentThinkingLevelDescription(),
+	},
+}, "description", "prompt")
 
 func subagentThinkingLevelDescription() string {
 	levels := agent.ThinkingLevels()
@@ -40,16 +46,16 @@ func subagentThinkingLevelDescription() string {
 	for index, level := range levels {
 		values[index] = string(level)
 	}
-	return strings.Join(values[:len(values)-1], ", ") + ", or " + values[len(values)-1] + "; null inherits the parent level."
+	return strings.Join(values[:len(values)-1], ", ") + ", or " + values[len(values)-1] + ". Defaults to the main agent's current level."
 }
 
 var launchDefinition = agent.ToolDefinition{
 	Name:        launchToolName,
-	Description: "Launch one to four independent read-only research tasks, up to four active total. Results are delivered automatically. Use non-default model or thinking settings only when necessary.",
+	Description: "Launch one to four independent read-only research tasks, with at most four active. Terminal results are delivered automatically. Returned IDs are only for status and cancellation. Omit model profile and thinking level to inherit the main agent's settings. Override them only when explicitly requested or when there is a clear task-specific reason.",
 	Parameters: StrictObject(map[string]agent.JSONSchema{
 		"tasks": {
 			Type:        "array",
-			Description: "One to four independent tasks.",
+			Description: "One to four independent tasks, each with its own model profile and thinking level.",
 			Items:       &taskSchema,
 		},
 	}, "tasks"),
@@ -60,7 +66,7 @@ var waitDefinition = agent.ToolDefinition{
 	Description: "Wait sparingly when no independent work remains and the next step requires a subagent result. Completion notifications are delivered automatically. Steering interrupts the wait.",
 	Parameters: StrictObject(map[string]agent.JSONSchema{
 		"timeout_ms": nullable("integer", fmt.Sprintf("Optional timeout in milliseconds; null defaults to %d, maximum %d.", defaultWaitTimeoutMS, maximumWaitTimeoutMS)),
-	}, "timeout_ms"),
+	}),
 }
 
 var cancelDefinition = agent.ToolDefinition{
