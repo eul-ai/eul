@@ -75,6 +75,9 @@ func TestRenderFrameShowsPermission(t *testing.T) {
 		"bash needs access to the network",
 		"$ git push origin main",
 		"This command and its descendants will have network access.",
+		"[d] Deny once",
+		"[a] Allow once",
+		"[s] Allow for session",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("frame omits %q: %q", want, frame.plainRows)

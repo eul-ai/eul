@@ -153,11 +153,11 @@ func reducePermissionKey(model *tuiModel, key keyEvent) tuiAction {
 	switch key.code {
 	case keyText:
 		switch strings.ToLower(strings.TrimSpace(key.text)) {
-		case "y", "yes":
-			return permissionAction(PermissionAllowOnce)
-		case "n", "no":
-			return permissionAction(PermissionDenyOnce)
 		case "a":
+			return permissionAction(PermissionAllowOnce)
+		case "d":
+			return permissionAction(PermissionDenyOnce)
+		case "s":
 			return permissionAction(PermissionAllowSession)
 		}
 	case keyLeft:

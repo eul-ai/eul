@@ -14,9 +14,9 @@ func TestPermissionKeysTakePriority(t *testing.T) {
 		want         tuiActionKind
 		wantDecision PermissionDecision
 	}{
-		{name: "allow", key: keyEvent{code: keyText, text: "y"}, want: tuiActionResolvePermission, wantDecision: PermissionAllowOnce},
-		{name: "allow session", key: keyEvent{code: keyText, text: "a"}, want: tuiActionResolvePermission, wantDecision: PermissionAllowSession},
-		{name: "deny", key: keyEvent{code: keyText, text: "n"}, want: tuiActionResolvePermission, wantDecision: PermissionDenyOnce},
+		{name: "allow", key: keyEvent{code: keyText, text: "a"}, want: tuiActionResolvePermission, wantDecision: PermissionAllowOnce},
+		{name: "allow session", key: keyEvent{code: keyText, text: "s"}, want: tuiActionResolvePermission, wantDecision: PermissionAllowSession},
+		{name: "deny", key: keyEvent{code: keyText, text: "d"}, want: tuiActionResolvePermission, wantDecision: PermissionDenyOnce},
 		{name: "enter denies", key: keyEvent{code: keyEnter}, want: tuiActionResolvePermission, wantDecision: PermissionDenyOnce},
 		{name: "escape denies", key: keyEvent{code: keyEscape}, want: tuiActionResolvePermission, wantDecision: PermissionDenyOnce},
 		{name: "cancel", key: keyEvent{code: keyCtrlC}, want: tuiActionCancel},
