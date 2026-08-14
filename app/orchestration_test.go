@@ -318,7 +318,8 @@ func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) 
 			return agent.Response{}, fmt.Errorf("unexpected provider call %d", calls)
 		}
 	})
-	engine := agent.New(provider, registry, agent.Options{Model: "model", Inbox: manager, AdditionalInstructions: subagentInstructions(manager)})
+	bridge := newSubagentBridge(manager, "subagent_wait")
+	engine := agent.New(provider, registry, agent.Options{Model: "model", Inbox: bridge, AdditionalInstructions: bridge.additionalInstructions})
 
 	waitStarted := make(chan struct{})
 	done := make(chan error, 1)

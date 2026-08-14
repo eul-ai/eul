@@ -47,7 +47,7 @@ func (c *Client) Usage(ctx context.Context) (AccountUsage, error) {
 	}
 	defer response.Body.Close()
 
-	body, truncated, err := readBounded(response.Body, c.maxResponseBytes)
+	body, truncated, err := readBounded(response.Body, c.maxUsageResponseBytes)
 	if err != nil {
 		if classified := c.contextError(ctx, err, "read usage response"); classified != nil {
 			return AccountUsage{}, classified
@@ -55,7 +55,7 @@ func (c *Client) Usage(ctx context.Context) (AccountUsage, error) {
 		return AccountUsage{}, c.errorf("read usage response: %v", err)
 	}
 	if truncated {
-		return AccountUsage{}, c.errorf("usage response exceeds %d bytes", c.maxResponseBytes)
+		return AccountUsage{}, c.errorf("usage response exceeds %d bytes", c.maxUsageResponseBytes)
 	}
 
 	var wire usageResponse

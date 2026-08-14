@@ -19,7 +19,6 @@ const (
 	maxCompletionResultBytes  = 32 * 1024
 	maxCompletionResultLines  = 1_000
 	maxCompletionMessageBytes = 40 * 1024
-	maxInboxBatchBytes        = 48 * 1024
 )
 
 var (
@@ -434,97 +433,34 @@ func (m *Manager) Wait(ctx context.Context) (WaitOutcome, error) {
 	}
 }
 
-func (m *Manager) SnapshotInbox() agent.InboxBatch {
+func (m *Manager) Snapshot() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	if len(m.inbox) == 0 {
-		return agent.InboxBatch{}
-	}
-
-	selected := make([]Completion, 0, len(m.inbox))
-	var encoded []byte
-	for _, completion := range m.inbox {
-		candidate := append(selected, completion)
-		body, _ := json.Marshal(candidate)
-		envelope := []byte("<subagent_notifications>\n" + string(body) + "\n</subagent_notifications>")
-		if len(envelope) > maxInboxBatchBytes && len(selected) > 0 {
-			break
-		}
-		selected = candidate
-		encoded = envelope
-		if len(envelope) > maxInboxBatchBytes {
-			break
-		}
-	}
-
-	ids := make([]uint64, len(selected))
-	for index, completion := range selected {
-		ids[index] = completion.MessageID
-	}
-	return agent.InboxBatch{MessageIDs: ids, Text: string(encoded)}
+	return m.statusLocked()
 }
 
-func (m *Manager) AcknowledgeInbox(batch agent.InboxBatch) error {
-	if len(batch.MessageIDs) == 0 {
+func (m *Manager) AcknowledgeCompletions(messageIDs []uint64) error {
+	if len(messageIDs) == 0 {
 		return nil
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if len(m.inbox) < len(batch.MessageIDs) {
+	if len(m.inbox) < len(messageIDs) {
 		return errors.New("subagent inbox acknowledgement exceeds pending messages")
 	}
-	for index, id := range batch.MessageIDs {
+	for index, id := range messageIDs {
 		if m.inbox[index].MessageID != id {
 			return errors.New("subagent inbox acknowledgement does not match pending prefix")
 		}
 	}
-	m.inbox = append([]Completion(nil), m.inbox[len(batch.MessageIDs):]...)
+	m.inbox = append([]Completion(nil), m.inbox[len(messageIDs):]...)
 	m.publishLocked()
 	return nil
 }
 
-func (m *Manager) InboxEmpty() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.inbox) == 0
-}
-
-func (m *Manager) ActiveContext() string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if len(m.active) == 0 {
-		return ""
-	}
-
-	jobs := m.sortedJobsLocked()
-	var output strings.Builder
-	output.WriteString("Active subagents:\n")
-	for _, job := range jobs {
-		fmt.Fprintf(&output, "- %s: %s (%s)\n", job.id, strings.TrimSpace(job.description), job.state)
-	}
-	output.WriteString("Do not finish while required delegated work is still active. Continue independent work, or call subagent_wait when the next step depends on these results.")
-	return strings.TrimSpace(output.String())
-}
-
 func (m *Manager) publishLocked() {
-	status := Status{PendingCompletions: append([]Completion(nil), m.inbox...)}
-	jobs := m.sortedJobsLocked()
-	status.Active = make([]JobStatus, len(jobs))
-	status.Running = len(jobs)
-	for index, job := range jobs {
-		status.Active[index] = JobStatus{
-			ID:            job.id,
-			Task:          job.description,
-			ModelProfile:  job.modelProfile,
-			ThinkingLevel: job.thinkingLevel,
-			State:         job.state,
-			Started:       job.started,
-			Usage:         job.usage,
-		}
-	}
-
+	status := m.statusLocked()
 	select {
 	case m.status <- status:
 	default:
@@ -542,6 +478,25 @@ func (m *Manager) publishLocked() {
 	case m.dirty <- struct{}{}:
 	default:
 	}
+}
+
+func (m *Manager) statusLocked() Status {
+	status := Status{PendingCompletions: append([]Completion(nil), m.inbox...)}
+	jobs := m.sortedJobsLocked()
+	status.Active = make([]JobStatus, len(jobs))
+	status.Running = len(jobs)
+	for index, job := range jobs {
+		status.Active[index] = JobStatus{
+			ID:            job.id,
+			Task:          job.description,
+			ModelProfile:  job.modelProfile,
+			ThinkingLevel: job.thinkingLevel,
+			State:         job.state,
+			Started:       job.started,
+			Usage:         job.usage,
+		}
+	}
+	return status
 }
 
 func (m *Manager) sortedJobsLocked() []*job {

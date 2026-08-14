@@ -1133,11 +1133,11 @@ func TestRenderStatusPrioritizesActivityAndContext(t *testing.T) {
 	model.activity = activity{kind: activityCompacting}
 
 	wideLeft, wideRight := renderStatus(model, 80)
-	if wideLeft != "⠋ compacting context" || wideRight != "very-long-model (max) · context 50%" {
+	if wideLeft != "⠋ compacting" || wideRight != "very-long-model (max) · context 50%" {
 		t.Fatalf("wide status = %q / %q", wideLeft, wideRight)
 	}
 	narrowLeft, narrowRight := renderStatus(model, 33)
-	if strings.Contains(narrowRight, "very-long-model") || narrowLeft != "⠋ compacting context" || narrowRight != "context 50%" {
+	if strings.Contains(narrowRight, "very-long-model") || narrowLeft != "⠋ compacting" || narrowRight != "context 50%" {
 		t.Fatalf("narrow status = %q / %q", narrowLeft, narrowRight)
 	}
 }
@@ -1147,7 +1147,7 @@ func TestTUIModelShowsGenerationRetries(t *testing.T) {
 	model.applyAgentEvent(agent.Event{Kind: agent.EventGenerationRetry, Attempt: 2})
 
 	left, _ := renderStatus(model, 80)
-	if model.activity.kind != activityRetrying || left != "⠋ retrying response (attempt 2)" {
+	if model.activity.kind != activityRetrying || left != "⠋ retrying (attempt 2)" {
 		t.Fatalf("activity = %+v, status = %q", model.activity, left)
 	}
 }

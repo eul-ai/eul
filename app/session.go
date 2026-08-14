@@ -19,6 +19,7 @@ type sessionRunner interface {
 type sessionToolset struct {
 	registry        *tool.Registry
 	subagents       *subagent.Manager
+	subagentBridge  *subagentBridge
 	subagentUpdates <-chan subagent.Status
 }
 
@@ -55,20 +56,29 @@ func newSessionToolset(
 			return metadata.subagent[profile].ThinkingLevels
 		},
 	})
+	launchSubagent := tool.NewSubagent(manager)
+	waitForSubagent := tool.NewSubagentWait(manager)
+	cancelSubagent := tool.NewSubagentCancel(manager)
 	registry, err := newToolset(
 		config.cwd,
 		fullToolAccess,
 		config.noSandbox,
 		authorizeNetwork,
-		tool.NewSubagent(manager),
-		tool.NewSubagentWait(manager),
-		tool.NewSubagentCancel(manager),
+		launchSubagent,
+		waitForSubagent,
+		cancelSubagent,
 		tool.NewUpdateGoal(completeGoal),
 	)
 	if err != nil {
 		return sessionToolset{}, errors.Join(fmt.Errorf("configure tools: %w", err), manager.Close())
 	}
-	return sessionToolset{registry: registry, subagents: manager, subagentUpdates: manager.StatusChanges()}, nil
+	bridge := newSubagentBridge(manager, waitForSubagent.Definition().Name)
+	return sessionToolset{
+		registry:        registry,
+		subagents:       manager,
+		subagentBridge:  bridge,
+		subagentUpdates: manager.StatusChanges(),
+	}, nil
 }
 
 func newAgentSession(config resolvedConfig, env environment, backendRuntime backend.Runtime) (*agentSession, error) {
@@ -114,8 +124,8 @@ func newAgentSessionComponents(
 		config.models.main,
 		settings,
 		checkpointing,
-		tools.subagents,
-		subagentInstructions(tools.subagents),
+		tools.subagentBridge,
+		tools.subagentBridge.additionalInstructions,
 	))
 	session := &agentSession{
 		engine:         engine,

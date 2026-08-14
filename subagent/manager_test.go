@@ -35,9 +35,9 @@ func TestTerminalTransitionQueuesCompletionAndFreesCapacity(t *testing.T) {
 	if _, err := manager.Start(testTasks(1)); err != nil {
 		t.Fatalf("completion did not free capacity: %v", err)
 	}
-	batch := manager.SnapshotInbox()
-	if len(batch.MessageIDs) != 1 || !strings.Contains(batch.Text, "result for task-") {
-		t.Fatalf("batch = %+v", batch)
+	completions := manager.Snapshot().PendingCompletions
+	if len(completions) != 1 || !strings.Contains(completions[0].Result, "result for task-") {
+		t.Fatalf("completions = %+v", completions)
 	}
 }
 
@@ -208,7 +208,7 @@ func TestWaitBlocksUntilCompletionAndDoesNotDrainInbox(t *testing.T) {
 	if result := <-waitDone; result.err != nil || result.outcome != WaitCompletion {
 		t.Fatalf("wait result = %+v", result)
 	}
-	if len(manager.SnapshotInbox().MessageIDs) != 1 {
+	if len(manager.Snapshot().PendingCompletions) != 1 {
 		t.Fatal("wait drained inbox")
 	}
 }
@@ -248,7 +248,7 @@ func TestWaitCancellationDoesNotCancelChild(t *testing.T) {
 	<-childDone
 }
 
-func TestInboxBoundsDescriptionResultAndBatch(t *testing.T) {
+func TestInboxBoundsDescriptionAndResult(t *testing.T) {
 	manager := NewManager(Config{Runner: RunFunc(func(context.Context, RunRequest, func(Progress)) (agent.RunResult, error) {
 		return agent.RunResult{Text: strings.Repeat("é\n", maxCompletionResultLines+100) + strings.Repeat("x", maxCompletionResultBytes)}, nil
 	})})
@@ -262,9 +262,8 @@ func TestInboxBoundsDescriptionResultAndBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	batch := manager.SnapshotInbox()
-	if len(completion.Task) > maxTaskDescriptionBytes || len(encoded) > maxCompletionMessageBytes || len(batch.Text) > maxInboxBatchBytes {
-		t.Fatalf("task bytes = %d, completion bytes = %d, batch bytes = %d", len(completion.Task), len(encoded), len(batch.Text))
+	if len(completion.Task) > maxTaskDescriptionBytes || len(encoded) > maxCompletionMessageBytes {
+		t.Fatalf("task bytes = %d, completion bytes = %d", len(completion.Task), len(encoded))
 	}
 }
 
@@ -278,18 +277,21 @@ func TestInboxAcknowledgesOnlyExactPrefix(t *testing.T) {
 	}
 	waitForStatus(t, manager, func(status Status) bool { return len(status.PendingCompletions) == 2 })
 
-	batch := manager.SnapshotInbox()
-	bad := batch
-	bad.MessageIDs = append([]uint64(nil), batch.MessageIDs...)
-	bad.MessageIDs[0]++
-	if err := manager.AcknowledgeInbox(bad); err == nil {
+	completions := manager.Snapshot().PendingCompletions
+	messageIDs := make([]uint64, len(completions))
+	for index, completion := range completions {
+		messageIDs[index] = completion.MessageID
+	}
+	bad := append([]uint64(nil), messageIDs...)
+	bad[0]++
+	if err := manager.AcknowledgeCompletions(bad); err == nil {
 		t.Fatal("mismatched acknowledgement succeeded")
 	}
-	if err := manager.AcknowledgeInbox(batch); err != nil {
+	if err := manager.AcknowledgeCompletions(messageIDs); err != nil {
 		t.Fatal(err)
 	}
-	if next := manager.SnapshotInbox(); len(next.MessageIDs) != 0 {
-		t.Fatalf("pending batch = %+v", next)
+	if next := manager.Snapshot().PendingCompletions; len(next) != 0 {
+		t.Fatalf("pending completions = %+v", next)
 	}
 }
 

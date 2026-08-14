@@ -115,11 +115,8 @@ func (c *Client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
 	if len(request.State) == 0 {
 		return false
 	}
-	if c.maxStateBytes > 0 {
-		shared, err := c.responsesClient()
-		if err == nil && shared.ShouldCompactState(request) {
-			return true
-		}
+	if c.responses.ShouldCompactState(request) {
+		return true
 	}
 	if usage.TotalTokens <= 0 {
 		return false

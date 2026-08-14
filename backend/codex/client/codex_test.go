@@ -144,9 +144,19 @@ func TestCodexSourceIsResolvedPerRequest(t *testing.T) {
 }
 
 func TestCodexDefaultEndpoint(t *testing.T) {
-	client, err := New(testTokenSource("token"), Options{})
-	if err != nil || client.endpoint != "https://chatgpt.com/backend-api/codex/responses" {
-		t.Fatalf("endpoint=%q error=%v", client.endpoint, err)
+	transport := roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.String() != "https://chatgpt.com/backend-api/codex/responses" {
+			t.Fatalf("endpoint = %q", request.URL)
+		}
+		body := "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	client, err := New(testTokenSource("token"), Options{HTTPClient: &http.Client{Transport: transport}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Generate(context.Background(), agent.Request{}, agent.StreamObserver{}); err != nil {
+		t.Fatal(err)
 	}
 }
 

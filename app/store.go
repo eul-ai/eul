@@ -1,12 +1,10 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,57 +14,15 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
 )
 
-const (
-	sessionRecordVersion       = 2
-	maxSessionBytes            = int64(64 * 1024 * 1024)
-	maxSessionDescriptionBytes = 120
-)
+const maxSessionBytes = int64(64 * 1024 * 1024)
 
 var errSessionInUse = errors.New("session is already in use")
-
-type sessionStatus string
-
-const (
-	sessionIdle   sessionStatus = "idle"
-	sessionActive sessionStatus = "active"
-)
-
-type sessionRecord struct {
-	Version          int                 `json:"version"`
-	ID               string              `json:"id"`
-	Revision         uint64              `json:"revision"`
-	CreatedAt        time.Time           `json:"created_at"`
-	UpdatedAt        time.Time           `json:"updated_at"`
-	Status           sessionStatus       `json:"status"`
-	Provider         string              `json:"provider"`
-	WorkingDirectory string              `json:"working_directory"`
-	Model            string              `json:"model"`
-	FastModel        string              `json:"fast_model"`
-	BalancedModel    string              `json:"balanced_model"`
-	ThinkingLevel    agent.ThinkingLevel `json:"thinking_level"`
-	FastMode         bool                `json:"fast_mode,omitempty"`
-	Description      string              `json:"description,omitempty"`
-	Agent            agent.Checkpoint    `json:"agent"`
-	Subagent         subagent.Checkpoint `json:"subagent"`
-	Terminal         terminal.Checkpoint `json:"terminal"`
-}
-
-func (record sessionRecord) models() modelSet {
-	return modelSet{
-		main:     record.Model,
-		fast:     record.FastModel,
-		balanced: record.BalancedModel,
-	}
-}
 
 type sessionStore struct {
 	root string
@@ -124,22 +80,24 @@ func (store *sessionStore) Create(
 		path:  path,
 		lock:  lock,
 		record: sessionRecord{
-			Version:          sessionRecordVersion,
-			ID:               id,
-			CreatedAt:        now,
-			UpdatedAt:        now,
-			Status:           sessionIdle,
-			Provider:         provider,
-			WorkingDirectory: cwd,
-			Model:            models.main,
-			FastModel:        models.fast,
-			BalancedModel:    models.balanced,
-			ThinkingLevel:    thinkingLevel,
-			FastMode:         fastMode,
-			Description:      terminalCheckpoint.Description(),
-			Agent:            agentCheckpoint,
-			Subagent:         subagentCheckpoint,
-			Terminal:         terminalCheckpoint,
+			sessionMetadata: sessionMetadata{
+				Version:          sessionRecordVersion,
+				ID:               id,
+				CreatedAt:        now,
+				UpdatedAt:        now,
+				Status:           sessionIdle,
+				Provider:         provider,
+				WorkingDirectory: cwd,
+				Model:            models.main,
+				FastModel:        models.fast,
+				BalancedModel:    models.balanced,
+				ThinkingLevel:    thinkingLevel,
+				FastMode:         fastMode,
+				Description:      terminalCheckpoint.Description(),
+			},
+			Agent:    agentCheckpoint,
+			Subagent: subagentCheckpoint,
+			Terminal: terminalCheckpoint,
 		},
 	}
 	if handle.record.Description != "" {
@@ -185,13 +143,6 @@ func (store *sessionStore) Open(ctx context.Context, cwd, id string) (*sessionHa
 	}
 
 	return &sessionHandle{store: store, path: path, lock: lock, record: record, warnings: warnings}, nil
-}
-
-type sessionSummary struct {
-	ID          string
-	Description string
-	UpdatedAt   time.Time
-	Active      bool
 }
 
 func (store *sessionStore) List(cwd string) ([]sessionSummary, []string, error) {
@@ -343,14 +294,10 @@ func (handle *sessionHandle) Save(
 }
 
 func (handle *sessionHandle) write(record sessionRecord) error {
-	if err := validateSessionRecord(record); err != nil {
+	encoded, err := encodeSessionRecord(record)
+	if err != nil {
 		return err
 	}
-	encoded, err := json.MarshalIndent(record, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode session: %w", err)
-	}
-	encoded = append(encoded, '\n')
 	if int64(len(encoded)) > maxSessionBytes {
 		return fmt.Errorf("session exceeds %d bytes", maxSessionBytes)
 	}
@@ -399,123 +346,7 @@ func readSessionSummary(path string) (sessionSummary, string, error) {
 	}
 	defer file.Close()
 
-	decoder := json.NewDecoder(io.LimitReader(file, maxSessionBytes+1))
-	opening, err := decoder.Token()
-	if err != nil {
-		return sessionSummary{}, "", fmt.Errorf("decode session: %w", err)
-	}
-	if opening != json.Delim('{') {
-		return sessionSummary{}, "", errors.New("decode session: expected object")
-	}
-
-	var record sessionRecord
-	for decoder.More() {
-		key, err := decoder.Token()
-		if err != nil {
-			return sessionSummary{}, "", fmt.Errorf("decode session: %w", err)
-		}
-		name, ok := key.(string)
-		if !ok {
-			return sessionSummary{}, "", errors.New("decode session: expected field name")
-		}
-
-		switch name {
-		case "version":
-			err = decoder.Decode(&record.Version)
-		case "id":
-			err = decoder.Decode(&record.ID)
-		case "revision":
-			err = decoder.Decode(&record.Revision)
-		case "created_at":
-			err = decoder.Decode(&record.CreatedAt)
-		case "updated_at":
-			err = decoder.Decode(&record.UpdatedAt)
-		case "status":
-			err = decoder.Decode(&record.Status)
-		case "provider":
-			err = decoder.Decode(&record.Provider)
-		case "working_directory":
-			err = decoder.Decode(&record.WorkingDirectory)
-		case "model":
-			err = decoder.Decode(&record.Model)
-		case "fast_model":
-			err = decoder.Decode(&record.FastModel)
-		case "balanced_model":
-			err = decoder.Decode(&record.BalancedModel)
-		case "thinking_level":
-			err = decoder.Decode(&record.ThinkingLevel)
-		case "fast_mode":
-			err = decoder.Decode(&record.FastMode)
-		case "description":
-			err = decoder.Decode(&record.Description)
-			if err == nil {
-				if err := validateSessionSummary(record); err != nil {
-					return sessionSummary{}, "", err
-				}
-				return sessionSummary{
-					ID:          record.ID,
-					Description: record.Description,
-					UpdatedAt:   record.UpdatedAt,
-					Active:      record.Status == sessionActive,
-				}, record.WorkingDirectory, nil
-			}
-		case "agent", "subagent", "terminal":
-			if err := validateSessionSummaryMetadata(record); err != nil {
-				return sessionSummary{}, "", err
-			}
-			return sessionSummary{}, "", errors.New("session description is missing")
-		default:
-			return sessionSummary{}, "", fmt.Errorf("decode session: unknown field %q before description", name)
-		}
-		if err != nil {
-			return sessionSummary{}, "", fmt.Errorf("decode session: %w", err)
-		}
-	}
-
-	if err := validateSessionSummaryMetadata(record); err != nil {
-		return sessionSummary{}, "", err
-	}
-	return sessionSummary{}, "", errors.New("session description is missing")
-}
-
-func validateSessionSummary(record sessionRecord) error {
-	if err := validateSessionSummaryMetadata(record); err != nil {
-		return err
-	}
-	if !utf8.ValidString(record.Description) || record.Description == "" || len(record.Description) > maxSessionDescriptionBytes || strings.IndexFunc(record.Description, unicode.IsControl) >= 0 {
-		return errors.New("session description is invalid")
-	}
-	return nil
-}
-
-func validateSessionSummaryMetadata(record sessionRecord) error {
-	switch {
-	case record.Version != sessionRecordVersion:
-		return fmt.Errorf("unsupported session version %d", record.Version)
-	case !validSessionID(record.ID):
-		return errors.New("session has an invalid ID")
-	case record.Revision == 0:
-		return errors.New("session has no revision")
-	case record.CreatedAt.IsZero() || record.UpdatedAt.IsZero():
-		return errors.New("session timestamps are missing")
-	case record.UpdatedAt.Before(record.CreatedAt):
-		return errors.New("session timestamps are inconsistent")
-	case record.Status != sessionIdle && record.Status != sessionActive:
-		return fmt.Errorf("session has invalid status %q", record.Status)
-	case !backend.ValidID(record.Provider):
-		return fmt.Errorf("session provider %q is invalid", record.Provider)
-	case !filepath.IsAbs(record.WorkingDirectory) || filepath.Clean(record.WorkingDirectory) != record.WorkingDirectory:
-		return errors.New("session working directory is not canonical")
-	case strings.TrimSpace(record.Model) == "":
-		return errors.New("session model is empty")
-	case strings.TrimSpace(record.FastModel) == "":
-		return errors.New("session fast model is empty")
-	case strings.TrimSpace(record.BalancedModel) == "":
-		return errors.New("session balanced model is empty")
-	case !record.ThinkingLevel.Valid():
-		return errors.New("session thinking level is invalid")
-	}
-	return nil
+	return decodeSessionSummary(io.LimitReader(file, maxSessionBytes+1))
 }
 
 func readSessionRecord(path string) (sessionRecord, error) {
@@ -542,58 +373,7 @@ func readSessionRecord(path string) (sessionRecord, error) {
 	if int64(len(body)) > maxSessionBytes {
 		return sessionRecord{}, fmt.Errorf("session exceeds %d bytes", maxSessionBytes)
 	}
-
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	var record sessionRecord
-	if err := decoder.Decode(&record); err != nil {
-		return sessionRecord{}, fmt.Errorf("decode session: %w", err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return sessionRecord{}, errors.New("decode session: multiple JSON values")
-		}
-		return sessionRecord{}, fmt.Errorf("decode session: %w", err)
-	}
-	if err := validateSessionRecord(record); err != nil {
-		return sessionRecord{}, err
-	}
-	return record, nil
-}
-
-func validateSessionRecord(record sessionRecord) error {
-	switch {
-	case record.Version != sessionRecordVersion:
-		return fmt.Errorf("unsupported session version %d", record.Version)
-	case !validSessionID(record.ID):
-		return errors.New("session has an invalid ID")
-	case record.Revision == 0:
-		return errors.New("session has no revision")
-	case record.CreatedAt.IsZero() || record.UpdatedAt.IsZero():
-		return errors.New("session timestamps are missing")
-	case record.UpdatedAt.Before(record.CreatedAt):
-		return errors.New("session timestamps are inconsistent")
-	case record.Status != sessionIdle && record.Status != sessionActive:
-		return fmt.Errorf("session has invalid status %q", record.Status)
-	case !backend.ValidID(record.Provider):
-		return fmt.Errorf("session provider %q is invalid", record.Provider)
-	case !filepath.IsAbs(record.WorkingDirectory) || filepath.Clean(record.WorkingDirectory) != record.WorkingDirectory:
-		return errors.New("session working directory is not canonical")
-	case strings.TrimSpace(record.Model) == "":
-		return errors.New("session model is empty")
-	case strings.TrimSpace(record.FastModel) == "":
-		return errors.New("session fast model is empty")
-	case strings.TrimSpace(record.BalancedModel) == "":
-		return errors.New("session balanced model is empty")
-	case !record.ThinkingLevel.Valid():
-		return errors.New("session thinking level is invalid")
-	case !record.Agent.Initialized() || !record.Subagent.Initialized() || !record.Terminal.Initialized():
-		return errors.New("session checkpoints are missing")
-	case !utf8.ValidString(record.Description) || len(record.Description) > maxSessionDescriptionBytes || strings.IndexFunc(record.Description, unicode.IsControl) >= 0:
-		return errors.New("session description is invalid")
-	}
-	return nil
+	return decodeSessionRecord(body)
 }
 
 func writeSessionRecord(path string, encoded []byte) error {

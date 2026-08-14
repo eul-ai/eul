@@ -2,12 +2,12 @@ package client
 
 import (
 	"encoding/json"
-	"net/http"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend/openai/responses"
 )
 
 func TestClientReasoningSummaryAndModelMetadata(t *testing.T) {
@@ -149,16 +149,15 @@ func TestEstimateInputTokensUsesOrderedTextParts(t *testing.T) {
 }
 
 func TestClientShouldCompactForContinuationStateHeadroom(t *testing.T) {
-	client := &Client{
-		httpClient:          &http.Client{},
-		endpoint:            "https://example.com/responses",
-		tokenSource:         testTokenSource("token"),
-		maxRequestBytes:     defaultMaxRequestBytes,
-		maxResponseBytes:    defaultMaxResponseBytes,
-		maxErrorBytes:       defaultMaxErrorBytes,
-		maxStateBytes:       160,
-		stateOutputHeadroom: 50,
+	responsesClient, err := responses.New(responses.Options{
+		Endpoint:            "https://example.com/responses",
+		MaxStateBytes:       160,
+		StateOutputHeadroom: 50,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
+	client := &Client{responses: responsesClient}
 	state, err := json.Marshal(map[string]any{"version": 1, "items": []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"` + strings.Repeat("x", 35) + `"}`)}})
 	if err != nil {
 		t.Fatal(err)
@@ -175,7 +174,12 @@ func TestClientShouldCompactForContinuationStateHeadroom(t *testing.T) {
 }
 
 func TestClientShouldCompact(t *testing.T) {
-	client := &Client{}
+	responsesClient, err := responses.New(responses.Options{Endpoint: "https://example.com/responses"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &Client{responses: responsesClient}
+	state := []byte(`{"version":1}`)
 	solLimit := models[ModelGPT56Sol].contextWindow * 9 / 10
 	terraLimit := models[ModelGPT56Terra].contextWindow * 9 / 10
 	lunaLimit := models[ModelGPT56Luna].contextWindow * 9 / 10
@@ -186,12 +190,12 @@ func TestClientShouldCompact(t *testing.T) {
 		want    bool
 	}{
 		{name: "no state", request: agent.Request{Model: ModelGPT56Sol}, usage: agent.Usage{TotalTokens: solLimit}, want: false},
-		{name: "no usage", request: agent.Request{Model: ModelGPT56Sol, State: []byte("state")}, want: false},
-		{name: "unknown model", request: agent.Request{Model: "unknown", State: []byte("state")}, usage: agent.Usage{TotalTokens: solLimit}, want: false},
-		{name: "below limit", request: agent.Request{Model: ModelGPT56Sol, State: []byte("state")}, usage: agent.Usage{TotalTokens: solLimit - 1}, want: false},
-		{name: "sol at limit", request: agent.Request{Model: ModelGPT56Sol, State: []byte("state")}, usage: agent.Usage{TotalTokens: solLimit}, want: true},
-		{name: "terra at limit", request: agent.Request{Model: ModelGPT56Terra, State: []byte("state")}, usage: agent.Usage{TotalTokens: terraLimit}, want: true},
-		{name: "pending input crosses luna limit", request: agent.Request{Model: ModelGPT56Luna, State: []byte("state"), Inputs: []agent.Input{agent.NewTextInput("12345678")}}, usage: agent.Usage{TotalTokens: lunaLimit - 2}, want: true},
+		{name: "no usage", request: agent.Request{Model: ModelGPT56Sol, State: state}, want: false},
+		{name: "unknown model", request: agent.Request{Model: "unknown", State: state}, usage: agent.Usage{TotalTokens: solLimit}, want: false},
+		{name: "below limit", request: agent.Request{Model: ModelGPT56Sol, State: state}, usage: agent.Usage{TotalTokens: solLimit - 1}, want: false},
+		{name: "sol at limit", request: agent.Request{Model: ModelGPT56Sol, State: state}, usage: agent.Usage{TotalTokens: solLimit}, want: true},
+		{name: "terra at limit", request: agent.Request{Model: ModelGPT56Terra, State: state}, usage: agent.Usage{TotalTokens: terraLimit}, want: true},
+		{name: "pending input crosses luna limit", request: agent.Request{Model: ModelGPT56Luna, State: state, Inputs: []agent.Input{agent.NewTextInput("12345678")}}, usage: agent.Usage{TotalTokens: lunaLimit - 2}, want: true},
 	}
 
 	for _, test := range tests {

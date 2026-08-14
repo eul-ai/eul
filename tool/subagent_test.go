@@ -102,7 +102,7 @@ func TestSubagentWaitIsSynchronizationOnly(t *testing.T) {
 	if err != nil || result.IsError || !strings.Contains(result.Output, "completion is available") || strings.Contains(result.Output, "research result") {
 		t.Fatalf("wait result = %+v, error = %v", result, err)
 	}
-	if len(manager.SnapshotInbox().MessageIDs) != 1 {
+	if len(manager.Snapshot().PendingCompletions) != 1 {
 		t.Fatal("wait drained inbox")
 	}
 }

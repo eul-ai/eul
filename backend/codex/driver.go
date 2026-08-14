@@ -13,9 +13,9 @@ import (
 const (
 	ID            = "openai-codex"
 	Name          = "OpenAI Codex"
-	ModelFast     = "gpt-5.6-luna"
-	ModelBalanced = "gpt-5.6-terra"
-	ModelMain     = "gpt-5.6-sol"
+	ModelFast     = client.ModelGPT56Luna
+	ModelBalanced = client.ModelGPT56Terra
+	ModelMain     = client.ModelGPT56Sol
 )
 
 type oauthManager interface {

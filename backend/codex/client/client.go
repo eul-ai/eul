@@ -15,13 +15,10 @@ import (
 )
 
 const (
-	defaultBaseURL             = "https://chatgpt.com/backend-api"
-	defaultHTTPTimeout         = 10 * time.Minute
-	defaultMaxRequestBytes     = int64(32 * 1024 * 1024)
-	defaultMaxResponseBytes    = int64(16 * 1024 * 1024)
-	defaultMaxErrorBytes       = int64(64 * 1024)
-	defaultMaxStateBytes       = 16 * 1024 * 1024
-	defaultStateOutputHeadroom = 1024 * 1024
+	defaultBaseURL               = "https://chatgpt.com/backend-api"
+	defaultHTTPTimeout           = 10 * time.Minute
+	defaultMaxUsageResponseBytes = int64(16 * 1024 * 1024)
+	defaultMaxUsageErrorBytes    = int64(64 * 1024)
 )
 
 type Options struct {
@@ -40,16 +37,13 @@ type TokenSource interface {
 }
 
 type Client struct {
-	httpClient          *http.Client
-	endpoint            string
-	usageEndpoint       string
-	tokenSource         TokenSource
-	maxRequestBytes     int64
-	maxResponseBytes    int64
-	maxErrorBytes       int64
-	maxStateBytes       int
-	stateOutputHeadroom int
-	reasoningSummary    ReasoningSummary
+	httpClient            *http.Client
+	usageEndpoint         string
+	tokenSource           TokenSource
+	responses             *responses.Client
+	maxUsageResponseBytes int64
+	maxUsageErrorBytes    int64
+	reasoningSummary      ReasoningSummary
 }
 
 var (
@@ -90,62 +84,41 @@ func New(source TokenSource, options Options) (*Client, error) {
 		usageEndpoint = baseURL + "/wham/usage"
 	}
 
-	return &Client{
-		httpClient:          httpClient,
-		endpoint:            baseURL + "/codex/responses",
-		usageEndpoint:       usageEndpoint,
-		tokenSource:         source,
-		maxRequestBytes:     defaultMaxRequestBytes,
-		maxResponseBytes:    defaultMaxResponseBytes,
-		maxErrorBytes:       defaultMaxErrorBytes,
-		maxStateBytes:       defaultMaxStateBytes,
-		stateOutputHeadroom: defaultStateOutputHeadroom,
-		reasoningSummary:    reasoningSummary,
-	}, nil
+	client := &Client{
+		httpClient:            httpClient,
+		usageEndpoint:         usageEndpoint,
+		tokenSource:           source,
+		maxUsageResponseBytes: defaultMaxUsageResponseBytes,
+		maxUsageErrorBytes:    defaultMaxUsageErrorBytes,
+		reasoningSummary:      reasoningSummary,
+	}
+	client.responses, err = responses.New(responses.Options{
+		HTTPClient:     httpClient,
+		Endpoint:       baseURL + "/codex/responses",
+		ErrorPrefix:    "openai",
+		PrepareRequest: client.prepareResponsesRequest,
+		RequestOptions: client.responsesRequestOptions,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
 }
 
 func (c *Client) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {
-	shared, err := c.responsesClient()
-	if err != nil {
-		return agent.Response{}, err
-	}
-	return shared.Generate(ctx, request, observer)
+	return c.responses.Generate(ctx, request, observer)
 }
 
 func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {
-	shared, err := c.responsesClient()
-	if err != nil {
-		return agent.CompactResponse{}, err
-	}
-	return shared.Compact(ctx, request)
+	return c.responses.Compact(ctx, request)
 }
 
 func (c *Client) RetryGeneration(err error, failedAttempts int) (time.Duration, bool) {
-	shared, sharedErr := c.responsesClient()
-	if sharedErr != nil {
-		return 0, false
-	}
-	return shared.RetryGeneration(err, failedAttempts)
+	return c.responses.RetryGeneration(err, failedAttempts)
 }
 
 func (c *Client) ShouldCompactAfterError(_ agent.Request, err error) bool {
-	shared, sharedErr := c.responsesClient()
-	return sharedErr == nil && shared.IsContextLimitError(err)
-}
-
-func (c *Client) responsesClient() (*responses.Client, error) {
-	return responses.New(responses.Options{
-		HTTPClient:          c.httpClient,
-		Endpoint:            c.endpoint,
-		ErrorPrefix:         "openai",
-		PrepareRequest:      c.prepareResponsesRequest,
-		RequestOptions:      c.responsesRequestOptions,
-		MaxRequestBytes:     c.maxRequestBytes,
-		MaxResponseBytes:    c.maxResponseBytes,
-		MaxErrorBytes:       c.maxErrorBytes,
-		MaxStateBytes:       c.maxStateBytes,
-		StateOutputHeadroom: c.stateOutputHeadroom,
-	})
+	return c.responses.IsContextLimitError(err)
 }
 
 func (c *Client) responsesRequestOptions(request agent.Request) (responses.RequestOptions, error) {
@@ -205,7 +178,7 @@ func (c *Client) get(ctx context.Context, endpoint string, credential Credential
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		defer response.Body.Close()
-		body, _, readErr := readBounded(response.Body, c.maxErrorBytes)
+		body, _, readErr := readBounded(response.Body, c.maxUsageErrorBytes)
 		if readErr != nil {
 			return nil, c.wrapf(readErr, "HTTP %s; read error response: %v", response.Status, readErr)
 		}
@@ -248,7 +221,7 @@ func (c *Client) wrapf(cause error, format string, arguments ...any) error {
 
 func (c *Client) errorMessage(format string, arguments ...any) string {
 	message := strings.ToValidUTF8(fmt.Sprintf(format, arguments...), "�")
-	return truncateUTF8("openai: "+message, int(c.maxErrorBytes))
+	return truncateUTF8("openai: "+message, int(c.maxUsageErrorBytes))
 }
 
 type wrappedError struct {

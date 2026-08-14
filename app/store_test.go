@@ -123,13 +123,15 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 func TestSessionRecordModelSetKeepsModelJSONFields(t *testing.T) {
 	models := modelSet{main: "main-model", fast: "fast-model", balanced: "balanced-model"}
 	encoded, err := json.Marshal(sessionRecord{
-		Version:       sessionRecordVersion,
-		Model:         models.main,
-		FastModel:     models.fast,
-		BalancedModel: models.balanced,
-		Agent:         sessionStoreTestAgentCheckpoint(t),
-		Subagent:      subagent.EmptyCheckpoint(),
-		Terminal:      terminal.EmptyCheckpoint(),
+		sessionMetadata: sessionMetadata{
+			Version:       sessionRecordVersion,
+			Model:         models.main,
+			FastModel:     models.fast,
+			BalancedModel: models.balanced,
+		},
+		Agent:    sessionStoreTestAgentCheckpoint(t),
+		Subagent: subagent.EmptyCheckpoint(),
+		Terminal: terminal.EmptyCheckpoint(),
 	})
 	if err != nil {
 		t.Fatal(err)
