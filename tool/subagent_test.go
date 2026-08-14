@@ -65,6 +65,15 @@ func TestSubagentLaunchSchemaPlacesPolicyOnTasks(t *testing.T) {
 	if task == nil || task.Properties["model_profile"].Type != "string" || task.Properties["thinking_level"].Type != "string" {
 		t.Fatalf("task schema = %+v", task)
 	}
+	thinkingDescription := task.Properties["thinking_level"].Description
+	for _, level := range subagent.AllowedThinkingLevels() {
+		if !strings.Contains(thinkingDescription, string(level)) {
+			t.Fatalf("thinking-level description %q does not include %q", thinkingDescription, level)
+		}
+	}
+	if !strings.Contains(thinkingDescription, string(subagent.DefaultThinkingLevel)+" (default)") {
+		t.Fatalf("thinking-level description = %q", thinkingDescription)
+	}
 }
 
 func TestSubagentWaitDefaultTimeout(t *testing.T) {

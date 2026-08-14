@@ -15,8 +15,6 @@ var errEngineBusy = errors.New("agent: engine is busy")
 
 type Options struct {
 	Model                  string
-	ThinkingLevel          ThinkingLevel
-	FastMode               bool
 	WorkingDirectory       string
 	ProjectInstructions    string
 	Skills                 []skill.Skill
@@ -49,7 +47,7 @@ type Engine struct {
 func New(provider Provider, tools Toolbox, options Options) *Engine {
 	settings := options.Settings
 	if settings == nil {
-		settings = NewSettings(options.ThinkingLevel, options.FastMode)
+		settings = NewSettings(DefaultThinkingLevel, false)
 	}
 	skills := append([]skill.Skill(nil), options.Skills...)
 	instructions := buildSystemPrompt(tools.Definitions(), options.WorkingDirectory, options.ProjectInstructions, options.Skills)

@@ -2,6 +2,7 @@ package subagent
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
@@ -16,6 +17,20 @@ const (
 	ProfileBalanced Profile = "balanced"
 	ProfileMain     Profile = "main"
 )
+
+const DefaultThinkingLevel = agent.ThinkingLow
+
+var allowedThinkingLevels = []agent.ThinkingLevel{
+	agent.ThinkingOff,
+	agent.ThinkingMinimal,
+	agent.ThinkingLow,
+	agent.ThinkingMedium,
+	agent.ThinkingHigh,
+}
+
+func AllowedThinkingLevels() []agent.ThinkingLevel {
+	return slices.Clone(allowedThinkingLevels)
+}
 
 func (profile Profile) valid() bool {
 	switch profile {

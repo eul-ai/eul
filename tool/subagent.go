@@ -36,9 +36,24 @@ var taskSchema = StrictObject(map[string]agent.JSONSchema{
 	},
 	"thinking_level": {
 		Type:        "string",
-		Description: "off, minimal, low (default), medium, or high.",
+		Description: subagentThinkingLevelDescription(),
 	},
 }, "description", "prompt")
+
+func subagentThinkingLevelDescription() string {
+	levels := subagent.AllowedThinkingLevels()
+	values := make([]string, len(levels))
+	for index, level := range levels {
+		values[index] = string(level)
+		if level == subagent.DefaultThinkingLevel {
+			values[index] += " (default)"
+		}
+	}
+	if len(values) < 2 {
+		return strings.Join(values, "") + "."
+	}
+	return strings.Join(values[:len(values)-1], ", ") + ", or " + values[len(values)-1] + "."
+}
 
 var launchDefinition = agent.ToolDefinition{
 	Name:        launchToolName,

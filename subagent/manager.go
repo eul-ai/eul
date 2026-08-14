@@ -63,13 +63,7 @@ func NewManager(config Config) *Manager {
 	supportedThinkingLevels := config.SupportedThinkingLevels
 	if supportedThinkingLevels == nil {
 		supportedThinkingLevels = func(Profile) []agent.ThinkingLevel {
-			return []agent.ThinkingLevel{
-				agent.ThinkingOff,
-				agent.ThinkingMinimal,
-				agent.ThinkingLow,
-				agent.ThinkingMedium,
-				agent.ThinkingHigh,
-			}
+			return AllowedThinkingLevels()
 		}
 	}
 
@@ -175,7 +169,7 @@ func (m *Manager) normalizeTasks(tasks []Task) []Task {
 			normalized[index].ModelProfile = ProfileBalanced
 		}
 		if normalized[index].ThinkingLevel == "" {
-			normalized[index].ThinkingLevel = agent.ClampThinkingLevel(agent.ThinkingLow, m.supportedThinkingLevels(normalized[index].ModelProfile))
+			normalized[index].ThinkingLevel = agent.ClampThinkingLevel(DefaultThinkingLevel, m.supportedThinkingLevels(normalized[index].ModelProfile))
 		}
 	}
 	return normalized
@@ -209,14 +203,26 @@ func (m *Manager) validateStart(tasks []Task) error {
 }
 
 func validateThinkingLevel(level agent.ThinkingLevel) error {
-	switch level {
-	case agent.ThinkingOff, agent.ThinkingMinimal, agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh:
+	if slices.Contains(allowedThinkingLevels, level) {
 		return nil
-	case agent.ThinkingXHigh, agent.ThinkingMax:
-		return fmt.Errorf("thinking level %q is not available to subagents; use off, minimal, low, medium, or high", level)
-	default:
-		return errors.New("thinking level must be one of off, minimal, low, medium, or high")
 	}
+
+	available := formatThinkingLevels(allowedThinkingLevels)
+	if level.Valid() {
+		return fmt.Errorf("thinking level %q is not available to subagents; use %s", level, available)
+	}
+	return fmt.Errorf("thinking level must be one of %s", available)
+}
+
+func formatThinkingLevels(levels []agent.ThinkingLevel) string {
+	values := make([]string, len(levels))
+	for index, level := range levels {
+		values[index] = string(level)
+	}
+	if len(values) < 2 {
+		return strings.Join(values, "")
+	}
+	return strings.Join(values[:len(values)-1], ", ") + ", or " + values[len(values)-1]
 }
 
 func (m *Manager) runJob(job *job) {

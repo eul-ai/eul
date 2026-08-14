@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -75,6 +76,30 @@ func TestStartValidatesLaunchPolicyBeforeMutation(t *testing.T) {
 				t.Fatalf("manager mutated after rejection: %+v", checkpoint.data)
 			}
 		})
+	}
+}
+
+func TestThinkingLevelPolicy(t *testing.T) {
+	levels := AllowedThinkingLevels()
+	want := []agent.ThinkingLevel{
+		agent.ThinkingOff,
+		agent.ThinkingMinimal,
+		agent.ThinkingLow,
+		agent.ThinkingMedium,
+		agent.ThinkingHigh,
+	}
+	if !slices.Equal(levels, want) || DefaultThinkingLevel != agent.ThinkingLow {
+		t.Fatalf("levels = %q, default = %q", levels, DefaultThinkingLevel)
+	}
+
+	levels[0] = agent.ThinkingHigh
+	if AllowedThinkingLevels()[0] != agent.ThinkingOff {
+		t.Fatal("AllowedThinkingLevels returned shared policy state")
+	}
+	for _, level := range want {
+		if err := validateThinkingLevel(level); err != nil {
+			t.Fatalf("validateThinkingLevel(%q): %v", level, err)
+		}
 	}
 }
 
