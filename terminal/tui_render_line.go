@@ -25,6 +25,18 @@ type lineStyle struct {
 	italic          bool
 }
 
+type lineBreak struct {
+	continuation bool
+	separator    string
+}
+
+func (b lineBreak) sourceSeparator() string {
+	if b.continuation {
+		return b.separator
+	}
+	return "\n"
+}
+
 type styledLine struct {
 	prefixText       string
 	prefixForeground *terminalColor
@@ -33,7 +45,7 @@ type styledLine struct {
 	spans            []inlineSpan
 	style            lineStyle
 	padding          int
-	continuation     bool
+	breakBefore      lineBreak
 }
 
 type fittedLine struct {

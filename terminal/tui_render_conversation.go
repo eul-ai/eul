@@ -36,16 +36,26 @@ func conversationLines(blocks []conversationBlock, width int) []styledLine {
 	return lines
 }
 
-func wrapConversationText(text string, width int) []formattedLine {
+func wrapHardConversationText(text string, width int) []formattedLine {
 	wrapped := wrapText(text, width)
 	lines := make([]formattedLine, len(wrapped))
 	line := 0
 	for _, paragraph := range strings.Split(strings.ReplaceAll(text, "\t", "    "), "\n") {
 		count := len(wrapText(paragraph, width))
 		for offset := range count {
-			lines[line+offset] = formattedLine{text: wrapped[line+offset], continuation: offset > 0}
+			lines[line+offset] = formattedLine{
+				text: wrapped[line+offset], breakBefore: lineBreak{continuation: offset > 0},
+			}
 		}
 		line += count
+	}
+	return lines
+}
+
+func wrapConversationProse(text string, width int) []formattedLine {
+	lines := wrapInlineSpans([]inlineSpan{{text: text}}, width)
+	for index := range lines {
+		lines[index].spans = nil
 	}
 	return lines
 }
@@ -93,15 +103,21 @@ func conversationBlockLines(block conversationBlock, width int) []styledLine {
 		lines = append(lines, styledLine{style: style, padding: padding})
 	case block.kind == blockUser && len(block.content) > 0 && contentHasImage(block.content):
 		for _, line := range wrapInlineSpans(contentDisplaySpans(block.content), contentWidth) {
-			lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding, continuation: line.continuation})
+			lines = append(lines, styledLine{
+				text: line.text, spans: line.spans, style: style, padding: padding,
+				breakBefore: line.breakBefore,
+			})
 		}
 	case block.kind == blockUser && len(block.content) > 0:
 		lines = append(lines, markdownConversationLines(contentText(block.content), contentWidth, style, padding)...)
 	case isInlineMarkdownBlock(block.kind):
 		lines = append(lines, markdownConversationLines(text, contentWidth, style, padding)...)
 	default:
-		for _, line := range wrapConversationText(text, contentWidth) {
-			lines = append(lines, styledLine{text: line.text, style: style, padding: padding, continuation: line.continuation})
+		for _, line := range wrapConversationProse(text, contentWidth) {
+			lines = append(lines, styledLine{
+				text: line.text, style: style, padding: padding,
+				breakBefore: line.breakBefore,
+			})
 		}
 	}
 	return lines
@@ -111,7 +127,10 @@ func markdownConversationLines(text string, width int, style lineStyle, padding 
 	var lines []styledLine
 	for _, line := range wrapMarkdown(text, width) {
 		lineStyle := style
-		styled := styledLine{text: line.text, spans: line.spans, style: lineStyle, padding: padding, continuation: line.continuation}
+		styled := styledLine{
+			text: line.text, spans: line.spans, style: lineStyle, padding: padding,
+			breakBefore: line.breakBefore,
+		}
 		if line.fencedCode {
 			styled.style.foreground = currentTheme.markdownCode
 			styled.style.bold = false
@@ -145,7 +164,10 @@ func toolConversationLines(block conversationBlock, width int, style lineStyle, 
 
 	lines := make([]styledLine, 0, len(block.tool.Lines)+len(block.tool.Diff)+4)
 	for _, line := range wrapInlineSpans(heading, width) {
-		lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding})
+		lines = append(lines, styledLine{
+			text: line.text, spans: line.spans, style: style, padding: padding,
+			breakBefore: line.breakBefore,
+		})
 	}
 	if len(block.tool.Lines) == 0 && len(block.tool.Diff) == 0 && block.tool.Elapsed == 0 {
 		return lines
@@ -159,8 +181,11 @@ func toolConversationLines(block conversationBlock, width int, style lineStyle, 
 		if block.tool.Markdown {
 			bodyLines = append(bodyLines, markdownConversationLines(body, width, style, padding)...)
 		} else {
-			for _, line := range wrapConversationText(body, width) {
-				bodyLines = append(bodyLines, styledLine{text: line.text, style: style, padding: padding, continuation: line.continuation})
+			for _, line := range wrapHardConversationText(body, width) {
+				bodyLines = append(bodyLines, styledLine{
+					text: line.text, style: style, padding: padding,
+					breakBefore: line.breakBefore,
+				})
 			}
 		}
 		if block.tool.LinesTruncated {

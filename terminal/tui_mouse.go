@@ -102,15 +102,15 @@ func selectedText(model *tuiModel, frame terminalFrame) string {
 
 	lines := frame.plainRows
 	if bounds.start.conversation {
-		return selectedConversationText(frame.conversationLines, frame.conversationContinuations, bounds)
+		return selectedConversationText(frame.conversationLines, frame.conversationSeparators, bounds)
 	}
 	return selectedTextFromLines(lines, bounds)
 }
 
-func selectedConversationText(lines []string, continuations []bool, bounds selectionBounds) string {
+func selectedConversationText(lines, separators []string, bounds selectionBounds) string {
 	return selectedTextFromLinesWithSeparators(lines, bounds, conversationPadding, func(row int) string {
-		if row < len(continuations) && continuations[row] {
-			return ""
+		if row < len(separators) {
+			return separators[row]
 		}
 		return "\n"
 	})

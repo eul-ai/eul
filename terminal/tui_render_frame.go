@@ -9,27 +9,27 @@ import (
 )
 
 type terminalFrame struct {
-	width                     int
-	height                    int
-	rows                      []string
-	plainRows                 []string
-	cursorRow                 int
-	cursorColumn              int
-	cursorVisible             bool
-	layout                    tuiLayout
-	conversationTop           int
-	conversationLines         []string
-	conversationContinuations []bool
-	conversationVersion       uint64
+	width                  int
+	height                 int
+	rows                   []string
+	plainRows              []string
+	cursorRow              int
+	cursorColumn           int
+	cursorVisible          bool
+	layout                 tuiLayout
+	conversationTop        int
+	conversationLines      []string
+	conversationSeparators []string
+	conversationVersion    uint64
 }
 
 type renderPreparation struct {
-	input                     renderedInput
-	layout                    tuiLayout
-	conversationLines         []styledLine
-	conversationPlain         []string
-	conversationContinuations []bool
-	scrollTop                 int
+	input                  renderedInput
+	layout                 tuiLayout
+	conversationLines      []styledLine
+	conversationPlain      []string
+	conversationSeparators []string
+	scrollTop              int
 }
 
 func (r *tuiRenderer) prepare(model *tuiModel) renderPreparation {
@@ -39,12 +39,12 @@ func (r *tuiRenderer) prepare(model *tuiModel) renderPreparation {
 	}
 
 	return renderPreparation{
-		input:                     input,
-		layout:                    layout,
-		conversationLines:         r.conversationLines,
-		conversationPlain:         r.conversationPlain,
-		conversationContinuations: r.conversationContinuations,
-		scrollTop:                 model.scrollTop,
+		input:                  input,
+		layout:                 layout,
+		conversationLines:      r.conversationLines,
+		conversationPlain:      r.conversationPlain,
+		conversationSeparators: r.conversationSeparators,
+		scrollTop:              model.scrollTop,
 	}
 }
 
@@ -70,12 +70,12 @@ func (r *tuiRenderer) prepareConversation(model *tuiModel) {
 	plainCapacity := len(r.conversationPlain)
 	lines := make([]styledLine, 0, lineCapacity)
 	plain := make([]string, 0, plainCapacity)
-	continuations := make([]bool, 0, lineCapacity)
+	separators := make([]string, 0, lineCapacity)
 	blankPlain := renderedLineText(styledLine{}, model.width)
 	appendBlank := func() {
 		lines = append(lines, styledLine{})
 		plain = append(plain, blankPlain)
-		continuations = append(continuations, false)
+		separators = append(separators, "\n")
 	}
 	for range conversationVerticalPadding {
 		appendBlank()
@@ -87,7 +87,7 @@ func (r *tuiRenderer) prepareConversation(model *tuiModel) {
 	appendBlock := func(rendered renderedConversationBlock) {
 		lines = append(lines, rendered.lines...)
 		plain = append(plain, rendered.plain...)
-		continuations = append(continuations, rendered.continuations...)
+		separators = append(separators, rendered.separators...)
 		appendedBlocks++
 		if appendedBlocks < totalBlocks {
 			appendBlank()
@@ -105,7 +105,7 @@ func (r *tuiRenderer) prepareConversation(model *tuiModel) {
 
 	r.conversationLines = lines
 	r.conversationPlain = plain
-	r.conversationContinuations = continuations
+	r.conversationSeparators = separators
 	r.conversationWidth = model.width
 	r.conversationVersion = model.conversationVersion
 }
@@ -113,14 +113,14 @@ func (r *tuiRenderer) prepareConversation(model *tuiModel) {
 func renderConversationBlock(block conversationBlock, width int) renderedConversationBlock {
 	lines := conversationBlockLines(block, width)
 	plain := make([]string, len(lines))
-	continuations := make([]bool, len(lines))
+	separators := make([]string, len(lines))
 	for index, line := range lines {
 		plain[index] = renderedLineText(line, width)
-		continuations[index] = line.continuation
+		separators[index] = line.breakBefore.sourceSeparator()
 	}
 	block.tool = block.tool.Clone()
 	block.content = cloneTerminalContent(block.content)
-	return renderedConversationBlock{block: block, lines: lines, plain: plain, continuations: continuations}
+	return renderedConversationBlock{block: block, lines: lines, plain: plain, separators: separators}
 }
 
 func contentEqual(left, right []agent.ContentPart) bool {
@@ -182,18 +182,18 @@ func projectTerminalFrame(model *tuiModel, prepared renderPreparation) terminalF
 	rows := composeFrameRows(model, prepared)
 	renderedRows, plainRows := encodeFrameRows(model, prepared.layout, rows)
 	return terminalFrame{
-		width:                     width,
-		height:                    height,
-		rows:                      renderedRows,
-		plainRows:                 plainRows,
-		cursorRow:                 prepared.layout.inputRow + prepared.input.cursorRow,
-		cursorColumn:              prepared.input.cursorColumn,
-		cursorVisible:             prepared.layout.inputRow > 0 && !model.permission.active(),
-		layout:                    prepared.layout,
-		conversationTop:           prepared.scrollTop,
-		conversationLines:         prepared.conversationPlain,
-		conversationContinuations: prepared.conversationContinuations,
-		conversationVersion:       model.conversationVersion,
+		width:                  width,
+		height:                 height,
+		rows:                   renderedRows,
+		plainRows:              plainRows,
+		cursorRow:              prepared.layout.inputRow + prepared.input.cursorRow,
+		cursorColumn:           prepared.input.cursorColumn,
+		cursorVisible:          prepared.layout.inputRow > 0 && !model.permission.active(),
+		layout:                 prepared.layout,
+		conversationTop:        prepared.scrollTop,
+		conversationLines:      prepared.conversationPlain,
+		conversationSeparators: prepared.conversationSeparators,
+		conversationVersion:    model.conversationVersion,
 	}
 }
 

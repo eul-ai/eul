@@ -70,6 +70,39 @@ func TestUserMessagesRenderInlineMarkdown(t *testing.T) {
 	}
 }
 
+func TestConversationProseWrapsAtWordBoundaries(t *testing.T) {
+	lines := conversationLines([]conversationBlock{{kind: blockAssistant, text: "alpha beta"}}, 10)
+	if len(lines) != 2 || lines[0].text != "alpha" || lines[1].text != "beta" {
+		t.Fatalf("lines = %+v", lines)
+	}
+	if !lines[1].breakBefore.continuation || lines[1].breakBefore.separator != " " {
+		t.Fatalf("soft-wrapped line = %+v", lines[1])
+	}
+}
+
+func TestRawToolOutputRemainsHardWrapped(t *testing.T) {
+	lines := conversationLines([]conversationBlock{{
+		kind: blockTool,
+		tool: agent.ToolPresentation{Title: "bash", Lines: []string{"abc def"}},
+	}}, 7)
+	if !slices.ContainsFunc(lines, func(line styledLine) bool { return line.text == "abc d" }) {
+		t.Fatalf("lines = %+v", lines)
+	}
+}
+
+func TestToolDiffRemainsHardWrapped(t *testing.T) {
+	lines := conversationLines([]conversationBlock{{
+		kind: blockTool,
+		tool: agent.ToolPresentation{
+			Title: "edit",
+			Diff:  []agent.ToolDiffLine{{Kind: agent.ToolDiffLineContext, OldLine: 1, NewLine: 1, Text: "abc def"}},
+		},
+	}}, 10)
+	if !slices.ContainsFunc(lines, func(line styledLine) bool { return line.text == " 1 abc d" }) {
+		t.Fatalf("lines = %+v", lines)
+	}
+}
+
 func TestAssistantFencedCodeUsesCodePresentation(t *testing.T) {
 	lines := conversationLines([]conversationBlock{{
 		kind: blockAssistant,

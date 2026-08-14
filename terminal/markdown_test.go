@@ -101,7 +101,7 @@ func TestWrapMarkdownFencedCodeUsesAvailableWidth(t *testing.T) {
 	got := wrapMarkdown("```\nabcdefgh\n```", 6)
 	want := []formattedLine{
 		{text: "abcdef", fencedCode: true},
-		{text: "gh", continuation: true, fencedCode: true},
+		{text: "gh", breakBefore: lineBreak{continuation: true}, fencedCode: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("lines = %+v, want %+v", got, want)
@@ -141,13 +141,51 @@ func TestWrapInlineMarkdownCodeMarkersDoNotUseWidth(t *testing.T) {
 
 func TestWrapInlineMarkdownUsesRenderedWidth(t *testing.T) {
 	lines := wrapInlineMarkdown("**abcd** *ef*", 5)
-	if len(lines) != 2 || lines[0].text != "abcd " || lines[1].text != "ef" {
+	if len(lines) != 2 || lines[0].text != "abcd" || lines[1].text != "ef" {
 		t.Fatalf("lines = %+v", lines)
 	}
-	if len(lines[0].spans) != 2 || !lines[0].spans[0].style.bold {
+	if len(lines[0].spans) != 1 || !lines[0].spans[0].style.bold {
 		t.Fatalf("first line spans = %+v", lines[0].spans)
 	}
-	if len(lines[1].spans) != 1 || !lines[1].spans[0].style.italic {
-		t.Fatalf("second line spans = %+v", lines[1].spans)
+	if len(lines[1].spans) != 1 || !lines[1].spans[0].style.italic || lines[1].breakBefore.separator != " " {
+		t.Fatalf("second line = %+v", lines[1])
+	}
+}
+
+func TestWrapInlineMarkdownUsesWordBoundaries(t *testing.T) {
+	lines := wrapInlineMarkdown("alpha beta gamma", 8)
+	want := []string{"alpha", "beta", "gamma"}
+	if len(lines) != len(want) {
+		t.Fatalf("lines = %+v", lines)
+	}
+	for index, text := range want {
+		if lines[index].text != text {
+			t.Fatalf("line %d = %+v, want text %q", index, lines[index], text)
+		}
+		if index > 0 && (!lines[index].breakBefore.continuation || lines[index].breakBefore.separator != " ") {
+			t.Fatalf("line %d does not preserve its soft-wrap separator: %+v", index, lines[index])
+		}
+	}
+}
+
+func TestWrapInlineMarkdownHardWrapsLongWords(t *testing.T) {
+	lines := wrapInlineMarkdown("**abcdefgh**", 5)
+	if len(lines) != 2 || lines[0].text != "abcde" || lines[1].text != "fgh" {
+		t.Fatalf("lines = %+v", lines)
+	}
+	if !lines[1].breakBefore.continuation || lines[1].breakBefore.separator != "" {
+		t.Fatalf("long word continuation = %+v", lines[1])
+	}
+	for index, line := range lines {
+		if len(line.spans) != 1 || !line.spans[0].style.bold {
+			t.Fatalf("line %d lost its style: %+v", index, line)
+		}
+	}
+}
+
+func TestWrapInlineMarkdownUsesCellWidthAtWordBoundaries(t *testing.T) {
+	lines := wrapInlineMarkdown("界界 test", 5)
+	if len(lines) != 2 || lines[0].text != "界界" || lines[1].text != "test" || lines[1].breakBefore.separator != " " {
+		t.Fatalf("lines = %+v", lines)
 	}
 }

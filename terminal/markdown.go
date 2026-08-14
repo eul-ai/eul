@@ -31,10 +31,10 @@ type inlineSpan struct {
 }
 
 type formattedLine struct {
-	text         string
-	spans        []inlineSpan
-	continuation bool
-	fencedCode   bool
+	text        string
+	spans       []inlineSpan
+	breakBefore lineBreak
+	fencedCode  bool
 }
 
 func wrapMarkdown(text string, width int) []formattedLine {
@@ -59,7 +59,9 @@ func wrapMarkdown(text string, width int) []formattedLine {
 			inFence = false
 		case inFence:
 			for index, wrapped := range wrapText(sourceLine, width) {
-				lines = append(lines, formattedLine{text: wrapped, continuation: index > 0, fencedCode: true})
+				lines = append(lines, formattedLine{
+					text: wrapped, breakBefore: lineBreak{continuation: index > 0}, fencedCode: true,
+				})
 			}
 		case strings.HasPrefix(sourceLine, "```"):
 			flushPlain()
@@ -76,6 +78,14 @@ func wrapInlineMarkdown(text string, width int) []formattedLine {
 	return wrapInlineSpans(parseInlineMarkdown(text), width)
 }
 
+type inlineWrapToken struct {
+	spans      []inlineSpan
+	width      int
+	whitespace bool
+	atomic     bool
+	newline    bool
+}
+
 func wrapInlineSpans(spans []inlineSpan, width int) []formattedLine {
 	if width <= 0 {
 		return nil
@@ -84,55 +94,132 @@ func wrapInlineSpans(spans []inlineSpan, width int) []formattedLine {
 	lines := make([]formattedLine, 0, 1)
 	current := make([]inlineSpan, 0, 1)
 	lineWidth := 0
-	continuation := false
+	breakBefore := lineBreak{}
 	flush := func() {
-		lines = append(lines, formattedLine{text: inlineSpanText(current), spans: current, continuation: continuation})
+		lines = append(lines, formattedLine{
+			text:        inlineSpanText(current),
+			spans:       current,
+			breakBefore: breakBefore,
+		})
 		current = nil
 		lineWidth = 0
 	}
-	appendCharacter := func(character rune, style inlineStyle) {
-		characterWidth := runeWidth(character)
-		if lineWidth > 0 && lineWidth+characterWidth > width {
-			flush()
-			continuation = true
+	startContinuation := func(separator string) {
+		breakBefore = lineBreak{continuation: true, separator: separator}
+	}
+	appendSpans := func(spans []inlineSpan) {
+		for _, span := range spans {
+			appendInlineSpan(&current, span.text, span.style)
 		}
-		appendInlineSpan(&current, string(character), style)
-		lineWidth += characterWidth
+	}
+	appendHard := func(spans []inlineSpan) {
+		for _, span := range spans {
+			for _, character := range span.text {
+				characterWidth := runeWidth(character)
+				if lineWidth > 0 && lineWidth+characterWidth > width {
+					flush()
+					startContinuation("")
+				}
+				appendInlineSpan(&current, string(character), span.style)
+				lineWidth += characterWidth
+			}
+		}
+	}
+
+	var pendingWhitespace []inlineSpan
+	pendingWidth := 0
+	for _, token := range inlineWrapTokens(spans) {
+		if token.newline {
+			appendHard(pendingWhitespace)
+			pendingWhitespace = nil
+			pendingWidth = 0
+			flush()
+			breakBefore = lineBreak{}
+			continue
+		}
+		if token.whitespace {
+			for _, span := range token.spans {
+				appendInlineSpan(&pendingWhitespace, span.text, span.style)
+			}
+			pendingWidth += token.width
+			continue
+		}
+
+		if lineWidth == 0 {
+			appendHard(pendingWhitespace)
+			pendingWhitespace = nil
+			pendingWidth = 0
+		}
+		if lineWidth > 0 && len(pendingWhitespace) > 0 {
+			if lineWidth+pendingWidth+token.width <= width {
+				appendSpans(pendingWhitespace)
+				lineWidth += pendingWidth
+				pendingWhitespace = nil
+				pendingWidth = 0
+			} else {
+				separator := inlineSpanText(pendingWhitespace)
+				pendingWhitespace = nil
+				pendingWidth = 0
+				flush()
+				startContinuation(separator)
+			}
+		}
+
+		if token.atomic && lineWidth > 0 && lineWidth+token.width > width {
+			flush()
+			startContinuation("")
+		}
+		if token.atomic {
+			span := token.spans[0]
+			if token.width > width {
+				appendInlineSpan(&current, truncateCells(span.text, width, false), span.style)
+				lineWidth = width
+				continue
+			}
+			appendSpans(token.spans)
+			lineWidth += token.width
+			continue
+		}
+		appendHard(token.spans)
+	}
+
+	appendHard(pendingWhitespace)
+	flush()
+	return lines
+}
+
+func inlineWrapTokens(spans []inlineSpan) []inlineWrapToken {
+	var tokens []inlineWrapToken
+	appendText := func(text string, style inlineStyle, whitespace bool) {
+		if len(tokens) == 0 || tokens[len(tokens)-1].whitespace != whitespace || tokens[len(tokens)-1].atomic || tokens[len(tokens)-1].newline {
+			tokens = append(tokens, inlineWrapToken{whitespace: whitespace})
+		}
+		token := &tokens[len(tokens)-1]
+		appendInlineSpan(&token.spans, text, style)
+		token.width += cellWidth(text)
 	}
 
 	for _, span := range spans {
 		if span.atomic {
-			spanWidth := cellWidth(span.text)
-			if lineWidth > 0 && lineWidth+spanWidth > width {
-				flush()
-				continuation = true
-			}
-			if spanWidth > width {
-				appendInlineSpan(&current, truncateCells(span.text, width, false), span.style)
-				lineWidth = width
-			} else {
-				appendInlineSpan(&current, span.text, span.style)
-				lineWidth += spanWidth
-			}
+			tokens = append(tokens, inlineWrapToken{
+				spans:  []inlineSpan{{text: span.text, style: span.style}},
+				width:  cellWidth(span.text),
+				atomic: true,
+			})
 			continue
 		}
-
 		for _, character := range span.text {
-			switch character {
-			case '\n':
-				flush()
-				continuation = false
-			case '\t':
-				for range 4 {
-					appendCharacter(' ', span.style)
-				}
+			switch {
+			case character == '\n':
+				tokens = append(tokens, inlineWrapToken{newline: true})
+			case character == '\t':
+				appendText("    ", span.style, true)
 			default:
-				appendCharacter(character, span.style)
+				appendText(string(character), span.style, unicode.IsSpace(character))
 			}
 		}
 	}
-	flush()
-	return lines
+	return tokens
 }
 
 func parseInlineMarkdown(text string) []inlineSpan {

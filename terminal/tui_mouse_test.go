@@ -133,8 +133,22 @@ func TestMouseSelectionOmitsConversationPaddingAndWrappedNewlines(t *testing.T) 
 		end:   selectionPoint{row: 2, column: 7, conversation: true},
 	}
 
-	if got := selectedConversationText(frame.conversationLines, frame.conversationContinuations, bounds); got != "abcdefghij" {
+	if got := selectedConversationText(frame.conversationLines, frame.conversationSeparators, bounds); got != "abcdefghij" {
 		t.Fatalf("selected text = %q, want %q", got, "abcdefghij")
+	}
+}
+
+func TestMouseSelectionPreservesSoftWrapWhitespace(t *testing.T) {
+	model := newTUIModel(8, 10, Options{})
+	model.appendBlock(blockAssistant, "abc  def")
+	frame := buildTerminalFrame(model)
+	bounds := selectionBounds{
+		start: selectionPoint{row: 1, column: 0, conversation: true},
+		end:   selectionPoint{row: 2, column: 7, conversation: true},
+	}
+
+	if got := selectedConversationText(frame.conversationLines, frame.conversationSeparators, bounds); got != "abc  def" {
+		t.Fatalf("selected text = %q, want %q", got, "abc  def")
 	}
 }
 
@@ -147,7 +161,7 @@ func TestMouseSelectionPreservesExplicitConversationNewlines(t *testing.T) {
 		end:   selectionPoint{row: 2, column: 7, conversation: true},
 	}
 
-	if got := selectedConversationText(frame.conversationLines, frame.conversationContinuations, bounds); got != "abc\ndef" {
+	if got := selectedConversationText(frame.conversationLines, frame.conversationSeparators, bounds); got != "abc\ndef" {
 		t.Fatalf("selected text = %q, want %q", got, "abc\\ndef")
 	}
 }
