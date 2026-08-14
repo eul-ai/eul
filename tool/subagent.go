@@ -32,7 +32,7 @@ var taskSchema = StrictObject(map[string]agent.JSONSchema{
 	},
 	"model_profile": {
 		Type:        "string",
-		Description: "fast, balanced (default), or main (the main agent's model).",
+		Description: "fast, balanced, or main (default; the main agent's model).",
 	},
 	"thinking_level": {
 		Type:        "string",
@@ -41,23 +41,17 @@ var taskSchema = StrictObject(map[string]agent.JSONSchema{
 }, "description", "prompt")
 
 func subagentThinkingLevelDescription() string {
-	levels := subagent.AllowedThinkingLevels()
+	levels := agent.ThinkingLevels()
 	values := make([]string, len(levels))
 	for index, level := range levels {
 		values[index] = string(level)
-		if level == subagent.DefaultThinkingLevel {
-			values[index] += " (default)"
-		}
 	}
-	if len(values) < 2 {
-		return strings.Join(values, "") + "."
-	}
-	return strings.Join(values[:len(values)-1], ", ") + ", or " + values[len(values)-1] + "."
+	return strings.Join(values[:len(values)-1], ", ") + ", or " + values[len(values)-1] + ". Defaults to the main agent's current level."
 }
 
 var launchDefinition = agent.ToolDefinition{
 	Name:        launchToolName,
-	Description: "Launch one to four independent read-only research tasks, with at most four active. Terminal results are delivered automatically. Returned IDs are only for status and cancellation.",
+	Description: "Launch one to four independent read-only research tasks, with at most four active. Terminal results are delivered automatically. Returned IDs are only for status and cancellation. Omit model profile and thinking level to inherit the main agent's settings. Override them only when explicitly requested or when there is a clear task-specific reason.",
 	Parameters: StrictObject(map[string]agent.JSONSchema{
 		"tasks": {
 			Type:        "array",

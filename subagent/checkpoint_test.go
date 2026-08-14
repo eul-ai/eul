@@ -29,7 +29,7 @@ func TestCheckpointRejectsInvalidActivePolicy(t *testing.T) {
 	}
 
 	invalidThinking := cloneCheckpointData(base)
-	invalidThinking.Active[0].ThinkingLevel = agent.ThinkingMax
+	invalidThinking.Active[0].ThinkingLevel = agent.ThinkingLevel("invalid")
 	if err := validateCheckpointData(invalidThinking); err == nil {
 		t.Fatal("invalid thinking level accepted")
 	}

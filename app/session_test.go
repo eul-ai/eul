@@ -213,6 +213,67 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 	}
 }
 
+func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
+	requests := make(chan agent.Request, 2)
+	provider := &profileMetadataProvider{
+		providerFunction: func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
+			requests <- request
+			return agent.Response{Text: "done"}, nil
+		},
+		metadata: map[string]backend.ModelMetadata{
+			"main":     {ThinkingLevels: agent.ThinkingLevels()},
+			"fast":     {ThinkingLevels: agent.ThinkingLevels()},
+			"balanced": {ThinkingLevels: agent.ThinkingLevels()},
+		},
+	}
+	backendRuntime := &fakeBackendRuntime{
+		newProvider: func() (agent.Provider, error) {
+			return provider, nil
+		},
+		metadata: provider.metadataFor,
+	}
+	runtime := environment{newToolset: func(_ string, _ toolAccess, _ bool, _ tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
+		return tool.NewRegistry(additional)
+	}}
+	session, err := newAgentSession(resolvedConfig{
+		models:        modelSet{main: "main", fast: "fast", balanced: "balanced"},
+		thinkingLevel: agent.ThinkingHigh,
+		cwd:           t.TempDir(),
+	}, runtime, backendRuntime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.finish(nil)
+
+	launch := func(id string) agent.Request {
+		result, err := session.tools.Execute(context.Background(), agent.ToolCall{
+			ID: id, Name: "subagent", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`),
+		}, nil)
+		if err != nil || result.IsError {
+			t.Fatalf("launch result = %+v, error = %v", result, err)
+		}
+		select {
+		case request := <-requests:
+			return request
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for subagent request")
+			return agent.Request{}
+		}
+	}
+
+	request := launch("high")
+	if request.Model != "main" || request.ThinkingLevel != agent.ThinkingHigh {
+		t.Fatalf("high request = %+v", request)
+	}
+	if err := session.engine.SetThinkingLevel(agent.ThinkingMinimal); err != nil {
+		t.Fatal(err)
+	}
+	request = launch("minimal")
+	if request.Model != "main" || request.ThinkingLevel != agent.ThinkingMinimal {
+		t.Fatalf("minimal request = %+v", request)
+	}
+}
+
 func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 	runtime := environment{}
 	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {

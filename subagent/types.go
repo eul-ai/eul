@@ -2,7 +2,6 @@ package subagent
 
 import (
 	"context"
-	"slices"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
@@ -17,20 +16,6 @@ const (
 	ProfileBalanced Profile = "balanced"
 	ProfileMain     Profile = "main"
 )
-
-const DefaultThinkingLevel = agent.ThinkingLow
-
-var allowedThinkingLevels = []agent.ThinkingLevel{
-	agent.ThinkingOff,
-	agent.ThinkingMinimal,
-	agent.ThinkingLow,
-	agent.ThinkingMedium,
-	agent.ThinkingHigh,
-}
-
-func AllowedThinkingLevels() []agent.ThinkingLevel {
-	return slices.Clone(allowedThinkingLevels)
-}
 
 func (profile Profile) valid() bool {
 	switch profile {
@@ -97,6 +82,7 @@ func (run RunFunc) Run(ctx context.Context, request RunRequest, update func(Prog
 type Config struct {
 	Runner                  Runner
 	SupportedThinkingLevels func(Profile) []agent.ThinkingLevel
+	DefaultThinkingLevel    func() agent.ThinkingLevel
 }
 
 type JobStatus struct {

@@ -55,6 +55,10 @@ func newSessionToolset(
 		SupportedThinkingLevels: func(profile subagent.Profile) []agent.ThinkingLevel {
 			return metadata.subagent[profile].ThinkingLevels
 		},
+		DefaultThinkingLevel: func() agent.ThinkingLevel {
+			thinkingLevel, _ := settings.Snapshot()
+			return thinkingLevel
+		},
 	})
 	launchSubagent := tool.NewSubagent(manager)
 	waitForSubagent := tool.NewSubagentWait(manager)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -63,7 +62,6 @@ func TestStartValidatesLaunchPolicyBeforeMutation(t *testing.T) {
 		{name: "blank prompt", tasks: []Task{{Description: "task"}}},
 		{name: "unknown profile", tasks: []Task{{Description: "task", Prompt: "task", ModelProfile: Profile("unknown"), ThinkingLevel: agent.ThinkingMedium}}},
 		{name: "invalid thinking", tasks: []Task{{Description: "task", Prompt: "task", ModelProfile: ProfileBalanced, ThinkingLevel: agent.ThinkingLevel("invalid")}}},
-		{name: "disallowed thinking", tasks: []Task{{Description: "task", Prompt: "task", ModelProfile: ProfileBalanced, ThinkingLevel: agent.ThinkingMax}}},
 		{name: "unsupported thinking", tasks: []Task{{Description: "task", Prompt: "task", ModelProfile: ProfileBalanced, ThinkingLevel: agent.ThinkingLow}}},
 	}
 	for _, test := range tests {
@@ -80,26 +78,43 @@ func TestStartValidatesLaunchPolicyBeforeMutation(t *testing.T) {
 }
 
 func TestThinkingLevelPolicy(t *testing.T) {
-	levels := AllowedThinkingLevels()
-	want := []agent.ThinkingLevel{
-		agent.ThinkingOff,
-		agent.ThinkingMinimal,
-		agent.ThinkingLow,
-		agent.ThinkingMedium,
-		agent.ThinkingHigh,
-	}
-	if !slices.Equal(levels, want) || DefaultThinkingLevel != agent.ThinkingLow {
-		t.Fatalf("levels = %q, default = %q", levels, DefaultThinkingLevel)
-	}
-
-	levels[0] = agent.ThinkingHigh
-	if AllowedThinkingLevels()[0] != agent.ThinkingOff {
-		t.Fatal("AllowedThinkingLevels returned shared policy state")
-	}
-	for _, level := range want {
+	for _, level := range agent.ThinkingLevels() {
 		if err := validateThinkingLevel(level); err != nil {
 			t.Fatalf("validateThinkingLevel(%q): %v", level, err)
 		}
+	}
+	if err := validateThinkingLevel(agent.ThinkingLevel("invalid")); err == nil {
+		t.Fatal("invalid thinking level accepted")
+	}
+}
+
+func TestStartUsesDynamicDefaults(t *testing.T) {
+	thinkingLevel := agent.ThinkingLow
+	manager := NewManager(Config{
+		Runner: RunFunc(func(context.Context, RunRequest, func(Progress)) (agent.RunResult, error) {
+			return agent.RunResult{}, nil
+		}),
+		DefaultThinkingLevel: func() agent.ThinkingLevel {
+			return thinkingLevel
+		},
+	})
+	defer manager.Close()
+
+	jobs, err := manager.Start([]Task{{Description: "first", Prompt: "first"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jobs[0].ModelProfile != ProfileMain || jobs[0].ThinkingLevel != agent.ThinkingLow {
+		t.Fatalf("first job = %+v", jobs[0])
+	}
+
+	thinkingLevel = agent.ThinkingHigh
+	jobs, err = manager.Start([]Task{{Description: "second", Prompt: "second"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jobs[0].ModelProfile != ProfileMain || jobs[0].ThinkingLevel != agent.ThinkingHigh {
+		t.Fatalf("second job = %+v", jobs[0])
 	}
 }
 

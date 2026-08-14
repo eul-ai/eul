@@ -29,6 +29,7 @@ var (
 type Manager struct {
 	runner                  Runner
 	supportedThinkingLevels func(Profile) []agent.ThinkingLevel
+	defaultThinkingLevel    func() agent.ThinkingLevel
 
 	ctx           context.Context
 	cancel        context.CancelCauseFunc
@@ -63,7 +64,13 @@ func NewManager(config Config) *Manager {
 	supportedThinkingLevels := config.SupportedThinkingLevels
 	if supportedThinkingLevels == nil {
 		supportedThinkingLevels = func(Profile) []agent.ThinkingLevel {
-			return AllowedThinkingLevels()
+			return agent.ThinkingLevels()
+		}
+	}
+	defaultThinkingLevel := config.DefaultThinkingLevel
+	if defaultThinkingLevel == nil {
+		defaultThinkingLevel = func() agent.ThinkingLevel {
+			return agent.DefaultThinkingLevel
 		}
 	}
 
@@ -71,6 +78,7 @@ func NewManager(config Config) *Manager {
 	return &Manager{
 		runner:                  config.Runner,
 		supportedThinkingLevels: supportedThinkingLevels,
+		defaultThinkingLevel:    defaultThinkingLevel,
 		ctx:                     ctx,
 		cancel:                  cancel,
 		active:                  make(map[string]*job),
@@ -166,10 +174,10 @@ func (m *Manager) normalizeTasks(tasks []Task) []Task {
 	normalized := slices.Clone(tasks)
 	for index := range normalized {
 		if normalized[index].ModelProfile == "" {
-			normalized[index].ModelProfile = ProfileBalanced
+			normalized[index].ModelProfile = ProfileMain
 		}
 		if normalized[index].ThinkingLevel == "" {
-			normalized[index].ThinkingLevel = agent.ClampThinkingLevel(DefaultThinkingLevel, m.supportedThinkingLevels(normalized[index].ModelProfile))
+			normalized[index].ThinkingLevel = agent.ClampThinkingLevel(m.defaultThinkingLevel(), m.supportedThinkingLevels(normalized[index].ModelProfile))
 		}
 	}
 	return normalized
@@ -203,15 +211,11 @@ func (m *Manager) validateStart(tasks []Task) error {
 }
 
 func validateThinkingLevel(level agent.ThinkingLevel) error {
-	if slices.Contains(allowedThinkingLevels, level) {
+	if level.Valid() {
 		return nil
 	}
 
-	available := formatThinkingLevels(allowedThinkingLevels)
-	if level.Valid() {
-		return fmt.Errorf("thinking level %q is not available to subagents; use %s", level, available)
-	}
-	return fmt.Errorf("thinking level must be one of %s", available)
+	return fmt.Errorf("thinking level must be one of %s", formatThinkingLevels(agent.ThinkingLevels()))
 }
 
 func formatThinkingLevels(levels []agent.ThinkingLevel) string {

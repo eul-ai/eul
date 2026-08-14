@@ -31,7 +31,7 @@ func TestSubagentLaunchUsesPerTaskPolicyDefaultsAndSurfacesManagerValidation(t *
 	}
 	for range 2 {
 		request := <-requests
-		if request.Task == "default" && (request.Profile != subagent.ProfileBalanced || request.ThinkingLevel != agent.ThinkingMedium) {
+		if request.Task == "default" && (request.Profile != subagent.ProfileMain || request.ThinkingLevel != agent.ThinkingMedium) {
 			t.Fatalf("default request = %+v", request)
 		}
 		if request.Task == "custom" && (request.Profile != subagent.ProfileFast || request.ThinkingLevel != agent.ThinkingMedium) {
@@ -54,6 +54,9 @@ func TestSubagentLaunchUsesPerTaskPolicyDefaultsAndSurfacesManagerValidation(t *
 
 func TestSubagentLaunchSchemaPlacesPolicyOnTasks(t *testing.T) {
 	definition := NewSubagent(nil).Definition()
+	if !strings.Contains(definition.Description, "Omit model profile and thinking level to inherit the main agent's settings. Override them only when explicitly requested or when there is a clear task-specific reason.") {
+		t.Fatalf("description = %q", definition.Description)
+	}
 	if _, ok := definition.Parameters.Properties["model_profile"]; ok {
 		t.Fatal("launch-level model profile remains in schema")
 	}
@@ -66,13 +69,16 @@ func TestSubagentLaunchSchemaPlacesPolicyOnTasks(t *testing.T) {
 		t.Fatalf("task schema = %+v", task)
 	}
 	thinkingDescription := task.Properties["thinking_level"].Description
-	for _, level := range subagent.AllowedThinkingLevels() {
+	for _, level := range agent.ThinkingLevels() {
 		if !strings.Contains(thinkingDescription, string(level)) {
 			t.Fatalf("thinking-level description %q does not include %q", thinkingDescription, level)
 		}
 	}
-	if !strings.Contains(thinkingDescription, string(subagent.DefaultThinkingLevel)+" (default)") {
+	if !strings.Contains(thinkingDescription, "Defaults to the main agent's current level.") {
 		t.Fatalf("thinking-level description = %q", thinkingDescription)
+	}
+	if modelDescription := task.Properties["model_profile"].Description; !strings.Contains(modelDescription, "main (default") {
+		t.Fatalf("model-profile description = %q", modelDescription)
 	}
 }
 
