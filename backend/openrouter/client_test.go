@@ -292,7 +292,7 @@ func TestClientSemanticallyCompactsAndReplaysSummary(t *testing.T) {
 		case 1:
 			input, _ := json.Marshal(wire.Input)
 			joined := string(input)
-			if wire.Instructions == "original" || wire.Instructions == "" || len(wire.Input) != 3 || !strings.Contains(joined, "old answer") || !strings.Contains(joined, "pending request") {
+			if wire.Instructions == "original" || wire.Instructions == "" || len(wire.Input) != 2 || !strings.Contains(joined, "old answer") {
 				t.Errorf("summary input = %s, instructions = %q", wire.Input, wire.Instructions)
 			}
 			if len(wire.Tools) != 0 || wire.ToolChoice != "" || wire.ParallelToolCalls || wire.Reasoning["effort"] != "high" || strings.Contains(joined, "compaction_trigger") {
@@ -302,8 +302,17 @@ func TestClientSemanticallyCompactsAndReplaysSummary(t *testing.T) {
 		case 2:
 			input, _ := json.Marshal(wire.Input)
 			joined := string(input)
-			if len(wire.Input) != 2 || !strings.Contains(joined, "concise handoff") || !strings.Contains(joined, "continue") || strings.Contains(joined, "old answer") || strings.Contains(joined, "pending request") {
+			if len(wire.Input) != 2 {
 				t.Errorf("continued input = %s", wire.Input)
+			} else {
+				var summaryMessage, userMessage struct {
+					Role string `json:"role"`
+				}
+				_ = json.Unmarshal(wire.Input[0], &summaryMessage)
+				_ = json.Unmarshal(wire.Input[1], &userMessage)
+				if summaryMessage.Role != "assistant" || userMessage.Role != "user" || !strings.Contains(joined, "concise handoff") || !strings.Contains(joined, "continue") || strings.Contains(joined, "old answer") {
+					t.Errorf("continued input = %s", wire.Input)
+				}
 			}
 			fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"continued\"}]}]}}\n\n")
 		default:
@@ -322,7 +331,6 @@ func TestClientSemanticallyCompactsAndReplaysSummary(t *testing.T) {
 		ThinkingLevel: agent.ThinkingHigh,
 		Instructions:  "original",
 		State:         state,
-		Inputs:        []agent.Input{agent.NewTextInput("pending request")},
 		Tools:         []agent.ToolDefinition{{Name: "read"}},
 	})
 	if err != nil {

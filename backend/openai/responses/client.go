@@ -13,15 +13,15 @@ import (
 )
 
 const (
-	defaultHTTPTimeout           = 10 * time.Minute
-	defaultMaxRequestBytes       = int64(32 * 1024 * 1024)
-	defaultMaxResponseBytes      = int64(16 * 1024 * 1024)
-	defaultMaxErrorBytes         = int64(64 * 1024)
-	defaultMaxStateBytes         = 16 * 1024 * 1024
-	defaultStateOutputHeadroom   = 1024 * 1024
-	compactedContextTag          = "compacted_context"
-	compactedContextIntroduction = "The earlier conversation was compacted into the following summary. Continue the task from this context:"
-	semanticCompactionRequest    = "Produce the requested handoff summary now."
+	defaultHTTPTimeout             = 10 * time.Minute
+	defaultMaxRequestBytes         = int64(32 * 1024 * 1024)
+	defaultMaxResponseBytes        = int64(16 * 1024 * 1024)
+	defaultMaxErrorBytes           = int64(64 * 1024)
+	defaultMaxStateBytes           = 16 * 1024 * 1024
+	defaultStateOutputHeadroom     = 1024 * 1024
+	compactedSummaryIntroduction   = "The earlier conversation was compacted into the following summary. Continue the task from this context:"
+	semanticCompactionRequest      = "Produce the requested handoff summary now."
+	semanticCompactionContinuation = "Continue the task from the compacted summary."
 )
 
 type RequestOptions struct {
@@ -280,6 +280,7 @@ func (c *Client) SemanticCompact(ctx context.Context, request agent.Request, ins
 		return agent.CompactResponse{}, err
 	}
 
+	continueAfterCompaction := len(request.Inputs) != 0
 	request.Instructions = instructions
 	request.Tools = nil
 	request.Inputs = append(append([]agent.Input(nil), request.Inputs...), agent.NewTextInput(semanticCompactionRequest))
@@ -328,7 +329,7 @@ func (c *Client) SemanticCompact(ctx context.Context, request agent.Request, ins
 		return agent.CompactResponse{}, c.errorf("summary response is empty")
 	}
 
-	items, err := encodeInputs([]agent.Input{agent.NewTextInput(formatCompactedContext(summary))})
+	items, err := semanticCompactionStateItems(summary, continueAfterCompaction)
 	if err != nil {
 		return agent.CompactResponse{}, c.errorf("encode summary state: %v", err)
 	}
@@ -340,14 +341,21 @@ func (c *Client) SemanticCompact(ctx context.Context, request agent.Request, ins
 	return agent.CompactResponse{State: state, Usage: usage}, nil
 }
 
-func formatCompactedContext(summary string) string {
-	return fmt.Sprintf(
-		"<%s>\n%s\n\n%s\n</%s>\n\n",
-		compactedContextTag,
-		compactedContextIntroduction,
-		summary,
-		compactedContextTag,
-	)
+func semanticCompactionStateItems(summary string, continueTask bool) ([]json.RawMessage, error) {
+	summaryItem, _ := json.Marshal(inputMessage{
+		Role:    "assistant",
+		Content: fmt.Sprintf("%s\n\n%s", compactedSummaryIntroduction, summary),
+	})
+	items := []json.RawMessage{summaryItem}
+	if !continueTask {
+		return items, nil
+	}
+
+	continuation, err := encodeInputs([]agent.Input{agent.NewTextInput(semanticCompactionContinuation)})
+	if err != nil {
+		return nil, err
+	}
+	return append(items, continuation...), nil
 }
 
 func (c *Client) configureRequest(request agent.Request, wireRequest *createResponseRequest) error {

@@ -61,28 +61,65 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 	}
 
 	items, err := decodeState(compacted.State, defaultMaxStateBytes)
-	if err != nil || len(items) != 1 {
+	if err != nil || len(items) != 2 {
 		t.Fatalf("summary state items = %d, error = %v", len(items), err)
 	}
-	if item := string(items[0]); !strings.Contains(item, `"role":"user"`) || !strings.Contains(item, "concise handoff") || strings.Contains(item, "old answer") || strings.Contains(item, "pending request") {
-		t.Fatalf("summary state = %s", item)
+	var summaryMessage inputMessage
+	if err := json.Unmarshal(items[0], &summaryMessage); err != nil || summaryMessage.Role != "assistant" {
+		t.Fatalf("summary message = %s, error = %v", items[0], err)
 	}
-	var message struct {
-		Content []inputContentPart `json:"content"`
+	summaryText, _ := summaryMessage.Content.(string)
+	if !strings.Contains(summaryText, "concise handoff") || strings.Contains(summaryText, "<compacted_context>") || strings.Contains(summaryText, "old answer") || strings.Contains(summaryText, "pending request") {
+		t.Fatalf("summary text = %q", summaryText)
 	}
-	if err := json.Unmarshal(items[0], &message); err != nil || len(message.Content) != 1 || !strings.HasPrefix(message.Content[0].Text, "<compacted_context>\n") || !strings.HasSuffix(message.Content[0].Text, "\n</compacted_context>\n\n") {
-		t.Fatalf("summary boundary = %+v, error = %v", message.Content, err)
+	var continuationMessage inputMessage
+	if err := json.Unmarshal(items[1], &continuationMessage); err != nil || continuationMessage.Role != "user" {
+		t.Fatalf("continuation message = %s, error = %v", items[1], err)
+	}
+
+	continued, _, err := buildCreateRequest(agent.Request{State: compacted.State}, defaultMaxStateBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(continued.Input) != 2 {
+		t.Fatalf("continued input = %s", continued.Input)
+	}
+}
+
+func TestManualSemanticCompactionPreservesTurnBoundary(t *testing.T) {
+	server := responseServer(t, http.StatusOK, `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"concise handoff"}]}]}`)
+	defer server.Close()
+
+	client := newTestClient(t, "key", server.URL, Options{})
+	state, err := encodeState(nil, nil, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)}, defaultMaxStateBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compacted, err := client.SemanticCompact(context.Background(), agent.Request{
+		Model:         "test-model",
+		ThinkingLevel: agent.ThinkingOff,
+		State:         state,
+	}, "summarize")
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	continued, _, err := buildCreateRequest(agent.Request{
 		State:  compacted.State,
-		Inputs: []agent.Input{agent.NewTextInput("continue")},
+		Inputs: []agent.Input{agent.NewTextInput("new request")},
 	}, defaultMaxStateBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(continued.Input) != 2 || !strings.Contains(string(continued.Input[0]), "concise handoff") || !strings.Contains(string(continued.Input[1]), "continue") {
+	if len(continued.Input) != 2 {
 		t.Fatalf("continued input = %s", continued.Input)
+	}
+	var summaryMessage, userMessage inputMessage
+	if err := json.Unmarshal(continued.Input[0], &summaryMessage); err != nil || summaryMessage.Role != "assistant" {
+		t.Fatalf("summary message = %s, error = %v", continued.Input[0], err)
+	}
+	if err := json.Unmarshal(continued.Input[1], &userMessage); err != nil || userMessage.Role != "user" {
+		t.Fatalf("user message = %s, error = %v", continued.Input[1], err)
 	}
 }
 
