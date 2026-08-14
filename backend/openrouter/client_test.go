@@ -68,7 +68,7 @@ func TestClientUsesOpenRouterResponsesEndpointHeadersAndState(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := newClient("secret", server.URL+"/responses", server.Client(), func(string) bool { return true })
+	client, err := newClient("secret", server.URL+"/responses", server.Client(), func(string) bool { return true }, func(string) int64 { return 128_000 })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestClientStreamsInterleavedToolCalls(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider, err := newClient("secret", server.URL, server.Client(), func(string) bool { return false })
+	provider, err := newClient("secret", server.URL, server.Client(), func(string) bool { return false }, func(string) int64 { return 128_000 })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestClientEncodesImageInput(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider, err := newClient("secret", server.URL, server.Client(), func(string) bool { return false })
+	provider, err := newClient("secret", server.URL, server.Client(), func(string) bool { return false }, func(string) int64 { return 128_000 })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestClientHandlesNumericRateLimitErrorAndRedactsKey(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider, err := newClient(key, server.URL, server.Client(), func(string) bool { return false })
+	provider, err := newClient(key, server.URL, server.Client(), func(string) bool { return false }, func(string) int64 { return 128_000 })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,6 +183,28 @@ func TestClientHandlesNumericRateLimitErrorAndRedactsKey(t *testing.T) {
 	}
 	if _, retry := provider.RetryGeneration(err, 1); !retry {
 		t.Fatal("numeric 429 stream error was not retryable")
+	}
+	if provider.ShouldCompactAfterError(agent.Request{}, err) {
+		t.Fatal("rate limit error triggered compaction")
+	}
+}
+
+func TestClientClassifiesContextLimitErrorForCompaction(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(writer, "data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"context_length_exceeded\",\"message\":\"too long\"}}\n\n")
+	}))
+	defer server.Close()
+
+	client, err := newClient("secret", server.URL, server.Client(), func(string) bool { return false }, func(string) int64 { return 128_000 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Generate(context.Background(), agent.Request{
+		Model: "vendor/model", ThinkingLevel: agent.ThinkingOff,
+	}, agent.StreamObserver{})
+	if err == nil || !client.ShouldCompactAfterError(agent.Request{}, err) {
+		t.Fatalf("Generate() error = %v, should compact = %t", err, client.ShouldCompactAfterError(agent.Request{}, err))
 	}
 }
 
@@ -202,5 +224,121 @@ func TestRequestOptionsRespectModelReasoningMetadata(t *testing.T) {
 	off, err := options(agent.Request{Model: "vendor/plain", ThinkingLevel: agent.ThinkingOff})
 	if err != nil || off.Reasoning != nil {
 		t.Fatalf("plain model off options = %+v, %v", off, err)
+	}
+}
+
+func TestClientShouldCompactAtModelContextThreshold(t *testing.T) {
+	client, err := newClient(
+		"secret",
+		"http://127.0.0.1:1/responses",
+		&http.Client{},
+		func(string) bool { return false },
+		func(model string) int64 {
+			if model == "vendor/model" {
+				return 1_000
+			}
+			return 0
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	state := []byte(`{"version":1,"items":[{"type":"message","role":"assistant","content":"history"}]}`)
+	tests := []struct {
+		name    string
+		request agent.Request
+		usage   agent.Usage
+		want    bool
+	}{
+		{name: "no state", request: agent.Request{Model: "vendor/model"}, usage: agent.Usage{TotalTokens: 900}},
+		{name: "no usage", request: agent.Request{Model: "vendor/model", State: state}},
+		{name: "below threshold", request: agent.Request{Model: "vendor/model", State: state}, usage: agent.Usage{TotalTokens: 899}},
+		{name: "at threshold", request: agent.Request{Model: "vendor/model", State: state}, usage: agent.Usage{TotalTokens: 900}, want: true},
+		{name: "pending input crosses threshold", request: agent.Request{Model: "vendor/model", State: state, Inputs: []agent.Input{agent.NewTextInput("12345678")}}, usage: agent.Usage{TotalTokens: 898}, want: true},
+		{name: "unknown model", request: agent.Request{Model: "vendor/unknown", State: state}, usage: agent.Usage{TotalTokens: 900}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := client.ShouldCompact(test.request, test.usage); got != test.want {
+				t.Fatalf("ShouldCompact() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestClientSemanticallyCompactsAndReplaysSummary(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		calls++
+		if request.Header.Get("Authorization") != "Bearer secret" || request.Header.Get("HTTP-Referer") == "" {
+			t.Errorf("headers = %v", request.Header)
+		}
+
+		var wire struct {
+			Instructions      string            `json:"instructions"`
+			Input             []json.RawMessage `json:"input"`
+			Tools             []json.RawMessage `json:"tools"`
+			ToolChoice        string            `json:"tool_choice"`
+			ParallelToolCalls bool              `json:"parallel_tool_calls"`
+			Reasoning         map[string]string `json:"reasoning"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
+			t.Fatal(err)
+		}
+
+		writer.Header().Set("Content-Type", "text/event-stream")
+		switch calls {
+		case 1:
+			input, _ := json.Marshal(wire.Input)
+			joined := string(input)
+			if wire.Instructions == "original" || wire.Instructions == "" || len(wire.Input) != 3 || !strings.Contains(joined, "old answer") || !strings.Contains(joined, "pending request") {
+				t.Errorf("summary input = %s, instructions = %q", wire.Input, wire.Instructions)
+			}
+			if len(wire.Tools) != 0 || wire.ToolChoice != "" || wire.ParallelToolCalls || wire.Reasoning["effort"] != "high" || strings.Contains(joined, "compaction_trigger") {
+				t.Errorf("summary request = %+v", wire)
+			}
+			fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"concise handoff\"}]}],\"usage\":{\"input_tokens\":80,\"output_tokens\":10,\"total_tokens\":90}}}\n\n")
+		case 2:
+			input, _ := json.Marshal(wire.Input)
+			joined := string(input)
+			if len(wire.Input) != 2 || !strings.Contains(joined, "concise handoff") || !strings.Contains(joined, "continue") || strings.Contains(joined, "old answer") || strings.Contains(joined, "pending request") {
+				t.Errorf("continued input = %s", wire.Input)
+			}
+			fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"continued\"}]}]}}\n\n")
+		default:
+			t.Errorf("unexpected request %d", calls)
+		}
+	}))
+	defer server.Close()
+
+	client, err := newClient("secret", server.URL, server.Client(), func(string) bool { return true }, func(string) int64 { return 128_000 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := []byte(`{"version":1,"items":[{"type":"message","role":"assistant","content":"old answer"}]}`)
+	compacted, err := client.Compact(context.Background(), agent.Request{
+		Model:         "vendor/model",
+		ThinkingLevel: agent.ThinkingHigh,
+		Instructions:  "original",
+		State:         state,
+		Inputs:        []agent.Input{agent.NewTextInput("pending request")},
+		Tools:         []agent.ToolDefinition{{Name: "read"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compacted.Usage != (agent.Usage{InputTokens: 80, OutputTokens: 10, TotalTokens: 90}) {
+		t.Fatalf("compaction usage = %+v", compacted.Usage)
+	}
+
+	response, err := client.Generate(context.Background(), agent.Request{
+		Model:         "vendor/model",
+		ThinkingLevel: agent.ThinkingOff,
+		State:         compacted.State,
+		Inputs:        []agent.Input{agent.NewTextInput("continue")},
+	}, agent.StreamObserver{})
+	if err != nil || response.Text != "continued" || calls != 2 {
+		t.Fatalf("response = %+v, error = %v, calls = %d", response, err, calls)
 	}
 }

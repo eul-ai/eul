@@ -20,9 +20,15 @@ type createResponseEnvelope struct {
 }
 
 type responseError struct {
-	Code    errorCode `json:"code"`
-	Message string    `json:"message"`
-	Type    string    `json:"type"`
+	Code     errorCode             `json:"code"`
+	Message  string                `json:"message"`
+	Type     string                `json:"type"`
+	Metadata responseErrorMetadata `json:"metadata"`
+}
+
+type responseErrorMetadata struct {
+	ProviderName string          `json:"provider_name"`
+	Raw          json.RawMessage `json:"raw"`
 }
 
 type errorCode string

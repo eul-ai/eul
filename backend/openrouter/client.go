@@ -11,15 +11,22 @@ import (
 )
 
 type client struct {
-	responses *responses.Client
+	responses     *responses.Client
+	contextWindow func(string) int64
 }
 
 var (
 	_ agent.Provider              = (*client)(nil)
 	_ agent.GenerationRetryPolicy = (*client)(nil)
+	_ agent.Compactor             = (*client)(nil)
+	_ agent.CompactionErrorPolicy = (*client)(nil)
 )
 
-func newClient(apiKey, endpoint string, httpClient *http.Client, supportsReasoning func(string) bool) (*client, error) {
+const compactionInstructions = `Create a concise, standalone handoff summary of the conversation so another coding agent can continue the task.
+
+Preserve only continuation-critical facts: the user's current goal, requirements, and constraints; important decisions and rationale; relevant files, symbols, and code details; changes already made; commands and tests run with their outcomes; errors and unresolved issues; and the exact next steps. Include pending user requests and relevant tool findings. Do not continue the task or address the user. Output only the summary.`
+
+func newClient(apiKey, endpoint string, httpClient *http.Client, supportsReasoning func(string) bool, contextWindow func(string) int64) (*client, error) {
 	shared, err := responses.New(responses.Options{
 		HTTPClient:     httpClient,
 		Endpoint:       endpoint,
@@ -31,11 +38,58 @@ func newClient(apiKey, endpoint string, httpClient *http.Client, supportsReasoni
 	if err != nil {
 		return nil, err
 	}
-	return &client{responses: shared}, nil
+	return &client{responses: shared, contextWindow: contextWindow}, nil
 }
 
 func (c *client) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {
 	return c.responses.Generate(ctx, request, observer)
+}
+
+func (c *client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
+	if len(request.State) == 0 {
+		return false
+	}
+	if c.responses.ShouldCompactState(request) {
+		return true
+	}
+	if usage.TotalTokens <= 0 {
+		return false
+	}
+
+	contextWindow := c.contextWindow(request.Model)
+	if contextWindow <= 0 {
+		return false
+	}
+	limit := contextWindow * 9 / 10
+	if usage.TotalTokens >= limit {
+		return true
+	}
+
+	return estimateInputTokens(request.Inputs) >= limit-usage.TotalTokens
+}
+
+func (c *client) Compact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {
+	return c.responses.SemanticCompact(ctx, request, compactionInstructions)
+}
+
+func (c *client) ShouldCompactAfterError(_ agent.Request, err error) bool {
+	return c.responses.IsContextLimitError(err)
+}
+
+func estimateInputTokens(inputs []agent.Input) int64 {
+	var total int64
+	for _, input := range inputs {
+		textBytes := len(input.Text)
+		if input.Kind == agent.InputUser {
+			textBytes = len(input.PlainText())
+		}
+		bytes := int64(textBytes)
+		total += bytes / 4
+		if bytes%4 != 0 {
+			total++
+		}
+	}
+	return total
 }
 
 func (c *client) RetryGeneration(err error, failedAttempts int) (time.Duration, bool) {

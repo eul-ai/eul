@@ -89,8 +89,13 @@ func TestRuntimeChecksCredentialsLoadsModelsAndCreatesProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := provider.(*client); !ok {
+	configuredProvider, ok := provider.(*client)
+	if !ok {
 		t.Fatalf("provider = %T", provider)
+	}
+	state := []byte(`{"version":1,"items":[{"type":"message","role":"assistant","content":"history"}]}`)
+	if !configuredProvider.ShouldCompact(agent.Request{Model: "vendor/reasoning", State: state}, agent.Usage{TotalTokens: 115_200}) {
+		t.Fatal("provider did not use cached model context window for compaction")
 	}
 	if _, err := provider.Generate(context.Background(), agent.Request{
 		Model: "vendor/plain", ThinkingLevel: agent.ThinkingOff,

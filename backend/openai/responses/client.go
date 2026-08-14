@@ -18,6 +18,8 @@ const (
 	defaultMaxErrorBytes       = int64(64 * 1024)
 	defaultMaxStateBytes       = 16 * 1024 * 1024
 	defaultStateOutputHeadroom = 1024 * 1024
+	compactedSummaryPrefix     = "The earlier conversation was compacted into the following summary. Continue the task from this context:\n\n"
+	semanticCompactionRequest  = "Produce the requested handoff summary now."
 )
 
 type RequestOptions struct {
@@ -266,6 +268,71 @@ func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.Comp
 	state, err := encodeState(nil, nil, compactedStateItems(input, wireResponse.Output), c.generationStateBytes())
 	if err != nil {
 		return agent.CompactResponse{}, c.errorf("%v", err)
+	}
+
+	return agent.CompactResponse{State: state, Usage: usage}, nil
+}
+
+func (c *Client) SemanticCompact(ctx context.Context, request agent.Request, instructions string) (agent.CompactResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return agent.CompactResponse{}, err
+	}
+
+	request.Instructions = instructions
+	request.Tools = nil
+	request.Inputs = append(append([]agent.Input(nil), request.Inputs...), agent.NewTextInput(semanticCompactionRequest))
+	wireRequest, _, err := buildCreateRequestUnchecked(request, c.maxStateBytes)
+	if err != nil {
+		return agent.CompactResponse{}, c.errorf("build summary request: %v", err)
+	}
+	if err := c.configureRequest(request, &wireRequest); err != nil {
+		return agent.CompactResponse{}, c.errorf("%v", err)
+	}
+	wireRequest.ToolChoice = ""
+	wireRequest.ParallelToolCalls = false
+
+	requestBody, oversized, err := marshalBoundedJSON(wireRequest, c.maxRequestBytes)
+	if err != nil {
+		return agent.CompactResponse{}, c.errorf("encode summary request: %v", err)
+	}
+	if oversized {
+		return agent.CompactResponse{}, c.errorf("summary request exceeds %d bytes", c.maxRequestBytes)
+	}
+
+	httpResponse, err := c.post(ctx, requestBody, "summary request")
+	if err != nil {
+		return agent.CompactResponse{}, err
+	}
+	defer httpResponse.Body.Close()
+
+	wireResponse, err := readResponsesSSE(httpResponse.Body, c.maxResponseBytes, nil)
+	if err != nil {
+		if classified := c.contextError(ctx, err, "read summary response"); classified != nil {
+			return agent.CompactResponse{}, classified
+		}
+		return agent.CompactResponse{}, c.errorf("read summary response: %v", err)
+	}
+
+	summary, calls, usage, err := normalizeResponse(wireResponse)
+	if err != nil {
+		c.redactResponseFailure(err)
+		return agent.CompactResponse{}, c.errorf("%v", err)
+	}
+	if len(calls) != 0 {
+		return agent.CompactResponse{}, c.errorf("summary response contains tool calls")
+	}
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return agent.CompactResponse{}, c.errorf("summary response is empty")
+	}
+
+	items, err := encodeInputs([]agent.Input{agent.NewTextInput(compactedSummaryPrefix + summary)})
+	if err != nil {
+		return agent.CompactResponse{}, c.errorf("encode summary state: %v", err)
+	}
+	state, err := encodeState(nil, nil, items, c.generationStateBytes())
+	if err != nil {
+		return agent.CompactResponse{}, c.errorf("encode summary state: %v", err)
 	}
 
 	return agent.CompactResponse{State: state, Usage: usage}, nil

@@ -116,13 +116,25 @@ func (configured *runtime) CheckCredentials(ctx context.Context) error {
 }
 
 func (configured *runtime) NewProvider() (agent.Provider, error) {
-	return newClient(configured.apiKey, configured.baseURL+"/responses", configured.generationClient, configured.supportsReasoning)
+	return newClient(
+		configured.apiKey,
+		configured.baseURL+"/responses",
+		configured.generationClient,
+		configured.supportsReasoning,
+		configured.contextWindow,
+	)
 }
 
 func (configured *runtime) supportsReasoning(model string) bool {
 	configured.mu.RLock()
 	defer configured.mu.RUnlock()
 	return configured.models[model].reasoning
+}
+
+func (configured *runtime) contextWindow(model string) int64 {
+	configured.mu.RLock()
+	defer configured.mu.RUnlock()
+	return configured.models[model].contextWindow
 }
 
 func (configured *runtime) ModelMetadata(model string) backend.ModelMetadata {
