@@ -67,6 +67,12 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 	if item := string(items[0]); !strings.Contains(item, `"role":"user"`) || !strings.Contains(item, "concise handoff") || strings.Contains(item, "old answer") || strings.Contains(item, "pending request") {
 		t.Fatalf("summary state = %s", item)
 	}
+	var message struct {
+		Content []inputContentPart `json:"content"`
+	}
+	if err := json.Unmarshal(items[0], &message); err != nil || len(message.Content) != 1 || !strings.HasPrefix(message.Content[0].Text, "<compacted_context>\n") || !strings.HasSuffix(message.Content[0].Text, "\n</compacted_context>\n\n") {
+		t.Fatalf("summary boundary = %+v, error = %v", message.Content, err)
+	}
 
 	continued, _, err := buildCreateRequest(agent.Request{
 		State:  compacted.State,
