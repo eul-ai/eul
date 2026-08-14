@@ -794,7 +794,7 @@ func TestTUIControllerCompactsConversation(t *testing.T) {
 	if engine.compactionCount() != 1 || model.running || model.activity.kind != activityReady || model.contextTokens != 0 {
 		t.Fatalf("compactions=%d running=%v activity=%+v context=%d", engine.compactionCount(), model.running, model.activity, model.contextTokens)
 	}
-	if len(model.blocks) != 2 || model.blocks[0].text != "existing conversation" || model.blocks[1].kind != blockContext {
+	if len(model.blocks) != 2 || model.blocks[0].text != "existing conversation" || model.blocks[1].kind != blockContext || model.blocks[1].text != "Context compacted" {
 		t.Fatalf("blocks = %+v", model.blocks)
 	}
 }

@@ -282,9 +282,9 @@ func (m *tuiModel) applyAgentEvent(event agent.Event) {
 		m.appendStream(blockAssistant, event.Text)
 		m.setActiveActivity(activity{kind: activityResponding})
 	case agent.EventCompactionStart:
-		m.appendBlock(blockContext, "Compacting conversation")
 		m.setActiveActivity(activity{kind: activityCompacting})
 	case agent.EventCompactionEnd:
+		m.appendBlock(blockContext, "Context compacted")
 		m.contextTokens = 0
 		m.setActiveActivity(activity{kind: activityThinking})
 	case agent.EventContextUsage:
