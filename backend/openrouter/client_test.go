@@ -39,13 +39,14 @@ func TestClientUsesOpenRouterResponsesEndpointHeadersAndState(t *testing.T) {
 			Input             []json.RawMessage `json:"input"`
 			Stream            bool              `json:"stream"`
 			Reasoning         map[string]string `json:"reasoning"`
+			Include           []string          `json:"include"`
 			ServiceTier       string            `json:"service_tier"`
 			ParallelToolCalls bool              `json:"parallel_tool_calls"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
 			t.Error(err)
 		}
-		if wire.Model != "vendor/model" || !wire.Stream || wire.Reasoning["effort"] != "high" || wire.ServiceTier != "" || !wire.ParallelToolCalls {
+		if wire.Model != "vendor/model" || !wire.Stream || wire.Reasoning["effort"] != "high" || len(wire.Include) != 1 || wire.Include[0] != "reasoning.encrypted_content" || wire.ServiceTier != "" || !wire.ParallelToolCalls {
 			t.Errorf("request = %+v", wire)
 		}
 
@@ -56,10 +57,11 @@ func TestClientUsesOpenRouterResponsesEndpointHeadersAndState(t *testing.T) {
 				t.Errorf("first input count = %d", len(wire.Input))
 			}
 			fmt.Fprint(writer, "data: {\"type\":\"response.reasoning_text.delta\",\"delta\":\"thinking\"}\n\n")
-			fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_read\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"file.go\\\"}\"}}\n\n")
+			fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"format\":\"google-gemini-v1\",\"encrypted_content\":\"opaque-thought-signature\",\"summary\":[]}}\n\n")
+			fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_read\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"file.go\\\"}\"}}\n\n")
 			fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":3,\"output_tokens\":2,\"total_tokens\":5}}}\n\n")
 		case 2:
-			if len(wire.Input) != 3 || !strings.Contains(string(wire.Input[1]), `"call_id":"call_read"`) || !strings.Contains(string(wire.Input[2]), `"type":"function_call_output"`) {
+			if len(wire.Input) != 4 || !strings.Contains(string(wire.Input[1]), `"encrypted_content":"opaque-thought-signature"`) || !strings.Contains(string(wire.Input[2]), `"call_id":"call_read"`) || !strings.Contains(string(wire.Input[3]), `"type":"function_call_output"`) || !strings.Contains(string(wire.Input[3]), "[tool error]") {
 				t.Errorf("replayed input = %s", wire.Input)
 			}
 			fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}}\n\n")
@@ -90,7 +92,7 @@ func TestClientUsesOpenRouterResponsesEndpointHeadersAndState(t *testing.T) {
 		ThinkingLevel: agent.ThinkingHigh,
 		State:         first.State,
 		Inputs: []agent.Input{{
-			Kind: agent.InputToolResult, CallID: "call_read", Tool: "read", Text: "contents",
+			Kind: agent.InputToolResult, CallID: "call_read", Tool: "read", Text: "timed out", IsError: true,
 		}},
 	}, agent.StreamObserver{})
 	if err != nil || second.Text != "done" || calls != 2 {
@@ -282,9 +284,13 @@ func TestClientSemanticallyCompactsAndReplaysSummary(t *testing.T) {
 			ToolChoice        string            `json:"tool_choice"`
 			ParallelToolCalls bool              `json:"parallel_tool_calls"`
 			Reasoning         map[string]string `json:"reasoning"`
+			Include           []string          `json:"include"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
 			t.Fatal(err)
+		}
+		if len(wire.Include) != 1 || wire.Include[0] != "reasoning.encrypted_content" {
+			t.Errorf("include = %v", wire.Include)
 		}
 
 		writer.Header().Set("Content-Type", "text/event-stream")

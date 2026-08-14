@@ -129,6 +129,7 @@ func requestOptions(supportsReasoning func(string) bool) responses.RequestOption
 		options := responses.RequestOptions{ToolChoice: "auto", ParallelToolCalls: true}
 		if supportsReasoning(request.Model) {
 			options.Reasoning = &responses.Reasoning{Effort: effort}
+			options.Include = []string{"reasoning.encrypted_content"}
 		}
 		return options, nil
 	}
