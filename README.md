@@ -15,12 +15,15 @@ persisted locally, and tools run directly on your machine with your permissions.
 - Full-screen terminal interface with streaming responses and tool activity
 - File reading, writing, and targeted editing with visible diffs
 - Shell command execution with streamed output
-- File search and references from the prompt with `@`
+- File search and references from the prompt
+- Image attachments in prompts
 - Steering while the agent is working
-- Can use subagents
+- Autonomous goals for longer-running tasks
+- Parallel research with subagents
 - Project instructions from `AGENTS.md`
-- Global and project-specific [Agent Skills](https://agentskills.io)
-- Automatic context compaction and durable sessions
+- Global and project-specific Agent Skills
+- Automatic context compaction
+- Resumable sessions
 - ChatGPT and OpenRouter support
 
 ## Getting started
@@ -41,8 +44,7 @@ Sign in with ChatGPT and start a session:
 To use OpenRouter, provide an API key and model:
 
 ```sh
-export OPENROUTER_API_KEY=...
-./eul --provider openrouter --model <provider/model>
+OPENROUTER_API_KEY=... ./eul --provider openrouter --model <provider/model>
 ```
 
 OpenRouter feature support depends on the selected model.
