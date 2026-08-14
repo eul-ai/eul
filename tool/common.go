@@ -51,11 +51,8 @@ func StrictObject(properties map[string]agent.JSONSchema, required ...string) ag
 
 func nullable(schemaType string, description string) agent.JSONSchema {
 	return agent.JSONSchema{
+		Type:        []string{schemaType, "null"},
 		Description: description,
-		AnyOf: []agent.JSONSchema{
-			{Type: schemaType},
-			{Type: "null"},
-		},
 	}
 }
 

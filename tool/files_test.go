@@ -64,18 +64,35 @@ func TestCoreToolDefinitionsUseStrictSchemas(t *testing.T) {
 				if !exists {
 					t.Fatalf("missing property %q", name)
 				}
-				gotTypes := []string{property.Type}
-				if len(property.AnyOf) > 0 {
-					gotTypes = gotTypes[:0]
-					for _, item := range property.AnyOf {
-						gotTypes = append(gotTypes, item.Type)
-					}
+				var gotTypes []string
+				switch schemaType := property.Type.(type) {
+				case string:
+					gotTypes = []string{schemaType}
+				case []string:
+					gotTypes = schemaType
 				}
 				if !slices.Equal(gotTypes, wantTypes) {
 					t.Fatalf("property %q types = %v, want %v", name, gotTypes, wantTypes)
 				}
 			}
 		})
+	}
+}
+
+func TestNullableSchemaMarshalsAsTypeUnion(t *testing.T) {
+	encoded, err := json.Marshal(nullable("integer", "optional integer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Type  []string        `json:"type"`
+		AnyOf json.RawMessage `json:"anyOf"`
+	}
+	if err := json.Unmarshal(encoded, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(schema.Type, []string{"integer", "null"}) || len(schema.AnyOf) != 0 {
+		t.Fatalf("nullable schema = %s", encoded)
 	}
 }
 

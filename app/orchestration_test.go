@@ -139,7 +139,8 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 						definitions[definition.Name] = definition
 					}
 					waitDefinition := definitions["subagent_wait"]
-					if !strings.Contains(definitions["subagent"].Description, "delivered automatically") || !strings.Contains(waitDefinition.Description, "Wait sparingly") || len(waitDefinition.Parameters.Properties["timeout_ms"].AnyOf) != 2 || definitions["subagent_cancel"].Name == "" {
+					timeoutTypes, _ := waitDefinition.Parameters.Properties["timeout_ms"].Type.([]string)
+					if !strings.Contains(definitions["subagent"].Description, "delivered automatically") || !strings.Contains(waitDefinition.Description, "Wait sparingly") || !slices.Equal(timeoutTypes, []string{"integer", "null"}) || definitions["subagent_cancel"].Name == "" {
 						t.Fatalf("subagent definitions = %+v", definitions)
 					}
 					if strings.Contains(request.Instructions, "explicitly asks for subagents") {

@@ -25,7 +25,7 @@ func TestBuildCreateRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if request.Model != "model" || request.ServiceTier != "" || len(request.Input) != 2 || len(newItems) != 1 || len(request.Tools) != 1 || request.Tools[0].Strict != nil {
+	if request.Model != "model" || request.ServiceTier != "" || len(request.Input) != 2 || len(newItems) != 1 || len(request.Tools) != 1 || !request.Tools[0].Strict {
 		t.Fatalf("request=%+v newItems=%s", request, newItems)
 	}
 	compact, err := buildCompactRequest(agent.Request{Model: "model", FastMode: true}, defaultMaxStateBytes)

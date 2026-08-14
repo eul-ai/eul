@@ -44,7 +44,7 @@ type functionTool struct {
 	Name        string           `json:"name"`
 	Description string           `json:"description,omitempty"`
 	Parameters  agent.JSONSchema `json:"parameters"`
-	Strict      *bool            `json:"strict"`
+	Strict      bool             `json:"strict"`
 }
 
 type inputMessage struct {
@@ -105,6 +105,7 @@ func buildCreateRequestUnchecked(request agent.Request, maxStateBytes int) (crea
 			Name:        definition.Name,
 			Description: definition.Description,
 			Parameters:  definition.Parameters,
+			Strict:      true,
 		}
 	}
 

@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -54,7 +55,7 @@ func TestSubagentLaunchUsesPerTaskPolicyDefaultsAndSurfacesManagerValidation(t *
 
 func TestSubagentLaunchSchemaPlacesPolicyOnTasks(t *testing.T) {
 	definition := NewSubagent(nil).Definition()
-	if !strings.Contains(definition.Description, "Omit model profile and thinking level to inherit the main agent's settings. Override them only when explicitly requested or when there is a clear task-specific reason.") {
+	if definition.Description != "Launch one to four independent read-only research tasks, up to four active total. Results are delivered automatically. Use non-default model or thinking settings only when necessary." {
 		t.Fatalf("description = %q", definition.Description)
 	}
 	if _, ok := definition.Parameters.Properties["model_profile"]; ok {
@@ -65,26 +66,33 @@ func TestSubagentLaunchSchemaPlacesPolicyOnTasks(t *testing.T) {
 	}
 
 	task := definition.Parameters.Properties["tasks"].Items
-	if task == nil || task.Properties["model_profile"].Type != "string" || task.Properties["thinking_level"].Type != "string" {
+	if task == nil || !slices.Equal(task.Required, []string{"description", "prompt", "model_profile", "thinking_level"}) {
 		t.Fatalf("task schema = %+v", task)
 	}
-	thinkingDescription := task.Properties["thinking_level"].Description
+	modelProfile := task.Properties["model_profile"]
+	thinkingLevel := task.Properties["thinking_level"]
+	if !slices.Equal(modelProfile.Type.([]string), []string{"string", "null"}) || !slices.Equal(thinkingLevel.Type.([]string), []string{"string", "null"}) {
+		t.Fatalf("task policy schema = %+v", task)
+	}
 	for _, level := range agent.ThinkingLevels() {
-		if !strings.Contains(thinkingDescription, string(level)) {
-			t.Fatalf("thinking-level description %q does not include %q", thinkingDescription, level)
+		if !strings.Contains(thinkingLevel.Description, string(level)) {
+			t.Fatalf("thinking-level description %q does not include %q", thinkingLevel.Description, level)
 		}
 	}
-	if !strings.Contains(thinkingDescription, "Defaults to the main agent's current level.") {
-		t.Fatalf("thinking-level description = %q", thinkingDescription)
+	if !strings.Contains(thinkingLevel.Description, "null inherits the parent level.") {
+		t.Fatalf("thinking-level description = %q", thinkingLevel.Description)
 	}
-	if modelDescription := task.Properties["model_profile"].Description; !strings.Contains(modelDescription, "main (default") {
-		t.Fatalf("model-profile description = %q", modelDescription)
+	if !strings.Contains(modelProfile.Description, "null inherits the parent model") {
+		t.Fatalf("model-profile description = %q", modelProfile.Description)
 	}
 }
 
 func TestSubagentWaitDefaultTimeout(t *testing.T) {
 	if defaultWaitTimeout != 30*time.Second || defaultWaitTimeoutMS != 30_000 {
 		t.Fatalf("default wait timeout = %s (%dms)", defaultWaitTimeout, defaultWaitTimeoutMS)
+	}
+	if !slices.Equal(waitDefinition.Parameters.Required, []string{"timeout_ms"}) {
+		t.Fatalf("required wait arguments = %v", waitDefinition.Parameters.Required)
 	}
 }
 

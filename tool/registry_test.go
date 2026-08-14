@@ -47,7 +47,10 @@ func TestRegistryDefinitionsAreSortedAndDefensive(t *testing.T) {
 	registry := mustRegistry(
 		t,
 		fakeTool{definition: agent.ToolDefinition{Name: "write"}},
-		fakeTool{definition: agent.ToolDefinition{Name: "read", Parameters: agent.JSONSchema{Properties: map[string]agent.JSONSchema{"path": {Type: "string"}}}}},
+		fakeTool{definition: agent.ToolDefinition{Name: "read", Parameters: agent.JSONSchema{Properties: map[string]agent.JSONSchema{
+			"path":   {Type: "string"},
+			"offset": {Type: []string{"integer", "null"}},
+		}}}},
 	)
 
 	definitions := registry.Definitions()
@@ -56,8 +59,10 @@ func TestRegistryDefinitionsAreSortedAndDefensive(t *testing.T) {
 	}
 	definitions[0].Name = "changed"
 	definitions[0].Parameters.Properties["path"] = agent.JSONSchema{Type: "number"}
+	definitions[0].Parameters.Properties["offset"].Type.([]string)[0] = "number"
 	fresh := registry.Definitions()
-	if fresh[0].Name != "read" || fresh[0].Parameters.Properties["path"].Type != "string" {
+	offsetTypes, _ := fresh[0].Parameters.Properties["offset"].Type.([]string)
+	if fresh[0].Name != "read" || fresh[0].Parameters.Properties["path"].Type != "string" || !slices.Equal(offsetTypes, []string{"integer", "null"}) {
 		t.Fatalf("definitions share registry storage: %+v", fresh)
 	}
 }

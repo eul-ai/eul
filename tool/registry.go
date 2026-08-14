@@ -121,6 +121,9 @@ func cloneToolDefinition(definition agent.ToolDefinition) agent.ToolDefinition {
 }
 
 func cloneJSONSchema(schema agent.JSONSchema) agent.JSONSchema {
+	if schemaTypes, ok := schema.Type.([]string); ok {
+		schema.Type = slices.Clone(schemaTypes)
+	}
 	if schema.Properties != nil {
 		properties := make(map[string]agent.JSONSchema, len(schema.Properties))
 		for name, property := range schema.Properties {
