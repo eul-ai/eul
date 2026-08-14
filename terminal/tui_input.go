@@ -22,6 +22,7 @@ const (
 	keyUp
 	keyAltUp
 	keyDown
+	keyAltDown
 	keyHome
 	keyEnd
 	keyBackspace
@@ -87,6 +88,7 @@ var keySequences = []struct {
 	{sequence: "\x1b[5~", code: keyPageUp},
 	{sequence: "\x1b[6~", code: keyPageDown},
 	{sequence: "\x1b[1;3A", code: keyAltUp},
+	{sequence: "\x1b[1;3B", code: keyAltDown},
 	{sequence: "\x1b[A", code: keyUp},
 	{sequence: "\x1b[B", code: keyDown},
 	{sequence: "\x1b[C", code: keyRight},
@@ -461,6 +463,9 @@ func matchKittyKeySequence(buffer []byte) (int, bool, keyEvent, bool) {
 			}
 			return consumed, false, keyEvent{code: keyUp}, true
 		case 'B':
+			if alt {
+				return consumed, false, keyEvent{code: keyAltDown}, true
+			}
 			return consumed, false, keyEvent{code: keyDown}, true
 		case 'C':
 			return consumed, false, keyEvent{code: keyRight}, true

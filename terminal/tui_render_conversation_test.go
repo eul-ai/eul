@@ -625,11 +625,36 @@ func TestConversationDividerIndicatesTextBelow(t *testing.T) {
 	if scrolledDivider == followingDivider {
 		t.Fatalf("divider did not change after scrolling: %q", scrolledDivider)
 	}
+	if !strings.Contains(scrolledDivider, "more (alt+↓)") {
+		t.Fatalf("divider does not show jump shortcut: %q", scrolledDivider)
+	}
 
 	scrollConversation(model, 1, renderer.frame)
 	_ = renderModel(&renderer, model)
 	if renderer.frame.plainRows[ruleRow] != followingDivider {
 		t.Fatalf("divider was not restored: got %q, want %q", renderer.frame.plainRows[ruleRow], followingDivider)
+	}
+}
+
+func TestAltDownJumpsConversationToBottom(t *testing.T) {
+	model := newTUIModel(20, 8, Options{})
+	for index := 0; index < 8; index++ {
+		model.appendBlock(blockInfo, strings.Repeat(string(rune('a'+index)), 20))
+	}
+
+	var renderer tuiRenderer
+	_ = renderModel(&renderer, model)
+	bottom := model.scrollTop
+	scrollConversation(model, -1, renderer.frame)
+	if model.following {
+		t.Fatal("conversation remained at bottom after scrolling up")
+	}
+
+	if _, err := handleKeyInput(model, keyEvent{code: keyAltDown}, renderer.frame); err != nil {
+		t.Fatal(err)
+	}
+	if model.scrollTop != bottom || !model.following {
+		t.Fatalf("conversation did not jump to bottom: top=%d bottom=%d following=%t", model.scrollTop, bottom, model.following)
 	}
 }
 

@@ -96,6 +96,9 @@ func handleKeyInput(model *tuiModel, key keyEvent, frame terminalFrame) (tuiActi
 	case keyPageDown:
 		scrollConversation(model, 1, frame)
 		return tuiAction{}, nil
+	case keyAltDown:
+		scrollConversationToBottom(model, frame)
+		return tuiAction{}, nil
 	case keyAltUp:
 		return tuiAction{kind: tuiActionDequeue}, nil
 	}

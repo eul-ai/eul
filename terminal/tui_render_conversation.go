@@ -317,6 +317,16 @@ func scrollConversation(model *tuiModel, direction int, frame terminalFrame) {
 	scrollConversationBy(model, direction*frame.layout.conversationHeight, frame)
 }
 
+func scrollConversationToBottom(model *tuiModel, frame terminalFrame) {
+	height := frame.layout.conversationHeight
+	if height <= 0 {
+		return
+	}
+
+	model.scrollTop = max(0, len(frame.conversationLines)-height)
+	model.following = true
+}
+
 func scrollConversationBy(model *tuiModel, lines int, frame terminalFrame) {
 	height := frame.layout.conversationHeight
 	if height <= 0 || lines == 0 {

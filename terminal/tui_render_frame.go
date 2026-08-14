@@ -221,7 +221,7 @@ func composeFrameRows(model *tuiModel, prepared renderPreparation) []styledLine 
 		} else {
 			bottom := max(0, len(prepared.conversationLines)-layout.conversationHeight)
 			if prepared.scrollTop < bottom {
-				indicator := truncateCells("↓ more", width, false)
+				indicator := truncateCells("more (alt+↓)", width, false)
 				remaining := width - cellWidth(indicator)
 				left := remaining / 2
 				topRule.text = strings.Repeat("─", left) + indicator + strings.Repeat("─", remaining-left)
