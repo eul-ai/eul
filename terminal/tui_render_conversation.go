@@ -335,7 +335,7 @@ func scrollConversationBy(model *tuiModel, lines int, frame terminalFrame) {
 
 	bottom := max(0, len(frame.conversationLines)-height)
 	if model.following {
-		model.scrollTop = frame.conversationTop
+		model.scrollTop = bottom
 	}
 	model.following = false
 	model.scrollTop += lines

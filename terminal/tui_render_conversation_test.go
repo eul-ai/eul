@@ -645,9 +645,10 @@ func TestAltDownJumpsConversationToBottom(t *testing.T) {
 	var renderer tuiRenderer
 	_ = renderModel(&renderer, model)
 	bottom := model.scrollTop
-	scrollConversation(model, -1, renderer.frame)
-	if model.following {
-		t.Fatal("conversation remained at bottom after scrolling up")
+	scrollConversationBy(model, -bottom, renderer.frame)
+	_ = renderModel(&renderer, model)
+	if model.following || renderer.frame.conversationTop != 0 {
+		t.Fatalf("conversation did not scroll to top: top=%d following=%t", renderer.frame.conversationTop, model.following)
 	}
 
 	if _, err := handleKeyInput(model, keyEvent{code: keyAltDown}, renderer.frame); err != nil {
@@ -655,6 +656,11 @@ func TestAltDownJumpsConversationToBottom(t *testing.T) {
 	}
 	if model.scrollTop != bottom || !model.following {
 		t.Fatalf("conversation did not jump to bottom: top=%d bottom=%d following=%t", model.scrollTop, bottom, model.following)
+	}
+
+	reduceMouse(model, mouseEvent{kind: mouseWheelUp}, renderer.frame)
+	if model.scrollTop != bottom-mouseWheelScrollLines {
+		t.Fatalf("residual scroll jumped to stale viewport: top=%d bottom=%d", model.scrollTop, bottom)
 	}
 }
 
