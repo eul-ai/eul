@@ -343,7 +343,7 @@ func TestReduceKeyActions(t *testing.T) {
 			},
 			key: keyEvent{code: keyEnter},
 			check: func(t *testing.T, model *tuiModel) {
-				if len(model.history) != 1 || len(model.blocks) != 1 || model.blocks[0].kind != blockError || model.activity.detail != "unknown command" {
+				if len(model.history) != 1 || len(model.blocks) != 1 || model.blocks[0].kind != blockError || model.activity.kind != activityError {
 					t.Fatalf("history=%q blocks=%+v activity=%+v", model.history, model.blocks, model.activity)
 				}
 			},

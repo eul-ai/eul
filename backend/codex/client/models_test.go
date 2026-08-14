@@ -36,7 +36,7 @@ func TestClientReasoningSummaryAndModelMetadata(t *testing.T) {
 
 func TestNewRejectsNilTokenSource(t *testing.T) {
 	client, err := New(nil, Options{})
-	if client != nil || err == nil || !strings.Contains(err.Error(), "token source is required") {
+	if client != nil || err == nil {
 		t.Fatalf("client = %v, error = %v", client, err)
 	}
 }

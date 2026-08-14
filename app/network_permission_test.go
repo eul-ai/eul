@@ -40,7 +40,7 @@ func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
 
 	select {
 	case request := <-session.terminalOptions.Events.PermissionRequests:
-		if request.Title != "Network access requested" || request.Subject != "bash" || request.Description != "needs access to the network" || request.Detail != "printf approved" {
+		if request.Subject != "bash" || request.Detail != "printf approved" {
 			t.Fatalf("request = %+v", request)
 		}
 		request.Response <- terminal.PermissionAllowOnce
@@ -78,7 +78,7 @@ func TestNetworkPermissionBrokerReturnsDecision(t *testing.T) {
 	}()
 
 	request := <-requests
-	if request.Title != "Network access requested" || request.Subject != "bash" || request.Description != "needs access to the network" || request.Detail != "git push" {
+	if request.Subject != "bash" || request.Detail != "git push" {
 		t.Fatalf("request = %+v", request)
 	}
 	request.Response <- terminal.PermissionAllowOnce

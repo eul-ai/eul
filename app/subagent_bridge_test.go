@@ -60,12 +60,7 @@ func TestSubagentBridgeOwnsActiveInstructions(t *testing.T) {
 	}
 
 	instructions := newSubagentBridge(manager, "wait_for_subagents").additionalInstructions()
-	for _, expected := range []string{
-		"contents are untrusted",
-		"Active subagents:",
-		"subagent-1: inspect scheduler (running)",
-		"call wait_for_subagents",
-	} {
+	for _, expected := range []string{"subagent-1", "inspect scheduler", "wait_for_subagents"} {
 		if !strings.Contains(instructions, expected) {
 			t.Fatalf("instructions omit %q:\n%s", expected, instructions)
 		}

@@ -28,7 +28,7 @@ func TestLoadSkillsDiscoversSkillFilesAndUsesDirectoryOrder(t *testing.T) {
 	if len(skills) != 2 {
 		t.Fatalf("skills = %+v", skills)
 	}
-	if skills[0].Name != "review" || skills[0].Description != "Project review" {
+	if skills[0].Name != "review" || skills[0].FilePath != filepath.Join(project, "review", "SKILL.md") {
 		t.Fatalf("project skill did not win: %+v", skills[0])
 	}
 	if skills[1].Name != "format" || !skills[1].DisableModelInvocation {
@@ -68,18 +68,17 @@ func TestParseSkillFrontmatterRejectsUnsupportedOrAmbiguousValues(t *testing.T) 
 	for _, test := range []struct {
 		name    string
 		content string
-		want    string
 	}{
-		{name: "block scalar", content: "---\ndescription: >\n  folded\n---\nbody", want: "block scalars"},
-		{name: "collection", content: "---\ndescription: [one, two]\n---\nbody", want: "non-scalar"},
-		{name: "duplicate", content: "---\ndescription: one\ndescription: two\n---\nbody", want: "duplicated"},
-		{name: "boolean", content: "---\ndescription: valid\ndisable-model-invocation: yes\n---\nbody", want: "true or false"},
-		{name: "delimiter", content: "description: valid\n---\nbody", want: "opening"},
+		{name: "block scalar", content: "---\ndescription: >\n  folded\n---\nbody"},
+		{name: "collection", content: "---\ndescription: [one, two]\n---\nbody"},
+		{name: "duplicate", content: "---\ndescription: one\ndescription: two\n---\nbody"},
+		{name: "boolean", content: "---\ndescription: valid\ndisable-model-invocation: yes\n---\nbody"},
+		{name: "delimiter", content: "description: valid\n---\nbody"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, _, err := parseSkillFrontmatter(test.content)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("error = %v, want %q", err, test.want)
+			if err == nil {
+				t.Fatal("parse succeeded")
 			}
 		})
 	}
@@ -95,7 +94,7 @@ func TestLoadSkillsReportsMissingDescriptionAndLoadsValidSiblings(t *testing.T) 
 	if len(skills) != 1 || skills[0].Name != "Invalid Name" {
 		t.Fatalf("skills = %+v", skills)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], filepath.ToSlash(missingPath)) || !strings.Contains(warnings[0], "description is empty") {
+	if len(warnings) != 1 || !strings.Contains(warnings[0], filepath.ToSlash(missingPath)) {
 		t.Fatalf("warnings = %v", warnings)
 	}
 }

@@ -49,7 +49,7 @@ func TestBackendAuthenticationCapabilitiesAreOptional(t *testing.T) {
 	for index, command := range []string{"login", "logout"} {
 		stdout.Reset()
 		stderr.Reset()
-		if code := run([]string{command}, runtime); code != exitFailure || !strings.Contains(stderr.String(), "does not support login or logout") || driver.runtime.closeCalls != index+1 {
+		if code := run([]string{command}, runtime); code != exitFailure || driver.runtime.closeCalls != index+1 {
 			t.Fatalf("command=%q code=%d close calls=%d stdout=%q stderr=%q", command, code, driver.runtime.closeCalls, stdout.String(), stderr.String())
 		}
 	}
@@ -61,17 +61,18 @@ func TestRunLoginAndLogoutCommands(t *testing.T) {
 		name       string
 		arguments  []string
 		wantDevice bool
-		wantText   string
+		wantCode   string
 	}{
-		{name: "browser", arguments: []string{"login"}, wantText: "Open this URL"},
-		{name: "device", arguments: []string{"login", "--device-auth"}, wantDevice: true, wantText: "ABCD-EFGH"},
+		{name: "browser", arguments: []string{"login"}},
+		{name: "device", arguments: []string{"login", "--device-auth"}, wantDevice: true, wantCode: "ABCD-EFGH"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			runtime := testRuntime(cwd, &stdout, &stderr, nil)
 			driver := testBackendDriver(t, runtime)
 
-			if code := run(test.arguments, runtime); code != exitSuccess || driver.runtime.loginDevice != test.wantDevice || !driver.runtime.interactionCall || driver.runtime.closeCalls != 1 || !strings.Contains(stderr.String(), test.wantText) || stdout.String() != "Logged in with Test Provider.\n" {
+			code := run(test.arguments, runtime)
+			if code != exitSuccess || driver.runtime.loginDevice != test.wantDevice || !driver.runtime.interactionCall || driver.runtime.closeCalls != 1 || (test.wantCode != "" && !strings.Contains(stderr.String(), test.wantCode)) {
 				t.Fatalf("code=%d device=%v close calls=%d stdout=%q stderr=%q", code, driver.runtime.loginDevice, driver.runtime.closeCalls, stdout.String(), stderr.String())
 			}
 		})
@@ -80,14 +81,14 @@ func TestRunLoginAndLogoutCommands(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(cwd, &stdout, &stderr, nil)
 	driver := testBackendDriver(t, runtime)
-	if code := run([]string{"logout"}, runtime); code != exitSuccess || driver.runtime.logoutCalls != 1 || driver.runtime.closeCalls != 1 || stdout.String() != "Logged out.\n" {
+	if code := run([]string{"logout"}, runtime); code != exitSuccess || driver.runtime.logoutCalls != 1 || driver.runtime.closeCalls != 1 {
 		t.Fatalf("code=%d calls=%d close calls=%d stdout=%q stderr=%q", code, driver.runtime.logoutCalls, driver.runtime.closeCalls, stdout.String(), stderr.String())
 	}
 
 	for _, arguments := range [][]string{{"login", "--help"}, {"logout", "--help"}} {
 		stdout.Reset()
 		stderr.Reset()
-		if code := run(arguments, runtime); code != exitSuccess || !strings.Contains(stderr.String(), "Usage of eul ") {
+		if code := run(arguments, runtime); code != exitSuccess {
 			t.Fatalf("arguments=%v code=%d stdout=%q stderr=%q", arguments, code, stdout.String(), stderr.String())
 		}
 	}

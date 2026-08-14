@@ -177,8 +177,10 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 			if got := toolNames(request.Tools); !slices.Equal(got, []string{"read", "write"}) {
 				t.Fatalf("tool order = %v, want [read write]", got)
 			}
-			if strings.Contains(request.Instructions, "Read file contents") || strings.Contains(request.Instructions, "Create or overwrite files") {
-				t.Fatalf("instructions duplicate tool descriptions:\n%s", request.Instructions)
+			for _, definition := range request.Tools {
+				if strings.Contains(request.Instructions, definition.Description) {
+					t.Fatalf("instructions duplicate tool description %q:\n%s", definition.Description, request.Instructions)
+				}
 			}
 			if err := onText("Checking"); err != nil {
 				return Response{}, err
@@ -221,8 +223,8 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 
 	toolbox := &fakeToolbox{
 		definitions: []ToolDefinition{
-			{Name: "read", Description: "Read file contents"},
-			{Name: "write", Description: "Create or overwrite files"},
+			{Name: "read", Description: "opaque-read-description"},
+			{Name: "write", Description: "opaque-write-description"},
 		},
 		execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
 			if call.ID != "call-1" || call.Name != "read" || string(call.Arguments) != `{"path":"README.md"}` {
@@ -866,7 +868,7 @@ func TestEngineCompactionSinkFailuresPreservePhaseContinuation(t *testing.T) {
 func TestEngineEventSinkFailuresPreserveResponseContinuation(t *testing.T) {
 	failure := errors.New("sink failed")
 	synthetic := func(id, tool string) Input {
-		return Input{Kind: InputToolResult, CallID: id, Tool: tool, Text: "tool was not executed: " + failure.Error(), IsError: true}
+		return Input{Kind: InputToolResult, CallID: id, Tool: tool, IsError: true}
 	}
 
 	for _, test := range []struct {
@@ -981,10 +983,17 @@ func TestEngineEventSinkFailuresPreserveResponseContinuation(t *testing.T) {
 					return test.response, nil
 				}
 
-				wantInputs := append([]Input(nil), test.wantPending...)
-				wantInputs = append(wantInputs, NewTextInput("continue"))
-				if string(request.State) != string(test.response.State) || !reflect.DeepEqual(request.Inputs, wantInputs) {
-					t.Fatalf("continued request = %+v, want state %q and inputs %+v", request, test.response.State, wantInputs)
+				if string(request.State) != string(test.response.State) || len(request.Inputs) != len(test.wantPending)+1 {
+					t.Fatalf("continued request = %+v, want state %q and %d pending inputs", request, test.response.State, len(test.wantPending))
+				}
+				for i, want := range test.wantPending {
+					got := request.Inputs[i]
+					if got.Kind != want.Kind || got.CallID != want.CallID || got.Tool != want.Tool || got.IsError != want.IsError || (want.Text != "" && got.Text != want.Text) {
+						t.Fatalf("pending input %d = %+v, want fields %+v", i, got, want)
+					}
+				}
+				if got := request.Inputs[len(test.wantPending)]; !reflect.DeepEqual(got, NewTextInput("continue")) {
+					t.Fatalf("continuation input = %+v", got)
 				}
 				return Response{Text: "recovered", State: []byte("recovered")}, nil
 			})
@@ -1269,7 +1278,7 @@ func TestEngineErrorCompactionFailurePreservesContinuation(t *testing.T) {
 	engine.conversation.usage = Usage{TotalTokens: 100}
 
 	_, err := engine.Run(context.Background(), "hello", discardEvents)
-	if !errors.Is(err, compactFailure) || !strings.Contains(err.Error(), "agent: compact context") {
+	if !errors.Is(err, compactFailure) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if string(engine.conversation.state) != "stable" || engine.conversation.usage.TotalTokens != 100 || len(engine.conversation.inputs) != 1 || engine.conversation.inputs[0].PlainText() != "hello" {
@@ -1316,7 +1325,7 @@ func TestEngineCompactionFailureAfterToolPreservesContinuation(t *testing.T) {
 	engine.conversation.usage = Usage{TotalTokens: 50}
 
 	_, err := engine.Run(context.Background(), "change", discardEvents)
-	if !errors.Is(err, compactError) || !strings.Contains(err.Error(), "agent: compact context") {
+	if !errors.Is(err, compactError) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	result, err := engine.Run(context.Background(), "continue", discardEvents)
@@ -1372,7 +1381,7 @@ func TestEngineRejectsOnDemandCompactionWithoutContext(t *testing.T) {
 	}
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
 
-	if err := engine.Compact(context.Background(), discardEvents); err == nil || !strings.Contains(err.Error(), "no context to compact") {
+	if err := engine.Compact(context.Background(), discardEvents); err == nil {
 		t.Fatalf("Compact() error = %v", err)
 	}
 }
@@ -1601,7 +1610,7 @@ func TestEngineReturnsUnknownToolsToProvider(t *testing.T) {
 			}, nil
 		},
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if len(request.Inputs) != 1 || !request.Inputs[0].IsError || request.Inputs[0].CallID != "unknown" || !strings.Contains(request.Inputs[0].PlainText(), "unknown tool") {
+			if len(request.Inputs) != 1 || request.Inputs[0].Kind != InputToolResult || !request.Inputs[0].IsError || request.Inputs[0].CallID != "unknown" || request.Inputs[0].Tool != "missing" {
 				t.Fatalf("unknown result = %+v", request.Inputs)
 			}
 			return Response{Text: "recovered", State: []byte("done")}, nil
@@ -1667,7 +1676,7 @@ func TestEngineHonorsCancellationDuringToolExecution(t *testing.T) {
 			return Response{ToolCalls: []ToolCall{{ID: "wait", Name: "wait", Arguments: json.RawMessage(`{}`)}}, State: []byte("waiting")}, nil
 		},
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if string(request.State) != "waiting" || len(request.Inputs) != 2 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].CallID != "wait" || !request.Inputs[0].IsError || !strings.Contains(request.Inputs[0].PlainText(), "canceled") || request.Inputs[1].Kind != InputUser || request.Inputs[1].PlainText() != "continue" {
+			if string(request.State) != "waiting" || len(request.Inputs) != 2 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].CallID != "wait" || request.Inputs[0].Tool != "wait" || !request.Inputs[0].IsError || request.Inputs[1].Kind != InputUser || request.Inputs[1].PlainText() != "continue" {
 				t.Fatalf("state after cancellation = %+v", request)
 			}
 			return Response{Text: "recovered", State: []byte("recovered")}, nil
@@ -1755,7 +1764,7 @@ func TestEngineTreatsToolLocalDeadlineAsRecoverable(t *testing.T) {
 			return Response{ToolCalls: []ToolCall{{ID: "timeout", Name: "bash", Arguments: json.RawMessage(`{}`)}}, State: []byte("timeout")}, nil
 		},
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if len(request.Inputs) != 1 || !request.Inputs[0].IsError || !strings.Contains(request.Inputs[0].PlainText(), context.DeadlineExceeded.Error()) {
+			if len(request.Inputs) != 1 || request.Inputs[0].Kind != InputToolResult || request.Inputs[0].CallID != "timeout" || request.Inputs[0].Tool != "bash" || !request.Inputs[0].IsError {
 				t.Fatalf("tool-local deadline result = %+v", request.Inputs)
 			}
 			return Response{Text: "recovered", State: []byte("done")}, nil

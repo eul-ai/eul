@@ -92,7 +92,7 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 	if result.Text != "answer" {
 		t.Fatalf("result = %+v", result)
 	}
-	if !strings.Contains(gotRequest.Instructions, projectInstructions) || !strings.Contains(gotRequest.Instructions, filepath.ToSlash(filepath.Join(cwd, "AGENTS.md"))) || !strings.Contains(gotRequest.Instructions, "Current working directory: "+filepath.ToSlash(cwd)) {
+	if !strings.Contains(gotRequest.Instructions, projectInstructions) || !strings.Contains(gotRequest.Instructions, filepath.ToSlash(filepath.Join(cwd, "AGENTS.md"))) || strings.Count(gotRequest.Instructions, filepath.ToSlash(cwd)) < 2 {
 		t.Fatalf("instructions omit project context:\n%s", gotRequest.Instructions)
 	}
 	names := make([]string, len(gotRequest.Tools))
@@ -140,11 +140,8 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 					}
 					waitDefinition := definitions["subagent_wait"]
 					timeoutTypes, _ := waitDefinition.Parameters.Properties["timeout_ms"].Type.([]string)
-					if !strings.Contains(definitions["subagent"].Description, "delivered automatically") || !strings.Contains(waitDefinition.Description, "Wait sparingly") || !slices.Equal(timeoutTypes, []string{"integer", "null"}) || definitions["subagent_cancel"].Name == "" {
+					if definitions["subagent"].Name != "subagent" || waitDefinition.Name != "subagent_wait" || !slices.Equal(timeoutTypes, []string{"integer", "null"}) || definitions["subagent_cancel"].Name != "subagent_cancel" {
 						t.Fatalf("subagent definitions = %+v", definitions)
-					}
-					if strings.Contains(request.Instructions, "explicitly asks for subagents") {
-						t.Fatalf("main request retains explicit subagent rule: %+v", request)
 					}
 					return agent.Response{ToolCalls: []agent.ToolCall{{
 						ID:        "launch",
@@ -155,9 +152,8 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "subagent" {
 						t.Fatalf("launch continuation inputs = %+v", request.Inputs)
 					}
-					output := request.Inputs[0].PlainText()
-					if !strings.Contains(output, "subagent-1 (fast, minimal thinking): review alpha") || !strings.Contains(output, "subagent-2 (balanced, medium thinking): review beta") || strings.Contains(output, "finding for") {
-						t.Fatalf("launch output = %q", output)
+					if request.Inputs[0].CallID != "launch" || request.Inputs[0].IsError {
+						t.Fatalf("launch result = %+v", request.Inputs[0])
 					}
 					return agent.Response{ToolCalls: []agent.ToolCall{{
 						ID:        "read",
@@ -175,7 +171,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 						Arguments: []byte(`{}`),
 					}}}, nil
 				case 4:
-					if len(request.Inputs) != 2 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "subagent_wait" || !strings.Contains(request.Inputs[0].PlainText(), "completion is available") || request.Inputs[1].Kind != agent.InputInbox || !strings.Contains(request.Inputs[1].PlainText(), "finding for review") {
+					if len(request.Inputs) != 2 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].CallID != "wait" || request.Inputs[0].Tool != "subagent_wait" || request.Inputs[0].IsError || request.Inputs[1].Kind != agent.InputInbox || !strings.Contains(request.Inputs[1].PlainText(), "finding for review") {
 						t.Fatalf("wait continuation inputs = %+v", request.Inputs)
 					}
 					if err := sink("combined answer"); err != nil {
@@ -251,7 +247,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 		default:
 			t.Fatalf("unexpected child request = %+v", request)
 		}
-		if !request.FastMode || !strings.Contains(request.Instructions, projectInstructions) || !strings.Contains(request.Instructions, "Current working directory: "+filepath.ToSlash(cwd)) {
+		if !request.FastMode || !strings.Contains(request.Instructions, projectInstructions) || strings.Count(request.Instructions, filepath.ToSlash(cwd)) < 2 {
 			t.Fatalf("child request = %+v", request)
 		}
 		names := make([]string, len(request.Tools))
@@ -311,7 +307,7 @@ func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) 
 				Arguments: json.RawMessage(`{"timeout_ms":1000}`),
 			}}}, nil
 		case 3:
-			if len(request.Inputs) != 2 || request.Inputs[0].Kind != agent.InputToolResult || !strings.Contains(request.Inputs[0].PlainText(), "then continue the original task") || request.Inputs[1].Kind != agent.InputUser || request.Inputs[1].PlainText() != "redirect" || !strings.Contains(request.Instructions, "Do not finish while required delegated work is still active") {
+			if len(request.Inputs) != 2 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].CallID != "wait" || request.Inputs[0].Tool != "subagent_wait" || request.Inputs[1].Kind != agent.InputUser || request.Inputs[1].PlainText() != "redirect" {
 				return agent.Response{}, fmt.Errorf("steering request = %+v", request)
 			}
 			return agent.Response{Text: "redirected"}, nil

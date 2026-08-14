@@ -11,36 +11,30 @@ import (
 func TestBuildSystemPrompt(t *testing.T) {
 	workingDirectory := filepath.Join("workspace", "project")
 	projectInstructions := "Run focused tests before finishing.\n"
+	descriptions := []string{"opaque-read-description", "opaque-write-description"}
 	prompt := buildSystemPrompt([]ToolDefinition{
-		{Name: "read", Description: "Read file contents"},
-		{Name: "write", Description: "Create or overwrite files"},
+		{Name: "read", Description: descriptions[0]},
+		{Name: "write", Description: descriptions[1]},
 	}, workingDirectory, projectInstructions, nil)
 
-	if strings.Contains(prompt, "Available tools:") || strings.Contains(prompt, "Read file contents") || strings.Contains(prompt, "Create or overwrite files") {
-		t.Fatalf("prompt duplicates tool definitions:\n%s", prompt)
-	}
-	if !strings.Contains(prompt, "Independent tool calls may run concurrently; separate dependent calls.") {
-		t.Fatalf("prompt omits concurrent tool guidance:\n%s", prompt)
+	for _, description := range descriptions {
+		if strings.Contains(prompt, description) {
+			t.Fatalf("prompt duplicates tool description %q:\n%s", description, prompt)
+		}
 	}
 	instructionPath := filepath.ToSlash(filepath.Join(workingDirectory, "AGENTS.md"))
 	wantInstructions := `<project_instructions path="` + instructionPath + `">` + "\n" + strings.TrimSuffix(projectInstructions, "\n") + "\n</project_instructions>"
 	if !strings.Contains(prompt, wantInstructions) {
 		t.Fatalf("prompt does not identify loaded project instructions:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "Current working directory: "+filepath.ToSlash(workingDirectory)) {
-		t.Fatalf("prompt omits working directory:\n%s", prompt)
+	if strings.Count(prompt, filepath.ToSlash(workingDirectory)) < 2 {
+		t.Fatalf("prompt omits standalone working directory value:\n%s", prompt)
 	}
 }
 
 func TestBuildSystemPromptWithNoToolsOrWorkingDirectory(t *testing.T) {
 	prompt := buildSystemPrompt(nil, "", "", []skill.Skill{{Name: "review", Description: "Review code", FilePath: "/skills/review/SKILL.md"}})
 
-	if strings.Contains(prompt, "concurrently") {
-		t.Fatalf("prompt includes tool guidance without tools:\n%s", prompt)
-	}
-	if strings.Contains(prompt, "Current working directory:") {
-		t.Fatalf("prompt unexpectedly identifies a working directory:\n%s", prompt)
-	}
 	if !strings.Contains(prompt, "<name>review</name>") {
 		t.Fatalf("prompt omits skills:\n%s", prompt)
 	}

@@ -3,6 +3,7 @@ package openrouter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -189,11 +190,13 @@ func TestRequestOptionsRespectModelReasoningMetadata(t *testing.T) {
 	options := requestOptions(func(model string) bool { return model == "vendor/reasoning" })
 
 	_, err := options(agent.Request{Model: "vendor/reasoning", ThinkingLevel: agent.ThinkingMax})
-	if err == nil || !strings.Contains(err.Error(), `thinking level "max"`) {
+	var unsupported *unsupportedThinkingLevelError
+	if !errors.As(err, &unsupported) || unsupported.level != agent.ThinkingMax || unsupported.model != "vendor/reasoning" {
 		t.Fatalf("max thinking error = %v", err)
 	}
 	_, err = options(agent.Request{Model: "vendor/plain", ThinkingLevel: agent.ThinkingMedium})
-	if err == nil || !strings.Contains(err.Error(), `thinking level "medium"`) {
+	unsupported = nil
+	if !errors.As(err, &unsupported) || unsupported.level != agent.ThinkingMedium || unsupported.model != "vendor/plain" {
 		t.Fatalf("plain model thinking error = %v", err)
 	}
 	off, err := options(agent.Request{Model: "vendor/plain", ThinkingLevel: agent.ThinkingOff})

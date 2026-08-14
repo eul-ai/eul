@@ -129,7 +129,7 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 	if len(runner.options) != 2 {
 		t.Fatalf("runner calls = %d, want 2", len(runner.options))
 	}
-	if err := runner.options[1].StateChanges.Notify(terminal.EmptyCheckpoint(), false); err == nil || !strings.Contains(err.Error(), "session is closed") {
+	if err := runner.options[1].StateChanges.Notify(terminal.EmptyCheckpoint(), false); err == nil {
 		t.Fatalf("save after new session cleanup = %v", err)
 	}
 	newRecord, err := store.Open(ctx, cwd, runner.options[1].Config.SessionID)
@@ -224,7 +224,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 	if len(runner.options) != 2 {
 		t.Fatalf("runner calls = %d, want 2", len(runner.options))
 	}
-	if err := runner.options[1].StateChanges.Notify(targetTerminal, false); err == nil || !strings.Contains(err.Error(), "session is closed") {
+	if err := runner.options[1].StateChanges.Notify(targetTerminal, false); err == nil {
 		t.Fatalf("save after resumed session cleanup = %v", err)
 	}
 

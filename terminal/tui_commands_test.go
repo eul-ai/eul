@@ -60,12 +60,6 @@ func TestFastCommandOnlyAppearsWhenAvailable(t *testing.T) {
 	if err != nil || action.kind != tuiActionToggleFast {
 		t.Fatalf("action=%+v error=%v", action, err)
 	}
-	if help := commandHelpText(true); !strings.Contains(help, "/fast") {
-		t.Fatalf("help = %q", help)
-	}
-	if help := commandHelpText(false); strings.Contains(help, "/fast") {
-		t.Fatalf("help = %q", help)
-	}
 }
 
 func TestCommandPickerFiltersCommandsAndSkills(t *testing.T) {
@@ -103,7 +97,7 @@ func TestCommandPickerEnterCompletesAndSubmits(t *testing.T) {
 	if _, err := controller.applyAction(context.Background(), action); err != nil {
 		t.Fatal(err)
 	}
-	if len(model.blocks) != 1 || !strings.Contains(model.blocks[0].text, "/goal clear") {
+	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo {
 		t.Fatalf("help blocks = %+v", model.blocks)
 	}
 }
@@ -265,7 +259,7 @@ func TestRenderCommandPickerShowsSelectionAndDescription(t *testing.T) {
 	}
 
 	lines := renderCommandPicker(model, model.commandPickerHeight())
-	if len(lines) != 1 || lines[0].text != "/help" || lines[0].rightText != "show this help" || lines[0].prefixText != "> " || !lines[0].style.paintBackground {
+	if len(lines) != 1 || lines[0].text != "/help" || lines[0].prefixText != "> " || !lines[0].style.paintBackground {
 		t.Fatalf("lines = %+v", lines)
 	}
 

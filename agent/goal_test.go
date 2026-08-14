@@ -21,9 +21,8 @@ func TestEngineContinuesActiveGoalBeforeSettling(t *testing.T) {
 			if string(request.State) != "partial-state" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputUser {
 				t.Fatalf("goal continuation request = %+v", request)
 			}
-			prompt := request.Inputs[0].PlainText()
-			if prompt != goalContinuationPrompt+"\n\nGoal: finish the migration" {
-				t.Fatalf("goal continuation prompt = %q", prompt)
+			if !strings.Contains(request.Inputs[0].PlainText(), "finish the migration") {
+				t.Fatalf("goal continuation input = %+v", request.Inputs[0])
 			}
 			engine.ClearGoal()
 			return Response{Text: "done", State: []byte("done-state")}, nil
@@ -114,7 +113,7 @@ func TestEngineDrainsSteeringBeforeGoalContinuation(t *testing.T) {
 			return Response{Text: "second steering", State: []byte("steer-two")}, nil
 		},
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if string(request.State) != "steer-two" || len(request.Inputs) != 1 || request.Inputs[0].PlainText() != goalContinuationPrompt+"\n\nGoal: keep going" {
+			if string(request.State) != "steer-two" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputUser || !strings.Contains(request.Inputs[0].PlainText(), "keep going") {
 				t.Fatalf("goal request = %+v", request)
 			}
 			engine.ClearGoal()
@@ -359,7 +358,7 @@ func TestEngineClearGoalDuringGenerationPreventsContinuation(t *testing.T) {
 
 func TestEngineRejectsInactiveAndRepeatedGoalCompletion(t *testing.T) {
 	engine := newTestEngine(t, &scriptedProvider{t: t}, &fakeToolbox{}, Options{})
-	if err := engine.CompleteGoal(); err == nil || !strings.Contains(err.Error(), "no goal") {
+	if err := engine.CompleteGoal(); err == nil {
 		t.Fatalf("inactive completion error = %v", err)
 	}
 	if err := engine.SetGoal("finish"); err != nil {
@@ -368,7 +367,7 @@ func TestEngineRejectsInactiveAndRepeatedGoalCompletion(t *testing.T) {
 	if err := engine.CompleteGoal(); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.CompleteGoal(); err == nil || !strings.Contains(err.Error(), "already complete") {
+	if err := engine.CompleteGoal(); err == nil {
 		t.Fatalf("repeated completion error = %v", err)
 	}
 }

@@ -106,6 +106,7 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 }
 
 func TestCodexSourceIsResolvedPerRequest(t *testing.T) {
+	transportFailure := errors.New("transport sentinel")
 	calls := 0
 	transport := roundTripperFunc(func(request *http.Request) (*http.Response, error) {
 		calls++
@@ -117,7 +118,7 @@ func TestCodexSourceIsResolvedPerRequest(t *testing.T) {
 			t.Errorf("authorization = %q", request.Header.Get("Authorization"))
 		}
 		if calls == 2 {
-			return nil, errors.New("transport failed")
+			return nil, transportFailure
 		}
 		body := "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
 		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(body))}, nil
@@ -135,7 +136,7 @@ func TestCodexSourceIsResolvedPerRequest(t *testing.T) {
 	if _, err := client.Generate(context.Background(), request, agent.StreamObserver{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Generate(context.Background(), request, agent.StreamObserver{}); err == nil || !strings.Contains(err.Error(), "transport failed") {
+	if _, err := client.Generate(context.Background(), request, agent.StreamObserver{}); !errors.Is(err, transportFailure) {
 		t.Fatalf("second Generate() error = %v", err)
 	}
 	if sourceCalls != 2 {

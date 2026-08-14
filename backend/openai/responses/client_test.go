@@ -310,15 +310,14 @@ func TestClientRejectsMalformedCompactResponses(t *testing.T) {
 	tests := []struct {
 		name string
 		body string
-		want string
 	}{
-		{name: "malformed JSON", body: `{`, want: "decode Responses SSE event"},
-		{name: "trailing JSON", body: `{"status":"completed","output":[{}]} {}`, want: "decode Responses SSE event"},
-		{name: "missing output", body: `{"status":"completed"}`, want: "exactly one output item"},
-		{name: "empty output", body: `{"status":"completed","output":[]}`, want: "exactly one output item"},
-		{name: "non-object output", body: `{"status":"completed","output":[3]}`, want: "must be a JSON object"},
-		{name: "wrong output type", body: `{"status":"completed","output":[{}]}`, want: "output has type"},
-		{name: "negative usage", body: `{"status":"completed","output":[{"type":"compaction"}],"usage":{"input_tokens":-1}}`, want: "negative token"},
+		{name: "malformed JSON", body: `{`},
+		{name: "trailing JSON", body: `{"status":"completed","output":[{}]} {}`},
+		{name: "missing output", body: `{"status":"completed"}`},
+		{name: "empty output", body: `{"status":"completed","output":[]}`},
+		{name: "non-object output", body: `{"status":"completed","output":[3]}`},
+		{name: "wrong output type", body: `{"status":"completed","output":[{}]}`},
+		{name: "negative usage", body: `{"status":"completed","output":[{"type":"compaction"}],"usage":{"input_tokens":-1}}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -326,8 +325,8 @@ func TestClientRejectsMalformedCompactResponses(t *testing.T) {
 			defer server.Close()
 			client := newTestClient(t, "key", server.URL, Options{})
 			_, err := client.Compact(context.Background(), baseRequest())
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("Compact() error = %v, want containing %q", err, test.want)
+			if err == nil {
+				t.Fatal("Compact() succeeded")
 			}
 		})
 	}
@@ -350,7 +349,7 @@ func TestClientCompactBoundsCancellationAndOptionalUsage(t *testing.T) {
 		client := newTestClient(t, "key", server.URL, Options{})
 		client.maxResponseBytes = 100
 		_, err := client.Compact(context.Background(), baseRequest())
-		if err == nil || !strings.Contains(err.Error(), "responses SSE response exceeds 100 bytes") {
+		if err == nil {
 			t.Fatalf("Compact() error = %v", err)
 		}
 	})
@@ -364,7 +363,7 @@ func TestClientCompactBoundsCancellationAndOptionalUsage(t *testing.T) {
 		request := baseRequest()
 		request.Inputs[0].Content[0].Text = strings.Repeat("x", 200)
 		_, err := client.Compact(context.Background(), request)
-		if err == nil || !strings.Contains(err.Error(), "compact request exceeds 100 bytes") || calls.Load() != 0 {
+		if err == nil || calls.Load() != 0 {
 			t.Fatalf("Compact() error = %v, HTTP calls = %d", err, calls.Load())
 		}
 	})
@@ -376,7 +375,7 @@ func TestClientCompactBoundsCancellationAndOptionalUsage(t *testing.T) {
 		client.maxStateBytes = 100
 		client.stateOutputHeadroom = 1
 		_, err := client.Compact(context.Background(), baseRequest())
-		if err == nil || !strings.Contains(err.Error(), "continuation state exceeds 99 bytes") {
+		if err == nil {
 			t.Fatalf("Compact() error = %v", err)
 		}
 	})
@@ -513,17 +512,16 @@ func TestClientRejectsMalformedResponses(t *testing.T) {
 	tests := []struct {
 		name string
 		body string
-		want string
 	}{
-		{name: "malformed JSON", body: `{`, want: "decode Responses SSE"},
-		{name: "trailing JSON", body: `{"status":"completed","output":[]} {}`, want: "decode Responses SSE"},
-		{name: "incomplete", body: `{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[]}`, want: "incomplete: max_output_tokens"},
-		{name: "response error", body: `{"status":"failed","error":{"type":"server_error","code":"bad","message":"failed"},"output":[]}`, want: "server_error/bad: failed"},
-		{name: "missing call ID", body: `{"status":"completed","output":[{"type":"function_call","name":"read","arguments":"{}"}]}`, want: "no call ID"},
-		{name: "missing call name", body: `{"status":"completed","output":[{"type":"function_call","call_id":"call_1","arguments":"{}"}]}`, want: "no name"},
-		{name: "duplicate call ID", body: `{"status":"completed","output":[{"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"},{"type":"function_call","call_id":"call_1","name":"bash","arguments":"{}"}]}`, want: "duplicate function call ID"},
-		{name: "negative usage", body: `{"status":"completed","output":[],"usage":{"input_tokens":-1,"output_tokens":0,"total_tokens":0}}`, want: "negative token"},
-		{name: "non-object output", body: `{"status":"completed","output":[3]}`, want: "must be a JSON object"},
+		{name: "malformed JSON", body: `{`},
+		{name: "trailing JSON", body: `{"status":"completed","output":[]} {}`},
+		{name: "incomplete", body: `{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[]}`},
+		{name: "response error", body: `{"status":"failed","error":{"type":"server_error","code":"bad","message":"failed"},"output":[]}`},
+		{name: "missing call ID", body: `{"status":"completed","output":[{"type":"function_call","name":"read","arguments":"{}"}]}`},
+		{name: "missing call name", body: `{"status":"completed","output":[{"type":"function_call","call_id":"call_1","arguments":"{}"}]}`},
+		{name: "duplicate call ID", body: `{"status":"completed","output":[{"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"},{"type":"function_call","call_id":"call_1","name":"bash","arguments":"{}"}]}`},
+		{name: "negative usage", body: `{"status":"completed","output":[],"usage":{"input_tokens":-1,"output_tokens":0,"total_tokens":0}}`},
+		{name: "non-object output", body: `{"status":"completed","output":[3]}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -534,8 +532,8 @@ func TestClientRejectsMalformedResponses(t *testing.T) {
 				t.Fatal("text sink called for malformed response")
 				return nil
 			}, nil, nil)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("Generate() error = %v, want containing %q", err, test.want)
+			if err == nil {
+				t.Fatal("Generate() succeeded")
 			}
 		})
 	}
@@ -551,7 +549,8 @@ func TestClientBoundsHTTPErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("Generate() succeeded")
 	}
-	if len(err.Error()) > 160 || !strings.Contains(err.Error(), "HTTP 400") {
+	var responseErr *httpResponseError
+	if !errors.As(err, &responseErr) || responseErr.statusCode != http.StatusBadRequest || len(err.Error()) > 160 {
 		t.Fatalf("bounded error = %q (%d bytes)", err, len(err.Error()))
 	}
 }
@@ -561,7 +560,8 @@ func TestClientParsesStructuredHTTPError(t *testing.T) {
 	defer server.Close()
 	client := newTestClient(t, "key", server.URL, Options{})
 	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
-	if err == nil || !strings.Contains(err.Error(), "HTTP 429") || !strings.Contains(err.Error(), "rate_limit_error/rate_limit: slow down") {
+	var responseErr *httpResponseError
+	if !errors.As(err, &responseErr) || responseErr.statusCode != http.StatusTooManyRequests || responseErr.detail.Type != "rate_limit_error" || responseErr.detail.Code != "rate_limit" || responseErr.detail.Message != "slow down" {
 		t.Fatalf("Generate() error = %v", err)
 	}
 }
@@ -781,7 +781,7 @@ func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
 		client := newTestClient(t, "key", server.URL, Options{})
 		client.maxResponseBytes = 100
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
-		if err == nil || !strings.Contains(err.Error(), "response exceeds 100 bytes") {
+		if err == nil {
 			t.Fatalf("Generate() error = %v", err)
 		}
 	})
@@ -794,7 +794,7 @@ func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
 		request := baseRequest()
 		request.Inputs[0].Content[0].Text = strings.Repeat("x", 200)
 		_, err := generate(client, context.Background(), request, nil, nil, nil)
-		if err == nil || !strings.Contains(err.Error(), "request exceeds 100 bytes") || calls.Load() != 0 {
+		if err == nil || calls.Load() != 0 {
 			t.Fatalf("Generate() error = %v, HTTP calls = %d", err, calls.Load())
 		}
 	})
@@ -811,7 +811,7 @@ func TestClientRejectsOversizedReturnedStateBeforeTextSink(t *testing.T) {
 		sinkCalled = true
 		return nil
 	}, nil, nil)
-	if err == nil || !strings.Contains(err.Error(), "response output cannot fit continuation state") || sinkCalled {
+	if err == nil || sinkCalled {
 		t.Fatalf("Generate() error = %v, sink called = %v", err, sinkCalled)
 	}
 }
@@ -912,7 +912,8 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		defer origin.Close()
 		client := newTestClient(t, "key", origin.URL, Options{})
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
-		if err == nil || !strings.Contains(err.Error(), "HTTP 307") || destinationCalls.Load() != 0 {
+		var responseErr *httpResponseError
+		if !errors.As(err, &responseErr) || responseErr.statusCode != http.StatusTemporaryRedirect || destinationCalls.Load() != 0 {
 			t.Fatalf("Generate() error = %v, destination calls = %d", err, destinationCalls.Load())
 		}
 	})

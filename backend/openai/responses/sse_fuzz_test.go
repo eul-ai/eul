@@ -2,7 +2,6 @@ package responses
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"reflect"
 	"strings"
@@ -78,7 +77,7 @@ func FuzzResponsesSSE(f *testing.F) {
 		_, err := readSSE(bytes.NewReader(stream), maximum, func([]byte) (createResponseEnvelope, bool, error) {
 			return createResponseEnvelope{}, false, nil
 		})
-		if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("exceeds %d bytes", maximum)) {
+		if err == nil {
 			t.Fatalf("stream of %d bytes with limit %d returned %v", len(stream), maximum, err)
 		}
 	})

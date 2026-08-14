@@ -29,8 +29,8 @@ func FuzzParseSkillFrontmatter(f *testing.F) {
 		frontmatter, body, err := parseSkillFrontmatter(content)
 		normalized := strings.ReplaceAll(strings.ReplaceAll(content, "\r\n", "\n"), "\r", "\n")
 		normalizedFrontmatter, normalizedBody, normalizedErr := parseSkillFrontmatter(normalized)
-		if !reflect.DeepEqual(frontmatter, normalizedFrontmatter) || body != normalizedBody || skillFuzzError(err) != skillFuzzError(normalizedErr) {
-			t.Fatalf("newline normalization changed parse result:\noriginal:   frontmatter=%#v body=%q error=%q\nnormalized: frontmatter=%#v body=%q error=%q", frontmatter, body, skillFuzzError(err), normalizedFrontmatter, normalizedBody, skillFuzzError(normalizedErr))
+		if !reflect.DeepEqual(frontmatter, normalizedFrontmatter) || body != normalizedBody || (err == nil) != (normalizedErr == nil) {
+			t.Fatalf("newline normalization changed parse result:\noriginal:   frontmatter=%#v body=%q failed=%t\nnormalized: frontmatter=%#v body=%q failed=%t", frontmatter, body, err != nil, normalizedFrontmatter, normalizedBody, normalizedErr != nil)
 		}
 		if err != nil {
 			return
@@ -48,11 +48,4 @@ func FuzzParseSkillFrontmatter(f *testing.F) {
 			t.Fatalf("canonical fields changed result: got frontmatter=%#v body=%q, want frontmatter=%#v body=%q", canonicalFrontmatter, canonicalBody, frontmatter, body)
 		}
 	})
-}
-
-func skillFuzzError(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }

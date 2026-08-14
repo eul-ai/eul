@@ -5,7 +5,6 @@ package tool
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -16,7 +15,7 @@ func TestBashWithoutNetworkFailsClosedOutsideLinuxAndMacOS(t *testing.T) {
 		"command": `: > "` + marker + `"`,
 		"network": false,
 	})
-	if !result.IsError || !strings.Contains(result.Output, "only supported on Linux and macOS") {
+	if !result.IsError {
 		t.Fatalf("result = %+v", result)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {

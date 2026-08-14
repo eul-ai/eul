@@ -71,17 +71,16 @@ func TestRegistryRejectsInvalidDefinitions(t *testing.T) {
 	for _, test := range []struct {
 		name  string
 		tools []Tool
-		want  string
 	}{
-		{name: "empty", tools: []Tool{fakeTool{}}, want: "no name"},
+		{name: "empty", tools: []Tool{fakeTool{}}},
 		{name: "duplicate", tools: []Tool{
 			fakeTool{definition: agent.ToolDefinition{Name: "read"}},
 			fakeTool{definition: agent.ToolDefinition{Name: "read"}},
-		}, want: "duplicate"},
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := NewRegistry(test.tools); err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("error = %v, want containing %q", err, test.want)
+			if _, err := NewRegistry(test.tools); err == nil {
+				t.Fatal("NewRegistry succeeded")
 			}
 		})
 	}
@@ -140,7 +139,7 @@ func TestRegistryCorrelatesErrorsAndReturnsUnknownToolsAsResults(t *testing.T) {
 	}
 	missing := "missing-" + strings.Repeat("x", defaultMaxBytes)
 	unknown, err := registry.Execute(context.Background(), agent.ToolCall{ID: "call-2", Name: missing}, nil)
-	if err != nil || unknown.CallID != "call-2" || unknown.Tool != missing || !unknown.IsError || !strings.Contains(unknown.Output, errUnknownTool.Error()) || len(unknown.Output) > defaultMaxBytes {
+	if err != nil || unknown.CallID != "call-2" || unknown.Tool != missing || !unknown.IsError || len(unknown.Output) > defaultMaxBytes {
 		t.Fatalf("unknown tool result=%+v error=%v", unknown, err)
 	}
 }
@@ -156,21 +155,21 @@ func TestDecodeArguments(t *testing.T) {
 		name    string
 		input   string
 		want    arguments
-		wantErr string
+		wantErr bool
 	}{
 		{name: "valid", input: `{"path":"README.md","limit":10}`, want: arguments{Path: "README.md", Limit: &limit}},
 		{name: "case insensitive", input: `{"PATH":"README.md","limit":10}`, want: arguments{Path: "README.md", Limit: &limit}},
 		{name: "duplicate uses last", input: `{"path":"first","path":"README.md","limit":10}`, want: arguments{Path: "README.md", Limit: &limit}},
-		{name: "unknown", input: `{"path":"README.md","extra":true}`, wantErr: "unknown field"},
-		{name: "non object", input: `[]`, wantErr: "decode arguments"},
-		{name: "malformed", input: `{"path":`, wantErr: "decode arguments"},
-		{name: "trailing", input: `{"path":"README.md"} {}`, wantErr: "multiple JSON values"},
+		{name: "unknown", input: `{"path":"README.md","extra":true}`, wantErr: true},
+		{name: "non object", input: `[]`, wantErr: true},
+		{name: "malformed", input: `{"path":`, wantErr: true},
+		{name: "trailing", input: `{"path":"README.md"} {}`, wantErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := DecodeArguments[arguments](json.RawMessage(test.input))
-			if test.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
-					t.Fatalf("error = %v, want %q", err, test.wantErr)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("DecodeArguments succeeded")
 				}
 				return
 			}

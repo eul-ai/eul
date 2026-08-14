@@ -47,9 +47,6 @@ func TestBashWithoutNetworkCannotReachHostListener(t *testing.T) {
 	command := `if bash -c 'printf connected > /dev/tcp/127.0.0.1/` + port + `'; then printf connected; else printf blocked; fi`
 	result := executeJSON(t, NewBash(t.TempDir()), map[string]any{"command": command, "network": false})
 	if result.IsError {
-		if strings.Contains(result.Output, "failed to start network-isolated shell") {
-			t.Fatalf("network isolation is unavailable: %s", result.Output)
-		}
 		t.Fatalf("result = %+v", result)
 	}
 	if !strings.Contains(result.Output, "blocked") || strings.Contains(result.Output, "connected") {

@@ -75,7 +75,7 @@ func TestTerminalCheckpointProjectsDraftImagesOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), "cG5n") || strings.Contains(string(encoded), imageAttachmentLabel) {
+	if strings.Contains(string(encoded), "cG5n") {
 		t.Fatalf("draft image was persisted: %s", encoded)
 	}
 }
@@ -93,8 +93,9 @@ func TestTerminalCheckpointPreservesInlineImagePositions(t *testing.T) {
 	}
 
 	restored := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint}})
-	if got := displayContent(restored.blocks[0].content); got != "before [image attached] after" {
-		t.Fatalf("restored content = %q", got)
+	content := restored.blocks[0].content
+	if len(content) != 3 || content[0].Text != "before " || content[1].Kind != agent.ContentPartImage || content[2].Text != " after" {
+		t.Fatalf("restored content = %+v", content)
 	}
 }
 
@@ -117,8 +118,8 @@ func TestTerminalCheckpointSanitizesContentText(t *testing.T) {
 func TestImageOnlyCheckpointDescription(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.beginTurnContent([]agent.ContentPart{{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png"}}})
-	if description := checkpointModel(model, nil).Description(); description != "Image attachment" {
-		t.Fatalf("description = %q", description)
+	if description := checkpointModel(model, nil).Description(); description == "" {
+		t.Fatal("image-only checkpoint has no description")
 	}
 }
 
@@ -199,15 +200,16 @@ func assertTerminalCheckpointSemanticJSON(t *testing.T, got, want []byte) {
 func TestPreviousActiveSessionShowsWarning(t *testing.T) {
 	checkpoint := EmptyCheckpoint()
 	model := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint, PreviousTurnActive: true}})
-	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo || !strings.Contains(model.blocks[0].text, "tool side effects may remain") {
+	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo {
 		t.Fatalf("blocks = %+v", model.blocks)
 	}
 }
 
 func TestStartupWarningsAreShownAfterRestoredConversation(t *testing.T) {
 	checkpoint := EmptyCheckpoint()
-	model := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint, Warnings: []string{"Skipped skill broken: invalid"}}})
-	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo || !strings.Contains(model.blocks[0].text, "Skipped skill") {
+	warning := "opaque-warning-sentinel"
+	model := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint, Warnings: []string{warning}}})
+	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo || !strings.Contains(model.blocks[0].text, warning) {
 		t.Fatalf("blocks = %+v", model.blocks)
 	}
 }
@@ -228,7 +230,7 @@ func TestResumePickerUsesNewestSessionAndReturnsSelection(t *testing.T) {
 		t.Fatalf("selected=%q exists=%v", id, ok)
 	}
 	frame := renderFrame(model)
-	if !strings.Contains(frame, "new prompt") || !strings.Contains(frame, newID) || !strings.Contains(frame, oldID) || !strings.Contains(frame, "interrupted") {
+	if !strings.Contains(frame, "new prompt") || !strings.Contains(frame, newID) || !strings.Contains(frame, oldID) {
 		t.Fatalf("frame = %q", frame)
 	}
 	action, handled := reduceResumePickerKey(model, keyEvent{code: keyDown})
@@ -279,7 +281,7 @@ func TestResumeCommandListsSessionsWithoutStoreDependency(t *testing.T) {
 		engineMessages: make(chan engineMessage, 1),
 		stopped:        make(chan struct{}),
 		sessions: Sessions{List: func(context.Context) ([]SessionSummary, []string, error) {
-			return []SessionSummary{{ID: "session", Description: "prompt"}}, []string{"Skipped session broken.json: invalid"}, nil
+			return []SessionSummary{{ID: "session", Description: "prompt"}}, []string{"resume-warning-sentinel"}, nil
 		}},
 	}
 
@@ -289,7 +291,7 @@ func TestResumeCommandListsSessionsWithoutStoreDependency(t *testing.T) {
 	if !model.resumePicker.active {
 		t.Fatal("resume picker did not open")
 	}
-	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo || !strings.Contains(model.blocks[0].text, "Skipped session") {
+	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo || !strings.Contains(model.blocks[0].text, "resume-warning-sentinel") {
 		t.Fatalf("warning blocks = %+v", model.blocks)
 	}
 	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}})

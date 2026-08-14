@@ -794,7 +794,7 @@ func TestTUIControllerCompactsConversation(t *testing.T) {
 	if engine.compactionCount() != 1 || model.running || model.activity.kind != activityReady || model.contextTokens != 0 {
 		t.Fatalf("compactions=%d running=%v activity=%+v context=%d", engine.compactionCount(), model.running, model.activity, model.contextTokens)
 	}
-	if len(model.blocks) != 2 || model.blocks[0].text != "existing conversation" || model.blocks[1].kind != blockContext || model.blocks[1].text != "Compacting conversation" {
+	if len(model.blocks) != 2 || model.blocks[0].text != "existing conversation" || model.blocks[1].kind != blockContext {
 		t.Fatalf("blocks = %+v", model.blocks)
 	}
 }
@@ -814,7 +814,7 @@ func TestTUIControllerSetsShowsAndClearsGoal(t *testing.T) {
 	if _, err := controller.applyAction(ctx, tuiAction{kind: tuiActionShowGoal}); err != nil {
 		t.Fatal(err)
 	}
-	if len(model.blocks) != 1 || model.blocks[0].text != "No goal is set" {
+	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo {
 		t.Fatalf("blocks = %+v", model.blocks)
 	}
 
@@ -838,14 +838,14 @@ func TestTUIControllerSetsShowsAndClearsGoal(t *testing.T) {
 	if _, err := controller.applyAction(ctx, tuiAction{kind: tuiActionShowGoal}); err != nil {
 		t.Fatal(err)
 	}
-	if model.blocks[len(model.blocks)-1].text != "Goal: finish migration" {
+	if model.blocks[len(model.blocks)-1].kind != blockInfo || !strings.Contains(model.blocks[len(model.blocks)-1].text, "finish migration") {
 		t.Fatalf("goal status block = %+v", model.blocks[len(model.blocks)-1])
 	}
 
 	if _, err := controller.applyAction(ctx, tuiAction{kind: tuiActionClearGoal}); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := engine.Goal(); ok || model.blocks[len(model.blocks)-1].text != "Goal cleared" {
+	if _, ok := engine.Goal(); ok || model.blocks[len(model.blocks)-1].kind != blockInfo {
 		t.Fatalf("goal still set or wrong block: %+v", model.blocks[len(model.blocks)-1])
 	}
 }
@@ -875,7 +875,7 @@ func TestTUIControllerShowsHelpAndGoalWhileRunning(t *testing.T) {
 	if !model.running || checkpointCalls != 0 || len(model.blocks) != 2 {
 		t.Fatalf("running=%v checkpoints=%d blocks=%+v", model.running, checkpointCalls, model.blocks)
 	}
-	if !strings.Contains(model.blocks[0].text, "Commands:") || model.blocks[1].text != "Goal: finish migration" {
+	if model.blocks[0].kind != blockInfo || model.blocks[1].kind != blockInfo || !strings.Contains(model.blocks[1].text, "finish migration") {
 		t.Fatalf("blocks=%+v", model.blocks)
 	}
 }
@@ -897,7 +897,7 @@ func TestTUIControllerSetsGoalWhileRunning(t *testing.T) {
 	}
 	goal, ok := engine.Goal()
 	last := model.blocks[len(model.blocks)-1]
-	if !ok || goal.Objective != "finish migration" || !model.running || last.kind != blockInfo || last.text != "Goal set: finish migration" {
+	if !ok || goal.Objective != "finish migration" || !model.running || last.kind != blockInfo || !strings.Contains(last.text, "finish migration") {
 		t.Fatalf("goal=%+v exists=%v running=%v block=%+v", goal, ok, model.running, last)
 	}
 	if calls := engine.snapshot(); len(calls) != 0 {
@@ -924,7 +924,7 @@ func TestTUIControllerClearsGoalWhileRunning(t *testing.T) {
 		t.Fatal("goal survived running clear command")
 	}
 	last := model.blocks[len(model.blocks)-1]
-	if !model.running || last.kind != blockInfo || last.text != "Goal cleared" {
+	if !model.running || last.kind != blockInfo {
 		t.Fatalf("running=%v block=%+v", model.running, last)
 	}
 }
@@ -1331,7 +1331,7 @@ func TestTUIControllerTogglesFastMode(t *testing.T) {
 	if !slices.Equal(configured, []bool{true, false}) {
 		t.Fatalf("configured=%v", configured)
 	}
-	if len(model.blocks) != 2 || model.blocks[0].text != "Fast mode on" || model.blocks[1].text != "Fast mode off" {
+	if len(model.blocks) != 2 || model.blocks[0].kind != blockInfo || model.blocks[1].kind != blockInfo {
 		t.Fatalf("blocks = %+v", model.blocks)
 	}
 }

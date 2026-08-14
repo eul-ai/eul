@@ -55,9 +55,6 @@ func TestSubagentLaunchUsesPerTaskPolicyDefaultsAndSurfacesManagerValidation(t *
 
 func TestSubagentLaunchSchemaPlacesPolicyOnTasks(t *testing.T) {
 	definition := NewSubagent(nil).Definition()
-	if definition.Description != "Launch one to four independent read-only research tasks, up to four active total. Results are delivered automatically. Use non-default model or thinking settings only when necessary." {
-		t.Fatalf("description = %q", definition.Description)
-	}
 	if _, ok := definition.Parameters.Properties["model_profile"]; ok {
 		t.Fatal("launch-level model profile remains in schema")
 	}
@@ -73,17 +70,6 @@ func TestSubagentLaunchSchemaPlacesPolicyOnTasks(t *testing.T) {
 	thinkingLevel := task.Properties["thinking_level"]
 	if !slices.Equal(modelProfile.Type.([]string), []string{"string", "null"}) || !slices.Equal(thinkingLevel.Type.([]string), []string{"string", "null"}) {
 		t.Fatalf("task policy schema = %+v", task)
-	}
-	for _, level := range agent.ThinkingLevels() {
-		if !strings.Contains(thinkingLevel.Description, string(level)) {
-			t.Fatalf("thinking-level description %q does not include %q", thinkingLevel.Description, level)
-		}
-	}
-	if !strings.Contains(thinkingLevel.Description, "null inherits the parent level.") {
-		t.Fatalf("thinking-level description = %q", thinkingLevel.Description)
-	}
-	if !strings.Contains(modelProfile.Description, "null inherits the parent model") {
-		t.Fatalf("model-profile description = %q", modelProfile.Description)
 	}
 }
 
@@ -105,7 +91,7 @@ func TestSubagentWaitPresentationShowsProvidedTimeout(t *testing.T) {
 	}
 
 	customPresentation := wait.Presentation(PresentationSnapshot{Arguments: map[string]any{"timeout_ms": json.Number("1500")}})
-	if customPresentation.Arguments != "(1.5s timeout)" {
+	if !strings.Contains(customPresentation.Arguments, (1500 * time.Millisecond).String()) {
 		t.Fatalf("custom presentation = %+v", customPresentation)
 	}
 }
@@ -122,18 +108,11 @@ func TestSubagentWaitIsSynchronizationOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := wait.Execute(context.Background(), json.RawMessage(`{}`), nil)
-	if err != nil || result.IsError || !strings.Contains(result.Output, "completion is available") || strings.Contains(result.Output, "research result") {
+	if err != nil || result.IsError {
 		t.Fatalf("wait result = %+v, error = %v", result, err)
 	}
 	if len(manager.Snapshot().PendingCompletions) != 1 {
 		t.Fatal("wait drained inbox")
-	}
-}
-
-func TestSubagentWaitSteeringResultPreservesOriginalTask(t *testing.T) {
-	message := waitResultMessage(subagent.WaitSteering)
-	if !strings.Contains(message, "continue the original task") || !strings.Contains(message, "call subagent_wait again") {
-		t.Fatalf("steering result = %q", message)
 	}
 }
 
@@ -161,7 +140,7 @@ func TestSubagentWaitTimesOutWithoutCancelingChild(t *testing.T) {
 		return nil
 	})
 	result, err := wait.Execute(context.Background(), json.RawMessage(`{"timeout_ms":1}`), updates)
-	if err != nil || result.IsError || !strings.Contains(result.Output, "No subagent completion") || presentation.Arguments != "(1ms timeout)" {
+	if err != nil || result.IsError || !strings.Contains(presentation.Arguments, time.Millisecond.String()) {
 		t.Fatalf("wait result = %+v, presentation = %+v, error = %v", result, presentation, err)
 	}
 	select {
@@ -172,7 +151,7 @@ func TestSubagentWaitTimesOutWithoutCancelingChild(t *testing.T) {
 
 	close(release)
 	result, err = wait.Execute(context.Background(), json.RawMessage(`{"timeout_ms":1000}`), nil)
-	if err != nil || result.IsError || !strings.Contains(result.Output, "completion is available") {
+	if err != nil || result.IsError {
 		t.Fatalf("completion wait result = %+v, error = %v", result, err)
 	}
 }

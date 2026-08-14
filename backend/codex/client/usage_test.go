@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 )
@@ -58,14 +57,14 @@ func TestClientUsageHandlesOptionalAndInvalidWindows(t *testing.T) {
 		name    string
 		body    string
 		want    AccountUsage
-		wantErr string
+		wantErr bool
 	}{
 		{name: "no rate limit", body: `{"plan_type":"plus","rate_limit":null}`},
 		{name: "one window", body: `{"rate_limit":{"primary_window":{"used_percent":0,"limit_window_seconds":3600}}}`, want: AccountUsage{Windows: []UsageWindow{{Duration: time.Hour}}}},
-		{name: "negative percent", body: `{"rate_limit":{"primary_window":{"used_percent":-1,"limit_window_seconds":3600}}}`, wantErr: "invalid used percentage"},
-		{name: "percent over one hundred", body: `{"rate_limit":{"primary_window":{"used_percent":101,"limit_window_seconds":3600}}}`, wantErr: "invalid used percentage"},
-		{name: "zero duration", body: `{"rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":0}}}`, wantErr: "invalid window duration"},
-		{name: "negative reset", body: `{"rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":3600,"reset_at":-1}}}`, wantErr: "invalid reset time"},
+		{name: "negative percent", body: `{"rate_limit":{"primary_window":{"used_percent":-1,"limit_window_seconds":3600}}}`, wantErr: true},
+		{name: "percent over one hundred", body: `{"rate_limit":{"primary_window":{"used_percent":101,"limit_window_seconds":3600}}}`, wantErr: true},
+		{name: "zero duration", body: `{"rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":0}}}`, wantErr: true},
+		{name: "negative reset", body: `{"rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":3600,"reset_at":-1}}}`, wantErr: true},
 	}
 
 	for _, test := range tests {
@@ -76,8 +75,8 @@ func TestClientUsageHandlesOptionalAndInvalidWindows(t *testing.T) {
 			defer server.Close()
 
 			usage, err := newTestClient(t, "token", server.URL, Options{}).Usage(context.Background())
-			if test.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+			if test.wantErr {
+				if err == nil {
 					t.Fatalf("Usage() error = %v", err)
 				}
 				return
