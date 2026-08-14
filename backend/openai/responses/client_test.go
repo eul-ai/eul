@@ -1104,13 +1104,6 @@ func compactResponseServer(t *testing.T, status int, body string) *httptest.Serv
 	}))
 }
 
-func writeCompactJSON(t *testing.T, writer http.ResponseWriter, value any) {
-	t.Helper()
-	if err := json.NewEncoder(writer).Encode(value); err != nil {
-		t.Errorf("encode compact response: %v", err)
-	}
-}
-
 func writeCompactSSE(t *testing.T, writer http.ResponseWriter, value any) {
 	t.Helper()
 	var payload bytes.Buffer
