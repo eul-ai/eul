@@ -824,7 +824,7 @@ func TestInputRendersImagesInline(t *testing.T) {
 	input := renderInput(model, model.width, maximumInputHeight(model.height, 0))
 	firstText := "Hey checkout this image: "
 	secondText := ". Compare it to this: "
-	if len(input.lines) != 1 || strings.Index(input.lines[0], firstText) < 0 || strings.Index(input.lines[0], secondText) <= strings.Index(input.lines[0], firstText) {
+	if len(input.lines) != 1 || !strings.Contains(input.lines[0], firstText) || strings.Index(input.lines[0], secondText) <= strings.Index(input.lines[0], firstText) {
 		t.Fatalf("input = %+v", input)
 	}
 	if input.cursorColumn != cellWidth(input.lines[0])+1 {

@@ -116,7 +116,8 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	runtime := testRuntime(cwd, &stdout, &stderr)
 	var mu sync.Mutex
 	factoryCalls := 0
-	var childRequests []agent.Request
+	childRequests := make([]agent.Request, 0, 2)
+	childrenStarted := make(chan struct{})
 	releaseChildren := make(chan struct{})
 	mainCalls := 0
 	driver := testBackendDriver(t, runtime)
@@ -164,6 +165,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "read" || !strings.Contains(request.Inputs[0].PlainText(), projectInstructions) {
 						t.Fatalf("independent continuation inputs = %+v", request.Inputs)
 					}
+					<-childrenStarted
 					close(releaseChildren)
 					return agent.Response{ToolCalls: []agent.ToolCall{{
 						ID:        "wait",
@@ -193,6 +195,9 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 		return providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
 			mu.Lock()
 			childRequests = append(childRequests, request)
+			if len(childRequests) == cap(childRequests) {
+				close(childrenStarted)
+			}
 			mu.Unlock()
 			if len(request.Inputs) != 1 {
 				t.Fatalf("child inputs = %+v", request.Inputs)
