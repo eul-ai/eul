@@ -91,18 +91,33 @@ func conversationBlockLines(block conversationBlock, width int) []styledLine {
 		lines = append(lines, styledLine{style: style, padding: padding})
 		lines = append(lines, toolConversationLines(block, contentWidth, style, padding)...)
 		lines = append(lines, styledLine{style: style, padding: padding})
-	case block.kind == blockUser && len(block.content) > 0:
+	case block.kind == blockUser && len(block.content) > 0 && contentHasImage(block.content):
 		for _, line := range wrapInlineSpans(contentDisplaySpans(block.content), contentWidth) {
 			lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding, continuation: line.continuation})
 		}
+	case block.kind == blockUser && len(block.content) > 0:
+		lines = append(lines, markdownConversationLines(contentText(block.content), contentWidth, style, padding)...)
 	case isInlineMarkdownBlock(block.kind):
-		for _, line := range wrapInlineMarkdown(text, contentWidth) {
-			lines = append(lines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding, continuation: line.continuation})
-		}
+		lines = append(lines, markdownConversationLines(text, contentWidth, style, padding)...)
 	default:
 		for _, line := range wrapConversationText(text, contentWidth) {
 			lines = append(lines, styledLine{text: line.text, style: style, padding: padding, continuation: line.continuation})
 		}
+	}
+	return lines
+}
+
+func markdownConversationLines(text string, width int, style lineStyle, padding int) []styledLine {
+	var lines []styledLine
+	for _, line := range wrapMarkdown(text, width) {
+		lineStyle := style
+		styled := styledLine{text: line.text, spans: line.spans, style: lineStyle, padding: padding, continuation: line.continuation}
+		if line.fencedCode {
+			styled.style.foreground = currentTheme.markdownCode
+			styled.style.bold = false
+			styled.style.italic = false
+		}
+		lines = append(lines, styled)
 	}
 	return lines
 }
@@ -142,9 +157,7 @@ func toolConversationLines(block conversationBlock, width int, style lineStyle, 
 		var bodyLines []styledLine
 		body := strings.Join(block.tool.Lines, "\n")
 		if block.tool.Markdown {
-			for _, line := range wrapInlineMarkdown(body, width) {
-				bodyLines = append(bodyLines, styledLine{text: line.text, spans: line.spans, style: style, padding: padding, continuation: line.continuation})
-			}
+			bodyLines = append(bodyLines, markdownConversationLines(body, width, style, padding)...)
 		} else {
 			for _, line := range wrapConversationText(body, width) {
 				bodyLines = append(bodyLines, styledLine{text: line.text, style: style, padding: padding, continuation: line.continuation})

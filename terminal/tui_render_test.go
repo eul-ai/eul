@@ -352,6 +352,28 @@ func TestUserMessagesRenderInlineMarkdown(t *testing.T) {
 	}
 }
 
+func TestAssistantFencedCodeUsesCodePresentation(t *testing.T) {
+	lines := conversationLines([]conversationBlock{{
+		kind: blockAssistant,
+		text: "before\n```go\n**literal**\n```\nafter",
+	}}, 80)
+	if len(lines) != 3 || lines[0].text != "before" || lines[1].text != "**literal**" || lines[2].text != "after" {
+		t.Fatalf("lines = %+v", lines)
+	}
+
+	code := lines[1]
+	if code.prefixText != "" || code.style.foreground != currentTheme.markdownCode || len(code.spans) != 0 {
+		t.Fatalf("code style = %+v", code)
+	}
+
+	var rendered strings.Builder
+	renderLine(&rendered, 1, 80, code)
+	want := ansiColors(currentTheme.markdownCode, terminalColor{}, false) + " **literal**"
+	if !strings.Contains(rendered.String(), want) {
+		t.Fatalf("rendered code = %q, want %q", rendered.String(), want)
+	}
+}
+
 func TestAssistantLinksAreClickable(t *testing.T) {
 	lines := conversationLines([]conversationBlock{{
 		kind: blockAssistant,

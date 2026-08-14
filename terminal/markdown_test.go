@@ -81,6 +81,33 @@ func TestParseInlineMarkdownPreservesCodeFences(t *testing.T) {
 	}
 }
 
+func TestWrapMarkdownFencedCode(t *testing.T) {
+	got := wrapMarkdown("before **bold**\n```go\nfmt.Println(`value`)\n\n```\nafter", 80)
+	want := []formattedLine{
+		{text: "before bold", spans: []inlineSpan{
+			{text: "before ", style: inlineStyle{}},
+			{text: "bold", style: inlineStyle{bold: true}},
+		}},
+		{text: "fmt.Println(`value`)", fencedCode: true},
+		{fencedCode: true},
+		{text: "after", spans: []inlineSpan{{text: "after", style: inlineStyle{}}}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("lines = %+v, want %+v", got, want)
+	}
+}
+
+func TestWrapMarkdownFencedCodeUsesAvailableWidth(t *testing.T) {
+	got := wrapMarkdown("```\nabcdefgh\n```", 6)
+	want := []formattedLine{
+		{text: "abcdef", fencedCode: true},
+		{text: "gh", continuation: true, fencedCode: true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("lines = %+v, want %+v", got, want)
+	}
+}
+
 func TestParseInlineMarkdownNestedCodeInEmphasis(t *testing.T) {
 	got := parseInlineMarkdown("**`backend/codex/api/models.go`** and *`SIGWINCH`*")
 	want := []inlineSpan{

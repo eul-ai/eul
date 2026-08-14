@@ -34,6 +34,42 @@ type formattedLine struct {
 	text         string
 	spans        []inlineSpan
 	continuation bool
+	fencedCode   bool
+}
+
+func wrapMarkdown(text string, width int) []formattedLine {
+	if width <= 0 {
+		return nil
+	}
+
+	var lines []formattedLine
+	var plainLines []string
+	flushPlain := func() {
+		if len(plainLines) == 0 {
+			return
+		}
+		lines = append(lines, wrapInlineMarkdown(strings.Join(plainLines, "\n"), width)...)
+		plainLines = nil
+	}
+
+	inFence := false
+	for _, sourceLine := range strings.Split(text, "\n") {
+		switch {
+		case inFence && strings.TrimSpace(sourceLine) == "```":
+			inFence = false
+		case inFence:
+			for index, wrapped := range wrapText(sourceLine, width) {
+				lines = append(lines, formattedLine{text: wrapped, continuation: index > 0, fencedCode: true})
+			}
+		case strings.HasPrefix(sourceLine, "```"):
+			flushPlain()
+			inFence = true
+		default:
+			plainLines = append(plainLines, sourceLine)
+		}
+	}
+	flushPlain()
+	return lines
 }
 
 func wrapInlineMarkdown(text string, width int) []formattedLine {
