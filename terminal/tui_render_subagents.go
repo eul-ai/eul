@@ -89,7 +89,7 @@ func appendSubagentSection(lines []styledLine, category string, jobs []subagentR
 		lines = append(lines, styledLine{
 			spans:   spans,
 			style:   lineStyle{foreground: currentTheme.muted},
-			padding: 2,
+			padding: 1,
 		})
 	}
 	return lines

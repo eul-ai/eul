@@ -131,8 +131,13 @@ func markdownConversationLines(text string, width int, style lineStyle, padding 
 			text: line.text, spans: line.spans, style: lineStyle, padding: padding,
 			breakBefore: line.breakBefore,
 		}
-		if line.fencedCode {
+		switch {
+		case line.fencedCode:
 			styled.style.foreground = currentTheme.markdownCode
+			styled.style.bold = false
+			styled.style.italic = false
+		case line.thematicBreak:
+			styled.style.foreground = currentTheme.muted
 			styled.style.bold = false
 			styled.style.italic = false
 		}

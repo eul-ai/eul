@@ -124,6 +124,8 @@ func renderLine(frame *strings.Builder, row, width int, line styledLine) {
 			switch span.style.foreground {
 			case inlineForegroundAccent:
 				spanForeground = currentTheme.accent
+			case inlineForegroundMuted:
+				spanForeground = currentTheme.muted
 			case inlineForegroundOrange:
 				spanForeground = currentTheme.orange
 			case inlineForegroundSuccess:

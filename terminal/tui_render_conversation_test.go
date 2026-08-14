@@ -125,6 +125,30 @@ func TestAssistantFencedCodeUsesCodePresentation(t *testing.T) {
 	}
 }
 
+func TestAssistantThematicBreakUsesMutedPresentation(t *testing.T) {
+	lines := conversationLines([]conversationBlock{{kind: blockAssistant, text: "---"}}, 10)
+	if len(lines) != 1 || lines[0].text != "────────" {
+		t.Fatalf("lines = %+v", lines)
+	}
+	if lines[0].style.foreground != currentTheme.muted || lines[0].style.bold || lines[0].style.italic {
+		t.Fatalf("thematic break style = %+v", lines[0].style)
+	}
+}
+
+func TestAssistantBlockQuoteUsesMutedGutter(t *testing.T) {
+	lines := conversationLines([]conversationBlock{{kind: blockAssistant, text: "> quote"}}, 20)
+	if len(lines) != 1 || lines[0].text != "│ quote" {
+		t.Fatalf("lines = %+v", lines)
+	}
+
+	var rendered strings.Builder
+	renderLine(&rendered, 1, 20, lines[0])
+	want := ansiForeground(currentTheme.muted) + "│ " + ansiForeground(currentTheme.foreground) + "quote"
+	if !strings.Contains(rendered.String(), want) {
+		t.Fatalf("rendered quote = %q, want %q", rendered.String(), want)
+	}
+}
+
 func TestAssistantLinksAreClickable(t *testing.T) {
 	lines := conversationLines([]conversationBlock{{
 		kind: blockAssistant,
