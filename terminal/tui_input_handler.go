@@ -267,8 +267,11 @@ func reduceFilePickerKey(model *tuiModel, key keyEvent) bool {
 	if !model.filePickerVisible() {
 		return false
 	}
-	if !model.filePicker.loading && len(model.filePicker.matches) == 0 {
-		return false
+	if !model.filePicker.matchesCurrent {
+		return key.code == keyUp || key.code == keyDown || key.code == keyEnter || key.code == keyTab || key.code == keyRight
+	}
+	if len(model.filePicker.matches) == 0 {
+		return model.filePicker.state == fileSearchDiscovering && (key.code == keyUp || key.code == keyDown || key.code == keyEnter || key.code == keyTab || key.code == keyRight)
 	}
 
 	switch key.code {
@@ -276,11 +279,28 @@ func reduceFilePickerKey(model *tuiModel, key keyEvent) bool {
 		model.moveFilePickerSelection(-1)
 	case keyDown:
 		model.moveFilePickerSelection(1)
-	case keyEnter, keyTab:
-		if !model.filePicker.loading {
-			if err := model.applyFilePickerSelection(); err != nil {
-				setInputError(model, err)
-			}
+	case keyEnter:
+		if err := model.applyFilePickerSelection(); err != nil {
+			setInputError(model, err)
+		}
+	case keyTab:
+		match := model.filePicker.matches[model.filePicker.selected]
+		var err error
+		if match.directory {
+			err = model.drillIntoFilePickerDirectory()
+		} else {
+			err = model.applyFilePickerSelection()
+		}
+		if err != nil {
+			setInputError(model, err)
+		}
+	case keyRight:
+		match := model.filePicker.matches[model.filePicker.selected]
+		if !match.directory {
+			return false
+		}
+		if err := model.drillIntoFilePickerDirectory(); err != nil {
+			setInputError(model, err)
 		}
 	case keyEscape:
 		model.dismissFilePicker()

@@ -1099,7 +1099,7 @@ func TestTUIControllerEventDirtiness(t *testing.T) {
 		},
 		{
 			name:      "stale file search is ignored",
-			event:     tuiEvent{kind: tuiEventFileSearch, fileSearch: fileSearchResult{id: 1, paths: []string{"ignored"}}},
+			event:     tuiEvent{kind: tuiEventFileSearch, fileSearch: testFileSearchResult(1, "ignored")},
 			wantDirty: false,
 		},
 		{

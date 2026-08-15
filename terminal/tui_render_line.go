@@ -42,6 +42,7 @@ type styledLine struct {
 	prefixForeground *terminalColor
 	text             string
 	rightText        string
+	rightForeground  *terminalColor
 	spans            []inlineSpan
 	style            lineStyle
 	padding          int
@@ -146,6 +147,9 @@ func renderLine(frame *strings.Builder, row, width int, line styledLine) {
 		writeTextAttributes(frame, style.bold, style.italic, &bold, &italic)
 	}
 	frame.WriteString(strings.Repeat(" ", fitted.textWidth-cellWidth(fitted.prefix)-cellWidth(fitted.text)))
+	if line.rightForeground != nil {
+		writeTextForeground(frame, *line.rightForeground, &foreground)
+	}
 	frame.WriteString(fitted.right)
 	frame.WriteString(strings.Repeat(" ", fitted.rightPadding))
 	frame.WriteString(ansiReset)

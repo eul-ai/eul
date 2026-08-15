@@ -74,7 +74,7 @@ func TestFilePickerKeysTakePriorityOverEditorActions(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
-	model.applyFileSearchResult(fileSearchResult{id: request.id, paths: []string{"a.go", "b.go"}})
+	model.applyFileSearchResult(testFileSearchResult(request.id, "a.go", "b.go"))
 	if !model.filePickerVisible() {
 		t.Fatal("picker did not open")
 	}
@@ -111,7 +111,7 @@ func TestFilePickerRemainsUsableWhileRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
-	model.applyFileSearchResult(fileSearchResult{id: request.id, paths: []string{"a.go", "b.go"}})
+	model.applyFileSearchResult(testFileSearchResult(request.id, "a.go", "b.go"))
 
 	if _, err := reduceKey(model, keyEvent{code: keyDown}); err != nil {
 		t.Fatal(err)
@@ -124,26 +124,62 @@ func TestFilePickerRemainsUsableWhileRunning(t *testing.T) {
 	}
 }
 
-func TestFilePickerKeepsResultsButCannotApplyThemDuringSearch(t *testing.T) {
+func TestFilePickerKeepsCurrentResultsSelectableDuringRefresh(t *testing.T) {
 	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	if _, err := reduceKey(model, keyEvent{code: keyText, text: "@"}); err != nil {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
-	model.applyFileSearchResult(fileSearchResult{id: request.id, paths: []string{"a.go", "b.go", "c.go"}})
+	matches := testFileSearchMatches("a.go", "b.go", "c.go")
+	model.applyFileSearchResult(fileSearchResult{id: request.id, matches: matches, state: fileSearchDiscovering})
 	originalHeight := model.filePickerHeight()
 
-	if _, err := reduceKey(model, keyEvent{code: keyText, text: "a"}); err != nil {
-		t.Fatal(err)
-	}
-	if !model.filePicker.loading || model.filePickerHeight() != originalHeight || len(model.filePicker.matches) != 3 {
-		t.Fatalf("picker changed while searching: %+v", model.filePicker)
+	if model.filePicker.state != fileSearchDiscovering || model.filePickerHeight() != originalHeight || len(model.filePicker.matches) != 3 {
+		t.Fatalf("picker changed while refreshing: %+v", model.filePicker)
 	}
 	if action, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil || action.kind != tuiActionNone {
 		t.Fatalf("enter action = %+v, err = %v", action, err)
 	}
-	if got := model.inputText(); got != "@a" {
-		t.Fatalf("stale selection changed input to %q", got)
+	if got := model.inputText(); got != "@a.go " {
+		t.Fatalf("cached selection changed input to %q", got)
+	}
+}
+
+func TestFilePickerDoesNotApplyPreviousQueryResults(t *testing.T) {
+	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	if _, err := reduceKey(model, keyEvent{code: keyText, text: "@"}); err != nil {
+		t.Fatal(err)
+	}
+	request := takePickerRequest(t, model)
+	model.applyFileSearchResult(testFileSearchResult(request.id, "a.go", "b.go"))
+
+	if _, err := reduceKey(model, keyEvent{code: keyText, text: "missing"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(model.filePicker.matches) != 2 || model.filePicker.matchesCurrent {
+		t.Fatalf("previous query results were not retained as pending: %+v", model.filePicker)
+	}
+	if action, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil || action.kind != tuiActionNone {
+		t.Fatalf("enter action = %+v, err = %v", action, err)
+	}
+	if got := model.inputText(); got != "@missing" {
+		t.Fatalf("pending search submitted or changed input to %q", got)
+	}
+}
+
+func TestFilePickerKeepsSettledEmptyStateWhileRescoring(t *testing.T) {
+	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	if _, err := reduceKey(model, keyEvent{code: keyText, text: "@missing"}); err != nil {
+		t.Fatal(err)
+	}
+	request := takePickerRequest(t, model)
+	model.applyFileSearchResult(fileSearchResult{id: request.id, state: fileSearchComplete})
+
+	if _, err := reduceKey(model, keyEvent{code: keyText, text: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if model.filePicker.matchesCurrent || model.filePicker.state != fileSearchComplete || len(model.filePicker.matches) != 0 {
+		t.Fatalf("empty picker did not stay settled while rescoring: %+v", model.filePicker)
 	}
 }
 
