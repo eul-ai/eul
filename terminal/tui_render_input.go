@@ -228,22 +228,22 @@ func renderPermission(model *tuiModel, width, maximumHeight int) renderedInput {
 
 func permissionButtons(selected PermissionDecision, style lineStyle) styledLine {
 	spans := []inlineSpan{
-		{text: "› [d] Deny once", style: inlineStyle{bold: true, foreground: inlineForegroundError}},
-		{text: "     [a] Allow once"},
-		{text: "     [s] Allow for session"},
+		{text: "› [d]eny once", style: inlineStyle{bold: true, foreground: inlineForegroundError}},
+		{text: "     [a]llow once"},
+		{text: "     allow for [s]ession"},
 	}
 	switch selected {
 	case PermissionAllowOnce:
 		spans = []inlineSpan{
-			{text: "  [d] Deny once"},
-			{text: "   › [a] Allow once", style: inlineStyle{bold: true, foreground: inlineForegroundSuccess}},
-			{text: "     [s] Allow for session"},
+			{text: "  [d]eny once"},
+			{text: "   › [a]llow once", style: inlineStyle{bold: true, foreground: inlineForegroundSuccess}},
+			{text: "     allow for [s]ession"},
 		}
 	case PermissionAllowSession:
 		spans = []inlineSpan{
-			{text: "  [d] Deny once"},
-			{text: "     [a] Allow once"},
-			{text: "   › [s] Allow for session", style: inlineStyle{bold: true, foreground: inlineForegroundSuccess}},
+			{text: "  [d]eny once"},
+			{text: "     [a]llow once"},
+			{text: "   › allow for [s]ession", style: inlineStyle{bold: true, foreground: inlineForegroundSuccess}},
 		}
 	}
 	style.foreground = currentTheme.muted
