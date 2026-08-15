@@ -24,7 +24,7 @@ persisted locally, and tools run directly on your machine with your permissions.
 - Global and project-specific Agent Skills
 - Automatic context compaction
 - Resumable sessions
-- OpenAI Codex and OpenRouter support
+- OpenAI Codex, OpenCode Go, and OpenRouter support
 
 ## Getting started
 
@@ -47,7 +47,11 @@ To use OpenRouter, provide an API key and model:
 OPENROUTER_API_KEY=... ./eul --provider openrouter --model <provider/model>
 ```
 
-OpenRouter feature support depends on the selected model.
+To use OpenCode Go, provide an API key and model:
+
+```sh
+OPENCODE_API_KEY=... ./eul --provider opencode-go --model <model-id>
+```
 
 ## Safety and limitations
 

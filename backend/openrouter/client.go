@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend/compaction"
 	"github.com/eul-ai/eul/backend/openai/responses"
 )
 
@@ -21,10 +22,6 @@ var (
 	_ agent.Compactor             = (*client)(nil)
 	_ agent.CompactionErrorPolicy = (*client)(nil)
 )
-
-const compactionInstructions = `Create a concise, standalone handoff summary of the conversation so another coding agent can continue the task.
-
-Preserve only continuation-critical facts: the user's current goal, requirements, and constraints; important decisions and rationale; relevant files, symbols, and code details; changes already made; commands and tests run with their outcomes; errors and unresolved issues; and the exact next steps. Include pending user requests and relevant tool findings. Do not continue the task or address the user. Output only the summary.`
 
 func newClient(apiKey, endpoint string, httpClient *http.Client, metadata func(string) modelMetadata) (*client, error) {
 	shared, err := responses.New(responses.Options{
@@ -69,7 +66,7 @@ func (c *client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
 }
 
 func (c *client) Compact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {
-	return c.responses.SemanticCompact(ctx, request, compactionInstructions)
+	return c.responses.SemanticCompact(ctx, request, compaction.Instructions)
 }
 
 func (c *client) ShouldCompactAfterError(_ agent.Request, err error) bool {

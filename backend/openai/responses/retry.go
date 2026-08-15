@@ -2,16 +2,12 @@ package responses
 
 import (
 	"errors"
-	"io"
-	"math/rand/v2"
-	"net"
-	"net/http"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 const (
@@ -26,17 +22,6 @@ type retryableOperationError struct {
 
 func (e *retryableOperationError) Error() string { return e.cause.Error() }
 func (e *retryableOperationError) Unwrap() error { return e.cause }
-
-// net/http exposes its internal HTTP/2 stream errors to matching structs through errors.As.
-type http2StreamErrorCode uint32
-
-type http2StreamError struct {
-	StreamID uint32
-	Code     http2StreamErrorCode
-	Cause    error
-}
-
-func (http2StreamError) Error() string { return "HTTP/2 stream error" }
 
 type httpResponseError struct {
 	message    string
@@ -87,10 +72,7 @@ func retryableGenerationError(err error) bool {
 }
 
 func retryableHTTPStatus(status int) bool {
-	return status == http.StatusRequestTimeout ||
-		status == http.StatusConflict ||
-		status == http.StatusTooManyRequests ||
-		status >= http.StatusInternalServerError && status <= 599
+	return backendhttp.RetryableHTTPStatus(status)
 }
 
 func (c *Client) IsContextLimitError(err error) bool {
@@ -125,65 +107,15 @@ func retryableResponseError(detail responseError) bool {
 }
 
 func generationRetryDelay(failedAttempts int) time.Duration {
-	delay := generationRetryBaseDelay
-	for attempt := 1; attempt < failedAttempts && delay < generationRetryMaxDelay; attempt++ {
-		delay = min(delay*2, generationRetryMaxDelay)
-	}
-
-	quarter := delay / 4
-	if quarter == 0 {
-		return delay
-	}
-	delay += time.Duration(rand.Int64N(int64(quarter)*2+1)) - quarter
-	return min(delay, generationRetryMaxDelay)
+	return backendhttp.RetryDelay(failedAttempts, generationRetryBaseDelay, generationRetryMaxDelay)
 }
 
 func parseRetryAfter(value string, now time.Time) time.Duration {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0
-	}
-	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
-		if seconds <= 0 {
-			return 0
-		}
-		maximumSeconds := int64(time.Duration(1<<63-1) / time.Second)
-		if seconds > maximumSeconds {
-			return time.Duration(1<<63 - 1)
-		}
-		return time.Duration(seconds) * time.Second
-	}
-
-	when, err := http.ParseTime(value)
-	if err != nil || !when.After(now) {
-		return 0
-	}
-	return when.Sub(now)
+	return backendhttp.ParseRetryAfter(value, now)
 }
 
 func isRetryableNetworkError(err error) bool {
-	const http2InternalError http2StreamErrorCode = 2
-
-	var streamErr http2StreamError
-	if errors.As(err, &streamErr) && streamErr.Code == http2InternalError {
-		return true
-	}
-
-	for _, target := range []error{
-		io.ErrUnexpectedEOF,
-		syscall.ECONNABORTED,
-		syscall.ECONNREFUSED,
-		syscall.ECONNRESET,
-		syscall.EPIPE,
-		syscall.ETIMEDOUT,
-	} {
-		if errors.Is(err, target) {
-			return true
-		}
-	}
-
-	var networkErr net.Error
-	return errors.As(err, &networkErr) && networkErr.Timeout()
+	return backendhttp.RetryableNetworkError(err)
 }
 
 func (c *Client) retryableWrapf(cause error, format string, arguments ...any) error {

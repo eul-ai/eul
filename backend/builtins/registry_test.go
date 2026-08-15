@@ -11,6 +11,7 @@ func TestRegistryContainsBuiltInBackends(t *testing.T) {
 	for id, want := range map[string]string{
 		"":             "openai-codex",
 		"openai-codex": "openai-codex",
+		"opencode-go":  "opencode-go",
 		"openrouter":   "openrouter",
 	} {
 		driver, err := registry.Lookup(id)

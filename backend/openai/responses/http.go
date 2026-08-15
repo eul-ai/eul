@@ -10,7 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
+
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 func (c *Client) post(ctx context.Context, body []byte, operation string) (*http.Response, error) {
@@ -123,12 +124,7 @@ func (c *Client) errorMessage(format string, arguments ...any) string {
 }
 
 func (c *Client) redactMessage(message string) string {
-	for _, value := range c.redact {
-		if value != "" {
-			message = strings.ReplaceAll(message, value, "[redacted]")
-		}
-	}
-	return message
+	return backendhttp.Redact(message, c.redact)
 }
 
 func (c *Client) redactResponseFailure(err error) {
@@ -149,28 +145,9 @@ func (e *wrappedError) Error() string { return e.message }
 func (e *wrappedError) Unwrap() error { return e.cause }
 
 func readBounded(reader io.Reader, maximum int64) ([]byte, bool, error) {
-	data, err := io.ReadAll(io.LimitReader(reader, maximum+1))
-	if err != nil {
-		return nil, false, err
-	}
-	if int64(len(data)) <= maximum {
-		return data, false, nil
-	}
-
-	return data[:maximum], true, nil
+	return backendhttp.ReadBounded(reader, maximum)
 }
 
 func truncateUTF8(text string, maximum int) string {
-	if maximum < 0 {
-		maximum = 0
-	}
-	if len(text) <= maximum {
-		return text
-	}
-
-	end := maximum
-	for end > 0 && end < len(text) && !utf8.RuneStart(text[end]) {
-		end--
-	}
-	return text[:end]
+	return backendhttp.TruncateUTF8(text, maximum)
 }
