@@ -62,10 +62,7 @@ func fileReferenceToken(input []rune, cursor int) (int, int, string, bool) {
 			if input[start] != '@' {
 				return 0, 0, "", false
 			}
-			query, ok := decodeFileReferenceQuery(string(input[start+1 : end]))
-			if !ok {
-				return 0, 0, "", false
-			}
+			query := decodeFileReferenceQuery(string(input[start+1 : end]))
 			return start, end, query, true
 		}
 		start = end + 1
@@ -73,9 +70,9 @@ func fileReferenceToken(input []rune, cursor int) (int, int, string, bool) {
 	return 0, 0, "", false
 }
 
-func decodeFileReferenceQuery(value string) (string, bool) {
+func decodeFileReferenceQuery(value string) string {
 	if !strings.HasPrefix(value, `"`) {
-		return value, true
+		return value
 	}
 
 	value = strings.TrimPrefix(value, `"`)
@@ -102,7 +99,7 @@ func decodeFileReferenceQuery(value string) (string, bool) {
 	if escaped {
 		decoded.WriteRune('\\')
 	}
-	return decoded.String(), true
+	return decoded.String()
 }
 
 func hasUnescapedClosingQuote(value string) bool {

@@ -201,9 +201,9 @@ func TestFormatFileReferenceQuotesUnicodeWhitespaceAndBackslashes(t *testing.T) 
 	}
 	for _, value := range []string{`folder\`, `folder"`, `folder\"`, "my folder/file.go"} {
 		formatted := formatFileReference(value)
-		decoded, ok := decodeFileReferenceQuery(formatted[1:])
-		if !ok || decoded != value {
-			t.Fatalf("round trip for %q = %q,%t via %q", value, decoded, ok, formatted)
+		decoded := decodeFileReferenceQuery(formatted[1:])
+		if decoded != value {
+			t.Fatalf("round trip for %q = %q via %q", value, decoded, formatted)
 		}
 	}
 }

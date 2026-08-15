@@ -451,6 +451,79 @@ func TestFileSearchRunnerCancelsDiscoveryWhenScopeChanges(t *testing.T) {
 	})
 }
 
+func TestFileSearchRunnerEvictsCatalogsOverEntryBudget(t *testing.T) {
+	cwd := t.TempDir()
+	directories := []string{
+		filepath.Join(cwd, "first"),
+		filepath.Join(cwd, "second"),
+	}
+	resolve := func(_, _, _, query string) (fileSearchSpec, error) {
+		var index int
+		if _, err := fmt.Sscanf(query, "%d", &index); err != nil {
+			return fileSearchSpec{}, err
+		}
+		return fileSearchSpec{directory: directories[index], query: query}, nil
+	}
+	var discoveries atomic.Int32
+	discover := func(_ context.Context, spec fileSearchSpec, emit func([]fileCandidate) error) (bool, error) {
+		discoveries.Add(1)
+		return false, emit([]fileCandidate{
+			{path: filepath.Join(spec.directory, "file-0.go"), name: "file-0.go"},
+			{path: filepath.Join(spec.directory, "file-1.go"), name: "file-1.go"},
+		})
+	}
+	runner := newConfiguredFileSearchRunnerWithLimits(cwd, "", resolve, discover, fileSearchCacheLimits{
+		maxCatalogs: 10,
+		maxEntries:  3,
+	})
+	defer runner.close()
+	output := make(chan fileSearchResult, 16)
+
+	for id, query := range []string{"0", "1", "0"} {
+		requestID := uint64(id + 1)
+		runner.update(context.Background(), fileSearchCommand{request: &fileSearchRequest{id: requestID, query: query}}, output)
+		waitForFileSearchResult(t, output, requestID, func(result fileSearchResult) bool {
+			return result.state == fileSearchComplete
+		})
+	}
+	if got, want := discoveries.Load(), int32(3); got != want {
+		t.Fatalf("discoveries = %d, want %d", got, want)
+	}
+}
+
+func TestFileSearchRunnerCancelsCompletedDiscoveryContext(t *testing.T) {
+	cwd := t.TempDir()
+	discoveryContexts := make(chan context.Context, 1)
+	discover := func(ctx context.Context, _ fileSearchSpec, _ func([]fileCandidate) error) (bool, error) {
+		discoveryContexts <- ctx
+		return false, nil
+	}
+	runner := newConfiguredFileSearchRunner(cwd, "", resolveFileSearchSpec, discover)
+	defer runner.close()
+	output := make(chan fileSearchResult, 4)
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runner.update(parent, fileSearchCommand{request: &fileSearchRequest{id: 1, refresh: true}}, output)
+	var discoveryContext context.Context
+	select {
+	case discoveryContext = <-discoveryContexts:
+	case <-time.After(2 * time.Second):
+		t.Fatal("discovery did not start")
+	}
+	waitForFileSearchResult(t, output, 1, func(result fileSearchResult) bool {
+		return result.state == fileSearchComplete
+	})
+	select {
+	case <-discoveryContext.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("completed discovery context was not canceled")
+	}
+	if err := parent.Err(); err != nil {
+		t.Fatalf("parent context was canceled: %v", err)
+	}
+}
+
 func TestFileSearchRunnerEvictsOldCatalogs(t *testing.T) {
 	cwd := t.TempDir()
 	directories := make([]string, fileSearchMaxCatalogs+1)

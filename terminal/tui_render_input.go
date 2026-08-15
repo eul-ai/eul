@@ -476,12 +476,12 @@ func renderFilePicker(model *tuiModel, height int) []styledLine {
 	}
 	if len(model.filePicker.matches) == 0 {
 		text := "  no matching files"
-		switch model.filePicker.state {
-		case fileSearchDiscovering:
+		switch {
+		case !model.filePicker.matchesCurrent || model.filePicker.state == fileSearchDiscovering:
 			text = "  searching files…"
-		case fileSearchLimited:
+		case model.filePicker.state == fileSearchLimited:
 			text = "  no matching files · search limited"
-		case fileSearchFailed:
+		case model.filePicker.state == fileSearchFailed:
 			text = "  file search failed"
 			if model.filePicker.err != "" {
 				text += ": " + singleLine(model.filePicker.err, 120)

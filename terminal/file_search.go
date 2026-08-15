@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	filePickerMaxResults  = 100
-	fileSearchMaxCatalogs = 16
+	filePickerMaxResults       = 100
+	fileSearchMaxCatalogs      = 16
+	fileSearchMaxCachedEntries = 500_000
 )
 
 type fileSearchRequest struct {
@@ -42,12 +43,18 @@ type fileSearchCommand struct {
 
 type resolveFileSearchFunc func(string, string, string, string) (fileSearchSpec, error)
 
+type fileSearchCacheLimits struct {
+	maxCatalogs int
+	maxEntries  int
+}
+
 type fileSearchRunner struct {
 	cwd          string
 	canonicalCWD string
 	home         string
 	resolve      resolveFileSearchFunc
 	discover     discoverFilesFunc
+	cacheLimits  fileSearchCacheLimits
 	commands     chan fileSearchRunnerUpdate
 	discoveries  chan fileDiscoveryUpdate
 	matches      chan fileMatchUpdate
@@ -107,6 +114,13 @@ func newFileSearchRunner(cwd string) *fileSearchRunner {
 }
 
 func newConfiguredFileSearchRunner(cwd, home string, resolve resolveFileSearchFunc, discover discoverFilesFunc) *fileSearchRunner {
+	return newConfiguredFileSearchRunnerWithLimits(cwd, home, resolve, discover, fileSearchCacheLimits{
+		maxCatalogs: fileSearchMaxCatalogs,
+		maxEntries:  fileSearchMaxCachedEntries,
+	})
+}
+
+func newConfiguredFileSearchRunnerWithLimits(cwd, home string, resolve resolveFileSearchFunc, discover discoverFilesFunc, cacheLimits fileSearchCacheLimits) *fileSearchRunner {
 	canonicalCWD, err := filepath.EvalSymlinks(cwd)
 	if err != nil {
 		canonicalCWD = filepath.Clean(cwd)
@@ -120,6 +134,7 @@ func newConfiguredFileSearchRunner(cwd, home string, resolve resolveFileSearchFu
 		home:         home,
 		resolve:      resolve,
 		discover:     discover,
+		cacheLimits:  cacheLimits,
 		commands:     make(chan fileSearchRunnerUpdate, 1),
 		discoveries:  make(chan fileDiscoveryUpdate, 64),
 		matches:      make(chan fileMatchUpdate, 64),
@@ -174,6 +189,7 @@ func (r *fileSearchRunner) run() {
 	var matchGeneration uint64
 	var discoveryGeneration uint64
 	var catalogClock uint64
+	var catalogEntries int
 	var pendingOutput chan<- fileSearchResult
 	var pendingResult fileSearchResult
 	var pendingDone <-chan struct{}
@@ -206,7 +222,7 @@ func (r *fileSearchRunner) run() {
 		discoveryGeneration++
 		catalog.generation = discoveryGeneration
 		catalog.refresh = nil
-		catalog.visible = cloneFileCandidates(catalog.entries)
+		catalog.visible = catalog.entries
 		catalog.err = ""
 		if catalog.initialized {
 			catalog.state = catalog.committedState
@@ -214,24 +230,27 @@ func (r *fileSearchRunner) run() {
 			catalog.state = fileSearchDiscovering
 		}
 	}
-	evictCatalog := func(except fileSearchKey) {
-		if len(catalogs) < fileSearchMaxCatalogs {
-			return
-		}
-		var oldestKey fileSearchKey
-		var oldest *fileSearchCatalog
-		for key, catalog := range catalogs {
-			if key == except || oldest != nil && catalog.lastUsed >= oldest.lastUsed {
-				continue
+	trimCatalogs := func() {
+		for len(catalogs) > r.cacheLimits.maxCatalogs || catalogEntries > r.cacheLimits.maxEntries {
+			var oldestKey fileSearchKey
+			var oldest *fileSearchCatalog
+			for key, catalog := range catalogs {
+				if active != nil && key == active.key {
+					continue
+				}
+				if oldest != nil && catalog.lastUsed >= oldest.lastUsed {
+					continue
+				}
+				oldestKey = key
+				oldest = catalog
 			}
-			oldestKey = key
-			oldest = catalog
+			if oldest == nil {
+				return
+			}
+			cancelCatalog(oldest)
+			catalogEntries -= len(oldest.entries)
+			delete(catalogs, oldestKey)
 		}
-		if oldest == nil {
-			return
-		}
-		cancelCatalog(oldest)
-		delete(catalogs, oldestKey)
 	}
 	cancelActive := func() {
 		cancelMatch()
@@ -239,6 +258,7 @@ func (r *fileSearchRunner) run() {
 			cancelCatalog(catalogs[active.key])
 		}
 		active = nil
+		trimCatalogs()
 	}
 	startMatch := func() {
 		cancelMatch()
@@ -259,6 +279,8 @@ func (r *fileSearchRunner) run() {
 		r.wait.Add(1)
 		go func() {
 			defer r.wait.Done()
+			defer cancel()
+
 			matches := rankFileCandidates(matchContext, r.canonicalCWD, spec, candidates)
 			if matchContext.Err() != nil {
 				return
@@ -292,6 +314,8 @@ func (r *fileSearchRunner) run() {
 		r.wait.Add(1)
 		go func() {
 			defer r.wait.Done()
+			defer cancel()
+
 			emit := func(batch []fileCandidate) error {
 				update := fileDiscoveryUpdate{key: key, generation: generation, batch: batch}
 				select {
@@ -310,6 +334,57 @@ func (r *fileSearchRunner) run() {
 			case <-r.stop:
 			}
 		}()
+	}
+	applyDiscoveryUpdate := func(update fileDiscoveryUpdate) bool {
+		catalog := catalogs[update.key]
+		if catalog == nil || catalog.generation != update.generation {
+			return false
+		}
+		for _, candidate := range update.batch {
+			catalog.refresh[candidate.path] = candidate
+			catalog.visible[candidate.path] = candidate
+		}
+
+		if update.done {
+			catalog.cancel = nil
+			previousEntries := len(catalog.entries)
+			switch {
+			case update.err != nil && !errors.Is(update.err, context.Canceled):
+				catalog.refresh = nil
+				catalog.visible = catalog.entries
+				catalog.state = fileSearchFailed
+				catalog.err = update.err.Error()
+			case update.err != nil:
+				catalog.refresh = nil
+				catalog.visible = catalog.entries
+				catalog.err = ""
+				if catalog.initialized {
+					catalog.state = catalog.committedState
+				} else {
+					catalog.state = fileSearchDiscovering
+				}
+			case update.limited:
+				catalog.entries = catalog.refresh
+				catalog.visible = catalog.entries
+				catalog.refresh = nil
+				catalog.initialized = true
+				catalog.state = fileSearchLimited
+				catalog.committedState = fileSearchLimited
+			default:
+				catalog.entries = catalog.refresh
+				catalog.visible = catalog.entries
+				catalog.refresh = nil
+				catalog.initialized = true
+				catalog.state = fileSearchComplete
+				catalog.committedState = fileSearchComplete
+				catalog.err = ""
+			}
+			if update.err == nil {
+				catalogEntries += len(catalog.entries) - previousEntries
+				trimCatalogs()
+			}
+		}
+		return active != nil && active.key == update.key
 	}
 
 	for {
@@ -354,7 +429,6 @@ func (r *fileSearchRunner) run() {
 
 			catalog := catalogs[key]
 			if catalog == nil {
-				evictCatalog(key)
 				catalog = &fileSearchCatalog{
 					entries:        make(map[string]fileCandidate),
 					visible:        make(map[string]fileCandidate),
@@ -365,55 +439,20 @@ func (r *fileSearchRunner) run() {
 			}
 			catalogClock++
 			catalog.lastUsed = catalogClock
+			trimCatalogs()
 			if command.request.refresh || !catalog.initialized && catalog.cancel == nil {
 				startDiscovery(update.ctx, key, spec, catalog)
 			}
 			startMatch()
 
 		case update := <-r.discoveries:
-			catalog := catalogs[update.key]
-			if catalog == nil || catalog.generation != update.generation {
-				continue
-			}
-			for _, candidate := range update.batch {
-				catalog.refresh[candidate.path] = candidate
-				catalog.visible[candidate.path] = candidate
-			}
-			if update.done {
-				catalog.cancel = nil
-				switch {
-				case update.err != nil && !errors.Is(update.err, context.Canceled):
-					catalog.refresh = nil
-					catalog.visible = cloneFileCandidates(catalog.entries)
-					catalog.state = fileSearchFailed
-					catalog.err = update.err.Error()
-				case update.err != nil:
-					catalog.refresh = nil
-					catalog.visible = cloneFileCandidates(catalog.entries)
-					catalog.err = ""
-					if catalog.initialized {
-						catalog.state = catalog.committedState
-					} else {
-						catalog.state = fileSearchDiscovering
-					}
-				case update.limited:
-					catalog.entries = catalog.refresh
-					catalog.visible = catalog.entries
-					catalog.refresh = nil
-					catalog.initialized = true
-					catalog.state = fileSearchLimited
-					catalog.committedState = fileSearchLimited
-				default:
-					catalog.entries = catalog.refresh
-					catalog.visible = catalog.entries
-					catalog.refresh = nil
-					catalog.initialized = true
-					catalog.state = fileSearchComplete
-					catalog.committedState = fileSearchComplete
-					catalog.err = ""
+			rematch := applyDiscoveryUpdate(update)
+			for range len(r.discoveries) {
+				if applyDiscoveryUpdate(<-r.discoveries) {
+					rematch = true
 				}
 			}
-			if active != nil && active.key == update.key {
+			if rematch {
 				startMatch()
 			}
 

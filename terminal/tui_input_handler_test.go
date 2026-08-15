@@ -167,19 +167,24 @@ func TestFilePickerDoesNotApplyPreviousQueryResults(t *testing.T) {
 	}
 }
 
-func TestFilePickerKeepsSettledEmptyStateWhileRescoring(t *testing.T) {
+func TestFilePickerShowsEmptyResultsUpdatingWhileRescoring(t *testing.T) {
 	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	if _, err := reduceKey(model, keyEvent{code: keyText, text: "@missing"}); err != nil {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
 	model.applyFileSearchResult(fileSearchResult{id: request.id, state: fileSearchComplete})
+	settled := renderFilePicker(model, model.filePickerHeight())
 
 	if _, err := reduceKey(model, keyEvent{code: keyText, text: "x"}); err != nil {
 		t.Fatal(err)
 	}
+	pending := renderFilePicker(model, model.filePickerHeight())
 	if model.filePicker.matchesCurrent || model.filePicker.state != fileSearchComplete || len(model.filePicker.matches) != 0 {
-		t.Fatalf("empty picker did not stay settled while rescoring: %+v", model.filePicker)
+		t.Fatalf("empty picker did not retain its results while rescoring: %+v", model.filePicker)
+	}
+	if len(settled) != 1 || len(pending) != 1 || pending[0].text == settled[0].text {
+		t.Fatalf("settled lines = %+v, pending lines = %+v", settled, pending)
 	}
 }
 

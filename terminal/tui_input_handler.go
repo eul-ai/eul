@@ -302,8 +302,6 @@ func reduceFilePickerKey(model *tuiModel, key keyEvent) bool {
 		if err := model.drillIntoFilePickerDirectory(); err != nil {
 			setInputError(model, err)
 		}
-	case keyEscape:
-		model.dismissFilePicker()
 	default:
 		return false
 	}
