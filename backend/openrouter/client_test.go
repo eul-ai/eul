@@ -13,6 +13,29 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
+func testMetadata(reasoning bool, contextWindow int64) func(string) modelMetadata {
+	return func(string) modelMetadata {
+		metadata := modelMetadata{
+			contextWindow:        contextWindow,
+			thinkingLevels:       []agent.ThinkingLevel{agent.ThinkingOff},
+			defaultThinkingLevel: agent.ThinkingOff,
+		}
+		if reasoning {
+			metadata.reasoning = true
+			metadata.thinkingLevels = []agent.ThinkingLevel{
+				agent.ThinkingOff,
+				agent.ThinkingMinimal,
+				agent.ThinkingLow,
+				agent.ThinkingMedium,
+				agent.ThinkingHigh,
+				agent.ThinkingXHigh,
+			}
+			metadata.defaultThinkingLevel = agent.ThinkingMedium
+		}
+		return metadata
+	}
+}
+
 func TestClientUsesOpenRouterResponsesEndpointHeadersAndState(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -70,7 +93,7 @@ func TestClientUsesOpenRouterResponsesEndpointHeadersAndState(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := newClient("secret", server.URL+"/responses", server.Client(), func(string) bool { return true }, func(string) int64 { return 128_000 })
+	client, err := newClient("secret", server.URL+"/responses", server.Client(), testMetadata(true, 128_000))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +136,7 @@ func TestClientStreamsInterleavedToolCalls(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider, err := newClient("secret", server.URL, server.Client(), func(string) bool { return false }, func(string) int64 { return 128_000 })
+	provider, err := newClient("secret", server.URL, server.Client(), testMetadata(false, 128_000))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +168,7 @@ func TestClientEncodesImageInput(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider, err := newClient("secret", server.URL, server.Client(), func(string) bool { return false }, func(string) int64 { return 128_000 })
+	provider, err := newClient("secret", server.URL, server.Client(), testMetadata(false, 128_000))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +196,7 @@ func TestClientHandlesNumericRateLimitErrorAndRedactsKey(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider, err := newClient(key, server.URL, server.Client(), func(string) bool { return false }, func(string) int64 { return 128_000 })
+	provider, err := newClient(key, server.URL, server.Client(), testMetadata(false, 128_000))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +221,7 @@ func TestClientClassifiesContextLimitErrorForCompaction(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := newClient("secret", server.URL, server.Client(), func(string) bool { return false }, func(string) int64 { return 128_000 })
+	client, err := newClient("secret", server.URL, server.Client(), testMetadata(false, 128_000))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,9 +234,18 @@ func TestClientClassifiesContextLimitErrorForCompaction(t *testing.T) {
 }
 
 func TestRequestOptionsRespectModelReasoningMetadata(t *testing.T) {
-	options := requestOptions(func(model string) bool { return model == "vendor/reasoning" })
+	options := requestOptions(func(model string) modelMetadata {
+		if model == "vendor/reasoning" {
+			return testMetadata(true, 0)(model)
+		}
+		return testMetadata(false, 0)(model)
+	})
 
-	_, err := options(agent.Request{Model: "vendor/reasoning", ThinkingLevel: agent.ThinkingMax})
+	defaults, err := options(agent.Request{Model: "vendor/reasoning"})
+	if err != nil || defaults.Reasoning == nil || defaults.Reasoning.Effort != "medium" {
+		t.Fatalf("default reasoning options = %+v, %v", defaults, err)
+	}
+	_, err = options(agent.Request{Model: "vendor/reasoning", ThinkingLevel: agent.ThinkingMax})
 	var unsupported *unsupportedThinkingLevelError
 	if !errors.As(err, &unsupported) || unsupported.level != agent.ThinkingMax || unsupported.model != "vendor/reasoning" {
 		t.Fatalf("max thinking error = %v", err)
@@ -234,12 +266,11 @@ func TestClientShouldCompactAtModelContextThreshold(t *testing.T) {
 		"secret",
 		"http://127.0.0.1:1/responses",
 		&http.Client{},
-		func(string) bool { return false },
-		func(model string) int64 {
+		func(model string) modelMetadata {
 			if model == "vendor/model" {
-				return 1_000
+				return modelMetadata{contextWindow: 1_000, thinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff}}
 			}
-			return 0
+			return modelMetadata{}
 		},
 	)
 	if err != nil {
@@ -327,7 +358,7 @@ func TestClientSemanticallyCompactsAndReplaysSummary(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := newClient("secret", server.URL, server.Client(), func(string) bool { return true }, func(string) int64 { return 128_000 })
+	client, err := newClient("secret", server.URL, server.Client(), testMetadata(true, 128_000))
 	if err != nil {
 		t.Fatal(err)
 	}

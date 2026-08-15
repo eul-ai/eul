@@ -105,9 +105,12 @@ func (configured *runtime) CheckCredentials(ctx context.Context) error {
 		if strings.TrimSpace(model.ID) == "" || model.ContextLength < 0 {
 			continue
 		}
+		thinkingLevels, defaultThinkingLevel := thinkingMetadata(model.Reasoning)
 		models[model.ID] = modelMetadata{
-			contextWindow: model.ContextLength,
-			reasoning:     contains(model.SupportedParameters, "reasoning"),
+			contextWindow:        model.ContextLength,
+			reasoning:            len(model.Reasoning.SupportedEfforts) > 0,
+			thinkingLevels:       thinkingLevels,
+			defaultThinkingLevel: defaultThinkingLevel,
 		}
 	}
 	configured.mu.Lock()
@@ -142,43 +145,26 @@ func (configured *runtime) NewProvider() (agent.Provider, error) {
 		configured.apiKey,
 		configured.baseURL+"/responses",
 		configured.generationClient,
-		configured.supportsReasoning,
-		configured.contextWindow,
+		configured.modelMetadata,
 	)
 }
 
-func (configured *runtime) supportsReasoning(model string) bool {
+func (configured *runtime) modelMetadata(model string) modelMetadata {
 	configured.mu.RLock()
 	defer configured.mu.RUnlock()
-	return configured.models[model].reasoning
-}
-
-func (configured *runtime) contextWindow(model string) int64 {
-	configured.mu.RLock()
-	defer configured.mu.RUnlock()
-	return configured.models[model].contextWindow
+	return configured.models[model]
 }
 
 func (configured *runtime) ModelMetadata(model string) backend.ModelMetadata {
-	configured.mu.RLock()
-	metadata, ok := configured.models[model]
-	configured.mu.RUnlock()
-	if !ok {
+	metadata := configured.modelMetadata(model)
+	if len(metadata.thinkingLevels) == 0 {
 		return backend.ModelMetadata{ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff}}
 	}
 
-	levels := []agent.ThinkingLevel{agent.ThinkingOff}
-	if metadata.reasoning {
-		levels = []agent.ThinkingLevel{
-			agent.ThinkingOff,
-			agent.ThinkingMinimal,
-			agent.ThinkingLow,
-			agent.ThinkingMedium,
-			agent.ThinkingHigh,
-			agent.ThinkingXHigh,
-		}
+	return backend.ModelMetadata{
+		ContextWindow:  metadata.contextWindow,
+		ThinkingLevels: append([]agent.ThinkingLevel(nil), metadata.thinkingLevels...),
 	}
-	return backend.ModelMetadata{ContextWindow: metadata.contextWindow, ThinkingLevels: levels}
 }
 
 func (*runtime) Close() error {
@@ -232,11 +218,35 @@ func (configured *runtime) redact(message string) string {
 	return strings.ReplaceAll(message, configured.apiKey, "[redacted]")
 }
 
-func contains(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
+func thinkingMetadata(reasoning modelReasoning) ([]agent.ThinkingLevel, agent.ThinkingLevel) {
+	supported := make(map[agent.ThinkingLevel]bool, len(reasoning.SupportedEfforts)+1)
+	if !reasoning.Mandatory {
+		supported[agent.ThinkingOff] = true
+	}
+	for _, effort := range reasoning.SupportedEfforts {
+		if level, ok := thinkingLevelForEffort(effort); ok {
+			supported[level] = true
 		}
 	}
-	return false
+
+	levels := make([]agent.ThinkingLevel, 0, len(supported))
+	for _, level := range agent.ThinkingLevels() {
+		if supported[level] {
+			levels = append(levels, level)
+		}
+	}
+
+	defaultLevel, ok := thinkingLevelForEffort(reasoning.DefaultEffort)
+	if !ok && !reasoning.Mandatory {
+		defaultLevel = agent.ThinkingOff
+	}
+	return levels, defaultLevel
+}
+
+func thinkingLevelForEffort(effort string) (agent.ThinkingLevel, bool) {
+	if effort == "none" {
+		return agent.ThinkingOff, true
+	}
+	level := agent.ThinkingLevel(effort)
+	return level, level.Valid()
 }

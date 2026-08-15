@@ -11,8 +11,8 @@ import (
 )
 
 type client struct {
-	responses     *responses.Client
-	contextWindow func(string) int64
+	responses *responses.Client
+	metadata  func(string) modelMetadata
 }
 
 var (
@@ -26,19 +26,19 @@ const compactionInstructions = `Create a concise, standalone handoff summary of 
 
 Preserve only continuation-critical facts: the user's current goal, requirements, and constraints; important decisions and rationale; relevant files, symbols, and code details; changes already made; commands and tests run with their outcomes; errors and unresolved issues; and the exact next steps. Include pending user requests and relevant tool findings. Do not continue the task or address the user. Output only the summary.`
 
-func newClient(apiKey, endpoint string, httpClient *http.Client, supportsReasoning func(string) bool, contextWindow func(string) int64) (*client, error) {
+func newClient(apiKey, endpoint string, httpClient *http.Client, metadata func(string) modelMetadata) (*client, error) {
 	shared, err := responses.New(responses.Options{
 		HTTPClient:     httpClient,
 		Endpoint:       endpoint,
 		ErrorPrefix:    "openrouter",
 		PrepareRequest: prepareRequest(apiKey),
-		RequestOptions: requestOptions(supportsReasoning),
+		RequestOptions: requestOptions(metadata),
 		Redact:         []string{apiKey},
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &client{responses: shared, contextWindow: contextWindow}, nil
+	return &client{responses: shared, metadata: metadata}, nil
 }
 
 func (c *client) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {
@@ -56,7 +56,7 @@ func (c *client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
 		return false
 	}
 
-	contextWindow := c.contextWindow(request.Model)
+	contextWindow := c.metadata(request.Model).contextWindow
 	if contextWindow <= 0 {
 		return false
 	}
@@ -106,28 +106,34 @@ func prepareRequest(apiKey string) responses.PrepareRequestFunc {
 	}
 }
 
-func requestOptions(supportsReasoning func(string) bool) responses.RequestOptionsFunc {
+func requestOptions(metadataFor func(string) modelMetadata) responses.RequestOptionsFunc {
 	return func(request agent.Request) (responses.RequestOptions, error) {
+		metadata := metadataFor(request.Model)
 		level := request.ThinkingLevel
 		if level == "" {
-			level = agent.DefaultThinkingLevel
+			level = metadata.defaultThinkingLevel
+			if level == "" && !metadata.reasoning {
+				level = agent.ThinkingOff
+			}
 		}
 
-		efforts := map[agent.ThinkingLevel]string{
-			agent.ThinkingOff:     "none",
-			agent.ThinkingMinimal: "minimal",
-			agent.ThinkingLow:     "low",
-			agent.ThinkingMedium:  "medium",
-			agent.ThinkingHigh:    "high",
-			agent.ThinkingXHigh:   "xhigh",
+		supported := !metadata.reasoning && level == agent.ThinkingOff
+		for _, candidate := range metadata.thinkingLevels {
+			if candidate == level {
+				supported = true
+				break
+			}
 		}
-		effort, valid := efforts[level]
-		if !valid || level != agent.ThinkingOff && !supportsReasoning(request.Model) {
+		if !supported {
 			return responses.RequestOptions{}, &unsupportedThinkingLevelError{level: level, model: request.Model}
 		}
 
 		options := responses.RequestOptions{ToolChoice: "auto", ParallelToolCalls: true}
-		if supportsReasoning(request.Model) {
+		if metadata.reasoning {
+			effort := string(level)
+			if level == agent.ThinkingOff {
+				effort = "none"
+			}
 			options.Reasoning = &responses.Reasoning{Effort: effort}
 			options.Include = []string{"reasoning.encrypted_content"}
 		}
