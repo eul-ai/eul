@@ -96,14 +96,14 @@ func providerUsageText(usage ProviderUsage, now time.Time) (string, string) {
 		short = append(short, shortText)
 	}
 	if usage.MonthlyUsageUSD != nil {
-		amount := formatUSD(*usage.MonthlyUsageUSD)
-		long = append(long, "monthly usage "+amount)
-		short = append(short, amount+"/mo")
+		amount := formatUSD(*usage.MonthlyUsageUSD) + "/mo"
+		long = append(long, amount)
+		short = append(short, amount)
 	}
 	if usage.LimitRemainingUSD != nil {
-		amount := formatUSD(*usage.LimitRemainingUSD)
-		long = append(long, "limit "+amount+" remaining")
-		short = append(short, amount+" left")
+		amount := formatUSD(*usage.LimitRemainingUSD) + " left"
+		long = append(long, amount)
+		short = append(short, amount)
 	}
 	return strings.Join(long, " · "), strings.Join(short, " · ")
 }
