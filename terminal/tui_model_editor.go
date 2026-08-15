@@ -483,10 +483,16 @@ func (m *tuiModel) takePrompt() (string, bool) {
 }
 
 func (m *tuiModel) rememberPrompt(prompt string) {
-	if strings.TrimSpace(prompt) != "" && (len(m.history) == 0 || m.history[len(m.history)-1] != prompt) {
-		m.history = append(m.history, prompt)
-		m.pendingHistory = append(m.pendingHistory, prompt)
+	trimmed := strings.TrimSpace(prompt)
+	if trimmed == "" || len(m.history) > 0 && m.history[len(m.history)-1] == prompt {
+		return
 	}
+
+	m.history = append(m.history, prompt)
+	if strings.HasPrefix(trimmed, "/") {
+		return
+	}
+	m.pendingHistory = append(m.pendingHistory, prompt)
 }
 
 func (m *tuiModel) reserveImage(requestID uint64) {

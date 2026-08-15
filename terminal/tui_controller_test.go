@@ -16,6 +16,7 @@ import (
 func TestTUIControllerFlushesMessageHistory(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.rememberPrompt("first prompt")
+	model.rememberPrompt(" /resume ")
 	model.rememberPrompt("second prompt")
 
 	var entries []string
@@ -31,6 +32,9 @@ func TestTUIControllerFlushesMessageHistory(t *testing.T) {
 	}
 	if !slices.Equal(entries, []string{"first prompt", "second prompt"}) || len(model.pendingHistory) != 0 {
 		t.Fatalf("entries = %q, pending = %q", entries, model.pendingHistory)
+	}
+	if !slices.Equal(model.history, []string{"first prompt", " /resume ", "second prompt"}) {
+		t.Fatalf("local history = %q", model.history)
 	}
 }
 
