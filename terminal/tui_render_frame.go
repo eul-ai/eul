@@ -94,7 +94,7 @@ func (r *tuiRenderer) prepareConversation(model *tuiModel) {
 		appendBlock(rendered)
 	}
 	for _, content := range pendingSteering {
-		appendBlock(renderConversationBlock(conversationBlock{kind: blockInfo, text: "Queued: " + displayContent(content)}, model.width))
+		appendBlock(renderConversationBlock(conversationBlock{kind: blockInfo, text: "Queued: " + displayContent(content) + " (alt+↑ to restore)"}, model.width))
 	}
 	for range conversationVerticalPadding {
 		appendBlank()

@@ -482,7 +482,9 @@ func TestPendingSteeringRendersAndDeliversInTranscriptOrder(t *testing.T) {
 	for _, line := range lines {
 		rendered = append(rendered, line.text)
 	}
-	if len(model.blocks) != 2 || model.blocks[1].text != "answer continues" || slices.IndexFunc(rendered, func(text string) bool { return strings.Contains(text, "redirect") }) < 0 {
+	redirectIndex := slices.IndexFunc(rendered, func(text string) bool { return strings.Contains(text, "redirect") })
+	shortcutIndex := slices.IndexFunc(rendered, func(text string) bool { return strings.Contains(text, "alt+↑") })
+	if len(model.blocks) != 2 || model.blocks[1].text != "answer continues" || redirectIndex < 0 || shortcutIndex < 0 {
 		t.Fatalf("blocks=%+v lines=%q", model.blocks, rendered)
 	}
 	if frame := buildTerminalFrame(model); !frame.cursorVisible {
