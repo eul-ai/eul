@@ -86,9 +86,9 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 	case tuiActionSteer:
 		accepted := false
 		if len(c.model.steering.deferred) == 0 && c.controls.Steer != nil {
-			accepted = c.controls.Steer(action.prompt)
+			accepted = c.controls.Steer(cloneTerminalContent(action.content))
 		}
-		c.model.enqueueSteering(action.prompt, accepted)
+		c.model.enqueueSteering(action.content, accepted)
 	case tuiActionShowGoal:
 		if c.controls.Goal == nil {
 			setInputError(c.model, errors.New("goal inspection is unavailable"))
@@ -216,12 +216,12 @@ func (c *tuiController) startCompaction(ctx context.Context) error {
 }
 
 func (c *tuiController) startDeferredTurn(ctx context.Context) error {
-	prompt, ok := c.model.nextDeferredSteering()
+	content, ok := c.model.nextDeferredSteering()
 	if !ok {
 		return nil
 	}
-	if err := c.startTurn(ctx, []agent.ContentPart{{Kind: agent.ContentPartText, Text: prompt}}); err != nil {
-		c.model.restoreDeferredSteering(prompt)
+	if err := c.startTurn(ctx, content); err != nil {
+		c.model.restoreDeferredSteering(content)
 		return err
 	}
 	return nil

@@ -66,6 +66,50 @@ func TestTUIControllerPastesClipboardImage(t *testing.T) {
 	}
 }
 
+func TestTUIControllerQueuesClipboardImageWhileRunning(t *testing.T) {
+	var steered []agent.ContentPart
+	engine := &fakeEngine{steerFunction: func(content []agent.ContentPart) bool {
+		steered = cloneTerminalContent(content)
+		return true
+	}}
+	model := newTUIModel(80, 24, Options{})
+	model.running = true
+	model.activity = activity{kind: activityThinking}
+	if err := model.insertInput("describe "); err != nil {
+		t.Fatal(err)
+	}
+	clipboardImages := make(chan tuiEvent, 1)
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
+		readClipboardImage: func(context.Context) (agent.Image, error) {
+			return agent.Image{MediaType: "image/png", Data: validTestPNG(t)}, nil
+		},
+		clipboardImages: clipboardImages,
+		stopped:         make(chan struct{}),
+	}
+
+	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlV}); err != nil {
+		t.Fatal(err)
+	}
+	event := <-clipboardImages
+	if _, err := controller.transition(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.insertInput(" please"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyEnter}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(steered) != 3 || steered[0].Text != "describe " || steered[1].Image == nil || steered[2].Text != " please" {
+		t.Fatalf("steered content = %+v", steered)
+	}
+	if !slices.Equal(steered[1].Image.Data, validTestPNG(t)) || len(model.steering.pending()) != 1 || len(model.input) != 0 || model.activity.kind != activityThinking {
+		t.Fatalf("image = %+v, pending = %+v, input = %+v, activity = %+v", steered[1].Image, model.steering.pending(), model.input, model.activity)
+	}
+}
+
 func TestTUIControllerSerializesPermissions(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.running = true
@@ -574,7 +618,7 @@ func TestTUIControllerStartsOperationsAfterActiveCheckpoint(t *testing.T) {
 			activity:      activityThinking,
 			wantUserBlock: true,
 			prepare: func(controller *tuiController) {
-				controller.model.steering.deferred = []string{"deferred prompt"}
+				controller.model.steering.deferred = [][]agent.ContentPart{testTextContent("deferred prompt")}
 			},
 			start: func(ctx context.Context, controller *tuiController) error {
 				return controller.startDeferredTurn(ctx)
@@ -681,7 +725,7 @@ func TestTUIControllerDoesNotLaunchAfterActiveCheckpointFailure(t *testing.T) {
 			name:     "deferred replay",
 			activity: activityThinking,
 			prepare: func(controller *tuiController) {
-				controller.model.steering.deferred = []string{"deferred prompt"}
+				controller.model.steering.deferred = [][]agent.ContentPart{testTextContent("deferred prompt")}
 			},
 			start: func(ctx context.Context, controller *tuiController) error {
 				return controller.startDeferredTurn(ctx)
@@ -1159,14 +1203,14 @@ func TestMouseWheelUsesCommittedConversationBounds(t *testing.T) {
 }
 
 func TestTUIControllerQueuesAndDequeuesSteering(t *testing.T) {
-	var queued []string
+	var queued [][]agent.ContentPart
 	engine := &fakeEngine{
-		steerFunction: func(prompt string) bool {
-			queued = append(queued, prompt)
+		steerFunction: func(content []agent.ContentPart) bool {
+			queued = append(queued, cloneTerminalContent(content))
 			return true
 		},
-		clearFunction: func() []string {
-			messages := append([]string(nil), queued...)
+		clearFunction: func() [][]agent.ContentPart {
+			messages := queued
 			queued = nil
 			return messages
 		},
@@ -1184,8 +1228,8 @@ func TestTUIControllerQueuesAndDequeuesSteering(t *testing.T) {
 	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(queued, []string{"steer"}) || !slices.Equal(controller.model.steering.pending(), []string{"steer"}) {
-		t.Fatalf("engine queue=%q coordinator queue=%q", queued, controller.model.steering.pending())
+	if !slices.Equal(steeringTexts(queued), []string{"steer"}) || !slices.Equal(steeringTexts(controller.model.steering.pending()), []string{"steer"}) {
+		t.Fatalf("engine queue=%q coordinator queue=%q", steeringTexts(queued), steeringTexts(controller.model.steering.pending()))
 	}
 	if calls := engine.snapshot(); len(calls) != 0 {
 		t.Fatalf("steering started runs: %q", calls)
@@ -1198,15 +1242,18 @@ func TestTUIControllerQueuesAndDequeuesSteering(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(queued) != 0 || len(controller.model.steering.pending()) != 0 || model.inputText() != "steer\n\ndraft" {
-		t.Fatalf("engine queue=%q coordinator queue=%q input=%q", queued, controller.model.steering.pending(), model.inputText())
+		t.Fatalf("engine queue=%q coordinator queue=%q input=%q", steeringTexts(queued), steeringTexts(controller.model.steering.pending()), model.inputText())
 	}
 }
 
 func TestTUIControllerCancelRestoresQueuedAndDeferredSteering(t *testing.T) {
-	engine := &fakeEngine{clearFunction: func() []string { return []string{"accepted"} }}
+	engine := &fakeEngine{clearFunction: func() [][]agent.ContentPart { return [][]agent.ContentPart{testTextContent("accepted")} }}
 	model := newTUIModel(80, 24, Options{})
 	model.running = true
-	model.steering = steeringCoordinator{accepted: []string{"accepted"}, deferred: []string{"deferred"}}
+	model.steering = steeringCoordinator{
+		accepted: [][]agent.ContentPart{testTextContent("accepted")},
+		deferred: [][]agent.ContentPart{testTextContent("deferred")},
+	}
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)
 	}
@@ -1221,7 +1268,7 @@ func TestTUIControllerCancelRestoresQueuedAndDeferredSteering(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !canceled || !model.interrupted || model.activity.kind != activityCanceling || len(controller.model.steering.pending()) != 0 {
-		t.Fatalf("canceled=%v interrupted=%v activity=%+v pending=%q", canceled, model.interrupted, model.activity, controller.model.steering.pending())
+		t.Fatalf("canceled=%v interrupted=%v activity=%+v pending=%+v", canceled, model.interrupted, model.activity, controller.model.steering.pending())
 	}
 	if model.inputText() != "accepted\n\ndeferred\n\ndraft" {
 		t.Fatalf("restored input = %q", model.inputText())
@@ -1231,7 +1278,7 @@ func TestTUIControllerCancelRestoresQueuedAndDeferredSteering(t *testing.T) {
 func TestTUIControllerRunsRejectedSteeringSequentially(t *testing.T) {
 	steerCalls := 0
 	engine := &fakeEngine{
-		steerFunction: func(string) bool {
+		steerFunction: func([]agent.ContentPart) bool {
 			steerCalls++
 			return false
 		},
@@ -1255,15 +1302,15 @@ func TestTUIControllerRunsRejectedSteeringSequentially(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if steerCalls != 1 || !slices.Equal(controller.model.steering.deferred, []string{"one", "two"}) {
-		t.Fatalf("steer calls=%d deferred=%q", steerCalls, controller.model.steering.deferred)
+	if steerCalls != 1 || !slices.Equal(steeringTexts(controller.model.steering.deferred), []string{"one", "two"}) {
+		t.Fatalf("steer calls=%d deferred=%q", steerCalls, steeringTexts(controller.model.steering.deferred))
 	}
 
 	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventEngine, engine: engineMessage{done: true}}); err != nil {
 		t.Fatal(err)
 	}
-	if !model.running || !slices.Equal(controller.model.steering.deferred, []string{"two"}) {
-		t.Fatalf("first replay running=%v deferred=%q", model.running, controller.model.steering.deferred)
+	if !model.running || !slices.Equal(steeringTexts(controller.model.steering.deferred), []string{"two"}) {
+		t.Fatalf("first replay running=%v deferred=%q", model.running, steeringTexts(controller.model.steering.deferred))
 	}
 	var firstDone engineMessage
 	select {
@@ -1285,21 +1332,63 @@ func TestTUIControllerRunsRejectedSteeringSequentially(t *testing.T) {
 	}
 	calls := engine.snapshot()
 	if !slices.Equal(calls, []string{"one", "two"}) || model.running || len(controller.model.steering.pending()) != 0 {
-		t.Fatalf("calls=%q running=%v pending=%q", calls, model.running, controller.model.steering.pending())
+		t.Fatalf("calls=%q running=%v pending=%+v", calls, model.running, controller.model.steering.pending())
+	}
+}
+
+func TestTUIControllerStartsDeferredImageSteering(t *testing.T) {
+	content := []agent.ContentPart{
+		{Kind: agent.ContentPartText, Text: "describe "},
+		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: validTestPNG(t)}},
+	}
+	started := make(chan []agent.ContentPart, 1)
+	engine := &fakeEngine{runContentFunction: func(_ context.Context, content []agent.ContentPart, _ agent.EventSink) (agent.RunResult, error) {
+		started <- cloneTerminalContent(content)
+		return agent.RunResult{}, nil
+	}}
+	messages := make(chan engineMessage, 1)
+	model := newTUIModel(80, 24, Options{})
+	model.steering.deferred = [][]agent.ContentPart{cloneTerminalContent(content)}
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
+		engineMessages: messages, stopped: make(chan struct{}),
+	}
+
+	if err := controller.startDeferredTurn(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-started:
+		if !contentEqual(got, content) {
+			t.Fatalf("deferred content = %+v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("deferred turn did not start")
+	}
+	select {
+	case message := <-messages:
+		if !message.done || message.err != nil {
+			t.Fatalf("engine message = %+v", message)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("deferred turn did not finish")
+	}
+	if len(model.steering.pending()) != 0 || len(model.blocks) != 1 || !contentEqual(model.blocks[0].content, content) {
+		t.Fatalf("steering = %+v, blocks = %+v", model.steering.pending(), model.blocks)
 	}
 }
 
 func TestTUIControllerIgnoresSteeringDeliveredAfterRestoration(t *testing.T) {
-	engine := &fakeEngine{clearFunction: func() []string { return []string{"accepted"} }}
+	engine := &fakeEngine{clearFunction: func() [][]agent.ContentPart { return [][]agent.ContentPart{testTextContent("accepted")} }}
 	model := newTUIModel(80, 24, Options{})
-	model.steering.accepted = []string{"accepted"}
+	model.steering.accepted = [][]agent.ContentPart{testTextContent("accepted")}
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 	}
 
 	controller.restoreQueuedInput()
-	if _, err := controller.handleAgentEvent(engineMessage{event: &agent.Event{Kind: agent.EventSteering, Text: "accepted"}}); err != nil {
+	if _, err := controller.handleAgentEvent(engineMessage{event: &agent.Event{Kind: agent.EventSteering, Content: testTextContent("accepted")}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(model.blocks) != 0 || model.inputText() != "accepted" {
@@ -1310,8 +1399,8 @@ func TestTUIControllerIgnoresSteeringDeliveredAfterRestoration(t *testing.T) {
 func TestTUIControllerRestoresSteeringAfterRunError(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.running = true
-	model.steering.accepted = []string{"retry this"}
-	engine := &fakeEngine{clearFunction: func() []string { return []string{"retry this"} }}
+	model.steering.accepted = [][]agent.ContentPart{testTextContent("retry this")}
+	engine := &fakeEngine{clearFunction: func() [][]agent.ContentPart { return [][]agent.ContentPart{testTextContent("retry this")} }}
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
@@ -1322,7 +1411,7 @@ func TestTUIControllerRestoresSteeringAfterRunError(t *testing.T) {
 		t.Fatal(err)
 	}
 	if model.inputText() != "retry this" || len(controller.model.steering.pending()) != 0 || model.activity.kind != activityError {
-		t.Fatalf("input=%q steering=%q activity=%+v", model.inputText(), controller.model.steering.pending(), model.activity)
+		t.Fatalf("input=%q steering=%+v activity=%+v", model.inputText(), controller.model.steering.pending(), model.activity)
 	}
 }
 

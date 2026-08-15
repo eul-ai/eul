@@ -85,10 +85,6 @@ func handleKeyInput(model *tuiModel, key keyEvent, frame terminalFrame) (tuiActi
 	case keyCtrlL:
 		return tuiAction{kind: tuiActionRedraw}, nil
 	case keyCtrlV:
-		if model.running {
-			setInputError(model, fmt.Errorf("images cannot be attached while the agent is running"))
-			return tuiAction{}, nil
-		}
 		return tuiAction{kind: tuiActionAttachImage}, nil
 	case keyPageUp:
 		scrollConversation(model, -1, frame)
@@ -305,23 +301,25 @@ func reduceInterrupt(model *tuiModel) (tuiAction, error) {
 }
 
 func reduceSteeringPrompt(model *tuiModel) tuiAction {
-	prompt := model.inputText()
-	trimmed := strings.TrimSpace(prompt)
-	if trimmed == "" {
+	content, ok := model.submittingContent()
+	if !ok {
 		return tuiAction{}
 	}
-	if strings.HasPrefix(trimmed, "/") {
+
+	prompt := contentText(content)
+	trimmed := strings.TrimSpace(prompt)
+	if !contentHasImage(content) && strings.HasPrefix(trimmed, "/") {
 		action, command, ok := matchSlashCommand(prompt, trimmed, model.fastModeAvailable)
 		if ok && command.availableDuringRun {
-			model.takePrompt()
+			model.finishSubmission(content)
 			return action
 		}
 		setInputError(model, fmt.Errorf("commands cannot be queued while the agent is running"))
 		return tuiAction{}
 	}
 
-	prompt, _ = model.takePrompt()
-	return tuiAction{kind: tuiActionSteer, prompt: prompt}
+	model.finishSubmission(content)
+	return tuiAction{kind: tuiActionSteer, prompt: prompt, content: content}
 }
 
 func reducePrompt(model *tuiModel) tuiAction {

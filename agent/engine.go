@@ -167,11 +167,11 @@ func (e *Engine) Reset() error {
 	return nil
 }
 
-func (e *Engine) Steer(text string) bool {
-	return e.continuations.steer(text)
+func (e *Engine) Steer(content []ContentPart) bool {
+	return e.continuations.steer(content)
 }
 
-func (e *Engine) ClearSteering() []string {
+func (e *Engine) ClearSteering() [][]ContentPart {
 	return e.continuations.clearSteering()
 }
 
@@ -200,12 +200,14 @@ func (e *Engine) endContinuations() {
 }
 
 func deliverContinuation(current *conversationState, next pendingContinuation, sink EventSink) error {
-	current.inputs = append(current.inputs, userInput([]ContentPart{{Kind: ContentPartText, Text: next.text}}))
-	eventKind := EventSteering
+	current.inputs = append(current.inputs, userInput(next.content))
+	event := Event{Kind: EventSteering, Content: cloneContentParts(next.content)}
 	if next.kind == continuationGoal {
-		eventKind = EventGoalContinuation
+		event.Kind = EventGoalContinuation
+		event.Text = NewUserInput(next.content...).PlainText()
+		event.Content = nil
 	}
-	if err := emit(sink, Event{Kind: eventKind, Text: next.text}); err != nil {
+	if err := emit(sink, event); err != nil {
 		current.inputs = current.inputs[:len(current.inputs)-1]
 		return err
 	}

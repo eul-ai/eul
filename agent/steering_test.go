@@ -48,7 +48,7 @@ func TestSteeringSignalInterruptsToolWaitAndDeliversContinuation(t *testing.T) {
 		done <- err
 	}()
 	<-toolbox.started
-	if !engine.Steer("redirect") {
+	if !engine.Steer(textParts("redirect")) {
 		t.Fatal("active engine rejected steering")
 	}
 	if err := <-done; err != nil {

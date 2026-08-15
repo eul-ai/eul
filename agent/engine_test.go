@@ -31,6 +31,10 @@ func (p *retryingProvider) RetryGeneration(err error, failedAttempts int) (time.
 	return p.retry(err, failedAttempts)
 }
 
+func textParts(text string) []ContentPart {
+	return []ContentPart{{Kind: ContentPartText, Text: text}}
+}
+
 type scriptedProvider struct {
 	t         *testing.T
 	steps     []providerStep
@@ -159,7 +163,7 @@ func TestEngineClearsQueuedSteeringAfterFailure(t *testing.T) {
 	}()
 
 	<-started
-	if !engine.Steer("queued") {
+	if !engine.Steer(textParts("queued")) {
 		t.Fatal("active engine rejected steering")
 	}
 	close(release)
@@ -167,9 +171,9 @@ func TestEngineClearsQueuedSteeringAfterFailure(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if queued := engine.ClearSteering(); len(queued) != 0 {
-		t.Fatalf("stale steering = %q", queued)
+		t.Fatalf("stale steering = %+v", queued)
 	}
-	if engine.Steer("late") {
+	if engine.Steer(textParts("late")) {
 		t.Fatal("failed engine accepted steering")
 	}
 	result, err := engine.Run(context.Background(), "next", discardEvents)

@@ -270,8 +270,8 @@ func (c *tuiController) handleEngineMessage(ctx context.Context, message engineM
 
 func (c *tuiController) handleAgentEvent(message engineMessage) (bool, error) {
 	if message.event.Kind == agent.EventSteering {
-		if c.model.deliverSteering(message.event.Text) {
-			c.model.appendBlock(blockUser, message.event.Text)
+		if c.model.deliverSteering(message.event.Content) {
+			c.model.appendUserContent(message.event.Content)
 			c.model.setActiveActivity(activity{kind: activityThinking})
 		}
 	} else {

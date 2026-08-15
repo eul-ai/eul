@@ -21,6 +21,7 @@ const (
 type Event struct {
 	Kind         EventKind
 	Text         string
+	Content      []ContentPart
 	Call         ToolCall
 	Presentation ToolPresentation
 	Result       ToolResult

@@ -24,7 +24,7 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)
 	}
-	queued := []string{"accepted", "deferred"}
+	queued := [][]agent.ContentPart{testTextContent("accepted"), testTextContent("deferred")}
 
 	checkpoint := checkpointModel(model, queued)
 	if description := checkpoint.Description(); description != "First line of the prompt" {
@@ -77,6 +77,29 @@ func TestTerminalCheckpointProjectsDraftImagesOut(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "cG5n") {
 		t.Fatalf("draft image was persisted: %s", encoded)
+	}
+}
+
+func TestTerminalCheckpointProjectsQueuedImagesOut(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	queued := [][]agent.ContentPart{{
+		{Kind: agent.ContentPartText, Text: "before "},
+		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("png")}},
+		{Kind: agent.ContentPartText, Text: "after"},
+	}, {
+		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("other")}},
+	}}
+
+	checkpoint := checkpointModel(model, queued)
+	if len(checkpoint.data.QueuedInputs) != 1 || checkpoint.data.QueuedInputs[0] != "before after" {
+		t.Fatalf("queued inputs = %q", checkpoint.data.QueuedInputs)
+	}
+	encoded, err := json.Marshal(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "cG5n") || strings.Contains(string(encoded), "b3RoZXI=") {
+		t.Fatalf("queued image was persisted: %s", encoded)
 	}
 }
 

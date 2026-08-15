@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"unicode"
@@ -384,6 +385,27 @@ func cloneTerminalContent(content []agent.ContentPart) []agent.ContentPart {
 	return cloned
 }
 
+func contentEqual(left, right []agent.ContentPart) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].Kind != right[index].Kind || left[index].Text != right[index].Text {
+			return false
+		}
+		leftImage := left[index].Image
+		rightImage := right[index].Image
+		switch {
+		case leftImage == nil && rightImage == nil:
+		case leftImage == nil || rightImage == nil:
+			return false
+		case leftImage.MediaType != rightImage.MediaType || !bytes.Equal(leftImage.Data, rightImage.Data):
+			return false
+		}
+	}
+	return true
+}
+
 func sanitizeContent(content []agent.ContentPart) []agent.ContentPart {
 	content = cloneTerminalContent(content)
 	for index := range content {
@@ -392,6 +414,24 @@ func sanitizeContent(content []agent.ContentPart) []agent.ContentPart {
 		}
 	}
 	return content
+}
+
+func editorItemsFromContent(content []agent.ContentPart) []editorItem {
+	var items []editorItem
+	for _, part := range content {
+		switch part.Kind {
+		case agent.ContentPartText:
+			items = append(items, editorItemsFromText(part.Text)...)
+		case agent.ContentPartImage:
+			if part.Image == nil {
+				continue
+			}
+			image := *part.Image
+			image.Data = append([]byte(nil), image.Data...)
+			items = append(items, editorItem{kind: editorItemImage, image: &image})
+		}
+	}
+	return items
 }
 
 func editorContent(items []editorItem) []agent.ContentPart {
@@ -465,7 +505,9 @@ func (m *tuiModel) resolveImage(requestID uint64, image agent.Image) error {
 	image.Data = append([]byte(nil), image.Data...)
 	m.input[index] = editorItem{kind: editorItemImage, image: &image}
 	m.clearInputPickers()
-	m.activity = activity{kind: activityReady, detail: "image attached"}
+	if !m.running {
+		m.activity = activity{kind: activityReady, detail: "image attached"}
+	}
 	return nil
 }
 

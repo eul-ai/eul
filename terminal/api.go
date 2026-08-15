@@ -36,8 +36,8 @@ type Operations struct {
 }
 
 type Controls struct {
-	Steer            func(string) bool
-	ClearSteering    func() []string
+	Steer            func([]agent.ContentPart) bool
+	ClearSteering    func() [][]agent.ContentPart
 	SetGoal          func(string) error
 	Goal             func() (agent.GoalState, bool)
 	ClearGoal        func()

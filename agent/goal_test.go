@@ -81,7 +81,7 @@ func TestEngineGivesSteeringPriorityOverGoal(t *testing.T) {
 		done <- err
 	}()
 	<-started
-	if !engine.Steer("user redirect") {
+	if !engine.Steer(textParts("user redirect")) {
 		t.Fatal("engine rejected steering")
 	}
 	close(release)
@@ -135,7 +135,7 @@ func TestEngineDrainsSteeringBeforeGoalContinuation(t *testing.T) {
 		done <- err
 	}()
 	<-started
-	if !engine.Steer("steer one") || !engine.Steer("steer two") {
+	if !engine.Steer(textParts("steer one")) || !engine.Steer(textParts("steer two")) {
 		t.Fatal("engine rejected steering")
 	}
 	close(release)

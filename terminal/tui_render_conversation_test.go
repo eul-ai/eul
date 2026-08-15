@@ -445,7 +445,7 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 		t.Fatal("width change did not invalidate cached blocks")
 	}
 
-	model.steering.accepted = []string{"inspect another file"}
+	model.steering.accepted = [][]agent.ContentPart{testTextContent("inspect another file")}
 	model.conversationChanged()
 	assertCachedConversationMatchesUncached(t, renderer, model)
 	model.steering.accepted = nil
@@ -473,7 +473,7 @@ func TestPendingSteeringRendersAndDeliversInTranscriptOrder(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
 	model.beginTurn("initial")
 	model.appendStream(blockAssistant, "answer")
-	model.steering.accepted = []string{"redirect"}
+	model.steering.accepted = [][]agent.ContentPart{testTextContent("redirect")}
 	controller := tuiController{model: model}
 	model.appendStream(blockAssistant, " continues")
 
@@ -489,11 +489,32 @@ func TestPendingSteeringRendersAndDeliversInTranscriptOrder(t *testing.T) {
 		t.Fatal("cursor hidden while agent is running")
 	}
 
-	if _, err := controller.handleAgentEvent(engineMessage{event: &agent.Event{Kind: agent.EventSteering, Text: "redirect"}}); err != nil {
+	if _, err := controller.handleAgentEvent(engineMessage{event: &agent.Event{Kind: agent.EventSteering, Content: testTextContent("redirect")}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(controller.model.steering.pending()) != 0 || len(model.blocks) != 3 || model.blocks[2].kind != blockUser || model.blocks[2].text != "redirect" {
-		t.Fatalf("steering=%q blocks=%+v", controller.model.steering.pending(), model.blocks)
+		t.Fatalf("steering=%+v blocks=%+v", controller.model.steering.pending(), model.blocks)
+	}
+}
+
+func TestPendingImageSteeringRendersAndDelivers(t *testing.T) {
+	content := []agent.ContentPart{
+		{Kind: agent.ContentPartText, Text: "describe "},
+		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("png")}},
+	}
+	model := newTUIModel(40, 8, Options{})
+	model.steering.accepted = [][]agent.ContentPart{cloneTerminalContent(content)}
+	controller := tuiController{model: model}
+
+	lines := modelConversationLines(model, 40)
+	if slices.IndexFunc(lines, func(line styledLine) bool { return strings.Contains(line.text, imageAttachmentLabel) }) < 0 {
+		t.Fatalf("queued image lines = %+v", lines)
+	}
+	if _, err := controller.handleAgentEvent(engineMessage{event: &agent.Event{Kind: agent.EventSteering, Content: content}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(model.steering.pending()) != 0 || len(model.blocks) != 1 || !contentEqual(model.blocks[0].content, content) {
+		t.Fatalf("steering = %+v, blocks = %+v", model.steering.pending(), model.blocks)
 	}
 }
 
@@ -501,11 +522,11 @@ func TestGoalContinuationHasDistinctTranscriptBlock(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
 	model.beginTurn("initial")
 	model.appendStream(blockAssistant, "first response")
-	model.steering.accepted = []string{"same text"}
+	model.steering.accepted = [][]agent.ContentPart{testTextContent("same text")}
 
 	model.applyAgentEvent(agent.Event{Kind: agent.EventGoalContinuation, Text: "same text"})
 	if len(model.steering.pending()) != 1 || len(model.blocks) != 3 || model.blocks[2].kind != blockInfo {
-		t.Fatalf("steering=%q blocks=%+v", model.steering.pending(), model.blocks)
+		t.Fatalf("steering=%+v blocks=%+v", model.steering.pending(), model.blocks)
 	}
 	model.appendStream(blockAssistant, "second response")
 	if len(model.blocks) != 4 || model.blocks[3].kind != blockAssistant {

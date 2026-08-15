@@ -12,12 +12,6 @@ func (c *tuiController) handleClipboardImage(requestID uint64, image agent.Image
 	if !active {
 		return false, nil
 	}
-	if c.model.running {
-		cancel()
-		delete(c.clipboardRequests, requestID)
-		c.model.removePendingImage(requestID)
-		return false, nil
-	}
 	cancel()
 	delete(c.clipboardRequests, requestID)
 

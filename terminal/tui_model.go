@@ -202,37 +202,37 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 	return model
 }
 
-func (m *tuiModel) pendingSteering() []string {
+func (m *tuiModel) pendingSteering() [][]agent.ContentPart {
 	return m.steering.pending()
 }
 
-func (m *tuiModel) enqueueSteering(prompt string, accepted bool) {
-	m.steering.enqueue(prompt, accepted)
+func (m *tuiModel) enqueueSteering(content []agent.ContentPart, accepted bool) {
+	m.steering.enqueue(content, accepted)
 	m.conversationChanged()
 }
 
-func (m *tuiModel) deliverSteering(prompt string) bool {
-	if !m.steering.delivered(prompt) {
+func (m *tuiModel) deliverSteering(content []agent.ContentPart) bool {
+	if !m.steering.delivered(content) {
 		return false
 	}
 	m.conversationChanged()
 	return true
 }
 
-func (m *tuiModel) nextDeferredSteering() (string, bool) {
-	prompt, ok := m.steering.nextDeferred()
+func (m *tuiModel) nextDeferredSteering() ([]agent.ContentPart, bool) {
+	content, ok := m.steering.nextDeferred()
 	if ok {
 		m.conversationChanged()
 	}
-	return prompt, ok
+	return content, ok
 }
 
-func (m *tuiModel) restoreDeferredSteering(prompt string) {
-	m.steering.restoreDeferred(prompt)
+func (m *tuiModel) restoreDeferredSteering(content []agent.ContentPart) {
+	m.steering.restoreDeferred(content)
 	m.conversationChanged()
 }
 
-func (m *tuiModel) clearSteering(clear func() []string) []string {
+func (m *tuiModel) clearSteering(clear func() [][]agent.ContentPart) [][]agent.ContentPart {
 	messages := m.steering.restore(clear)
 	if len(messages) > 0 {
 		m.conversationChanged()
@@ -386,17 +386,26 @@ func (m *tuiModel) setActiveActivity(next activity) {
 	}
 }
 
-func (m *tuiModel) restoreSteering(messages []string) {
+func (m *tuiModel) restoreSteering(messages [][]agent.ContentPart) {
 	if len(messages) == 0 {
 		return
 	}
 
-	queued := strings.Join(messages, "\n\n")
-	current := m.inputText()
-	if strings.TrimSpace(current) != "" {
-		queued += "\n\n" + current
+	var restored []editorItem
+	for index, content := range messages {
+		if index > 0 {
+			restored = append(restored, editorItemsFromText("\n\n")...)
+		}
+		restored = append(restored, editorItemsFromContent(content)...)
 	}
-	m.setInput(queued)
+	if len(m.input) > 0 {
+		restored = append(restored, editorItemsFromText("\n\n")...)
+		restored = append(restored, m.input...)
+	}
+	m.input = restored
+	m.cursor = len(m.input)
+	m.leaveHistory()
+	m.clearInputPickers()
 }
 
 func (m *tuiModel) showPermission(request PermissionRequest, index, total int) {

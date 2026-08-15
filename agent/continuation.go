@@ -31,8 +31,8 @@ const (
 )
 
 type pendingContinuation struct {
-	kind continuationKind
-	text string
+	kind    continuationKind
+	content []ContentPart
 }
 
 type GoalState struct {
@@ -43,9 +43,17 @@ type GoalState struct {
 type continuationArbiter struct {
 	mu                sync.Mutex
 	acceptingSteering bool
-	steering          []string
+	steering          [][]ContentPart
 	toolRoundSteering chan struct{}
 	goal              *GoalState
+}
+
+func cloneContentBatches(batches [][]ContentPart) [][]ContentPart {
+	cloned := make([][]ContentPart, len(batches))
+	for index, content := range batches {
+		cloned[index] = cloneContentParts(content)
+	}
+	return cloned
 }
 
 func (arbiter *continuationArbiter) beginRun() {
@@ -66,14 +74,14 @@ func (arbiter *continuationArbiter) endRun() {
 	arbiter.acceptingSteering = false
 }
 
-func (arbiter *continuationArbiter) steer(text string) bool {
+func (arbiter *continuationArbiter) steer(content []ContentPart) bool {
 	arbiter.mu.Lock()
 	defer arbiter.mu.Unlock()
 
 	if !arbiter.acceptingSteering {
 		return false
 	}
-	arbiter.steering = append(arbiter.steering, text)
+	arbiter.steering = append(arbiter.steering, cloneContentParts(content))
 	if arbiter.toolRoundSteering != nil {
 		close(arbiter.toolRoundSteering)
 		arbiter.toolRoundSteering = nil
@@ -81,11 +89,11 @@ func (arbiter *continuationArbiter) steer(text string) bool {
 	return true
 }
 
-func (arbiter *continuationArbiter) clearSteering() []string {
+func (arbiter *continuationArbiter) clearSteering() [][]ContentPart {
 	arbiter.mu.Lock()
 	defer arbiter.mu.Unlock()
 
-	steering := append([]string(nil), arbiter.steering...)
+	steering := cloneContentBatches(arbiter.steering)
 	arbiter.steering = nil
 	arbiter.toolRoundSteering = nil
 	return steering
@@ -187,15 +195,19 @@ func (arbiter *continuationArbiter) next(point continuationPoint) (pendingContin
 	defer arbiter.mu.Unlock()
 
 	if len(arbiter.steering) > 0 {
-		steering := arbiter.steering[0]
+		content := arbiter.steering[0]
+		arbiter.steering[0] = nil
 		arbiter.steering = arbiter.steering[1:]
-		return pendingContinuation{kind: continuationSteering, text: steering}, true
+		return pendingContinuation{kind: continuationSteering, content: content}, true
 	}
 
 	if point == continuationBeforeSettle && arbiter.goal != nil && !arbiter.goal.Complete {
 		return pendingContinuation{
 			kind: continuationGoal,
-			text: goalContinuationPrompt + "\n\nGoal: " + arbiter.goal.Objective,
+			content: []ContentPart{{
+				Kind: ContentPartText,
+				Text: goalContinuationPrompt + "\n\nGoal: " + arbiter.goal.Objective,
+			}},
 		}, true
 	}
 

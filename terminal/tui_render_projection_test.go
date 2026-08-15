@@ -2,8 +2,8 @@ package terminal
 
 func modelConversationLines(model *tuiModel, width int) []styledLine {
 	blocks := append([]conversationBlock(nil), model.blocks...)
-	for _, message := range model.pendingSteering() {
-		blocks = append(blocks, conversationBlock{kind: blockInfo, text: "Queued: " + message})
+	for _, content := range model.pendingSteering() {
+		blocks = append(blocks, conversationBlock{kind: blockInfo, text: "Queued: " + displayContent(content)})
 	}
 	lines := conversationLines(blocks, width)
 	result := make([]styledLine, 0, len(lines)+conversationVerticalPadding*2)

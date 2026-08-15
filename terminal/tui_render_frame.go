@@ -1,11 +1,8 @@
 package terminal
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
-
-	"github.com/eul-ai/eul/agent"
 )
 
 type terminalFrame struct {
@@ -96,8 +93,8 @@ func (r *tuiRenderer) prepareConversation(model *tuiModel) {
 	for _, rendered := range r.conversationBlocks {
 		appendBlock(rendered)
 	}
-	for _, message := range pendingSteering {
-		appendBlock(renderConversationBlock(conversationBlock{kind: blockInfo, text: "Queued: " + message}, model.width))
+	for _, content := range pendingSteering {
+		appendBlock(renderConversationBlock(conversationBlock{kind: blockInfo, text: "Queued: " + displayContent(content)}, model.width))
 	}
 	for range conversationVerticalPadding {
 		appendBlank()
@@ -121,27 +118,6 @@ func renderConversationBlock(block conversationBlock, width int) renderedConvers
 	block.tool = block.tool.Clone()
 	block.content = cloneTerminalContent(block.content)
 	return renderedConversationBlock{block: block, lines: lines, plain: plain, separators: separators}
-}
-
-func contentEqual(left, right []agent.ContentPart) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index].Kind != right[index].Kind || left[index].Text != right[index].Text {
-			return false
-		}
-		leftImage := left[index].Image
-		rightImage := right[index].Image
-		switch {
-		case leftImage == nil && rightImage == nil:
-		case leftImage == nil || rightImage == nil:
-			return false
-		case leftImage.MediaType != rightImage.MediaType || !bytes.Equal(leftImage.Data, rightImage.Data):
-			return false
-		}
-	}
-	return true
 }
 
 func conversationBlocksEqual(left, right conversationBlock) bool {

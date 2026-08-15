@@ -53,7 +53,7 @@ func TestEngineQueuesSteeringDuringGenerationOneAtATime(t *testing.T) {
 	}()
 
 	<-started
-	if !engine.Steer("steer one") || !engine.Steer("steer two") {
+	if !engine.Steer(textParts("steer one")) || !engine.Steer(textParts("steer two")) {
 		t.Fatal("active engine rejected steering")
 	}
 	close(release)
@@ -64,14 +64,66 @@ func TestEngineQueuesSteeringDuringGenerationOneAtATime(t *testing.T) {
 	var delivered []string
 	for _, event := range events {
 		if event.Kind == EventSteering {
-			delivered = append(delivered, event.Text)
+			delivered = append(delivered, NewUserInput(event.Content...).PlainText())
 		}
 	}
 	if !slices.Equal(delivered, []string{"steer one", "steer two"}) {
 		t.Fatalf("delivered steering = %q", delivered)
 	}
-	if engine.Steer("too late") {
+	if engine.Steer(textParts("too late")) {
 		t.Fatal("completed engine accepted steering")
+	}
+}
+
+func TestEnginePreservesImageSteeringContent(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	want := []ContentPart{
+		{Kind: ContentPartText, Text: "describe "},
+		{Kind: ContentPartImage, Image: &Image{MediaType: "image/png", Data: []byte("png")}},
+		{Kind: ContentPartText, Text: " please"},
+	}
+	provider := &scriptedProvider{t: t, steps: []providerStep{
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			assertUserInput(t, request, "start")
+			close(started)
+			<-release
+			return Response{Text: "initial", State: []byte("one")}, nil
+		},
+		func(_ context.Context, request Request, _ TextSink) (Response, error) {
+			if len(request.Inputs) != 1 || !reflect.DeepEqual(request.Inputs[0], NewUserInput(want...)) {
+				t.Fatalf("image steering input = %+v", request.Inputs)
+			}
+			return Response{Text: "done", State: []byte("two")}, nil
+		},
+	}}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+	done := make(chan error, 1)
+	var delivered []ContentPart
+	go func() {
+		_, err := engine.Run(context.Background(), "start", func(event Event) error {
+			if event.Kind == EventSteering {
+				delivered = cloneContentParts(event.Content)
+			}
+			return nil
+		})
+		done <- err
+	}()
+
+	<-started
+	steering := cloneContentParts(want)
+	if !engine.Steer(steering) {
+		t.Fatal("active engine rejected image steering")
+	}
+	steering[0].Text = "changed"
+	steering[1].Image.Data[0] = 'x'
+	close(release)
+
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(delivered, want) {
+		t.Fatalf("steering event content = %+v", delivered)
 	}
 }
 
@@ -121,7 +173,7 @@ func TestEngineDeliversSteeringAfterCompleteToolBatch(t *testing.T) {
 	}()
 
 	<-toolStarted
-	if !engine.Steer("redirect") {
+	if !engine.Steer(textParts("redirect")) {
 		t.Fatal("engine rejected steering during tool execution")
 	}
 	close(releaseTool)
@@ -181,7 +233,7 @@ func TestEngineDoesNotCheckpointSteeringWhenDeliveryEventFails(t *testing.T) {
 	}()
 
 	<-started
-	if !engine.Steer("steer") {
+	if !engine.Steer(textParts("steer")) {
 		t.Fatal("active engine rejected steering")
 	}
 	close(release)
@@ -223,7 +275,7 @@ func TestEnginePreservesToolResultsWhenSteeringDeliveryEventFails(t *testing.T) 
 	_, err := engine.Run(context.Background(), "start", func(event Event) error {
 		switch event.Kind {
 		case EventToolExecute:
-			queued = engine.Steer("steer")
+			queued = engine.Steer(textParts("steer"))
 		case EventSteering:
 			return sinkErr
 		}
@@ -258,7 +310,7 @@ func TestEngineClearsQueuedSteeringAfterCancellationAndReset(t *testing.T) {
 	}()
 
 	<-started
-	if !engine.Steer("queued") {
+	if !engine.Steer(textParts("queued")) {
 		t.Fatal("active engine rejected steering")
 	}
 	cancel()
@@ -266,15 +318,15 @@ func TestEngineClearsQueuedSteeringAfterCancellationAndReset(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if queued := engine.ClearSteering(); len(queued) != 0 {
-		t.Fatalf("stale steering = %q", queued)
+		t.Fatalf("stale steering = %+v", queued)
 	}
-	if engine.Steer("late") {
+	if engine.Steer(textParts("late")) {
 		t.Fatal("canceled engine accepted steering")
 	}
 	if err := engine.Reset(); err != nil {
 		t.Fatal(err)
 	}
 	if queued := engine.ClearSteering(); len(queued) != 0 {
-		t.Fatalf("reset steering = %q", queued)
+		t.Fatalf("reset steering = %+v", queued)
 	}
 }

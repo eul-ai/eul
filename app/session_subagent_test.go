@@ -309,7 +309,7 @@ func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) 
 		done <- err
 	}()
 	<-waitStarted
-	if !engine.Steer("redirect") {
+	if !engine.Steer(agent.NewTextInput("redirect").Content) {
 		t.Fatal("active engine rejected steering")
 	}
 	if err := <-done; err != nil {

@@ -20,8 +20,8 @@ type fakeEngine struct {
 	runFunction        func(context.Context, string, agent.EventSink) (agent.RunResult, error)
 	runContentFunction func(context.Context, []agent.ContentPart, agent.EventSink) (agent.RunResult, error)
 	compactFunction    func(context.Context, agent.EventSink) error
-	steerFunction      func(string) bool
-	clearFunction      func() []string
+	steerFunction      func([]agent.ContentPart) bool
+	clearFunction      func() [][]agent.ContentPart
 }
 
 func (e *fakeEngine) Run(ctx context.Context, prompt string, sink agent.EventSink) (agent.RunResult, error) {
@@ -60,14 +60,14 @@ func (e *fakeEngine) Compact(ctx context.Context, sink agent.EventSink) error {
 	return function(ctx, sink)
 }
 
-func (e *fakeEngine) Steer(prompt string) bool {
+func (e *fakeEngine) Steer(content []agent.ContentPart) bool {
 	e.mu.Lock()
 	function := e.steerFunction
 	e.mu.Unlock()
-	return function != nil && function(prompt)
+	return function != nil && function(content)
 }
 
-func (e *fakeEngine) ClearSteering() []string {
+func (e *fakeEngine) ClearSteering() [][]agent.ContentPart {
 	e.mu.Lock()
 	function := e.clearFunction
 	e.mu.Unlock()
@@ -117,8 +117,8 @@ func (e *fakeEngine) compactionCount() int {
 type fakeEngineAPI interface {
 	RunContent(context.Context, []agent.ContentPart, agent.EventSink) (agent.RunResult, error)
 	Compact(context.Context, agent.EventSink) error
-	Steer(string) bool
-	ClearSteering() []string
+	Steer([]agent.ContentPart) bool
+	ClearSteering() [][]agent.ContentPart
 	SetGoal(string) error
 	Goal() (agent.GoalState, bool)
 	ClearGoal()
