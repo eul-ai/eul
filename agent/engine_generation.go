@@ -100,6 +100,7 @@ func (e *Engine) expandSkillContent(content []ContentPart) ([]ContentPart, error
 func (e *Engine) request(current conversationState) Request {
 	thinkingLevel, fastMode := e.currentSettings()
 	return Request{
+		SessionID:     e.sessionID,
 		Model:         e.model,
 		ThinkingLevel: thinkingLevel,
 		FastMode:      fastMode,

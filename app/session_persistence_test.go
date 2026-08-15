@@ -87,7 +87,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(requests) != 2 || string(requests[1].State) != "saved-state" || len(requests[1].Inputs) != 1 || requests[1].Inputs[0].PlainText() != "next prompt" {
+	if len(requests) != 2 || requests[0].SessionID != sessionID || requests[1].SessionID != sessionID || string(requests[1].State) != "saved-state" || len(requests[1].Inputs) != 1 || requests[1].Inputs[0].PlainText() != "next prompt" {
 		t.Fatalf("requests = %+v", requests)
 	}
 }

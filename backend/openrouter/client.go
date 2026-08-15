@@ -128,7 +128,7 @@ func requestOptions(metadataFor func(string) modelMetadata) responses.RequestOpt
 			return responses.RequestOptions{}, &unsupportedThinkingLevelError{level: level, model: request.Model}
 		}
 
-		options := responses.RequestOptions{ToolChoice: "auto", ParallelToolCalls: true}
+		options := responses.RequestOptions{SessionID: request.SessionID, ToolChoice: "auto", ParallelToolCalls: true}
 		if metadata.reasoning {
 			effort := string(level)
 			if level == agent.ThinkingOff {

@@ -58,6 +58,7 @@ func TestClientUsesOpenRouterResponsesEndpointHeadersAndState(t *testing.T) {
 		}
 
 		var wire struct {
+			SessionID         string            `json:"session_id"`
 			Model             string            `json:"model"`
 			Input             []json.RawMessage `json:"input"`
 			Stream            bool              `json:"stream"`
@@ -69,7 +70,7 @@ func TestClientUsesOpenRouterResponsesEndpointHeadersAndState(t *testing.T) {
 		if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
 			t.Error(err)
 		}
-		if wire.Model != "vendor/model" || !wire.Stream || wire.Reasoning["effort"] != "high" || len(wire.Include) != 1 || wire.Include[0] != "reasoning.encrypted_content" || wire.ServiceTier != "" || !wire.ParallelToolCalls {
+		if wire.SessionID != "session-123" || wire.Model != "vendor/model" || !wire.Stream || wire.Reasoning["effort"] != "high" || len(wire.Include) != 1 || wire.Include[0] != "reasoning.encrypted_content" || wire.ServiceTier != "" || !wire.ParallelToolCalls {
 			t.Errorf("request = %+v", wire)
 		}
 
@@ -99,6 +100,7 @@ func TestClientUsesOpenRouterResponsesEndpointHeadersAndState(t *testing.T) {
 	}
 	var reasoning string
 	first, err := client.Generate(context.Background(), agent.Request{
+		SessionID:     "session-123",
 		Model:         "vendor/model",
 		ThinkingLevel: agent.ThinkingHigh,
 		Inputs:        []agent.Input{agent.NewTextInput("inspect")},
@@ -111,6 +113,7 @@ func TestClientUsesOpenRouterResponsesEndpointHeadersAndState(t *testing.T) {
 	}
 
 	second, err := client.Generate(context.Background(), agent.Request{
+		SessionID:     "session-123",
 		Model:         "vendor/model",
 		ThinkingLevel: agent.ThinkingHigh,
 		State:         first.State,

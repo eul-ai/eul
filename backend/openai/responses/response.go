@@ -243,12 +243,37 @@ func formatResponseError(response responseError) string {
 		parts = append(parts, string(response.Code))
 	}
 
-	prefix := strings.Join(parts, "/")
-	if prefix == "" {
-		return response.Message
+	detail := strings.Join(parts, "/")
+	if detail != "" && response.Message != "" {
+		detail += ": "
 	}
-	if response.Message == "" {
-		return prefix
+	detail += response.Message
+
+	providerDetail := formatProviderError(response.Metadata)
+	switch {
+	case providerDetail == "":
+		return detail
+	case detail == "":
+		return providerDetail
+	default:
+		return detail + "; " + providerDetail
 	}
-	return prefix + ": " + response.Message
+}
+
+func formatProviderError(metadata responseErrorMetadata) string {
+	name := strings.TrimSpace(metadata.ProviderName)
+	detail := strings.TrimSpace(string(metadata.Raw))
+	var decoded string
+	if json.Unmarshal(metadata.Raw, &decoded) == nil {
+		detail = strings.TrimSpace(decoded)
+	}
+
+	switch {
+	case name == "":
+		return detail
+	case detail == "":
+		return name
+	default:
+		return name + ": " + detail
+	}
 }

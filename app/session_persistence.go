@@ -87,6 +87,7 @@ func newStoredAgentSession(
 	}
 
 	record := handle.Record()
+	session.engine.SetSessionID(record.ID)
 	if restore {
 		if err := session.engine.RestoreCheckpoint(record.Agent); err != nil {
 			return nil, session.finish(fmt.Errorf("restore agent session: %w", err))

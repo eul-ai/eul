@@ -16,6 +16,7 @@ const (
 )
 
 type createResponseRequest struct {
+	SessionID         string            `json:"session_id,omitempty"`
 	Model             string            `json:"model"`
 	ServiceTier       string            `json:"service_tier,omitempty"`
 	Instructions      string            `json:"instructions"`

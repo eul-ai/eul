@@ -179,6 +179,7 @@ type Usage struct {
 }
 
 type Request struct {
+	SessionID     string
 	Model         string
 	ThinkingLevel ThinkingLevel
 	FastMode      bool

@@ -30,6 +30,7 @@ type Engine struct {
 	mu                     sync.Mutex
 	provider               Provider
 	tools                  Toolbox
+	sessionID              string
 	model                  string
 	settings               *Settings
 	instructions           string
@@ -137,6 +138,13 @@ func (e *Engine) Compact(ctx context.Context, sink EventSink) error {
 	_, current, _, err := e.compactRequest(ctx, sink, compactor, e.request(current), current)
 	current.checkpoint(e)
 	return err
+}
+
+func (e *Engine) SetSessionID(sessionID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.sessionID = sessionID
 }
 
 func (e *Engine) SetThinkingLevel(level ThinkingLevel) error {

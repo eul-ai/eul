@@ -43,6 +43,22 @@ func TestClientParsesStructuredHTTPError(t *testing.T) {
 	}
 }
 
+func TestClientIncludesProviderHTTPErrorDetail(t *testing.T) {
+	const key = "provider-secret"
+	server := responseServer(t, http.StatusBadRequest, `{"error":{"code":400,"message":"Provider returned error","metadata":{"provider_name":"Google AI Studio","raw":"{\"error\":{\"code\":400,\"message\":\"Corrupted thought signature: provider-secret\",\"status\":\"INVALID_ARGUMENT\"}}"}}}`)
+	defer server.Close()
+	client := newTestClient(t, key, server.URL, Options{Redact: []string{key}})
+
+	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
+	var responseErr *httpResponseError
+	if !errors.As(err, &responseErr) || responseErr.statusCode != http.StatusBadRequest {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if message := err.Error(); !strings.Contains(message, "Google AI Studio") || !strings.Contains(message, "Corrupted thought signature") || strings.Contains(message, key) {
+		t.Fatalf("Generate() error = %v", err)
+	}
+}
+
 func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 	t.Run("HTTP error", func(t *testing.T) {
 		server := responseServer(t, http.StatusBadRequest, `{"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too many tokens"}}`)

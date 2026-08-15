@@ -25,6 +25,7 @@ const (
 )
 
 type RequestOptions struct {
+	SessionID         string
 	Reasoning         *Reasoning
 	ServiceTier       string
 	TextVerbosity     string
@@ -368,6 +369,7 @@ func (c *Client) configureRequest(request agent.Request, wireRequest *createResp
 		}
 	}
 
+	wireRequest.SessionID = options.SessionID
 	wireRequest.ServiceTier = options.ServiceTier
 	wireRequest.Stream = true
 	wireRequest.Reasoning = options.Reasoning
