@@ -14,9 +14,10 @@ import (
 type runnerFactory func(io.Reader, io.Writer) (sessionRunner, io.Closer, error)
 
 type sessionFactory struct {
-	env   environment
-	store *sessionStore
-	home  string
+	env            environment
+	store          *sessionStore
+	messageHistory *messageHistoryStore
+	home           string
 }
 
 func (factory sessionFactory) create(ctx context.Context, config resolvedConfig, driver backend.Driver) (*agentSession, error) {
@@ -24,7 +25,7 @@ func (factory sessionFactory) create(ctx context.Context, config resolvedConfig,
 	if err != nil {
 		return nil, err
 	}
-	return newStoredAgentSession(config, factory.env, backendRuntime, factory.store, nil)
+	return newStoredAgentSession(config, factory.env, backendRuntime, factory.store, factory.messageHistory, nil)
 }
 
 func (factory sessionFactory) open(ctx context.Context, cwd, sessionID string) (*agentSession, resolvedConfig, backend.Driver, error) {
@@ -37,7 +38,7 @@ func (factory sessionFactory) open(ctx context.Context, cwd, sessionID string) (
 		_ = handle.Close()
 		return nil, resolvedConfig{}, nil, err
 	}
-	session, err := newStoredAgentSession(config, factory.env, backendRuntime, factory.store, handle)
+	session, err := newStoredAgentSession(config, factory.env, backendRuntime, factory.store, factory.messageHistory, handle)
 	if err != nil {
 		return nil, resolvedConfig{}, nil, err
 	}
@@ -63,7 +64,8 @@ func run(ctx context.Context, options Options, dependencies Dependencies, newRun
 	home := dependencies.Home
 	env.newToolset = buildToolset
 	store := newSessionStore(home)
-	factory := sessionFactory{env: env, store: store, home: home}
+	messageHistory := newMessageHistoryStore(home)
+	factory := sessionFactory{env: env, store: store, messageHistory: messageHistory, home: home}
 
 	config, handle, driver, err := resolveInitialSession(ctx, options, env, store)
 	if err != nil {
@@ -78,7 +80,7 @@ func run(ctx context.Context, options Options, dependencies Dependencies, newRun
 			_ = closeSessionHandle(handle)
 			return openErr
 		}
-		session, err = newStoredAgentSession(config, env, backendRuntime, store, handle)
+		session, err = newStoredAgentSession(config, env, backendRuntime, store, messageHistory, handle)
 	}
 	if err != nil {
 		return err

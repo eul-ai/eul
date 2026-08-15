@@ -106,6 +106,11 @@ type StateChanges struct {
 	Notify func(Checkpoint, bool) error
 }
 
+type MessageHistory struct {
+	Entries []string
+	Append  func(string) error
+}
+
 type Events struct {
 	Interrupts         <-chan os.Signal
 	SubagentUpdates    <-chan subagent.Status
@@ -130,15 +135,16 @@ type Services struct {
 }
 
 type Options struct {
-	Input        io.Reader
-	Output       io.Writer
-	Config       Config
-	Operations   Operations
-	Controls     Controls
-	Sessions     Sessions
-	StateChanges StateChanges
-	Events       Events
-	Services     Services
+	Input          io.Reader
+	Output         io.Writer
+	Config         Config
+	Operations     Operations
+	Controls       Controls
+	Sessions       Sessions
+	StateChanges   StateChanges
+	MessageHistory MessageHistory
+	Events         Events
+	Services       Services
 }
 
 type fileDescriptor interface {

@@ -266,4 +266,5 @@ func restoreModelCheckpoint(model *tuiModel, checkpoint Checkpoint) {
 	model.historyIndex = -1
 	model.historyDraft = nil
 	model.historyDraftCursor = 0
+	model.pendingHistory = nil
 }

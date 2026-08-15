@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +16,7 @@ import (
 )
 
 func TestTerminalCheckpointRoundTrip(t *testing.T) {
-	model := newTUIModel(80, 24, Options{})
+	model := newTUIModel(80, 24, Options{MessageHistory: MessageHistory{Entries: []string{"global prompt"}}})
 	model.beginTurn("  First line of the prompt  \nsecond line")
 	model.appendBlock(blockAssistant, "answer")
 	model.running = false
@@ -27,6 +28,9 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	queued := [][]agent.ContentPart{testTextContent("accepted"), testTextContent("deferred")}
 
 	checkpoint := checkpointModel(model, queued)
+	if !slices.Equal(checkpoint.data.History, []string{"older prompt"}) {
+		t.Fatalf("checkpoint history = %q", checkpoint.data.History)
+	}
 	if description := checkpoint.Description(); description != "First line of the prompt" {
 		t.Fatalf("description = %q", description)
 	}
@@ -39,7 +43,10 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	restored := newTUIModel(100, 30, Options{Config: Config{InitialCheckpoint: &decoded}})
+	restored := newTUIModel(100, 30, Options{
+		Config:         Config{InitialCheckpoint: &decoded},
+		MessageHistory: MessageHistory{Entries: []string{"global prompt"}},
+	})
 	if restored.running || restored.streamOpen || restored.activity.kind != activityReady || restored.subagentStatus.Running != 0 || len(restored.subagentStatus.Active) != 0 {
 		t.Fatalf("runtime state was restored: %+v", restored)
 	}
@@ -51,6 +58,9 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	}
 	if len(restored.history) != 1 || restored.history[0] != "older prompt" {
 		t.Fatalf("history = %q", restored.history)
+	}
+	if !slices.Equal(restored.globalHistory, []string{"global prompt"}) {
+		t.Fatalf("global history = %q", restored.globalHistory)
 	}
 }
 

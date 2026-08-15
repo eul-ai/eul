@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -71,13 +72,14 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 	driver := newLifecycleBackendDriver(backendRuntimes)
 	runtime := newLifecycleRuntime(t, cwd, driver)
 	store := newSessionStore(home)
+	messageHistory := newMessageHistoryStore(home)
 	config := resolveLifecycleConfig(t, runtime, "main-model", "fast-model", "balanced-model", agent.ThinkingHigh, cwd)
 
 	backendRuntime, err := openBackendRuntime(ctx, driver, home, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	initialSession, err := newStoredAgentSession(config, runtime, backendRuntime, store, nil)
+	initialSession, err := newStoredAgentSession(config, runtime, backendRuntime, store, messageHistory, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,6 +99,9 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 			if options.Config.SessionID != initialID || options.Config.Model != "main-model" || options.Config.ThinkingLevel != agent.ThinkingHigh {
 				t.Fatalf("initial options = session %q, model %q, thinking %q", options.Config.SessionID, options.Config.Model, options.Config.ThinkingLevel)
 			}
+			if err := options.MessageHistory.Append("initial session prompt"); err != nil {
+				t.Fatal(err)
+			}
 			if err := options.Controls.SetThinkingLevel(agent.ThinkingLow); err != nil {
 				t.Fatal(err)
 			}
@@ -109,6 +114,9 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 			if options.Config.SessionID == "" || options.Config.SessionID == initialID {
 				t.Fatalf("new session ID = %q, initial = %q", options.Config.SessionID, initialID)
 			}
+			if !slices.Equal(options.MessageHistory.Entries, []string{"initial session prompt"}) {
+				t.Fatalf("message history = %q", options.MessageHistory.Entries)
+			}
 			if options.Config.Model != "main-model" || options.Config.ThinkingLevel != agent.ThinkingLow || !options.Config.FastMode {
 				t.Fatalf("new options = model %q, thinking %q, fast %v", options.Config.Model, options.Config.ThinkingLevel, options.Config.FastMode)
 			}
@@ -119,7 +127,7 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 		},
 	}}
 
-	if err := runSessions(ctx, runner, initialSession, config, driver, sessionFactory{env: runtime, store: store, home: home}); err != nil {
+	if err := runSessions(ctx, runner, initialSession, config, driver, sessionFactory{env: runtime, store: store, messageHistory: messageHistory, home: home}); err != nil {
 		t.Fatal(err)
 	}
 	if !oldClosedBeforeOpen {
@@ -153,6 +161,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 	driver := newLifecycleBackendDriver(backendRuntimes)
 	runtime := newLifecycleRuntime(t, initialCWD, driver)
 	store := newSessionStore(home)
+	messageHistory := newMessageHistoryStore(home)
 
 	targetTerminal := sessionStoreTestTerminalCheckpoint(t, "resume target prompt")
 	target, err := store.Create(
@@ -178,7 +187,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	initialSession, err := newStoredAgentSession(config, runtime, backendRuntime, store, nil)
+	initialSession, err := newStoredAgentSession(config, runtime, backendRuntime, store, messageHistory, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +223,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 		},
 	}}
 
-	if err := runSessions(ctx, runner, initialSession, config, driver, sessionFactory{env: runtime, store: store, home: home}); err != nil {
+	if err := runSessions(ctx, runner, initialSession, config, driver, sessionFactory{env: runtime, store: store, messageHistory: messageHistory, home: home}); err != nil {
 		t.Fatal(err)
 	}
 	if !oldClosedBeforeOpen {
@@ -248,13 +257,14 @@ func TestRunSessionsExitClosesSession(t *testing.T) {
 	driver := newLifecycleBackendDriver(backendRuntimes)
 	runtime := newLifecycleRuntime(t, cwd, driver)
 	store := newSessionStore(home)
+	messageHistory := newMessageHistoryStore(home)
 	config := resolveLifecycleConfig(t, runtime, "main-model", "fast-model", "balanced-model", agent.ThinkingHigh, cwd)
 
 	backendRuntime, err := openBackendRuntime(ctx, driver, home, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	initialSession, err := newStoredAgentSession(config, runtime, backendRuntime, store, nil)
+	initialSession, err := newStoredAgentSession(config, runtime, backendRuntime, store, messageHistory, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +274,7 @@ func TestRunSessionsExitClosesSession(t *testing.T) {
 		},
 	}}
 
-	if err := runSessions(ctx, runner, initialSession, config, driver, sessionFactory{env: runtime, store: store, home: home}); err != nil {
+	if err := runSessions(ctx, runner, initialSession, config, driver, sessionFactory{env: runtime, store: store, messageHistory: messageHistory, home: home}); err != nil {
 		t.Fatal(err)
 	}
 	if driver.openCalls != 1 {

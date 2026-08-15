@@ -305,7 +305,8 @@ func (m *tuiModel) moveDown() bool {
 }
 
 func (m *tuiModel) historyUp() {
-	if len(m.history) == 0 {
+	historyLength := len(m.globalHistory) + len(m.history)
+	if historyLength == 0 {
 		return
 	}
 
@@ -321,11 +322,11 @@ func (m *tuiModel) historyUp() {
 			}
 			m.historyDraft = append(m.historyDraft, item)
 		}
-		m.historyIndex = len(m.history) - 1
+		m.historyIndex = historyLength - 1
 	} else if m.historyIndex > 0 {
 		m.historyIndex--
 	}
-	m.setInput(m.history[m.historyIndex])
+	m.setInput(m.historyEntry(m.historyIndex))
 }
 
 func (m *tuiModel) historyDown() {
@@ -333,9 +334,10 @@ func (m *tuiModel) historyDown() {
 		return
 	}
 
-	if m.historyIndex < len(m.history)-1 {
+	historyLength := len(m.globalHistory) + len(m.history)
+	if m.historyIndex < historyLength-1 {
 		m.historyIndex++
-		m.setInput(m.history[m.historyIndex])
+		m.setInput(m.historyEntry(m.historyIndex))
 		return
 	}
 
@@ -345,6 +347,13 @@ func (m *tuiModel) historyDown() {
 	m.historyDraft = nil
 	m.historyDraftCursor = 0
 	m.clearInputPickers()
+}
+
+func (m *tuiModel) historyEntry(index int) string {
+	if index < len(m.globalHistory) {
+		return m.globalHistory[index]
+	}
+	return m.history[index-len(m.globalHistory)]
 }
 
 func (m *tuiModel) leaveHistory() {
@@ -476,6 +485,7 @@ func (m *tuiModel) takePrompt() (string, bool) {
 func (m *tuiModel) rememberPrompt(prompt string) {
 	if strings.TrimSpace(prompt) != "" && (len(m.history) == 0 || m.history[len(m.history)-1] != prompt) {
 		m.history = append(m.history, prompt)
+		m.pendingHistory = append(m.pendingHistory, prompt)
 	}
 }
 

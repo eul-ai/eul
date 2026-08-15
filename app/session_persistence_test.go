@@ -39,9 +39,11 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 		}}
 	}
 	config := resolvedConfig{provider: "test", models: modelSet{main: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
-	store := newSessionStore(t.TempDir())
+	home := t.TempDir()
+	store := newSessionStore(home)
+	messageHistory := newMessageHistoryStore(home)
 
-	first, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, nil)
+	first, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, messageHistory, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +63,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, handle)
+	second, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, messageHistory, handle)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,8 +107,10 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 		}), nil
 	}}
 	config := resolvedConfig{provider: "test", models: modelSet{main: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
-	store := newSessionStore(t.TempDir())
-	session, err := newStoredAgentSession(config, runtime, backendRuntime, store, nil)
+	home := t.TempDir()
+	store := newSessionStore(home)
+	messageHistory := newMessageHistoryStore(home)
+	session, err := newStoredAgentSession(config, runtime, backendRuntime, store, messageHistory, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,9 +161,11 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 		}}
 	}
 	config := resolvedConfig{provider: "test", models: modelSet{main: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
-	store := newSessionStore(t.TempDir())
+	home := t.TempDir()
+	store := newSessionStore(home)
+	messageHistory := newMessageHistoryStore(home)
 
-	first, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, nil)
+	first, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, messageHistory, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +194,7 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, handle)
+	second, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, messageHistory, handle)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +241,9 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime.backends = registry
-	store := newSessionStore(t.TempDir())
+	home := t.TempDir()
+	store := newSessionStore(home)
+	messageHistory := newMessageHistoryStore(home)
 
 	config, handle, selected, err := resolveInitialSession(context.Background(), Options{
 		Provider:      "alternate",
@@ -254,7 +262,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := newStoredAgentSession(config, runtime, backendRuntime, store, nil)
+	session, err := newStoredAgentSession(config, runtime, backendRuntime, store, messageHistory, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

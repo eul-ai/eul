@@ -55,6 +55,7 @@ type controllerOptions struct {
 	controls           Controls
 	stateChanges       StateChanges
 	sessions           Sessions
+	messageHistory     MessageHistory
 	readClipboardImage func(context.Context) (agent.Image, error)
 }
 
@@ -77,6 +78,7 @@ func newTUIController(config controllerOptions) *tuiController {
 		usageRequests:      config.usageRequests,
 		stateChanges:       config.stateChanges,
 		sessions:           config.sessions,
+		messageHistory:     config.messageHistory,
 		readClipboardImage: readClipboardImage,
 		clipboardImages:    config.clipboardImages,
 		clipboardRequests:  make(map[uint64]context.CancelFunc),
@@ -98,6 +100,7 @@ type tuiController struct {
 	usageRequests                chan<- struct{}
 	stateChanges                 StateChanges
 	sessions                     Sessions
+	messageHistory               MessageHistory
 	readClipboardImage           func(context.Context) (agent.Image, error)
 	clipboardImages              chan<- tuiEvent
 	clipboardRequests            map[uint64]context.CancelFunc
@@ -208,6 +211,9 @@ func (c *tuiController) handleKey(ctx context.Context, key keyEvent) (bool, erro
 	if err != nil {
 		return false, err
 	}
+	if err := c.flushMessageHistory(); err != nil {
+		return false, err
+	}
 	if c.fileSearch != nil {
 		c.fileSearch.update(ctx, c.model.takeFileSearchCommand(), c.fileSearchMessages)
 	}
@@ -226,6 +232,22 @@ func (c *tuiController) handleKey(ctx context.Context, key keyEvent) (bool, erro
 
 	c.dirty = true
 	return false, nil
+}
+
+func (c *tuiController) flushMessageHistory() error {
+	if c.messageHistory.Append == nil {
+		c.model.pendingHistory = nil
+		return nil
+	}
+	for len(c.model.pendingHistory) > 0 {
+		prompt := c.model.pendingHistory[0]
+		if err := c.messageHistory.Append(prompt); err != nil {
+			return fmt.Errorf("save message history: %w", err)
+		}
+		c.model.pendingHistory[0] = ""
+		c.model.pendingHistory = c.model.pendingHistory[1:]
+	}
+	return nil
 }
 
 func (c *tuiController) handleEngineMessage(ctx context.Context, message engineMessage) (bool, error) {

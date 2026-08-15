@@ -39,6 +39,19 @@ func TestTUIModelEditsAndNavigatesHistory(t *testing.T) {
 	}
 }
 
+func TestTUIModelNavigatesSessionThenGlobalHistory(t *testing.T) {
+	model := newTUIModel(80, 24, Options{MessageHistory: MessageHistory{Entries: []string{"global old", "global new"}}})
+	model.rememberPrompt("session old")
+	model.rememberPrompt("session new")
+
+	for _, want := range []string{"session new", "session old", "global new", "global old"} {
+		model.historyUp()
+		if got := model.inputText(); got != want {
+			t.Fatalf("history up = %q, want %q", got, want)
+		}
+	}
+}
+
 func TestTUIModelEditsInlineImages(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	if err := model.insertInput("before after"); err != nil {

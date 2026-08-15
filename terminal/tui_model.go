@@ -98,7 +98,9 @@ type editorModel struct {
 	commandPicker      commandPickerState
 	filePicker         filePickerState
 	resumePicker       resumePickerState
+	globalHistory      []string
 	history            []string
+	pendingHistory     []string
 	historyIndex       int
 	historyDraft       []editorItem
 	historyDraftCursor int
@@ -174,6 +176,7 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 		editorModel: editorModel{
 			commandCompletions: commandCompletions(options.Config.Skills, fastModeAvailable),
 			filePicker:         filePickerState{enabled: options.Config.WorkingDirectory != ""},
+			globalHistory:      append([]string(nil), options.MessageHistory.Entries...),
 			historyIndex:       -1,
 		},
 		statusModel: statusModel{

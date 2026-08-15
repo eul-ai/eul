@@ -214,6 +214,7 @@ func runTUIWithKeys(
 		controls:           options.Controls,
 		stateChanges:       options.StateChanges,
 		sessions:           options.Sessions,
+		messageHistory:     options.MessageHistory,
 		readClipboardImage: options.Services.ReadClipboardImage,
 	})
 	defer controller.cancelClipboardRequests()

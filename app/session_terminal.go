@@ -26,6 +26,7 @@ type terminalOptionsBuilder struct {
 	engine             *agent.Engine
 	checkpoints        *checkpointCoordinator
 	sessions           terminal.Sessions
+	messageHistory     terminal.MessageHistory
 	initialCheckpoint  *terminal.Checkpoint
 	sessionID          string
 	previousTurnActive bool
@@ -103,8 +104,9 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 				return nil
 			},
 		},
-		Sessions:     source.sessions,
-		StateChanges: terminalStateChanges(source.checkpoints),
+		Sessions:       source.sessions,
+		StateChanges:   terminalStateChanges(source.checkpoints),
+		MessageHistory: source.messageHistory,
 		Config: terminal.Config{
 			Model:              source.config.models.main,
 			WorkingDirectory:   source.config.cwd,

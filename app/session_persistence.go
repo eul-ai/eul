@@ -53,6 +53,7 @@ func newStoredAgentSession(
 	env environment,
 	backendRuntime backend.Runtime,
 	store *sessionStore,
+	messageHistory *messageHistoryStore,
 	handle *sessionHandle,
 ) (*agentSession, error) {
 	session, options, err := newAgentSessionComponents(config, env, backendRuntime, true)
@@ -93,6 +94,17 @@ func newStoredAgentSession(
 		if err := session.subagents.RestoreCheckpoint(record.Subagent); err != nil {
 			return nil, session.finish(fmt.Errorf("restore subagents: %w", err))
 		}
+	}
+
+	historyEntries, err := messageHistory.Load(record.ID)
+	if err != nil {
+		return nil, errors.Join(session.finish(fmt.Errorf("load message history: %w", err)), handle.Close())
+	}
+	options.messageHistory = terminal.MessageHistory{
+		Entries: historyEntries,
+		Append: func(prompt string) error {
+			return messageHistory.Append(record.ID, prompt)
+		},
 	}
 
 	checkpoints := newCheckpointCoordinator(handle, session.engine, session.subagents, session.settings)

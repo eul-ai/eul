@@ -13,6 +13,27 @@ import (
 	"github.com/eul-ai/eul/subagent"
 )
 
+func TestTUIControllerFlushesMessageHistory(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.rememberPrompt("first prompt")
+	model.rememberPrompt("second prompt")
+
+	var entries []string
+	controller := tuiController{
+		model: model,
+		messageHistory: MessageHistory{Append: func(prompt string) error {
+			entries = append(entries, prompt)
+			return nil
+		}},
+	}
+	if err := controller.flushMessageHistory(); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(entries, []string{"first prompt", "second prompt"}) || len(model.pendingHistory) != 0 {
+		t.Fatalf("entries = %q, pending = %q", entries, model.pendingHistory)
+	}
+}
+
 func TestTUIControllerRejectsInvalidClipboardImage(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	clipboardImages := make(chan tuiEvent, 1)
