@@ -190,7 +190,7 @@ func (e *Engine) generateResponse(ctx context.Context, request Request, sink Eve
 
 		delay, retry := retryPolicy.RetryGeneration(err, failedAttempts)
 		if !retry {
-			return Response{}, nil, false, newProviderGenerationError(err)
+			return Response{}, nil, observed, newProviderGenerationError(err)
 		}
 		if err := emit(sink, Event{Kind: EventGenerationRetry, Attempt: failedAttempts + 1}); err != nil {
 			return Response{}, nil, false, err

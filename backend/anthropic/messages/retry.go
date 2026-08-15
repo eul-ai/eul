@@ -1,4 +1,4 @@
-package responses
+package messages
 
 import (
 	"errors"
@@ -16,25 +16,7 @@ const (
 	generationRetryMaxDelay   = 5 * time.Minute
 )
 
-type retryableOperationError struct {
-	cause error
-}
-
-func (e *retryableOperationError) Error() string { return e.cause.Error() }
-func (e *retryableOperationError) Unwrap() error { return e.cause }
-
-type httpResponseError struct {
-	message    string
-	statusCode int
-	retryAfter time.Duration
-	detail     responseError
-	cause      error
-}
-
-func (e *httpResponseError) Error() string { return e.message }
-func (e *httpResponseError) Unwrap() error { return e.cause }
-
-func (c *Client) RetryGeneration(err error, failedAttempts int) (time.Duration, bool) {
+func (client *Client) RetryGeneration(err error, failedAttempts int) (time.Duration, bool) {
 	if failedAttempts >= maximumGenerationAttempts || !retryableGenerationError(err) {
 		return 0, false
 	}
@@ -65,49 +47,61 @@ func retryableGenerationError(err error) bool {
 	if errors.As(err, &httpErr) {
 		return backendhttp.RetryableHTTPStatus(httpErr.statusCode)
 	}
-
 	var responseErr *responseFailureError
 	if errors.As(err, &responseErr) {
-		return retryableResponseError(responseErr.detail)
+		return retryableAPIError(responseErr.detail)
 	}
-
 	var operationErr *retryableOperationError
-	return errors.As(err, &operationErr) || errors.Is(err, errResponsesSSEIncomplete)
+	return errors.As(err, &operationErr) || errors.Is(err, errSSEIncomplete)
 }
 
-func (c *Client) IsContextLimitError(err error) bool {
+func (client *Client) IsContextLimitError(err error) bool {
 	return contextLimitError(err)
 }
 
 func contextLimitError(err error) bool {
-	var httpErr *httpResponseError
-	if errors.As(err, &httpErr) && contextLimitResponseError(httpErr.detail) {
+	var stopError contextWindowExceededError
+	if errors.As(err, &stopError) {
 		return true
 	}
 
+	var httpErr *httpResponseError
+	if errors.As(err, &httpErr) && contextLimitAPIError(httpErr.detail) {
+		return true
+	}
 	var responseErr *responseFailureError
-	return errors.As(err, &responseErr) && contextLimitResponseError(responseErr.detail)
+	return errors.As(err, &responseErr) && contextLimitAPIError(responseErr.detail)
 }
 
-func contextLimitResponseError(detail responseError) bool {
-	return strings.EqualFold(string(detail.Code), "context_length_exceeded")
+func contextLimitAPIError(detail apiError) bool {
+	code := strings.ToLower(string(detail.Code))
+	typeName := strings.ToLower(detail.Type)
+	if code == "context_length_exceeded" || typeName == "context_length_exceeded" {
+		return true
+	}
+	if typeName != "invalid_request_error" && code != "invalid_request_error" && code != "bad_request" {
+		return false
+	}
+	message := strings.ToLower(detail.Message)
+	return strings.Contains(message, "context length") ||
+		strings.Contains(message, "maximum context") ||
+		strings.Contains(message, "prompt is too long")
 }
 
-func retryableResponseError(detail responseError) bool {
+func retryableAPIError(detail apiError) bool {
 	if code, err := strconv.Atoi(string(detail.Code)); err == nil && backendhttp.RetryableHTTPStatus(code) {
 		return true
 	}
 	for _, value := range []string{detail.Type, string(detail.Code)} {
 		switch strings.ToLower(value) {
-		case "server_error", "service_unavailable_error", "server_is_overloaded", "rate_limit", "rate_limit_error", "rate_limit_exceeded":
+		case "server_error", "service_unavailable_error", "server_is_overloaded", "rate_limit", "rate_limit_error", "rate_limit_exceeded", "api_error", "overloaded_error":
 			return true
 		}
 	}
 	return false
 }
 
-func (c *Client) retryableWrapf(cause error, format string, arguments ...any) error {
-	return &retryableOperationError{cause: c.wrapf(cause, format, arguments...)}
-}
-
-var _ agent.GenerationRetryPolicy = (*Client)(nil)
+var (
+	_ agent.Provider              = (*Client)(nil)
+	_ agent.GenerationRetryPolicy = (*Client)(nil)
+)

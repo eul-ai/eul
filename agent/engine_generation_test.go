@@ -232,6 +232,42 @@ func TestEngineDoesNotCompactAfterObservableGenerationError(t *testing.T) {
 	}
 }
 
+func TestEngineDoesNotCompactWhenRetryDeclinedAfterObservableEvent(t *testing.T) {
+	contextLimit := errors.New("context limit exceeded")
+	generateCalls := 0
+	retryCalls := 0
+	policyCalls := 0
+	compactCalls := 0
+	provider := &retryingCompactingProvider{
+		retryingProvider: &retryingProvider{
+			generate: func(_ context.Context, _ Request, onText TextSink, _ TextSink, _ ToolCallSink) (Response, error) {
+				generateCalls++
+				if err := onText("partial"); err != nil {
+					return Response{}, err
+				}
+				return Response{}, contextLimit
+			},
+			retry: func(error, int) (time.Duration, bool) {
+				retryCalls++
+				return 0, false
+			},
+		},
+		shouldCompactAfterError: func(Request, error) bool {
+			policyCalls++
+			return true
+		},
+		compact: func(context.Context, Request) (CompactResponse, error) {
+			compactCalls++
+			return CompactResponse{State: []byte("compacted")}, nil
+		},
+	}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
+	_, err := engine.Run(context.Background(), "start", discardEvents)
+	if !errors.Is(err, contextLimit) || generateCalls != 1 || retryCalls != 1 || policyCalls != 0 || compactCalls != 0 {
+		t.Fatalf("generate calls = %d, retry calls = %d, policy calls = %d, compact calls = %d, error = %v", generateCalls, retryCalls, policyCalls, compactCalls, err)
+	}
+}
+
 func TestEngineStopsGenerationRetryBackoffWhenCanceled(t *testing.T) {
 	transient := errors.New("temporary provider failure")
 	policyCalled := make(chan struct{})

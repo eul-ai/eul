@@ -14,6 +14,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 const (
@@ -61,23 +62,14 @@ func (driver *Driver) Open(backend.Options) (backend.Runtime, error) {
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
-	generationClient := &http.Client{}
-	if driver.httpClient != nil {
-		*generationClient = *driver.httpClient
-	}
-	generationClient.CheckRedirect = func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	}
-	credentialClient := *generationClient
-	if credentialClient.Timeout <= 0 {
-		credentialClient.Timeout = credentialHTTPTimeout
-	}
+	generationClient := backendhttp.New(driver.httpClient, 0)
+	credentialClient := backendhttp.New(generationClient, credentialHTTPTimeout)
 
 	return &runtime{
 		apiKey:           apiKey,
 		baseURL:          baseURL,
 		generationClient: generationClient,
-		credentialClient: &credentialClient,
+		credentialClient: credentialClient,
 		models:           make(map[string]modelMetadata),
 	}, nil
 }
@@ -200,16 +192,17 @@ func (configured *runtime) get(ctx context.Context, path string, target any) err
 		}
 		return fmt.Errorf("HTTP %s: %s", response.Status, detail)
 	}
-	limited := &io.LimitedReader{R: response.Body, N: maxResponseBytes + 1}
-	if target == nil {
-		if _, err := io.Copy(io.Discard, limited); err != nil {
-			return err
-		}
-	} else if err := json.NewDecoder(limited).Decode(target); err != nil {
+	body, truncated, err := backendhttp.ReadBounded(response.Body, maxResponseBytes)
+	if err != nil {
 		return err
 	}
-	if limited.N == 0 {
+	if truncated {
 		return fmt.Errorf("response exceeds %d bytes", maxResponseBytes)
+	}
+	if target != nil {
+		if err := json.Unmarshal(body, target); err != nil {
+			return err
+		}
 	}
 	return nil
 }

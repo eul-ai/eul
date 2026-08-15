@@ -159,6 +159,85 @@ func TestClientRetriesHTTP2InternalStreamErrorThroughEngine(t *testing.T) {
 	}
 }
 
+func TestClientDoesNotRetryTerminalFailureAfterDelivery(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"partial"}`,
+		"",
+		`data: {"type":"response.failed","response":{"status":"failed","error":{"type":"server_error","code":"server_error","message":"failed"}}}`,
+		"",
+	}, "\n")
+	client := newTestClient(t, "key", "https://example.test", Options{
+		HTTPClient: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(stream)),
+			}, nil
+		})},
+	})
+
+	delivered := 0
+	_, err := generate(client, context.Background(), baseRequest(), func(string) error {
+		delivered++
+		return nil
+	}, nil, nil)
+	var partial *partialResponseError
+	if delivered != 1 || !errors.As(err, &partial) {
+		t.Fatalf("deliveries=%d error=%v", delivered, err)
+	}
+	if _, retry := client.RetryGeneration(err, 1); retry {
+		t.Fatal("partial terminal failure is retryable")
+	}
+}
+
+func TestClientDoesNotRetryDeadlineAfterDelivery(t *testing.T) {
+	body := &deadlineAfterReadCloser{reader: strings.NewReader(`data: {"type":"response.output_text.delta","delta":"partial"}` + "\n\n")}
+	client := newTestClient(t, "key", "https://example.test", Options{
+		HTTPClient: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     make(http.Header),
+				Body:       body,
+			}, nil
+		})},
+	})
+
+	delivered := 0
+	_, err := generate(client, context.Background(), baseRequest(), func(string) error {
+		delivered++
+		return nil
+	}, nil, nil)
+	var partial *partialResponseError
+	if delivered != 1 || !errors.As(err, &partial) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("deliveries=%d error=%v", delivered, err)
+	}
+	if _, retry := client.RetryGeneration(err, 1); retry {
+		t.Fatal("partial deadline response is retryable")
+	}
+}
+
+type deadlineAfterReadCloser struct {
+	reader io.Reader
+}
+
+func (reader *deadlineAfterReadCloser) Read(buffer []byte) (int, error) {
+	for reader.reader != nil {
+		read, err := reader.reader.Read(buffer)
+		if !errors.Is(err, io.EOF) {
+			return read, err
+		}
+		reader.reader = nil
+		if read != 0 {
+			return read, nil
+		}
+	}
+	return 0, context.DeadlineExceeded
+}
+
+func (*deadlineAfterReadCloser) Close() error { return nil }
+
 func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 	t.Run("SSE server error", func(t *testing.T) {
 		server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -232,10 +311,11 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 
 func TestGenerationRetryAllowsExtendedRecovery(t *testing.T) {
 	transient := &retryableOperationError{cause: errors.New("temporary")}
-	if _, retry := (&Client{}).RetryGeneration(transient, maximumGenerationAttempts-1); !retry {
+	delay, retry := (&Client{}).RetryGeneration(transient, maximumGenerationAttempts-1)
+	if !retry {
 		t.Fatal("retry policy stopped before the final attempt")
 	}
-	if delay := generationRetryDelay(maximumGenerationAttempts - 1); delay < generationRetryMaxDelay*3/4 {
+	if delay < generationRetryMaxDelay*3/4 {
 		t.Fatalf("final retry delay = %s", delay)
 	}
 }

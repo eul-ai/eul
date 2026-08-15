@@ -94,12 +94,42 @@ func newAgentSession(config resolvedConfig, env environment, backendRuntime back
 	return session, nil
 }
 
+func validateRuntimeModels(backendRuntime backend.Runtime, models modelSet) error {
+	validator, ok := backendRuntime.(backend.ModelValidator)
+	if !ok {
+		return nil
+	}
+
+	validated := make(map[string]struct{}, 3)
+	for _, model := range []struct {
+		name  string
+		value string
+	}{
+		{name: "main", value: models.main},
+		{name: "fast", value: models.fast},
+		{name: "balanced", value: models.balanced},
+	} {
+		if _, ok := validated[model.value]; ok {
+			continue
+		}
+		validated[model.value] = struct{}{}
+		if err := validator.ValidateModel(model.value); err != nil {
+			return fmt.Errorf("%s model: %w", model.name, err)
+		}
+	}
+	return nil
+}
+
 func newAgentSessionComponents(
 	config resolvedConfig,
 	env environment,
 	backendRuntime backend.Runtime,
 	checkpointing bool,
 ) (*agentSession, terminalOptionsBuilder, error) {
+	if err := validateRuntimeModels(backendRuntime, config.models); err != nil {
+		return nil, terminalOptionsBuilder{}, errors.Join(err, closeBackendRuntime(backendRuntime))
+	}
+
 	provider, err := backendRuntime.NewProvider()
 	if err != nil {
 		return nil, terminalOptionsBuilder{}, errors.Join(fmt.Errorf("configure provider: %w", err), closeBackendRuntime(backendRuntime))

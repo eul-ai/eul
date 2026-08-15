@@ -4,24 +4,22 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend/compaction"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 const (
-	defaultHTTPTimeout             = 10 * time.Minute
-	defaultMaxRequestBytes         = int64(32 * 1024 * 1024)
-	defaultMaxResponseBytes        = int64(16 * 1024 * 1024)
-	defaultMaxErrorBytes           = int64(64 * 1024)
-	defaultMaxStateBytes           = 16 * 1024 * 1024
-	defaultStateOutputHeadroom     = 1024 * 1024
-	compactedSummaryIntroduction   = "The earlier conversation was compacted into the following summary. Continue the task from this context:"
-	semanticCompactionRequest      = "Produce the requested handoff summary now."
-	semanticCompactionContinuation = "Continue the task from the compacted summary."
+	defaultHTTPTimeout         = 10 * time.Minute
+	defaultMaxRequestBytes     = int64(32 * 1024 * 1024)
+	defaultMaxResponseBytes    = int64(16 * 1024 * 1024)
+	defaultMaxErrorBytes       = int64(64 * 1024)
+	defaultMaxStateBytes       = 16 * 1024 * 1024
+	defaultStateOutputHeadroom = 1024 * 1024
 )
 
 type RequestOptions struct {
@@ -71,16 +69,7 @@ func New(options Options) (*Client, error) {
 		return nil, errors.New("responses: endpoint is required")
 	}
 
-	httpClient := &http.Client{}
-	if options.HTTPClient != nil {
-		*httpClient = *options.HTTPClient
-	}
-	if httpClient.Timeout <= 0 {
-		httpClient.Timeout = defaultHTTPTimeout
-	}
-	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	}
+	httpClient := backendhttp.New(options.HTTPClient, defaultHTTPTimeout)
 
 	maxRequestBytes := options.MaxRequestBytes
 	if maxRequestBytes <= 0 {
@@ -157,7 +146,7 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, observer a
 		return agent.Response{}, c.errorf("%v", err)
 	}
 
-	requestBody, oversized, err := marshalBoundedJSON(wireRequest, c.maxRequestBytes)
+	requestBody, oversized, err := backendhttp.MarshalBoundedJSON(wireRequest, c.maxRequestBytes)
 	if err != nil {
 		return agent.Response{}, c.errorf("encode request: %v", err)
 	}
@@ -179,10 +168,14 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, observer a
 		if errors.As(err, &observerErr) {
 			return agent.Response{}, c.wrapf(err, "%v", err)
 		}
+		var partialErr *partialResponseError
+		if errors.As(err, &partialErr) {
+			return agent.Response{}, c.wrapf(err, "%v", err)
+		}
 		if classified := c.contextError(ctx, err, "read response"); classified != nil {
 			return agent.Response{}, classified
 		}
-		if isRetryableNetworkError(err) {
+		if backendhttp.RetryableNetworkError(err) {
 			return agent.Response{}, c.retryableWrapf(err, "%v", err)
 		}
 		return agent.Response{}, c.wrapf(err, "%v", err)
@@ -190,6 +183,9 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, observer a
 
 	text, calls, usage, err := normalizeResponse(wireResponse)
 	if err != nil {
+		if stream.observed {
+			err = &partialResponseError{cause: err}
+		}
 		c.redactResponseFailure(err)
 		return agent.Response{}, c.wrapf(err, "%v", err)
 	}
@@ -235,7 +231,7 @@ func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.Comp
 		return agent.CompactResponse{}, c.errorf("%v", err)
 	}
 
-	requestBody, oversized, err := marshalBoundedJSON(wireRequest, c.maxRequestBytes)
+	requestBody, oversized, err := backendhttp.MarshalBoundedJSON(wireRequest, c.maxRequestBytes)
 	if err != nil {
 		return agent.CompactResponse{}, c.errorf("encode compact request: %v", err)
 	}
@@ -281,10 +277,7 @@ func (c *Client) SemanticCompact(ctx context.Context, request agent.Request, ins
 		return agent.CompactResponse{}, err
 	}
 
-	continueAfterCompaction := len(request.Inputs) != 0
-	request.Instructions = instructions
-	request.Tools = nil
-	request.Inputs = append(append([]agent.Input(nil), request.Inputs...), agent.NewTextInput(semanticCompactionRequest))
+	request, continueAfterCompaction := compaction.Prepare(request, instructions)
 	wireRequest, _, err := buildCreateRequestUnchecked(request, c.maxStateBytes)
 	if err != nil {
 		return agent.CompactResponse{}, c.errorf("build summary request: %v", err)
@@ -295,7 +288,7 @@ func (c *Client) SemanticCompact(ctx context.Context, request agent.Request, ins
 	wireRequest.ToolChoice = ""
 	wireRequest.ParallelToolCalls = false
 
-	requestBody, oversized, err := marshalBoundedJSON(wireRequest, c.maxRequestBytes)
+	requestBody, oversized, err := backendhttp.MarshalBoundedJSON(wireRequest, c.maxRequestBytes)
 	if err != nil {
 		return agent.CompactResponse{}, c.errorf("encode summary request: %v", err)
 	}
@@ -322,12 +315,9 @@ func (c *Client) SemanticCompact(ctx context.Context, request agent.Request, ins
 		c.redactResponseFailure(err)
 		return agent.CompactResponse{}, c.errorf("%v", err)
 	}
-	if len(calls) != 0 {
-		return agent.CompactResponse{}, c.errorf("summary response contains tool calls")
-	}
-	summary = strings.TrimSpace(summary)
-	if summary == "" {
-		return agent.CompactResponse{}, c.errorf("summary response is empty")
+	summary, err = compaction.ValidateSummary(summary, len(calls))
+	if err != nil {
+		return agent.CompactResponse{}, c.errorf("%v", err)
 	}
 
 	items, err := semanticCompactionStateItems(summary, continueAfterCompaction)
@@ -345,14 +335,14 @@ func (c *Client) SemanticCompact(ctx context.Context, request agent.Request, ins
 func semanticCompactionStateItems(summary string, continueTask bool) ([]json.RawMessage, error) {
 	summaryItem, _ := json.Marshal(inputMessage{
 		Role:    "assistant",
-		Content: fmt.Sprintf("%s\n\n%s", compactedSummaryIntroduction, summary),
+		Content: compaction.FormatSummary(summary),
 	})
 	items := []json.RawMessage{summaryItem}
 	if !continueTask {
 		return items, nil
 	}
 
-	continuation, err := encodeInputs([]agent.Input{agent.NewTextInput(semanticCompactionContinuation)})
+	continuation, err := encodeInputs([]agent.Input{agent.NewTextInput(compaction.Continuation)})
 	if err != nil {
 		return nil, err
 	}
@@ -380,12 +370,4 @@ func (c *Client) configureRequest(request agent.Request, wireRequest *createResp
 	wireRequest.ToolChoice = options.ToolChoice
 	wireRequest.ParallelToolCalls = options.ParallelToolCalls
 	return nil
-}
-
-func marshalBoundedJSON(value any, maximum int64) ([]byte, bool, error) {
-	body, err := json.Marshal(value)
-	if err != nil {
-		return nil, false, err
-	}
-	return body, int64(len(body)) > maximum, nil
 }

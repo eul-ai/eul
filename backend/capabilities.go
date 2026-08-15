@@ -62,3 +62,7 @@ func (metadata ModelMetadata) ClampThinkingLevel(level agent.ThinkingLevel) agen
 type ModelMetadataProvider interface {
 	ModelMetadata(model string) ModelMetadata
 }
+
+type ModelValidator interface {
+	ValidateModel(model string) error
+}
