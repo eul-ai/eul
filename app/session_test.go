@@ -33,6 +33,20 @@ func (provider *profileMetadataProvider) metadataFor(model string) backend.Model
 	return provider.metadata[model]
 }
 
+type validatingBackendRuntime struct {
+	*fakeBackendRuntime
+	validated []string
+	invalid   string
+}
+
+func (runtime *validatingBackendRuntime) ValidateModel(model string) error {
+	runtime.validated = append(runtime.validated, model)
+	if model == runtime.invalid {
+		return errors.New("unsupported model")
+	}
+	return nil
+}
+
 func TestModelSetSelectsSubagentProfiles(t *testing.T) {
 	models := modelSet{
 		main:     "main-model",
@@ -57,6 +71,24 @@ func TestRuntimeModelMetadataDefaultsToThinkingOff(t *testing.T) {
 	metadata := runtimeModelMetadata(metadataFreeBackendRuntime{}, "model")
 	if !slices.Equal(metadata.ThinkingLevels, []agent.ThinkingLevel{agent.ThinkingOff}) {
 		t.Fatalf("thinking levels = %v", metadata.ThinkingLevels)
+	}
+}
+
+func TestNewAgentSessionValidatesModelsBeforeCreatingProvider(t *testing.T) {
+	providerCalls := 0
+	configured := &validatingBackendRuntime{
+		fakeBackendRuntime: &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
+			providerCalls++
+			return metadataFreeProvider{}, nil
+		}},
+		invalid: "unknown",
+	}
+	_, err := newAgentSession(resolvedConfig{
+		models: modelSet{main: "unknown", fast: "fast", balanced: "balanced"},
+		cwd:    t.TempDir(),
+	}, environment{}, configured)
+	if err == nil || providerCalls != 0 || configured.closeCalls != 1 || !slices.Equal(configured.validated, []string{"unknown"}) {
+		t.Fatalf("error=%v provider calls=%d close calls=%d validated=%v", err, providerCalls, configured.closeCalls, configured.validated)
 	}
 }
 

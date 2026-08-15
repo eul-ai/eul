@@ -14,13 +14,14 @@ import (
 )
 
 const (
-	defaultHTTPTimeout         = 10 * time.Minute
-	defaultMaxRequestBytes     = int64(32 * 1024 * 1024)
-	defaultMaxResponseBytes    = int64(16 * 1024 * 1024)
-	defaultMaxErrorBytes       = int64(64 * 1024)
-	defaultMaxStateBytes       = 16 * 1024 * 1024
-	defaultStateOutputHeadroom = 1024 * 1024
-	semanticCompactionQuestion = "What happened earlier in this conversation?"
+	defaultHTTPTimeout          = 10 * time.Minute
+	defaultMaxRequestBytes      = int64(32 * 1024 * 1024)
+	defaultMaxResponseBytes     = int64(16 * 1024 * 1024)
+	defaultMaxErrorBytes        = int64(64 * 1024)
+	defaultMaxStateBytes        = 16 * 1024 * 1024
+	defaultStateOutputHeadroom  = 1024 * 1024
+	minimumThinkingBudgetTokens = 1024
+	semanticCompactionQuestion  = "What happened earlier in this conversation?"
 )
 
 type RequestOptions struct {
@@ -40,6 +41,7 @@ type Options struct {
 	ErrorPrefix         string
 	PrepareRequest      PrepareRequestFunc
 	RequestOptions      RequestOptionsFunc
+	PromptCaching       bool
 	MaxRequestBytes     int64
 	MaxResponseBytes    int64
 	MaxErrorBytes       int64
@@ -54,6 +56,7 @@ type Client struct {
 	errorPrefix         string
 	prepareRequest      PrepareRequestFunc
 	requestOptions      RequestOptionsFunc
+	promptCaching       bool
 	maxRequestBytes     int64
 	maxResponseBytes    int64
 	maxErrorBytes       int64
@@ -94,6 +97,7 @@ func New(options Options) (*Client, error) {
 		errorPrefix:         strings.TrimSpace(options.ErrorPrefix),
 		prepareRequest:      options.PrepareRequest,
 		requestOptions:      options.RequestOptions,
+		promptCaching:       options.PromptCaching,
 		maxRequestBytes:     maxRequestBytes,
 		maxResponseBytes:    maxResponseBytes,
 		maxErrorBytes:       maxErrorBytes,
@@ -218,6 +222,14 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 }
 
 func (client *Client) complete(ctx context.Context, wireRequest createRequest, observer agent.StreamObserver, operation string) (streamResult, error) {
+	if client.promptCaching {
+		var err error
+		wireRequest, err = withPromptCacheControl(wireRequest)
+		if err != nil {
+			return streamResult{}, client.errorf("configure %s prompt caching: %v", operation, err)
+		}
+	}
+
 	requestBody, oversized, err := backendhttp.MarshalBoundedJSON(wireRequest, client.maxRequestBytes)
 	if err != nil {
 		return streamResult{}, client.errorf("encode %s: %v", operation, err)
@@ -239,6 +251,10 @@ func (client *Client) complete(ctx context.Context, wireRequest createRequest, o
 	client.redactResponseFailure(err)
 	var observerErr *observerDeliveryError
 	if errors.As(err, &observerErr) {
+		return streamResult{}, client.wrapf(err, "%v", err)
+	}
+	var partialErr *partialResponseError
+	if errors.As(err, &partialErr) {
 		return streamResult{}, client.wrapf(err, "%v", err)
 	}
 	if classified := client.contextError(ctx, err, "read "+operation); classified != nil {
@@ -263,8 +279,8 @@ func (client *Client) configureRequest(request agent.Request, wireRequest *creat
 		return errors.New("max tokens must be positive")
 	}
 	if options.Thinking != nil && options.Thinking.Type == "enabled" {
-		if options.Thinking.BudgetTokens <= 0 {
-			return errors.New("thinking budget must be positive")
+		if options.Thinking.BudgetTokens < minimumThinkingBudgetTokens {
+			return errors.New("thinking budget must be at least 1024 tokens")
 		}
 		if options.Thinking.BudgetTokens >= options.MaxTokens {
 			return errors.New("thinking budget must be less than max tokens")

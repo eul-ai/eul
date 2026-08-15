@@ -39,7 +39,7 @@ func (c *Client) RetryGeneration(err error, failedAttempts int) (time.Duration, 
 		return 0, false
 	}
 
-	delay := generationRetryDelay(failedAttempts)
+	delay := backendhttp.RetryDelay(failedAttempts, generationRetryBaseDelay, generationRetryMaxDelay)
 	var responseErr *httpResponseError
 	if errors.As(err, &responseErr) && responseErr.retryAfter > delay {
 		delay = min(responseErr.retryAfter, generationRetryMaxDelay)
@@ -56,10 +56,14 @@ func retryableGenerationError(err error) bool {
 	if errors.As(err, &observerErr) {
 		return false
 	}
+	var partialErr *partialResponseError
+	if errors.As(err, &partialErr) {
+		return false
+	}
 
 	var httpErr *httpResponseError
 	if errors.As(err, &httpErr) {
-		return retryableHTTPStatus(httpErr.statusCode)
+		return backendhttp.RetryableHTTPStatus(httpErr.statusCode)
 	}
 
 	var responseErr *responseFailureError
@@ -69,10 +73,6 @@ func retryableGenerationError(err error) bool {
 
 	var operationErr *retryableOperationError
 	return errors.As(err, &operationErr) || errors.Is(err, errResponsesSSEIncomplete)
-}
-
-func retryableHTTPStatus(status int) bool {
-	return backendhttp.RetryableHTTPStatus(status)
 }
 
 func (c *Client) IsContextLimitError(err error) bool {
@@ -94,7 +94,7 @@ func contextLimitResponseError(detail responseError) bool {
 }
 
 func retryableResponseError(detail responseError) bool {
-	if code, err := strconv.Atoi(string(detail.Code)); err == nil && retryableHTTPStatus(code) {
+	if code, err := strconv.Atoi(string(detail.Code)); err == nil && backendhttp.RetryableHTTPStatus(code) {
 		return true
 	}
 	for _, value := range []string{detail.Type, string(detail.Code)} {
@@ -104,18 +104,6 @@ func retryableResponseError(detail responseError) bool {
 		}
 	}
 	return false
-}
-
-func generationRetryDelay(failedAttempts int) time.Duration {
-	return backendhttp.RetryDelay(failedAttempts, generationRetryBaseDelay, generationRetryMaxDelay)
-}
-
-func parseRetryAfter(value string, now time.Time) time.Duration {
-	return backendhttp.ParseRetryAfter(value, now)
-}
-
-func isRetryableNetworkError(err error) bool {
-	return backendhttp.RetryableNetworkError(err)
 }
 
 func (c *Client) retryableWrapf(cause error, format string, arguments ...any) error {

@@ -76,6 +76,55 @@ func TestHTTPErrorRedactionRetryAndContextClassification(t *testing.T) {
 	}
 }
 
+func TestContextLimitAPIErrorDoesNotClassifyOutputTokenError(t *testing.T) {
+	detail := apiError{Type: "invalid_request_error", Message: "max_tokens is too large: too many tokens requested"}
+	if contextLimitAPIError(detail) {
+		t.Fatal("output token error was classified as an input context limit")
+	}
+}
+
+func TestGenerateClosesBodyWhenCanceledDuringRead(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	body := &cancelingReadCloser{cancel: cancel}
+	client, err := New(Options{
+		Endpoint: "https://example.test/v1/messages",
+		RequestOptions: func(agent.Request) (RequestOptions, error) {
+			return RequestOptions{MaxTokens: 100}, nil
+		},
+		HTTPClient: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     make(http.Header),
+				Body:       body,
+			}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = client.Generate(ctx, agent.Request{Model: "model", Inputs: []agent.Input{agent.NewTextInput("hello")}}, agent.StreamObserver{})
+	if err != context.Canceled || !body.closed {
+		t.Fatalf("Generate() error = %v, body closed = %v", err, body.closed)
+	}
+}
+
+type cancelingReadCloser struct {
+	cancel context.CancelFunc
+	closed bool
+}
+
+func (reader *cancelingReadCloser) Read([]byte) (int, error) {
+	reader.cancel()
+	return 0, context.Canceled
+}
+
+func (reader *cancelingReadCloser) Close() error {
+	reader.closed = true
+	return nil
+}
+
 func TestGenerateHonorsCanceledContext(t *testing.T) {
 	client, err := New(Options{Endpoint: "https://example.test/v1/messages"})
 	if err != nil {

@@ -28,8 +28,9 @@ type createRequest struct {
 }
 
 type systemBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type         string        `json:"type"`
+	Text         string        `json:"text"`
+	CacheControl *cacheControl `json:"cache_control,omitempty"`
 }
 
 type wireMessage struct {
@@ -38,9 +39,14 @@ type wireMessage struct {
 }
 
 type toolDefinition struct {
-	Name        string           `json:"name"`
-	Description string           `json:"description,omitempty"`
-	InputSchema agent.JSONSchema `json:"input_schema"`
+	Name         string           `json:"name"`
+	Description  string           `json:"description,omitempty"`
+	InputSchema  agent.JSONSchema `json:"input_schema"`
+	CacheControl *cacheControl    `json:"cache_control,omitempty"`
+}
+
+type cacheControl struct {
+	Type string `json:"type"`
 }
 
 type ToolChoice struct {
@@ -60,18 +66,19 @@ type OutputConfig struct {
 }
 
 type contentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	Source    *imageSource    `json:"source,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	Content   string          `json:"content,omitempty"`
-	IsError   bool            `json:"is_error,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	Thinking  string          `json:"thinking,omitempty"`
-	Signature string          `json:"signature,omitempty"`
-	Data      string          `json:"data,omitempty"`
+	Type         string          `json:"type"`
+	Text         string          `json:"text,omitempty"`
+	Source       *imageSource    `json:"source,omitempty"`
+	ToolUseID    string          `json:"tool_use_id,omitempty"`
+	Content      string          `json:"content,omitempty"`
+	IsError      bool            `json:"is_error,omitempty"`
+	ID           string          `json:"id,omitempty"`
+	Name         string          `json:"name,omitempty"`
+	Input        json.RawMessage `json:"input,omitempty"`
+	Thinking     string          `json:"thinking,omitempty"`
+	Signature    string          `json:"signature,omitempty"`
+	Data         string          `json:"data,omitempty"`
+	CacheControl *cacheControl   `json:"cache_control,omitempty"`
 }
 
 type imageSource struct {
@@ -129,6 +136,48 @@ func buildRequestUnchecked(request agent.Request, maxStateBytes int) (createRequ
 		Messages: messages,
 		Tools:    tools,
 	}, history, newMessages, nil
+}
+
+func withPromptCacheControl(request createRequest) (createRequest, error) {
+	request.Tools = append([]toolDefinition(nil), request.Tools...)
+	request.System = append([]systemBlock(nil), request.System...)
+	request.Messages = append([]json.RawMessage(nil), request.Messages...)
+
+	if len(request.Tools) != 0 {
+		request.Tools[len(request.Tools)-1].CacheControl = &cacheControl{Type: "ephemeral"}
+	}
+	if len(request.System) != 0 {
+		request.System[len(request.System)-1].CacheControl = &cacheControl{Type: "ephemeral"}
+	}
+
+	start := max(0, len(request.Messages)-2)
+	for index := start; index < len(request.Messages); index++ {
+		var message wireMessage
+		if err := json.Unmarshal(request.Messages[index], &message); err != nil {
+			return createRequest{}, fmt.Errorf("decode message %d for prompt caching: %w", index, err)
+		}
+
+		var blocks []contentBlock
+		if err := json.Unmarshal(message.Content, &blocks); err != nil {
+			return createRequest{}, fmt.Errorf("decode message %d content for prompt caching: %w", index, err)
+		}
+		if len(blocks) == 0 {
+			continue
+		}
+		blocks[len(blocks)-1].CacheControl = &cacheControl{Type: "ephemeral"}
+
+		content, err := json.Marshal(blocks)
+		if err != nil {
+			return createRequest{}, fmt.Errorf("encode message %d content for prompt caching: %w", index, err)
+		}
+		message.Content = content
+		request.Messages[index], err = json.Marshal(message)
+		if err != nil {
+			return createRequest{}, fmt.Errorf("encode message %d for prompt caching: %w", index, err)
+		}
+	}
+
+	return request, nil
 }
 
 func encodeInputs(inputs []agent.Input) ([]json.RawMessage, error) {

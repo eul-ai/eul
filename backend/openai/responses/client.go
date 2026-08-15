@@ -145,7 +145,7 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, observer a
 		return agent.Response{}, c.errorf("%v", err)
 	}
 
-	requestBody, oversized, err := marshalBoundedJSON(wireRequest, c.maxRequestBytes)
+	requestBody, oversized, err := backendhttp.MarshalBoundedJSON(wireRequest, c.maxRequestBytes)
 	if err != nil {
 		return agent.Response{}, c.errorf("encode request: %v", err)
 	}
@@ -167,10 +167,14 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, observer a
 		if errors.As(err, &observerErr) {
 			return agent.Response{}, c.wrapf(err, "%v", err)
 		}
+		var partialErr *partialResponseError
+		if errors.As(err, &partialErr) {
+			return agent.Response{}, c.wrapf(err, "%v", err)
+		}
 		if classified := c.contextError(ctx, err, "read response"); classified != nil {
 			return agent.Response{}, classified
 		}
-		if isRetryableNetworkError(err) {
+		if backendhttp.RetryableNetworkError(err) {
 			return agent.Response{}, c.retryableWrapf(err, "%v", err)
 		}
 		return agent.Response{}, c.wrapf(err, "%v", err)
@@ -178,6 +182,9 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, observer a
 
 	text, calls, usage, err := normalizeResponse(wireResponse)
 	if err != nil {
+		if stream.observed {
+			err = &partialResponseError{cause: err}
+		}
 		c.redactResponseFailure(err)
 		return agent.Response{}, c.wrapf(err, "%v", err)
 	}
@@ -223,7 +230,7 @@ func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.Comp
 		return agent.CompactResponse{}, c.errorf("%v", err)
 	}
 
-	requestBody, oversized, err := marshalBoundedJSON(wireRequest, c.maxRequestBytes)
+	requestBody, oversized, err := backendhttp.MarshalBoundedJSON(wireRequest, c.maxRequestBytes)
 	if err != nil {
 		return agent.CompactResponse{}, c.errorf("encode compact request: %v", err)
 	}
@@ -280,7 +287,7 @@ func (c *Client) SemanticCompact(ctx context.Context, request agent.Request, ins
 	wireRequest.ToolChoice = ""
 	wireRequest.ParallelToolCalls = false
 
-	requestBody, oversized, err := marshalBoundedJSON(wireRequest, c.maxRequestBytes)
+	requestBody, oversized, err := backendhttp.MarshalBoundedJSON(wireRequest, c.maxRequestBytes)
 	if err != nil {
 		return agent.CompactResponse{}, c.errorf("encode summary request: %v", err)
 	}
@@ -361,8 +368,4 @@ func (c *Client) configureRequest(request agent.Request, wireRequest *createResp
 	wireRequest.ToolChoice = options.ToolChoice
 	wireRequest.ParallelToolCalls = options.ParallelToolCalls
 	return nil
-}
-
-func marshalBoundedJSON(value any, maximum int64) ([]byte, bool, error) {
-	return backendhttp.MarshalBoundedJSON(value, maximum)
 }

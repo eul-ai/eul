@@ -25,6 +25,8 @@ type createRequest struct {
 	ReasoningEffort   string            `json:"reasoning_effort,omitempty"`
 	ToolChoice        string            `json:"tool_choice,omitempty"`
 	ParallelToolCalls *bool             `json:"parallel_tool_calls,omitempty"`
+
+	serializeReasoningContent bool
 }
 
 type streamOptions struct {
@@ -40,6 +42,7 @@ type toolDefinition struct {
 	Name        string           `json:"name"`
 	Description string           `json:"description,omitempty"`
 	Parameters  agent.JSONSchema `json:"parameters"`
+	Strict      bool             `json:"strict"`
 }
 
 type message struct {
@@ -53,8 +56,15 @@ type message struct {
 type assistantMessage struct {
 	Role             string     `json:"role"`
 	Content          any        `json:"content"`
-	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ReasoningContent *string    `json:"reasoning_content,omitempty"`
 	ToolCalls        []toolCall `json:"tool_calls,omitempty"`
+}
+
+func reasoningContent(value string, serializeEmpty bool) *string {
+	if value == "" && !serializeEmpty {
+		return nil
+	}
+	return &value
 }
 
 type contentPart struct {
@@ -122,6 +132,7 @@ func buildRequestUnchecked(request agent.Request, maxStateBytes int) (createRequ
 				Name:        definition.Name,
 				Description: definition.Description,
 				Parameters:  definition.Parameters,
+				Strict:      true,
 			},
 		}
 	}

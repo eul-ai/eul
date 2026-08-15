@@ -36,7 +36,7 @@ func TestBuildRequestEncodesInputsToolsAndState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if request.Model != "model" || len(request.Messages) != 4 || len(history) != 1 || len(newMessages) != 2 || len(request.Tools) != 1 {
+	if request.Model != "model" || len(request.Messages) != 4 || len(history) != 1 || len(newMessages) != 2 || len(request.Tools) != 1 || !request.Tools[0].Function.Strict {
 		t.Fatalf("request = %+v, history=%d new=%d", request, len(history), len(newMessages))
 	}
 

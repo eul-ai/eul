@@ -1,6 +1,7 @@
 package chatcompletions
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -53,7 +54,7 @@ func TestReadCompletionSSEStreamsAndNormalizes(t *testing.T) {
 			snapshots = append(snapshots, snapshot)
 			return nil
 		},
-	})
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +81,7 @@ func TestReadCompletionSSEStreamsRefusal(t *testing.T) {
 	result, err := readCompletionSSE(strings.NewReader(stream), 1024, agent.StreamObserver{Text: func(delta string) error {
 		delivered += delta
 		return nil
-	}})
+	}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,8 +90,68 @@ func TestReadCompletionSSEStreamsRefusal(t *testing.T) {
 	}
 }
 
+func TestReadCompletionSSEAcceptsSplitToolMetadata(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1"}]},"finish_reason":null}]}`,
+		"",
+		`data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"read","arguments":"{\"path\":\"a\"}"}}]},"finish_reason":"tool_calls"}]}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+
+	var snapshots []agent.ToolCallSnapshot
+	result, err := readCompletionSSE(strings.NewReader(stream), 1024, agent.StreamObserver{ToolCall: func(snapshot agent.ToolCallSnapshot) error {
+		snapshots = append(snapshots, snapshot)
+		return nil
+	}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.calls) != 1 || result.calls[0].ID != "call_1" || result.calls[0].Name != "read" || string(result.calls[0].Arguments) != `{"path":"a"}` {
+		t.Fatalf("calls = %+v", result.calls)
+	}
+	if len(snapshots) != 2 || snapshots[0].Complete || !snapshots[1].Complete {
+		t.Fatalf("snapshots = %+v", snapshots)
+	}
+}
+
+func TestReadCompletionSSERejectsLegacyFunctionCallFinish(t *testing.T) {
+	stream := "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"function_call\"}]}\n\ndata: [DONE]\n\n"
+	if _, err := readCompletionSSE(strings.NewReader(stream), 1024, agent.StreamObserver{}, false); err == nil {
+		t.Fatal("legacy function_call finish reason was accepted")
+	}
+}
+
+func TestReadCompletionSSESerializesEmptyReasoningContentWhenRequested(t *testing.T) {
+	stream := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+	for _, test := range []struct {
+		name      string
+		serialize bool
+		wantField bool
+	}{
+		{name: "default"},
+		{name: "required", serialize: true, wantField: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := readCompletionSSE(strings.NewReader(stream), 1024, agent.StreamObserver{}, test.serialize)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var assistant map[string]json.RawMessage
+			if err := json.Unmarshal(result.assistant, &assistant); err != nil {
+				t.Fatal(err)
+			}
+			reasoning, exists := assistant["reasoning_content"]
+			if exists != test.wantField || exists && string(reasoning) != `""` {
+				t.Fatalf("assistant = %s", result.assistant)
+			}
+		})
+	}
+}
+
 func TestReadCompletionSSERequiresFinishReason(t *testing.T) {
-	_, err := readCompletionSSE(strings.NewReader("data: {\"choices\":[]}\n\ndata: [DONE]\n\n"), 1024, agent.StreamObserver{})
+	_, err := readCompletionSSE(strings.NewReader("data: {\"choices\":[]}\n\ndata: [DONE]\n\n"), 1024, agent.StreamObserver{}, false)
 	if !errors.Is(err, errSSEIncomplete) {
 		t.Fatalf("error = %v", err)
 	}
@@ -101,12 +162,24 @@ func TestReadCompletionSSERequiresFinishReason(t *testing.T) {
 
 func TestReadCompletionSSEDoesNotRetryAfterDelivery(t *testing.T) {
 	stream := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n"
-	_, err := readCompletionSSE(strings.NewReader(stream), 1024, agent.StreamObserver{Text: func(string) error { return nil }})
+	_, err := readCompletionSSE(strings.NewReader(stream), 1024, agent.StreamObserver{Text: func(string) error { return nil }}, false)
 	var partial *partialResponseError
 	if !errors.As(err, &partial) {
 		t.Fatalf("error = %v", err)
 	}
 	if _, retry := (&Client{}).RetryGeneration(err, 1); retry {
 		t.Fatal("partial stream is retryable")
+	}
+}
+
+func TestReadCompletionSSERetriesWhenNothingWasDelivered(t *testing.T) {
+	stream := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n"
+	_, err := readCompletionSSE(strings.NewReader(stream), 1024, agent.StreamObserver{}, false)
+	var partial *partialResponseError
+	if errors.As(err, &partial) {
+		t.Fatalf("undelivered response was marked partial: %v", err)
+	}
+	if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {
+		t.Fatal("undelivered incomplete response is not retryable")
 	}
 }

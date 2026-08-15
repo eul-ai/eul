@@ -15,9 +15,13 @@ import (
 	"github.com/eul-ai/eul/backend/openai/responses"
 )
 
-const maxOutputTokens = 32_000
+const (
+	maxOutputTokens           = 32_000
+	maxThinkingOutputHeadroom = 8_000
+)
 
 type provider struct {
+	models    map[string]modelInfo
 	responses *responses.Client
 	chat      *chatcompletions.Client
 	anthropic *anthropic.Client
@@ -31,13 +35,15 @@ type routedError struct {
 func (err *routedError) Error() string { return err.cause.Error() }
 func (err *routedError) Unwrap() error { return err.cause }
 
-func newProvider(apiKey, baseURL string, httpClient *http.Client) (*provider, error) {
+func newProvider(apiKey, baseURL string, httpClient *http.Client, models map[string]modelInfo) (*provider, error) {
+	client := &provider{models: models}
+
 	responsesClient, err := responses.New(responses.Options{
 		HTTPClient:     httpClient,
 		Endpoint:       baseURL + "/responses",
 		ErrorPrefix:    "opencode go",
 		PrepareRequest: prepareBearerRequest(apiKey),
-		RequestOptions: responseRequestOptions,
+		RequestOptions: client.responseRequestOptions,
 		Redact:         []string{apiKey},
 	})
 	if err != nil {
@@ -49,7 +55,7 @@ func newProvider(apiKey, baseURL string, httpClient *http.Client) (*provider, er
 		Endpoint:       baseURL + "/chat/completions",
 		ErrorPrefix:    "opencode go",
 		PrepareRequest: prepareBearerRequest(apiKey),
-		RequestOptions: chatRequestOptions,
+		RequestOptions: client.chatRequestOptions,
 		Redact:         []string{apiKey},
 	})
 	if err != nil {
@@ -61,18 +67,22 @@ func newProvider(apiKey, baseURL string, httpClient *http.Client) (*provider, er
 		Endpoint:       baseURL + "/messages",
 		ErrorPrefix:    "opencode go",
 		PrepareRequest: prepareAnthropicRequest(apiKey),
-		RequestOptions: anthropicRequestOptions,
+		RequestOptions: client.anthropicRequestOptions,
+		PromptCaching:  true,
 		Redact:         []string{apiKey},
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return &provider{responses: responsesClient, chat: chatClient, anthropic: anthropicClient}, nil
+	client.responses = responsesClient
+	client.chat = chatClient
+	client.anthropic = anthropicClient
+	return client, nil
 }
 
 func (client *provider) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {
-	info, ok := models[request.Model]
+	info, ok := client.models[request.Model]
 	if !ok {
 		return agent.Response{}, fmt.Errorf("opencode go: model %q is not supported", request.Model)
 	}
@@ -113,7 +123,7 @@ func (client *provider) RetryGeneration(err error, failedAttempts int) (time.Dur
 }
 
 func (client *provider) ShouldCompact(request agent.Request, usage agent.Usage) bool {
-	info, ok := models[request.Model]
+	info, ok := client.models[request.Model]
 	if !ok {
 		return false
 	}
@@ -142,7 +152,7 @@ func (client *provider) ShouldCompact(request agent.Request, usage agent.Usage) 
 }
 
 func (client *provider) Compact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {
-	info, ok := models[request.Model]
+	info, ok := client.models[request.Model]
 	if !ok {
 		return agent.CompactResponse{}, fmt.Errorf("opencode go: model %q is not supported", request.Model)
 	}
@@ -166,7 +176,7 @@ func (client *provider) Compact(ctx context.Context, request agent.Request) (age
 }
 
 func (client *provider) ShouldCompactAfterError(request agent.Request, err error) bool {
-	info, ok := models[request.Model]
+	info, ok := client.models[request.Model]
 	if !ok {
 		return false
 	}
@@ -206,19 +216,19 @@ func prepareAnthropicRequest(apiKey string) func(context.Context, *http.Request)
 	}
 }
 
-func responseRequestOptions(request agent.Request) (responses.RequestOptions, error) {
-	info, err := validateRequestModel(request, protocolResponses)
+func (client *provider) responseRequestOptions(request agent.Request) (responses.RequestOptions, error) {
+	info, err := client.validateRequestModel(request, protocolResponses)
 	if err != nil {
 		return responses.RequestOptions{}, err
 	}
 
 	options := responses.RequestOptions{ToolChoice: "auto", ParallelToolCalls: true}
 	if info.thinkingMode == thinkingEffort {
-		effort := string(request.ThinkingLevel)
-		if request.ThinkingLevel == agent.ThinkingOff {
-			effort = "none"
+		reasoning := &responses.Reasoning{Effort: info.thinkingEfforts[request.ThinkingLevel]}
+		if request.ThinkingLevel != agent.ThinkingOff {
+			reasoning.Summary = "auto"
 		}
-		options.Reasoning = &responses.Reasoning{Effort: effort, Summary: "auto"}
+		options.Reasoning = reasoning
 	}
 	if info.includeEncryptedState {
 		options.Include = []string{"reasoning.encrypted_content"}
@@ -229,25 +239,26 @@ func responseRequestOptions(request agent.Request) (responses.RequestOptions, er
 	return options, nil
 }
 
-func chatRequestOptions(request agent.Request) (chatcompletions.RequestOptions, error) {
-	info, err := validateRequestModel(request, protocolChatCompletions)
+func (client *provider) chatRequestOptions(request agent.Request) (chatcompletions.RequestOptions, error) {
+	info, err := client.validateRequestModel(request, protocolChatCompletions)
 	if err != nil {
 		return chatcompletions.RequestOptions{}, err
 	}
 
 	options := chatcompletions.RequestOptions{
-		MaxTokens:         maxOutputTokens,
-		ToolChoice:        "auto",
-		ParallelToolCalls: true,
+		MaxTokens:                 maxOutputTokens,
+		ToolChoice:                "auto",
+		ParallelToolCalls:         true,
+		SerializeReasoningContent: info.serializeReasoningContent,
 	}
 	if info.thinkingMode == thinkingEffort {
-		options.ReasoningEffort = string(request.ThinkingLevel)
+		options.ReasoningEffort = info.thinkingEfforts[request.ThinkingLevel]
 	}
 	return options, nil
 }
 
-func anthropicRequestOptions(request agent.Request) (anthropic.RequestOptions, error) {
-	info, err := validateRequestModel(request, protocolAnthropicMessages)
+func (client *provider) anthropicRequestOptions(request agent.Request) (anthropic.RequestOptions, error) {
+	info, err := client.validateRequestModel(request, protocolAnthropicMessages)
 	if err != nil {
 		return anthropic.RequestOptions{}, err
 	}
@@ -260,7 +271,7 @@ func anthropicRequestOptions(request agent.Request) (anthropic.RequestOptions, e
 	case thinkingBudget:
 		budget := 16_000
 		if request.ThinkingLevel == agent.ThinkingMax {
-			budget = maxOutputTokens - 1
+			budget = maxOutputTokens - maxThinkingOutputHeadroom
 		}
 		options.Thinking = &anthropic.Thinking{Type: "enabled", BudgetTokens: budget}
 	case thinkingAdaptive:
@@ -273,8 +284,8 @@ func anthropicRequestOptions(request agent.Request) (anthropic.RequestOptions, e
 	return options, nil
 }
 
-func validateRequestModel(request agent.Request, expected protocol) (modelInfo, error) {
-	info, ok := models[request.Model]
+func (client *provider) validateRequestModel(request agent.Request, expected protocol) (modelInfo, error) {
+	info, ok := client.models[request.Model]
 	if !ok || info.protocol != expected {
 		return modelInfo{}, fmt.Errorf("model %q does not use the requested protocol", request.Model)
 	}

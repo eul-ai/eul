@@ -176,3 +176,19 @@ func TestReadMessagesSSEDoesNotRetryAfterDelivery(t *testing.T) {
 		t.Fatal("partial stream is retryable")
 	}
 }
+
+func TestReadMessagesSSERetriesWhenNothingWasDelivered(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"type":"message_start","message":{}}`, "",
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`, "",
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}`, "",
+	}, "\n")
+	_, err := readMessagesSSE(strings.NewReader(stream), 1<<20, agent.StreamObserver{})
+	var partial *partialResponseError
+	if errors.As(err, &partial) {
+		t.Fatalf("undelivered response was marked partial: %v", err)
+	}
+	if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {
+		t.Fatal("undelivered incomplete response is not retryable")
+	}
+}

@@ -45,12 +45,75 @@ func TestBuildRequestEncodesAnthropicInputs(t *testing.T) {
 	}
 }
 
+func TestPromptCacheControlMarksStableBoundariesWithoutMutatingRequest(t *testing.T) {
+	message := func(role string, blocks []contentBlock) json.RawMessage {
+		content, _ := json.Marshal(blocks)
+		raw, _ := json.Marshal(wireMessage{Role: role, Content: content})
+		return raw
+	}
+	request := createRequest{
+		System: []systemBlock{{Type: "text", Text: "first"}, {Type: "text", Text: "last"}},
+		Tools:  []toolDefinition{{Name: "first"}, {Name: "last"}},
+		Messages: []json.RawMessage{
+			message("user", []contentBlock{{Type: "text", Text: "old"}}),
+			message("assistant", []contentBlock{{Type: "thinking", Thinking: "thought", Signature: "signed"}, {Type: "tool_use", ID: "call", Name: "read", Input: json.RawMessage(`{}`)}}),
+			message("user", []contentBlock{{Type: "text", Text: "latest"}, {Type: "image", Source: &imageSource{Type: "base64", MediaType: "image/png", Data: "cG5n"}}}),
+		},
+	}
+
+	cached, err := withPromptCacheControl(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(cached)
+	if strings.Count(string(encoded), `"cache_control"`) != 4 {
+		t.Fatalf("cached request = %s", encoded)
+	}
+	if cached.Tools[0].CacheControl != nil || cached.Tools[1].CacheControl == nil || cached.System[0].CacheControl != nil || cached.System[1].CacheControl == nil {
+		t.Fatalf("tools=%+v system=%+v", cached.Tools, cached.System)
+	}
+
+	var latest wireMessage
+	if err := json.Unmarshal(cached.Messages[2], &latest); err != nil {
+		t.Fatal(err)
+	}
+	var blocks []contentBlock
+	if err := json.Unmarshal(latest.Content, &blocks); err != nil {
+		t.Fatal(err)
+	}
+	if blocks[0].CacheControl != nil || blocks[1].CacheControl == nil {
+		t.Fatalf("latest user blocks = %+v", blocks)
+	}
+	if strings.Contains(string(cached.Messages[0]), `"cache_control"`) || !strings.Contains(string(cached.Messages[1]), `"cache_control"`) {
+		t.Fatalf("message cache controls are misplaced: %s", cached.Messages)
+	}
+
+	original, _ := json.Marshal(request)
+	if strings.Contains(string(original), `"cache_control"`) {
+		t.Fatalf("original request was mutated: %s", original)
+	}
+}
+
 func TestConfigureRequestValidatesThinkingBudget(t *testing.T) {
-	client := &Client{requestOptions: func(agent.Request) (RequestOptions, error) {
-		return RequestOptions{MaxTokens: 100, Thinking: &Thinking{Type: "enabled", BudgetTokens: 100}}, nil
-	}}
-	if err := client.configureRequest(agent.Request{}, &createRequest{}); err == nil {
-		t.Fatal("invalid thinking budget was accepted")
+	for _, test := range []struct {
+		name      string
+		maxTokens int
+		budget    int
+		wantError bool
+	}{
+		{name: "below minimum", maxTokens: 2000, budget: 1023, wantError: true},
+		{name: "not below max", maxTokens: 1024, budget: 1024, wantError: true},
+		{name: "valid", maxTokens: 1025, budget: 1024},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &Client{requestOptions: func(agent.Request) (RequestOptions, error) {
+				return RequestOptions{MaxTokens: test.maxTokens, Thinking: &Thinking{Type: "enabled", BudgetTokens: test.budget}}, nil
+			}}
+			err := client.configureRequest(agent.Request{}, &createRequest{})
+			if (err != nil) != test.wantError {
+				t.Fatalf("configureRequest() error = %v", err)
+			}
+		})
 	}
 }
 

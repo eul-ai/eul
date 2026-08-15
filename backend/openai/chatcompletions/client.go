@@ -20,13 +20,15 @@ const (
 	defaultMaxErrorBytes       = int64(64 * 1024)
 	defaultMaxStateBytes       = 16 * 1024 * 1024
 	defaultStateOutputHeadroom = 1024 * 1024
+	semanticCompactionQuestion = "What happened earlier in this conversation?"
 )
 
 type RequestOptions struct {
-	MaxTokens         int
-	ReasoningEffort   string
-	ToolChoice        string
-	ParallelToolCalls bool
+	MaxTokens                 int
+	ReasoningEffort           string
+	ToolChoice                string
+	ParallelToolCalls         bool
+	SerializeReasoningContent bool
 }
 
 type RequestOptionsFunc func(agent.Request) (RequestOptions, error)
@@ -197,11 +199,13 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
 
+	questionRaw, _ := json.Marshal(message{Role: "user", Content: semanticCompactionQuestion})
 	summaryRaw, _ := json.Marshal(assistantMessage{
-		Role:    "assistant",
-		Content: compaction.FormatSummary(summary),
+		Role:             "assistant",
+		Content:          compaction.FormatSummary(summary),
+		ReasoningContent: reasoningContent("", wireRequest.serializeReasoningContent),
 	})
-	messages := []json.RawMessage{summaryRaw}
+	messages := []json.RawMessage{questionRaw, summaryRaw}
 	if continueAfterCompaction {
 		continuation, _ := json.Marshal(message{Role: "user", Content: compaction.Continuation})
 		messages = append(messages, continuation)
@@ -228,13 +232,22 @@ func (client *Client) complete(ctx context.Context, wireRequest createRequest, o
 	}
 	defer httpResponse.Body.Close()
 
-	result, err := readCompletionSSE(httpResponse.Body, client.maxResponseBytes, observer)
+	result, err := readCompletionSSE(
+		httpResponse.Body,
+		client.maxResponseBytes,
+		observer,
+		wireRequest.serializeReasoningContent,
+	)
 	if err == nil {
 		return result, nil
 	}
 	client.redactResponseFailure(err)
 	var observerErr *observerDeliveryError
 	if errors.As(err, &observerErr) {
+		return streamResult{}, client.wrapf(err, "%v", err)
+	}
+	var partialErr *partialResponseError
+	if errors.As(err, &partialErr) {
 		return streamResult{}, client.wrapf(err, "%v", err)
 	}
 	if classified := client.contextError(ctx, err, "read "+operation); classified != nil {
@@ -260,6 +273,7 @@ func (client *Client) configureRequest(request agent.Request, wireRequest *creat
 	wireRequest.StreamOptions = &streamOptions{IncludeUsage: true}
 	wireRequest.MaxTokens = options.MaxTokens
 	wireRequest.ReasoningEffort = options.ReasoningEffort
+	wireRequest.serializeReasoningContent = options.SerializeReasoningContent
 	if len(wireRequest.Tools) != 0 {
 		wireRequest.ToolChoice = options.ToolChoice
 		if options.ParallelToolCalls {

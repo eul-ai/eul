@@ -54,7 +54,7 @@ func TestClientContinuesAssistantToolCalls(t *testing.T) {
 				if err := json.Unmarshal(wire.Messages[2], &assistant); err != nil {
 					t.Fatal(err)
 				}
-				if assistant.ReasoningContent != "check " || len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].ID != "call_1" {
+				if assistant.ReasoningContent == nil || *assistant.ReasoningContent != "check " || len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].ID != "call_1" {
 					t.Fatalf("replayed assistant = %+v", assistant)
 				}
 				var tool message
@@ -107,6 +107,55 @@ func TestClientContinuesAssistantToolCalls(t *testing.T) {
 	}
 }
 
+func TestClientReplaysRequiredEmptyReasoningContent(t *testing.T) {
+	requestNumber := 0
+	client, err := New(Options{
+		Endpoint: "https://example.test/v1/chat/completions",
+		HTTPClient: &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			requestNumber++
+			var wire createRequest
+			if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
+				t.Fatal(err)
+			}
+			if requestNumber == 2 {
+				var assistant assistantMessage
+				if err := json.Unmarshal(wire.Messages[1], &assistant); err != nil {
+					t.Fatal(err)
+				}
+				if assistant.ReasoningContent == nil || *assistant.ReasoningContent != "" {
+					t.Fatalf("replayed assistant = %s", wire.Messages[1])
+				}
+			}
+			stream := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(stream))}, nil
+		})},
+		RequestOptions: func(agent.Request) (RequestOptions, error) {
+			return RequestOptions{MaxTokens: 100, SerializeReasoningContent: true}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := client.Generate(context.Background(), agent.Request{
+		Model:  "model",
+		Inputs: []agent.Input{agent.NewTextInput("first")},
+	}, agent.StreamObserver{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Generate(context.Background(), agent.Request{
+		Model:  "model",
+		State:  first.State,
+		Inputs: []agent.Input{agent.NewTextInput("second")},
+	}, agent.StreamObserver{}); err != nil {
+		t.Fatal(err)
+	}
+	if requestNumber != 2 {
+		t.Fatalf("requests = %d", requestNumber)
+	}
+}
+
 func TestSemanticCompactDisablesToolsAndStoresContinuation(t *testing.T) {
 	client, err := New(Options{
 		Endpoint: "https://example.test/v1/chat/completions",
@@ -122,7 +171,12 @@ func TestSemanticCompactDisablesToolsAndStoresContinuation(t *testing.T) {
 			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(stream))}, nil
 		})},
 		RequestOptions: func(agent.Request) (RequestOptions, error) {
-			return RequestOptions{MaxTokens: 100, ToolChoice: "auto", ParallelToolCalls: true}, nil
+			return RequestOptions{
+				MaxTokens:                 100,
+				ToolChoice:                "auto",
+				ParallelToolCalls:         true,
+				SerializeReasoningContent: true,
+			}, nil
 		},
 	})
 	if err != nil {
@@ -141,20 +195,24 @@ func TestSemanticCompactDisablesToolsAndStoresContinuation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(messages) != 2 {
+	if len(messages) != 3 {
 		t.Fatalf("compacted messages = %s", messages)
 	}
+	var question message
+	if err := json.Unmarshal(messages[0], &question); err != nil {
+		t.Fatal(err)
+	}
 	var summary assistantMessage
-	if err := json.Unmarshal(messages[0], &summary); err != nil {
+	if err := json.Unmarshal(messages[1], &summary); err != nil {
 		t.Fatal(err)
 	}
 	var continuation message
-	if err := json.Unmarshal(messages[1], &continuation); err != nil {
+	if err := json.Unmarshal(messages[2], &continuation); err != nil {
 		t.Fatal(err)
 	}
 	summaryText, summaryOK := summary.Content.(string)
 	continuationText, continuationOK := continuation.Content.(string)
-	if summary.Role != "assistant" || !summaryOK || !strings.Contains(summaryText, "summary") || continuation.Role != "user" || !continuationOK || continuationText == "" {
+	if question.Role != "user" || question.Content != semanticCompactionQuestion || summary.Role != "assistant" || summary.ReasoningContent == nil || *summary.ReasoningContent != "" || !summaryOK || !strings.Contains(summaryText, "summary") || continuation.Role != "user" || !continuationOK || continuationText == "" {
 		t.Fatalf("compacted messages = %s", messages)
 	}
 }

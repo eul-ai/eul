@@ -1,7 +1,6 @@
 package chatcompletions
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -11,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/eul-ai/eul/agent"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 var errSSEIncomplete = errors.New("chat completions SSE stream ended without a terminal event")
@@ -79,70 +79,34 @@ type streamResult struct {
 }
 
 type streamDecoder struct {
-	observer     agent.StreamObserver
-	text         strings.Builder
-	reasoning    strings.Builder
-	toolCalls    map[int]streamedToolCall
-	usage        *completionUsage
-	finishReason string
-	observed     bool
+	observer                  agent.StreamObserver
+	text                      strings.Builder
+	reasoning                 strings.Builder
+	toolCalls                 map[int]streamedToolCall
+	usage                     *completionUsage
+	finishReason              string
+	observed                  bool
+	serializeReasoningContent bool
 }
 
-func readCompletionSSE(reader io.Reader, maximum int64, observer agent.StreamObserver) (streamResult, error) {
-	decoder := streamDecoder{observer: observer, toolCalls: make(map[int]streamedToolCall)}
-	limited := &io.LimitedReader{R: reader, N: maximum + 1}
-	buffered := bufio.NewReader(limited)
-	var dataLines [][]byte
-
-	for {
-		line, err := buffered.ReadBytes('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return streamResult{}, decoder.wrapPartial(fmt.Errorf("read Chat Completions SSE: %w", err))
-		}
-		if limited.N == 0 {
-			return streamResult{}, decoder.wrapPartial(fmt.Errorf("chat completions SSE response exceeds %d bytes", maximum))
-		}
-
-		line = bytes.TrimSuffix(line, []byte("\n"))
-		line = bytes.TrimSuffix(line, []byte("\r"))
-		switch {
-		case len(line) == 0:
-			done, handleErr := decoder.handleData(dataLines)
-			dataLines = nil
-			if handleErr != nil {
-				return streamResult{}, decoder.wrapPartial(handleErr)
-			}
-			if done {
-				result, finishErr := decoder.finish()
-				return result, decoder.wrapPartial(finishErr)
-			}
-		case bytes.HasPrefix(line, []byte("data:")):
-			data := line[len("data:"):]
-			if len(data) > 0 && data[0] == ' ' {
-				data = data[1:]
-			}
-			dataLines = append(dataLines, data)
-		}
-
-		if errors.Is(err, io.EOF) {
-			done, handleErr := decoder.handleData(dataLines)
-			if handleErr != nil {
-				return streamResult{}, decoder.wrapPartial(handleErr)
-			}
-			if done || decoder.finishReason != "" {
-				result, finishErr := decoder.finish()
-				return result, decoder.wrapPartial(finishErr)
-			}
-			return streamResult{}, decoder.wrapPartial(errSSEIncomplete)
-		}
+func readCompletionSSE(reader io.Reader, maximum int64, observer agent.StreamObserver, serializeReasoningContent bool) (streamResult, error) {
+	decoder := streamDecoder{
+		observer:                  observer,
+		toolCalls:                 make(map[int]streamedToolCall),
+		serializeReasoningContent: serializeReasoningContent,
 	}
+	done, err := backendhttp.ReadSSE(reader, maximum, decoder.handleData)
+	if err != nil {
+		return streamResult{}, decoder.wrapPartial(fmt.Errorf("read Chat Completions SSE: %w", err))
+	}
+	if !done && decoder.finishReason == "" {
+		return streamResult{}, decoder.wrapPartial(errSSEIncomplete)
+	}
+	result, err := decoder.finish()
+	return result, decoder.wrapPartial(err)
 }
 
-func (decoder *streamDecoder) handleData(lines [][]byte) (bool, error) {
-	if len(lines) == 0 {
-		return false, nil
-	}
-	data := bytes.Join(lines, []byte("\n"))
+func (decoder *streamDecoder) handleData(data []byte) (bool, error) {
 	if len(data) == 0 {
 		return false, nil
 	}
@@ -182,11 +146,11 @@ func (decoder *streamDecoder) consumeDelta(delta completionDelta) error {
 	}
 	if visible != "" {
 		decoder.text.WriteString(visible)
-		decoder.observed = true
 		if decoder.observer.Text != nil {
 			if err := decoder.observer.Text(visible); err != nil {
 				return &observerDeliveryError{operation: "deliver text", cause: err}
 			}
+			decoder.observed = true
 		}
 	}
 
@@ -196,16 +160,16 @@ func (decoder *streamDecoder) consumeDelta(delta completionDelta) error {
 	}
 	if reasoning != "" {
 		decoder.reasoning.WriteString(reasoning)
-		decoder.observed = true
 		if decoder.observer.Reasoning != nil {
 			if err := decoder.observer.Reasoning(reasoning); err != nil {
 				return &observerDeliveryError{operation: "deliver reasoning", cause: err}
 			}
+			decoder.observed = true
 		}
 	}
 
 	for _, deltaCall := range delta.ToolCalls {
-		call, exists := decoder.toolCalls[deltaCall.Index]
+		call := decoder.toolCalls[deltaCall.Index]
 		call.index = deltaCall.Index
 		if deltaCall.ID != "" {
 			call.id = deltaCall.ID
@@ -213,12 +177,8 @@ func (decoder *streamDecoder) consumeDelta(delta completionDelta) error {
 		if deltaCall.Function.Name != "" {
 			call.name = deltaCall.Function.Name
 		}
-		if !exists && (call.id == "" || call.name == "") {
-			return fmt.Errorf("chat completion tool call %d starts without an ID and name", deltaCall.Index)
-		}
 		call.arguments += deltaCall.Function.Arguments
 		decoder.toolCalls[deltaCall.Index] = call
-		decoder.observed = true
 		if err := decoder.deliverToolCall(call, false); err != nil {
 			return err
 		}
@@ -238,6 +198,7 @@ func (decoder *streamDecoder) deliverToolCall(call streamedToolCall, complete bo
 	}); err != nil {
 		return &observerDeliveryError{operation: "deliver tool call", cause: err}
 	}
+	decoder.observed = true
 	return nil
 }
 
@@ -246,7 +207,7 @@ func (decoder *streamDecoder) finish() (streamResult, error) {
 		return streamResult{}, errSSEIncomplete
 	}
 	switch decoder.finishReason {
-	case "stop", "tool_calls", "function_call", "content_filter":
+	case "stop", "tool_calls", "content_filter":
 	case "length":
 		return streamResult{}, fmt.Errorf("chat completion stopped with finish reason %q", decoder.finishReason)
 	default:
@@ -298,7 +259,7 @@ func (decoder *streamDecoder) finish() (streamResult, error) {
 	assistant, err := json.Marshal(assistantMessage{
 		Role:             "assistant",
 		Content:          content,
-		ReasoningContent: reasoning,
+		ReasoningContent: reasoningContent(reasoning, decoder.serializeReasoningContent),
 		ToolCalls:        wireCalls,
 	})
 	if err != nil {

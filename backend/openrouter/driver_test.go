@@ -3,6 +3,7 @@ package openrouter
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -12,6 +13,12 @@ import (
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
 )
+
+type driverRoundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (function driverRoundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
 
 func TestDriverRequiresAPIKey(t *testing.T) {
 	driver := New()
@@ -214,6 +221,27 @@ func TestRuntimeLoadsAccountUsage(t *testing.T) {
 				t.Fatalf("limit remaining = %v, want %v", usage.LimitRemainingUSD, *test.wantRemaining)
 			}
 		})
+	}
+}
+
+func TestRuntimeUsageRejectsTrailingData(t *testing.T) {
+	driver := New()
+	driver.getenv = func(string) string { return "secret" }
+	driver.baseURL = "https://example.test"
+	driver.httpClient = &http.Client{Transport: driverRoundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"data":{"usage_monthly":12.34}} trailing`)),
+		}, nil
+	})}
+	opened, err := driver.Open(backend.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := opened.(backend.UsageProvider).Usage(context.Background()); err == nil {
+		t.Fatal("usage response with trailing data was accepted")
 	}
 }
 

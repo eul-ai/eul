@@ -1,7 +1,6 @@
 package responses
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -10,6 +9,7 @@ import (
 	"sort"
 
 	"github.com/eul-ai/eul/agent"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 var errResponsesSSEIncomplete = errors.New("responses SSE stream ended without a terminal response")
@@ -18,6 +18,7 @@ type streamObserver struct {
 	observer     agent.StreamObserver
 	sawDelta     bool
 	sawReasoning bool
+	observed     bool
 }
 
 type observerDeliveryError struct {
@@ -27,6 +28,13 @@ type observerDeliveryError struct {
 
 func (e *observerDeliveryError) Error() string { return e.operation + ": " + e.cause.Error() }
 func (e *observerDeliveryError) Unwrap() error { return e.cause }
+
+type partialResponseError struct {
+	cause error
+}
+
+func (e *partialResponseError) Error() string { return e.cause.Error() }
+func (e *partialResponseError) Unwrap() error { return e.cause }
 
 type responseStreamEvent struct {
 	Type        string          `json:"type"`
@@ -60,67 +68,29 @@ type responseStreamDecoder struct {
 
 func readResponsesSSE(reader io.Reader, maximum int64, observer *streamObserver) (createResponseEnvelope, error) {
 	decoder := responseStreamDecoder{observer: observer, toolStreams: make(map[int]streamedToolCall)}
-	return readSSE(reader, maximum, decoder.handle)
+	response, err := readSSE(reader, maximum, decoder.handle)
+	return response, decoder.wrapPartial(err)
 }
 
 func readSSE(reader io.Reader, maximum int64, handle func([]byte) (createResponseEnvelope, bool, error)) (createResponseEnvelope, error) {
-	limited := &io.LimitedReader{R: reader, N: maximum + 1}
-	buffered := bufio.NewReader(limited)
-	var dataLines [][]byte
-
-	for {
-		line, err := buffered.ReadBytes('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return createResponseEnvelope{}, fmt.Errorf("read Responses SSE: %w", err)
+	var response createResponseEnvelope
+	done, err := backendhttp.ReadSSE(reader, maximum, func(data []byte) (bool, error) {
+		if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
+			return false, nil
 		}
-		if limited.N == 0 {
-			return createResponseEnvelope{}, fmt.Errorf("responses SSE response exceeds %d bytes", maximum)
+		result, complete, err := handle(data)
+		if complete {
+			response = result
 		}
-
-		line = bytes.TrimSuffix(line, []byte("\n"))
-		line = bytes.TrimSuffix(line, []byte("\r"))
-		switch {
-		case len(line) == 0:
-			response, done, handleErr := handleSSEData(dataLines, handle)
-			dataLines = nil
-			if handleErr != nil {
-				return createResponseEnvelope{}, handleErr
-			}
-			if done {
-				return response, nil
-			}
-		case bytes.HasPrefix(line, []byte("data:")):
-			data := line[len("data:"):]
-			if len(data) > 0 && data[0] == ' ' {
-				data = data[1:]
-			}
-			dataLines = append(dataLines, data)
-		}
-
-		if errors.Is(err, io.EOF) {
-			response, done, handleErr := handleSSEData(dataLines, handle)
-			if handleErr != nil {
-				return createResponseEnvelope{}, handleErr
-			}
-			if done {
-				return response, nil
-			}
-			return createResponseEnvelope{}, errResponsesSSEIncomplete
-		}
+		return complete, err
+	})
+	if err != nil {
+		return createResponseEnvelope{}, fmt.Errorf("read Responses SSE: %w", err)
 	}
-}
-
-func handleSSEData(dataLines [][]byte, handle func([]byte) (createResponseEnvelope, bool, error)) (createResponseEnvelope, bool, error) {
-	if len(dataLines) == 0 {
-		return createResponseEnvelope{}, false, nil
+	if !done {
+		return createResponseEnvelope{}, errResponsesSSEIncomplete
 	}
-
-	data := bytes.Join(dataLines, []byte("\n"))
-	if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
-		return createResponseEnvelope{}, false, nil
-	}
-
-	return handle(data)
+	return response, nil
 }
 
 func (decoder *responseStreamDecoder) handle(data []byte) (createResponseEnvelope, bool, error) {
@@ -242,6 +212,7 @@ func (decoder *responseStreamDecoder) deliverToolCall(streamed streamedToolCall,
 	if err := decoder.observer.observer.ToolCall(snapshot); err != nil {
 		return &observerDeliveryError{operation: "deliver tool call", cause: err}
 	}
+	decoder.observer.observed = true
 	return nil
 }
 
@@ -254,6 +225,7 @@ func (decoder *responseStreamDecoder) deliverText(delta string) error {
 		if err := decoder.observer.observer.Text(delta); err != nil {
 			return &observerDeliveryError{operation: "deliver text", cause: err}
 		}
+		decoder.observer.observed = true
 	}
 
 	decoder.observer.sawDelta = true
@@ -269,6 +241,7 @@ func (decoder *responseStreamDecoder) deliverReasoning(delta string) error {
 		if err := decoder.observer.observer.Reasoning(delta); err != nil {
 			return &observerDeliveryError{operation: "deliver reasoning", cause: err}
 		}
+		decoder.observer.observed = true
 	}
 
 	decoder.observer.sawReasoning = true
@@ -308,6 +281,17 @@ func (decoder *responseStreamDecoder) terminal(event responseStreamEvent) (creat
 		response.Output = []json.RawMessage{}
 	}
 	return response, nil
+}
+
+func (decoder *responseStreamDecoder) wrapPartial(err error) error {
+	if err == nil || decoder.observer == nil || !decoder.observer.observed {
+		return err
+	}
+	var observerErr *observerDeliveryError
+	if errors.As(err, &observerErr) {
+		return err
+	}
+	return &partialResponseError{cause: err}
 }
 
 func streamError(event responseStreamEvent) error {

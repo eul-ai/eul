@@ -1,7 +1,6 @@
 package messages
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -11,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/eul-ai/eul/agent"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 var errSSEIncomplete = errors.New("anthropic messages SSE stream ended without message_stop")
@@ -108,59 +108,18 @@ type streamDecoder struct {
 
 func readMessagesSSE(reader io.Reader, maximum int64, observer agent.StreamObserver) (streamResult, error) {
 	decoder := streamDecoder{observer: observer, blocks: make(map[int]*blockAccumulator)}
-	limited := &io.LimitedReader{R: reader, N: maximum + 1}
-	buffered := bufio.NewReader(limited)
-	var dataLines [][]byte
-
-	for {
-		line, err := buffered.ReadBytes('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return streamResult{}, decoder.wrapPartial(fmt.Errorf("read Anthropic Messages SSE: %w", err))
-		}
-		if limited.N == 0 {
-			return streamResult{}, decoder.wrapPartial(fmt.Errorf("anthropic messages SSE response exceeds %d bytes", maximum))
-		}
-
-		line = bytes.TrimSuffix(line, []byte("\n"))
-		line = bytes.TrimSuffix(line, []byte("\r"))
-		switch {
-		case len(line) == 0:
-			done, handleErr := decoder.handleData(dataLines)
-			dataLines = nil
-			if handleErr != nil {
-				return streamResult{}, decoder.wrapPartial(handleErr)
-			}
-			if done {
-				result, finishErr := decoder.finish()
-				return result, decoder.wrapPartial(finishErr)
-			}
-		case bytes.HasPrefix(line, []byte("data:")):
-			data := line[len("data:"):]
-			if len(data) > 0 && data[0] == ' ' {
-				data = data[1:]
-			}
-			dataLines = append(dataLines, data)
-		}
-
-		if errors.Is(err, io.EOF) {
-			done, handleErr := decoder.handleData(dataLines)
-			if handleErr != nil {
-				return streamResult{}, decoder.wrapPartial(handleErr)
-			}
-			if done {
-				result, finishErr := decoder.finish()
-				return result, decoder.wrapPartial(finishErr)
-			}
-			return streamResult{}, decoder.wrapPartial(errSSEIncomplete)
-		}
+	done, err := backendhttp.ReadSSE(reader, maximum, decoder.handleData)
+	if err != nil {
+		return streamResult{}, decoder.wrapPartial(fmt.Errorf("read Anthropic Messages SSE: %w", err))
 	}
+	if !done {
+		return streamResult{}, decoder.wrapPartial(errSSEIncomplete)
+	}
+	result, err := decoder.finish()
+	return result, decoder.wrapPartial(err)
 }
 
-func (decoder *streamDecoder) handleData(lines [][]byte) (bool, error) {
-	if len(lines) == 0 {
-		return false, nil
-	}
-	data := bytes.Join(lines, []byte("\n"))
+func (decoder *streamDecoder) handleData(data []byte) (bool, error) {
 	if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
 		return false, nil
 	}
@@ -307,33 +266,28 @@ func (decoder *streamDecoder) stopBlock(index int) error {
 }
 
 func (decoder *streamDecoder) deliverText(delta string) error {
-	if delta == "" {
+	if delta == "" || decoder.observer.Text == nil {
 		return nil
 	}
-	decoder.observed = true
-	if decoder.observer.Text != nil {
-		if err := decoder.observer.Text(delta); err != nil {
-			return &observerDeliveryError{operation: "deliver text", cause: err}
-		}
+	if err := decoder.observer.Text(delta); err != nil {
+		return &observerDeliveryError{operation: "deliver text", cause: err}
 	}
+	decoder.observed = true
 	return nil
 }
 
 func (decoder *streamDecoder) deliverReasoning(delta string) error {
-	if delta == "" {
+	if delta == "" || decoder.observer.Reasoning == nil {
 		return nil
 	}
-	decoder.observed = true
-	if decoder.observer.Reasoning != nil {
-		if err := decoder.observer.Reasoning(delta); err != nil {
-			return &observerDeliveryError{operation: "deliver reasoning", cause: err}
-		}
+	if err := decoder.observer.Reasoning(delta); err != nil {
+		return &observerDeliveryError{operation: "deliver reasoning", cause: err}
 	}
+	decoder.observed = true
 	return nil
 }
 
 func (decoder *streamDecoder) deliverToolCall(block *blockAccumulator, complete bool) error {
-	decoder.observed = true
 	if decoder.observer.ToolCall == nil {
 		return nil
 	}
@@ -345,6 +299,7 @@ func (decoder *streamDecoder) deliverToolCall(block *blockAccumulator, complete 
 	}); err != nil {
 		return &observerDeliveryError{operation: "deliver tool call", cause: err}
 	}
+	decoder.observed = true
 	return nil
 }
 

@@ -85,8 +85,7 @@ func contextLimitAPIError(detail apiError) bool {
 	message := strings.ToLower(detail.Message)
 	return strings.Contains(message, "context length") ||
 		strings.Contains(message, "maximum context") ||
-		strings.Contains(message, "prompt is too long") ||
-		strings.Contains(message, "too many tokens")
+		strings.Contains(message, "prompt is too long")
 }
 
 func retryableAPIError(detail apiError) bool {

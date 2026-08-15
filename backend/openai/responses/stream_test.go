@@ -3,6 +3,7 @@ package responses
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -30,6 +31,54 @@ func TestResponsesSSEOrdersCompletedItemsByOutputIndex(t *testing.T) {
 	}
 	if text != "firstsecond" {
 		t.Fatalf("text = %q, want %q", text, "firstsecond")
+	}
+}
+
+func TestResponsesSSEDoesNotRetryAfterDelivery(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "text", body: `data: {"type":"response.output_text.delta","delta":"partial"}` + "\n\n"},
+		{name: "reasoning", body: `data: {"type":"response.reasoning_text.delta","delta":"thinking"}` + "\n\n"},
+		{name: "tool", body: `data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"read","arguments":""}}` + "\n\n"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			deliveries := 0
+			observer := &streamObserver{observer: agent.StreamObserver{
+				Text: func(string) error {
+					deliveries++
+					return nil
+				},
+				Reasoning: func(string) error {
+					deliveries++
+					return nil
+				},
+				ToolCall: func(agent.ToolCallSnapshot) error {
+					deliveries++
+					return nil
+				},
+			}}
+			_, err := readResponsesSSE(strings.NewReader(test.body), 1024, observer)
+			var partial *partialResponseError
+			if deliveries != 1 || !errors.As(err, &partial) {
+				t.Fatalf("deliveries=%d error=%v", deliveries, err)
+			}
+			if _, retry := (&Client{}).RetryGeneration(err, 1); retry {
+				t.Fatal("partial response is retryable")
+			}
+		})
+	}
+
+	_, err := readResponsesSSE(strings.NewReader(tests[0].body), 1024, &streamObserver{})
+	var partial *partialResponseError
+	if errors.As(err, &partial) {
+		t.Fatalf("undelivered response was marked partial: %v", err)
+	}
+	if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {
+		t.Fatal("undelivered incomplete response is not retryable")
 	}
 }
 

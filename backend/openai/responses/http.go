@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -35,7 +34,7 @@ func (c *Client) post(ctx context.Context, body []byte, operation string) (*http
 		if classified := c.contextError(ctx, err, operation+" failed"); classified != nil {
 			return nil, classified
 		}
-		if isRetryableNetworkError(err) {
+		if backendhttp.RetryableNetworkError(err) {
 			return nil, c.retryableWrapf(err, "%s failed: %v", operation, err)
 		}
 		return nil, c.wrapf(err, "%s failed: %v", operation, err)
@@ -61,7 +60,7 @@ func (c *Client) contextError(ctx context.Context, err error, operation string) 
 }
 
 func (c *Client) decodeHTTPError(response *http.Response) error {
-	body, truncated, err := readBounded(response.Body, c.maxErrorBytes)
+	body, truncated, err := backendhttp.ReadBounded(response.Body, c.maxErrorBytes)
 	if err != nil {
 		cause := err
 		switch {
@@ -101,7 +100,7 @@ func (c *Client) newHTTPResponseError(response *http.Response, cause error, deta
 	return &httpResponseError{
 		message:    c.errorMessage(format, arguments...),
 		statusCode: response.StatusCode,
-		retryAfter: parseRetryAfter(response.Header.Get("Retry-After"), time.Now()),
+		retryAfter: backendhttp.ParseRetryAfter(response.Header.Get("Retry-After"), time.Now()),
 		detail:     detail,
 		cause:      cause,
 	}
@@ -120,7 +119,7 @@ func (c *Client) errorMessage(format string, arguments ...any) string {
 	if c.errorPrefix != "" {
 		message = c.errorPrefix + ": " + message
 	}
-	return truncateUTF8(message, int(c.maxErrorBytes))
+	return backendhttp.TruncateUTF8(message, int(c.maxErrorBytes))
 }
 
 func (c *Client) redactMessage(message string) string {
@@ -143,11 +142,3 @@ type wrappedError struct {
 
 func (e *wrappedError) Error() string { return e.message }
 func (e *wrappedError) Unwrap() error { return e.cause }
-
-func readBounded(reader io.Reader, maximum int64) ([]byte, bool, error) {
-	return backendhttp.ReadBounded(reader, maximum)
-}
-
-func truncateUTF8(text string, maximum int) string {
-	return backendhttp.TruncateUTF8(text, maximum)
-}
