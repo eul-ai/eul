@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"slices"
 	"time"
 )
@@ -14,6 +16,79 @@ type JSONSchema struct {
 	AdditionalProperties *bool                 `json:"additionalProperties,omitempty"`
 	Items                *JSONSchema           `json:"items,omitempty"`
 	AnyOf                []JSONSchema          `json:"anyOf,omitempty"`
+}
+
+func (schema JSONSchema) MarshalJSON() ([]byte, error) {
+	type wireSchema struct {
+		Type                 any             `json:"type,omitempty"`
+		Description          string          `json:"description,omitempty"`
+		Properties           json.RawMessage `json:"properties,omitempty"`
+		Required             []string        `json:"required,omitempty"`
+		AdditionalProperties *bool           `json:"additionalProperties,omitempty"`
+		Items                *JSONSchema     `json:"items,omitempty"`
+		AnyOf                []JSONSchema    `json:"anyOf,omitempty"`
+	}
+
+	var properties json.RawMessage
+	if len(schema.Properties) != 0 {
+		encoded, err := marshalSchemaProperties(schema.Properties, schema.Required)
+		if err != nil {
+			return nil, err
+		}
+		properties = encoded
+	}
+
+	return json.Marshal(wireSchema{
+		Type:                 schema.Type,
+		Description:          schema.Description,
+		Properties:           properties,
+		Required:             schema.Required,
+		AdditionalProperties: schema.AdditionalProperties,
+		Items:                schema.Items,
+		AnyOf:                schema.AnyOf,
+	})
+}
+
+func marshalSchemaProperties(properties map[string]JSONSchema, required []string) ([]byte, error) {
+	names := make([]string, 0, len(properties))
+	seen := make(map[string]struct{}, len(properties))
+	for _, name := range required {
+		if _, exists := properties[name]; !exists {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		names = append(names, name)
+		seen[name] = struct{}{}
+	}
+
+	remaining := make([]string, 0, len(properties)-len(names))
+	for name := range properties {
+		if _, exists := seen[name]; !exists {
+			remaining = append(remaining, name)
+		}
+	}
+	slices.Sort(remaining)
+	names = append(names, remaining...)
+
+	var encoded bytes.Buffer
+	encoded.WriteByte('{')
+	for index, name := range names {
+		if index != 0 {
+			encoded.WriteByte(',')
+		}
+		encodedName, _ := json.Marshal(name)
+		encodedProperty, err := json.Marshal(properties[name])
+		if err != nil {
+			return nil, err
+		}
+		encoded.Write(encodedName)
+		encoded.WriteByte(':')
+		encoded.Write(encodedProperty)
+	}
+	encoded.WriteByte('}')
+	return encoded.Bytes(), nil
 }
 
 type ToolDefinition struct {
