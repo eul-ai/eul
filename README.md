@@ -47,7 +47,11 @@ To use OpenRouter, provide an API key and model:
 OPENROUTER_API_KEY=... ./eul --provider openrouter --model <provider/model>
 ```
 
-OpenRouter feature support depends on the selected model.
+To use OpenCode Go, provide an API key and model:
+
+```sh
+OPENCODE_API_KEY=... ./eul --provider opencode-go --model <provider/model>
+```
 
 ## Safety and limitations
 
