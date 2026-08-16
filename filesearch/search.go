@@ -1,4 +1,4 @@
-package terminal
+package filesearch
 
 import (
 	"context"
@@ -9,65 +9,65 @@ import (
 )
 
 const (
-	filePickerMaxResults       = 100
-	fileSearchMaxCatalogs      = 16
-	fileSearchMaxCachedEntries = 500_000
+	maxResults       = 100
+	maxCatalogs      = 16
+	maxCachedEntries = 500_000
 )
 
-type fileSearchRequest struct {
-	id      uint64
-	query   string
-	refresh bool
+type Request struct {
+	ID      uint64
+	Query   string
+	Refresh bool
 }
 
-type fileSearchState uint8
+type State uint8
 
 const (
-	fileSearchDiscovering fileSearchState = iota
-	fileSearchComplete
-	fileSearchLimited
-	fileSearchFailed
+	StateDiscovering State = iota
+	StateComplete
+	StateLimited
+	StateFailed
 )
 
-type fileSearchResult struct {
-	id      uint64
-	matches []fileSearchMatch
-	state   fileSearchState
-	err     string
+type Result struct {
+	ID      uint64
+	Matches []Match
+	State   State
+	Err     error
 }
 
-type fileSearchCommand struct {
-	request *fileSearchRequest
+type searchCommand struct {
+	request *Request
 	cancel  bool
 }
 
 type resolveFileSearchFunc func(string, string, string, string) (fileSearchSpec, error)
 
-type fileSearchCacheLimits struct {
+type cacheLimits struct {
 	maxCatalogs int
 	maxEntries  int
 }
 
-type fileSearchRunner struct {
+type Searcher struct {
 	cwd          string
 	canonicalCWD string
 	home         string
 	resolve      resolveFileSearchFunc
 	discover     discoverFilesFunc
-	cacheLimits  fileSearchCacheLimits
-	commands     chan fileSearchRunnerUpdate
+	cacheLimits  cacheLimits
+	commands     chan searcherUpdate
 	discoveries  chan fileDiscoveryUpdate
 	matches      chan fileMatchUpdate
+	results      chan Result
 	stop         chan struct{}
 	done         chan struct{}
 	wait         sync.WaitGroup
 	closeOnce    sync.Once
 }
 
-type fileSearchRunnerUpdate struct {
+type searcherUpdate struct {
 	ctx     context.Context
-	command fileSearchCommand
-	output  chan<- fileSearchResult
+	command searchCommand
 }
 
 type fileDiscoveryUpdate struct {
@@ -82,18 +82,18 @@ type fileDiscoveryUpdate struct {
 type fileMatchUpdate struct {
 	generation uint64
 	requestID  uint64
-	matches    []fileSearchMatch
-	state      fileSearchState
-	err        string
+	matches    []Match
+	state      State
+	err        error
 }
 
 type fileSearchCatalog struct {
 	entries        map[string]fileCandidate
 	visible        map[string]fileCandidate
 	refresh        map[string]fileCandidate
-	state          fileSearchState
-	committedState fileSearchState
-	err            string
+	state          State
+	committedState State
+	err            error
 	initialized    bool
 	generation     uint64
 	lastUsed       uint64
@@ -102,25 +102,24 @@ type fileSearchCatalog struct {
 
 type activeFileSearch struct {
 	ctx     context.Context
-	request fileSearchRequest
+	request Request
 	spec    fileSearchSpec
 	key     fileSearchKey
-	output  chan<- fileSearchResult
 }
 
-func newFileSearchRunner(cwd string) *fileSearchRunner {
+func New(cwd string) *Searcher {
 	home, _ := os.UserHomeDir()
-	return newConfiguredFileSearchRunner(cwd, home, resolveFileSearchSpec, discoverFiles)
+	return newConfiguredSearcher(cwd, home, resolveFileSearchSpec, discoverFiles)
 }
 
-func newConfiguredFileSearchRunner(cwd, home string, resolve resolveFileSearchFunc, discover discoverFilesFunc) *fileSearchRunner {
-	return newConfiguredFileSearchRunnerWithLimits(cwd, home, resolve, discover, fileSearchCacheLimits{
-		maxCatalogs: fileSearchMaxCatalogs,
-		maxEntries:  fileSearchMaxCachedEntries,
+func newConfiguredSearcher(cwd, home string, resolve resolveFileSearchFunc, discover discoverFilesFunc) *Searcher {
+	return newConfiguredSearcherWithLimits(cwd, home, resolve, discover, cacheLimits{
+		maxCatalogs: maxCatalogs,
+		maxEntries:  maxCachedEntries,
 	})
 }
 
-func newConfiguredFileSearchRunnerWithLimits(cwd, home string, resolve resolveFileSearchFunc, discover discoverFilesFunc, cacheLimits fileSearchCacheLimits) *fileSearchRunner {
+func newConfiguredSearcherWithLimits(cwd, home string, resolve resolveFileSearchFunc, discover discoverFilesFunc, limits cacheLimits) *Searcher {
 	canonicalCWD, err := filepath.EvalSymlinks(cwd)
 	if err != nil {
 		canonicalCWD = filepath.Clean(cwd)
@@ -128,60 +127,71 @@ func newConfiguredFileSearchRunnerWithLimits(cwd, home string, resolve resolveFi
 	if home != "" {
 		home = filepath.Clean(home)
 	}
-	runner := &fileSearchRunner{
+	searcher := &Searcher{
 		cwd:          filepath.Clean(cwd),
 		canonicalCWD: filepath.Clean(canonicalCWD),
 		home:         home,
 		resolve:      resolve,
 		discover:     discover,
-		cacheLimits:  cacheLimits,
-		commands:     make(chan fileSearchRunnerUpdate, 1),
+		cacheLimits:  limits,
+		commands:     make(chan searcherUpdate, 1),
 		discoveries:  make(chan fileDiscoveryUpdate, 64),
 		matches:      make(chan fileMatchUpdate, 64),
+		results:      make(chan Result, 64),
 		stop:         make(chan struct{}),
 		done:         make(chan struct{}),
 	}
-	go runner.run()
-	return runner
+	go searcher.run()
+	return searcher
 }
 
-func (r *fileSearchRunner) update(ctx context.Context, command fileSearchCommand, output chan<- fileSearchResult) {
-	if command.request == nil && !command.cancel {
-		return
-	}
-	update := fileSearchRunnerUpdate{ctx: ctx, command: command, output: output}
+func (s *Searcher) Search(ctx context.Context, request Request) {
+	s.update(ctx, searchCommand{request: &request})
+}
+
+func (s *Searcher) Cancel() {
+	s.update(context.Background(), searchCommand{cancel: true})
+}
+
+func (s *Searcher) Results() <-chan Result {
+	return s.results
+}
+
+func (s *Searcher) update(ctx context.Context, command searchCommand) {
+	update := searcherUpdate{ctx: ctx, command: command}
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-r.stop:
+		case <-s.stop:
 			return
 		default:
 		}
 
 		select {
-		case r.commands <- update:
+		case s.commands <- update:
 			return
 		default:
 		}
 
 		select {
-		case <-r.commands:
+		case <-s.commands:
 		default:
 		}
 	}
 }
 
-func (r *fileSearchRunner) close() {
-	r.closeOnce.Do(func() {
-		close(r.stop)
-		<-r.done
-		r.wait.Wait()
+func (s *Searcher) Close() {
+	s.closeOnce.Do(func() {
+		close(s.stop)
+		<-s.done
+		s.wait.Wait()
 	})
 }
 
-func (r *fileSearchRunner) run() {
-	defer close(r.done)
+func (s *Searcher) run() {
+	defer close(s.done)
+	defer close(s.results)
 
 	catalogs := make(map[fileSearchKey]*fileSearchCatalog)
 	var active *activeFileSearch
@@ -190,19 +200,19 @@ func (r *fileSearchRunner) run() {
 	var discoveryGeneration uint64
 	var catalogClock uint64
 	var catalogEntries int
-	var pendingOutput chan<- fileSearchResult
-	var pendingResult fileSearchResult
+	var pendingOutput chan<- Result
+	var pendingResult Result
 	var pendingDone <-chan struct{}
 
 	clearPending := func() {
 		pendingOutput = nil
 		pendingDone = nil
 	}
-	publish := func(ctx context.Context, output chan<- fileSearchResult, result fileSearchResult) {
+	publish := func(ctx context.Context, result Result) {
 		if ctx.Err() != nil {
 			return
 		}
-		pendingOutput = output
+		pendingOutput = s.results
 		pendingResult = result
 		pendingDone = ctx.Done()
 	}
@@ -223,15 +233,15 @@ func (r *fileSearchRunner) run() {
 		catalog.generation = discoveryGeneration
 		catalog.refresh = nil
 		catalog.visible = catalog.entries
-		catalog.err = ""
+		catalog.err = nil
 		if catalog.initialized {
 			catalog.state = catalog.committedState
 		} else {
-			catalog.state = fileSearchDiscovering
+			catalog.state = StateDiscovering
 		}
 	}
 	trimCatalogs := func() {
-		for len(catalogs) > r.cacheLimits.maxCatalogs || catalogEntries > r.cacheLimits.maxEntries {
+		for len(catalogs) > s.cacheLimits.maxCatalogs || catalogEntries > s.cacheLimits.maxEntries {
 			var oldestKey fileSearchKey
 			var oldest *fileSearchCatalog
 			for key, catalog := range catalogs {
@@ -269,19 +279,19 @@ func (r *fileSearchRunner) run() {
 		candidates := fileCandidateValues(catalog.visible)
 		state := catalog.state
 		errText := catalog.err
-		requestID := active.request.id
+		requestID := active.request.ID
 		spec := active.spec
 		matchGeneration++
 		generation := matchGeneration
 		matchContext, cancel := context.WithCancel(active.ctx)
 		matchCancel = cancel
 
-		r.wait.Add(1)
+		s.wait.Add(1)
 		go func() {
-			defer r.wait.Done()
+			defer s.wait.Done()
 			defer cancel()
 
-			matches := rankFileCandidates(matchContext, r.canonicalCWD, spec, candidates)
+			matches := rankFileCandidates(matchContext, s.canonicalCWD, spec, candidates)
 			if matchContext.Err() != nil {
 				return
 			}
@@ -293,9 +303,9 @@ func (r *fileSearchRunner) run() {
 				err:        errText,
 			}
 			select {
-			case r.matches <- update:
+			case s.matches <- update:
 			case <-matchContext.Done():
-			case <-r.stop:
+			case <-s.stop:
 			}
 		}()
 	}
@@ -306,32 +316,32 @@ func (r *fileSearchRunner) run() {
 		generation := catalog.generation
 		catalog.refresh = make(map[string]fileCandidate)
 		catalog.visible = cloneFileCandidates(catalog.entries)
-		catalog.state = fileSearchDiscovering
-		catalog.err = ""
+		catalog.state = StateDiscovering
+		catalog.err = nil
 		discoveryContext, cancel := context.WithCancel(ctx)
 		catalog.cancel = cancel
 
-		r.wait.Add(1)
+		s.wait.Add(1)
 		go func() {
-			defer r.wait.Done()
+			defer s.wait.Done()
 			defer cancel()
 
 			emit := func(batch []fileCandidate) error {
 				update := fileDiscoveryUpdate{key: key, generation: generation, batch: batch}
 				select {
-				case r.discoveries <- update:
+				case s.discoveries <- update:
 					return nil
 				case <-discoveryContext.Done():
 					return discoveryContext.Err()
-				case <-r.stop:
+				case <-s.stop:
 					return context.Canceled
 				}
 			}
-			limited, err := r.discover(discoveryContext, spec, emit)
+			limited, err := s.discover(discoveryContext, spec, emit)
 			update := fileDiscoveryUpdate{key: key, generation: generation, done: true, limited: limited, err: err}
 			select {
-			case r.discoveries <- update:
-			case <-r.stop:
+			case s.discoveries <- update:
+			case <-s.stop:
 			}
 		}()
 	}
@@ -352,32 +362,32 @@ func (r *fileSearchRunner) run() {
 			case update.err != nil && !errors.Is(update.err, context.Canceled):
 				catalog.refresh = nil
 				catalog.visible = catalog.entries
-				catalog.state = fileSearchFailed
-				catalog.err = update.err.Error()
+				catalog.state = StateFailed
+				catalog.err = update.err
 			case update.err != nil:
 				catalog.refresh = nil
 				catalog.visible = catalog.entries
-				catalog.err = ""
+				catalog.err = nil
 				if catalog.initialized {
 					catalog.state = catalog.committedState
 				} else {
-					catalog.state = fileSearchDiscovering
+					catalog.state = StateDiscovering
 				}
 			case update.limited:
 				catalog.entries = catalog.refresh
 				catalog.visible = catalog.entries
 				catalog.refresh = nil
 				catalog.initialized = true
-				catalog.state = fileSearchLimited
-				catalog.committedState = fileSearchLimited
+				catalog.state = StateLimited
+				catalog.committedState = StateLimited
 			default:
 				catalog.entries = catalog.refresh
 				catalog.visible = catalog.entries
 				catalog.refresh = nil
 				catalog.initialized = true
-				catalog.state = fileSearchComplete
-				catalog.committedState = fileSearchComplete
-				catalog.err = ""
+				catalog.state = StateComplete
+				catalog.committedState = StateComplete
+				catalog.err = nil
 			}
 			if update.err == nil {
 				catalogEntries += len(catalog.entries) - previousEntries
@@ -389,7 +399,7 @@ func (r *fileSearchRunner) run() {
 
 	for {
 		select {
-		case update := <-r.commands:
+		case update := <-s.commands:
 			clearPending()
 			command := update.command
 			if command.cancel {
@@ -403,14 +413,14 @@ func (r *fileSearchRunner) run() {
 			var err error
 			resolved := false
 			if active != nil {
-				spec, resolved = rescoreFileSearchSpec(active.spec, command.request.query)
+				spec, resolved = rescoreFileSearchSpec(active.spec, command.request.Query)
 			}
 			if !resolved {
-				spec, err = r.resolve(r.cwd, r.canonicalCWD, r.home, command.request.query)
+				spec, err = s.resolve(s.cwd, s.canonicalCWD, s.home, command.request.Query)
 			}
 			if err != nil {
 				cancelActive()
-				publish(update.ctx, update.output, fileSearchResult{id: command.request.id, state: fileSearchFailed, err: err.Error()})
+				publish(update.ctx, Result{ID: command.request.ID, State: StateFailed, Err: err})
 				continue
 			}
 
@@ -424,7 +434,6 @@ func (r *fileSearchRunner) run() {
 				request: *command.request,
 				spec:    spec,
 				key:     key,
-				output:  update.output,
 			}
 
 			catalog := catalogs[key]
@@ -432,23 +441,23 @@ func (r *fileSearchRunner) run() {
 				catalog = &fileSearchCatalog{
 					entries:        make(map[string]fileCandidate),
 					visible:        make(map[string]fileCandidate),
-					state:          fileSearchDiscovering,
-					committedState: fileSearchComplete,
+					state:          StateDiscovering,
+					committedState: StateComplete,
 				}
 				catalogs[key] = catalog
 			}
 			catalogClock++
 			catalog.lastUsed = catalogClock
 			trimCatalogs()
-			if command.request.refresh || !catalog.initialized && catalog.cancel == nil {
+			if command.request.Refresh || !catalog.initialized && catalog.cancel == nil {
 				startDiscovery(update.ctx, key, spec, catalog)
 			}
 			startMatch()
 
-		case update := <-r.discoveries:
+		case update := <-s.discoveries:
 			rematch := applyDiscoveryUpdate(update)
-			for range len(r.discoveries) {
-				if applyDiscoveryUpdate(<-r.discoveries) {
+			for range len(s.discoveries) {
+				if applyDiscoveryUpdate(<-s.discoveries) {
 					rematch = true
 				}
 			}
@@ -456,15 +465,15 @@ func (r *fileSearchRunner) run() {
 				startMatch()
 			}
 
-		case update := <-r.matches:
-			if active == nil || update.generation != matchGeneration || update.requestID != active.request.id {
+		case update := <-s.matches:
+			if active == nil || update.generation != matchGeneration || update.requestID != active.request.ID {
 				continue
 			}
-			publish(active.ctx, active.output, fileSearchResult{
-				id:      update.requestID,
-				matches: update.matches,
-				state:   update.state,
-				err:     update.err,
+			publish(active.ctx, Result{
+				ID:      update.requestID,
+				Matches: update.matches,
+				State:   update.state,
+				Err:     update.err,
 			})
 
 		case pendingOutput <- pendingResult:
@@ -473,7 +482,7 @@ func (r *fileSearchRunner) run() {
 		case <-pendingDone:
 			clearPending()
 
-		case <-r.stop:
+		case <-s.stop:
 			cancelActive()
 			for _, catalog := range catalogs {
 				cancelCatalog(catalog)

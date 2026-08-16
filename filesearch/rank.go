@@ -1,4 +1,4 @@
-package terminal
+package filesearch
 
 import (
 	"cmp"
@@ -11,32 +11,26 @@ import (
 	"unicode/utf8"
 )
 
-type fileSearchMatch struct {
-	path          string
-	display       string
-	reference     string
-	navigation    string
-	name          string
-	directory     bool
+type Match struct {
+	Path           string
+	Display        string
+	Reference      string
+	BrowseQuery    string
+	Name           string
+	IsDir          bool
+	MatchPositions []int
+
 	hidden        bool
 	caseMatch     bool
 	score         int
-	positions     []int
 	depth         int
 	displayLength int
 	foldedDisplay string
 }
 
-func (m fileSearchMatch) identity() string {
-	if m.path != "" {
-		return m.path
-	}
-	return m.reference
-}
-
-func rankFileCandidates(ctx context.Context, cwd string, spec fileSearchSpec, candidates []fileCandidate) []fileSearchMatch {
+func rankFileCandidates(ctx context.Context, cwd string, spec fileSearchSpec, candidates []fileCandidate) []Match {
 	queryRunes := foldedRunes(filepath.ToSlash(spec.query))
-	best := &fileSearchMatchHeap{spec: spec, matches: make([]fileSearchMatch, 0, min(len(candidates), filePickerMaxResults))}
+	best := &fileSearchMatchHeap{spec: spec, matches: make([]Match, 0, min(len(candidates), maxResults))}
 	for index, candidate := range candidates {
 		if index%256 == 0 {
 			if ctx.Err() != nil {
@@ -51,7 +45,7 @@ func rankFileCandidates(ctx context.Context, cwd string, spec fileSearchSpec, ca
 		if !ok {
 			continue
 		}
-		if best.Len() < filePickerMaxResults {
+		if best.Len() < maxResults {
 			heap.Push(best, match)
 			continue
 		}
@@ -63,24 +57,24 @@ func rankFileCandidates(ctx context.Context, cwd string, spec fileSearchSpec, ca
 	}
 
 	matches := best.matches
-	slices.SortFunc(matches, func(left, right fileSearchMatch) int {
+	slices.SortFunc(matches, func(left, right Match) int {
 		return compareFileSearchMatches(spec, left, right)
 	})
 	return matches
 }
 
-func compareFileSearchMatches(spec fileSearchSpec, left, right fileSearchMatch) int {
+func compareFileSearchMatches(spec fileSearchSpec, left, right Match) int {
 	if left.caseMatch != right.caseMatch {
 		return compareTrueFirst(left.caseMatch, right.caseMatch)
 	}
 	if order := cmp.Compare(right.score, left.score); order != 0 {
 		return order
 	}
-	if left.directory != right.directory {
+	if left.IsDir != right.IsDir {
 		if spec.query == "" {
-			return compareTrueFirst(left.directory, right.directory)
+			return compareTrueFirst(left.IsDir, right.IsDir)
 		}
-		return compareTrueFirst(!left.directory, !right.directory)
+		return compareTrueFirst(!left.IsDir, !right.IsDir)
 	}
 	if left.hidden != right.hidden {
 		return compareTrueFirst(!left.hidden, !right.hidden)
@@ -94,12 +88,12 @@ func compareFileSearchMatches(spec fileSearchSpec, left, right fileSearchMatch) 
 	if order := strings.Compare(left.foldedDisplay, right.foldedDisplay); order != 0 {
 		return order
 	}
-	return strings.Compare(left.display, right.display)
+	return strings.Compare(left.Display, right.Display)
 }
 
 type fileSearchMatchHeap struct {
 	spec    fileSearchSpec
-	matches []fileSearchMatch
+	matches []Match
 }
 
 func (h fileSearchMatchHeap) Len() int {
@@ -115,7 +109,7 @@ func (h fileSearchMatchHeap) Swap(left, right int) {
 }
 
 func (h *fileSearchMatchHeap) Push(value any) {
-	h.matches = append(h.matches, value.(fileSearchMatch))
+	h.matches = append(h.matches, value.(Match))
 }
 
 func (h *fileSearchMatchHeap) Pop() any {
@@ -136,14 +130,14 @@ func compareTrueFirst(left, right bool) int {
 	}
 }
 
-func buildFileSearchMatch(cwd string, spec fileSearchSpec, queryRunes []rune, candidate fileCandidate) (fileSearchMatch, bool) {
+func buildFileSearchMatch(cwd string, spec fileSearchSpec, queryRunes []rune, candidate fileCandidate) (Match, bool) {
 	relativeRoot, err := filepath.Rel(spec.directory, candidate.path)
 	if err != nil {
-		return fileSearchMatch{}, false
+		return Match{}, false
 	}
 	relativeRoot = filepath.ToSlash(relativeRoot)
 	if relativeRoot == "." || strings.HasPrefix(relativeRoot, "../") {
-		return fileSearchMatch{}, false
+		return Match{}, false
 	}
 
 	scorePath := relativeRoot
@@ -151,7 +145,7 @@ func buildFileSearchMatch(cwd string, spec fileSearchSpec, queryRunes []rune, ca
 	if !spec.explicit {
 		relativeCWD, err := filepath.Rel(cwd, candidate.path)
 		if err != nil || relativeCWD == "." || strings.HasPrefix(relativeCWD, ".."+string(filepath.Separator)) {
-			return fileSearchMatch{}, false
+			return Match{}, false
 		}
 		display = filepath.ToSlash(relativeCWD)
 		scorePath = display
@@ -161,7 +155,7 @@ func buildFileSearchMatch(cwd string, spec fileSearchSpec, queryRunes []rune, ca
 
 	score, positions, ok := scoreFileSearchPath(spec.query, queryRunes, scorePath, candidate.name)
 	if !ok {
-		return fileSearchMatch{}, false
+		return Match{}, false
 	}
 	caseMatch := matchesFileSearchCase(spec.query, scorePath, positions)
 
@@ -184,20 +178,20 @@ func buildFileSearchMatch(cwd string, spec fileSearchSpec, queryRunes []rune, ca
 		navigation += "/"
 	}
 
-	return fileSearchMatch{
-		path:          candidate.path,
-		display:       display,
-		reference:     reference,
-		navigation:    navigation,
-		name:          candidate.name,
-		directory:     candidate.directory,
-		hidden:        candidate.hidden,
-		caseMatch:     caseMatch,
-		score:         score,
-		positions:     positions,
-		depth:         strings.Count(strings.TrimSuffix(display, "/"), "/"),
-		displayLength: utf8.RuneCountInString(display),
-		foldedDisplay: strings.ToLower(display),
+	return Match{
+		Path:           candidate.path,
+		Display:        display,
+		Reference:      reference,
+		BrowseQuery:    navigation,
+		Name:           candidate.name,
+		IsDir:          candidate.directory,
+		MatchPositions: positions,
+		hidden:         candidate.hidden,
+		caseMatch:      caseMatch,
+		score:          score,
+		depth:          strings.Count(strings.TrimSuffix(display, "/"), "/"),
+		displayLength:  utf8.RuneCountInString(display),
+		foldedDisplay:  strings.ToLower(display),
 	}, true
 }
 

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/filesearch"
 )
 
 type tuiActionKind uint8
@@ -271,7 +272,7 @@ func reduceFilePickerKey(model *tuiModel, key keyEvent) bool {
 		return key.code == keyUp || key.code == keyDown || key.code == keyEnter || key.code == keyTab || key.code == keyRight
 	}
 	if len(model.filePicker.matches) == 0 {
-		return model.filePicker.state == fileSearchDiscovering && (key.code == keyUp || key.code == keyDown || key.code == keyEnter || key.code == keyTab || key.code == keyRight)
+		return model.filePicker.state == filesearch.StateDiscovering && (key.code == keyUp || key.code == keyDown || key.code == keyEnter || key.code == keyTab || key.code == keyRight)
 	}
 
 	switch key.code {
@@ -286,7 +287,7 @@ func reduceFilePickerKey(model *tuiModel, key keyEvent) bool {
 	case keyTab:
 		match := model.filePicker.matches[model.filePicker.selected]
 		var err error
-		if match.directory {
+		if match.IsDir {
 			err = model.drillIntoFilePickerDirectory()
 		} else {
 			err = model.applyFilePickerSelection()
@@ -296,7 +297,7 @@ func reduceFilePickerKey(model *tuiModel, key keyEvent) bool {
 		}
 	case keyRight:
 		match := model.filePicker.matches[model.filePicker.selected]
-		if !match.directory {
+		if !match.IsDir {
 			return false
 		}
 		if err := model.drillIntoFilePickerDirectory(); err != nil {

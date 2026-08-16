@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/filesearch"
 )
 
 func TestPermissionKeysTakePriority(t *testing.T) {
@@ -74,7 +75,7 @@ func TestFilePickerKeysTakePriorityOverEditorActions(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
-	model.applyFileSearchResult(testFileSearchResult(request.id, "a.go", "b.go"))
+	model.applyFileSearchResult(testFileSearchResult(request.ID, "a.go", "b.go"))
 	if !model.filePickerVisible() {
 		t.Fatal("picker did not open")
 	}
@@ -111,7 +112,7 @@ func TestFilePickerRemainsUsableWhileRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
-	model.applyFileSearchResult(testFileSearchResult(request.id, "a.go", "b.go"))
+	model.applyFileSearchResult(testFileSearchResult(request.ID, "a.go", "b.go"))
 
 	if _, err := reduceKey(model, keyEvent{code: keyDown}); err != nil {
 		t.Fatal(err)
@@ -131,10 +132,10 @@ func TestFilePickerKeepsCurrentResultsSelectableDuringRefresh(t *testing.T) {
 	}
 	request := takePickerRequest(t, model)
 	matches := testFileSearchMatches("a.go", "b.go", "c.go")
-	model.applyFileSearchResult(fileSearchResult{id: request.id, matches: matches, state: fileSearchDiscovering})
+	model.applyFileSearchResult(filesearch.Result{ID: request.ID, Matches: matches, State: filesearch.StateDiscovering})
 	originalHeight := model.filePickerHeight()
 
-	if model.filePicker.state != fileSearchDiscovering || model.filePickerHeight() != originalHeight || len(model.filePicker.matches) != 3 {
+	if model.filePicker.state != filesearch.StateDiscovering || model.filePickerHeight() != originalHeight || len(model.filePicker.matches) != 3 {
 		t.Fatalf("picker changed while refreshing: %+v", model.filePicker)
 	}
 	if action, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil || action.kind != tuiActionNone {
@@ -151,7 +152,7 @@ func TestFilePickerDoesNotApplyPreviousQueryResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
-	model.applyFileSearchResult(testFileSearchResult(request.id, "a.go", "b.go"))
+	model.applyFileSearchResult(testFileSearchResult(request.ID, "a.go", "b.go"))
 
 	if _, err := reduceKey(model, keyEvent{code: keyText, text: "missing"}); err != nil {
 		t.Fatal(err)
@@ -173,14 +174,14 @@ func TestFilePickerShowsEmptyResultsUpdatingWhileRescoring(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
-	model.applyFileSearchResult(fileSearchResult{id: request.id, state: fileSearchComplete})
+	model.applyFileSearchResult(filesearch.Result{ID: request.ID, State: filesearch.StateComplete})
 	settled := renderFilePicker(model, model.filePickerHeight())
 
 	if _, err := reduceKey(model, keyEvent{code: keyText, text: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	pending := renderFilePicker(model, model.filePickerHeight())
-	if model.filePicker.matchesCurrent || model.filePicker.state != fileSearchComplete || len(model.filePicker.matches) != 0 {
+	if model.filePicker.matchesCurrent || model.filePicker.state != filesearch.StateComplete || len(model.filePicker.matches) != 0 {
 		t.Fatalf("empty picker did not retain its results while rescoring: %+v", model.filePicker)
 	}
 	if len(settled) != 1 || len(pending) != 1 || pending[0].text == settled[0].text {

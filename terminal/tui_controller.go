@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/filesearch"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal/clipboard"
 )
@@ -37,7 +38,7 @@ type tuiEvent struct {
 	permission     PermissionRequest
 	image          agent.Image
 	requestID      uint64
-	fileSearch     fileSearchResult
+	fileSearch     filesearch.Result
 	err            error
 }
 
@@ -47,8 +48,7 @@ type controllerOptions struct {
 	outputFD           int
 	engineMessages     chan<- engineMessage
 	stopped            <-chan struct{}
-	fileSearch         *fileSearchRunner
-	fileSearchMessages chan<- fileSearchResult
+	fileSearch         *filesearch.Searcher
 	usageRequests      chan<- struct{}
 	clipboardImages    chan<- tuiEvent
 	operations         Operations
@@ -74,7 +74,6 @@ func newTUIController(config controllerOptions) *tuiController {
 		engineMessages:     config.engineMessages,
 		stopped:            config.stopped,
 		fileSearch:         config.fileSearch,
-		fileSearchMessages: config.fileSearchMessages,
 		usageRequests:      config.usageRequests,
 		stateChanges:       config.stateChanges,
 		sessions:           config.sessions,
@@ -95,8 +94,7 @@ type tuiController struct {
 	outputFD                     int
 	engineMessages               chan<- engineMessage
 	stopped                      <-chan struct{}
-	fileSearch                   *fileSearchRunner
-	fileSearchMessages           chan<- fileSearchResult
+	fileSearch                   *filesearch.Searcher
 	usageRequests                chan<- struct{}
 	stateChanges                 StateChanges
 	sessions                     Sessions
@@ -215,7 +213,13 @@ func (c *tuiController) handleKey(ctx context.Context, key keyEvent) (bool, erro
 		return false, err
 	}
 	if c.fileSearch != nil {
-		c.fileSearch.update(ctx, c.model.takeFileSearchCommand(), c.fileSearchMessages)
+		command := c.model.takeFileSearchCommand()
+		switch {
+		case command.request != nil:
+			c.fileSearch.Search(ctx, *command.request)
+		case command.cancel:
+			c.fileSearch.Cancel()
+		}
 	}
 	if exit {
 		if !c.model.running {
@@ -350,7 +354,7 @@ func sanitizeSubagentStatus(status subagent.Status) subagent.Status {
 	return sanitized
 }
 
-func (c *tuiController) handleFileSearch(result fileSearchResult) (bool, error) {
+func (c *tuiController) handleFileSearch(result filesearch.Result) (bool, error) {
 	if !c.model.applyFileSearchResult(result) {
 		return false, nil
 	}

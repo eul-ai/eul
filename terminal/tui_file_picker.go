@@ -5,25 +5,32 @@ import (
 	"os"
 	"strings"
 	"unicode"
+
+	"github.com/eul-ai/eul/filesearch"
 )
 
 const filePickerMaxVisible = 5
 
 type filePickerState struct {
-	matches        []fileSearchMatch
+	matches        []filesearch.Match
 	matchesCurrent bool
 	query          string
 	tokenStart     int
 	tokenEnd       int
 	selected       int
 	requestID      uint64
-	pending        *fileSearchRequest
-	state          fileSearchState
+	pending        *filesearch.Request
+	state          filesearch.State
 	err            string
 	enabled        bool
 	active         bool
 	dismissed      bool
 	cancelSearch   bool
+}
+
+type fileSearchCommand struct {
+	request *filesearch.Request
+	cancel  bool
 }
 
 func fileReferenceToken(input []rune, cursor int) (int, int, string, bool) {
@@ -143,12 +150,12 @@ func (m *tuiModel) refreshFilePicker(reopen bool) {
 	if !wasActive {
 		m.filePicker.matches = nil
 		m.filePicker.selected = 0
-		m.filePicker.state = fileSearchDiscovering
+		m.filePicker.state = filesearch.StateDiscovering
 		m.filePicker.err = ""
 	}
 	m.filePicker.matchesCurrent = false
 	m.filePicker.requestID++
-	request := fileSearchRequest{id: m.filePicker.requestID, query: query, refresh: !wasActive}
+	request := filesearch.Request{ID: m.filePicker.requestID, Query: query, Refresh: !wasActive}
 	m.filePicker.pending = &request
 }
 
@@ -163,22 +170,25 @@ func (m *tuiModel) takeFileSearchCommand() fileSearchCommand {
 	return command
 }
 
-func (m *tuiModel) applyFileSearchResult(result fileSearchResult) bool {
-	if result.id != m.filePicker.requestID || !m.filePicker.active {
+func (m *tuiModel) applyFileSearchResult(result filesearch.Result) bool {
+	if result.ID != m.filePicker.requestID || !m.filePicker.active {
 		return false
 	}
 	selectedPath := ""
 	if m.filePicker.selected >= 0 && m.filePicker.selected < len(m.filePicker.matches) {
-		selectedPath = m.filePicker.matches[m.filePicker.selected].identity()
+		selectedPath = fileSearchMatchIdentity(m.filePicker.matches[m.filePicker.selected])
 	}
-	m.filePicker.state = result.state
-	m.filePicker.err = result.err
-	m.filePicker.matches = append([]fileSearchMatch(nil), result.matches...)
+	m.filePicker.state = result.State
+	m.filePicker.err = ""
+	if result.Err != nil {
+		m.filePicker.err = result.Err.Error()
+	}
+	m.filePicker.matches = append([]filesearch.Match(nil), result.Matches...)
 	m.filePicker.matchesCurrent = true
 	m.filePicker.selected = 0
 	if selectedPath != "" {
 		for index, match := range m.filePicker.matches {
-			if match.identity() == selectedPath {
+			if fileSearchMatchIdentity(match) == selectedPath {
 				m.filePicker.selected = index
 				break
 			}
@@ -241,7 +251,7 @@ func (m *tuiModel) applyFilePickerSelection() error {
 		return err
 	}
 
-	reference := formatFileReference(match.reference)
+	reference := formatFileReference(match.Reference)
 	if picker.tokenEnd >= len(m.input) || m.input[picker.tokenEnd].kind != editorItemRune || !unicode.IsSpace(m.input[picker.tokenEnd].character) {
 		reference += " "
 	}
@@ -258,11 +268,11 @@ func (m *tuiModel) applyFilePickerSelection() error {
 	return nil
 }
 
-func validateFileSearchMatch(match fileSearchMatch) error {
-	if match.path == "" {
+func validateFileSearchMatch(match filesearch.Match) error {
+	if match.Path == "" {
 		return nil
 	}
-	if _, err := os.Lstat(match.path); err != nil {
+	if _, err := os.Lstat(match.Path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return errors.New("selected path no longer exists")
 		}
@@ -276,7 +286,7 @@ func (m *tuiModel) drillIntoFilePickerDirectory() error {
 	if !picker.matchesCurrent {
 		return nil
 	}
-	if picker.selected < 0 || picker.selected >= len(picker.matches) || !picker.matches[picker.selected].directory {
+	if picker.selected < 0 || picker.selected >= len(picker.matches) || !picker.matches[picker.selected].IsDir {
 		return nil
 	}
 	match := picker.matches[picker.selected]
@@ -284,7 +294,7 @@ func (m *tuiModel) drillIntoFilePickerDirectory() error {
 		return err
 	}
 
-	reference := formatFileReference(match.navigation)
+	reference := formatFileReference(match.BrowseQuery)
 	removedBytes := len(editorText(m.input[picker.tokenStart:picker.tokenEnd]))
 	if len(m.inputText())-removedBytes+len(reference) > maxInputBytes {
 		return errInputTooLong
@@ -309,7 +319,7 @@ func formatFileReference(path string) string {
 	return `@"` + escaped + `"`
 }
 
-func (m *tuiModel) visibleFilePickerMatches() []fileSearchMatch {
+func (m *tuiModel) visibleFilePickerMatches() []filesearch.Match {
 	matches := m.filePicker.matches
 	if len(matches) <= filePickerMaxVisible {
 		return matches
@@ -317,4 +327,11 @@ func (m *tuiModel) visibleFilePickerMatches() []fileSearchMatch {
 	start := m.filePicker.selected - filePickerMaxVisible/2
 	start = max(0, min(start, len(matches)-filePickerMaxVisible))
 	return matches[start : start+filePickerMaxVisible]
+}
+
+func fileSearchMatchIdentity(match filesearch.Match) string {
+	if match.Path != "" {
+		return match.Path
+	}
+	return match.Reference
 }

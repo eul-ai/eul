@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/filesearch"
 )
 
 func TestFilePickerKeepsSearchQueriesLiteral(t *testing.T) {
@@ -15,7 +16,7 @@ func TestFilePickerKeepsSearchQueriesLiteral(t *testing.T) {
 			t.Fatal(err)
 		}
 		request := takePickerRequest(t, model)
-		if request.query != query || !request.refresh {
+		if request.Query != query || !request.Refresh {
 			t.Fatalf("request = %+v, want initial query %q with refresh", request, query)
 		}
 	}
@@ -53,10 +54,10 @@ func TestFilePickerRequestsNavigatesAndAppliesSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
-	if request.query != "tui" || !model.filePickerVisible() {
+	if request.Query != "tui" || !model.filePickerVisible() {
 		t.Fatalf("request = %+v picker = %+v", request, model.filePicker)
 	}
-	if !model.applyFileSearchResult(testFileSearchResult(request.id, "terminal/tui.go", "terminal/tui_model.go")) {
+	if !model.applyFileSearchResult(testFileSearchResult(request.ID, "terminal/tui.go", "terminal/tui_model.go")) {
 		t.Fatal("current search result was rejected")
 	}
 
@@ -65,7 +66,7 @@ func TestFilePickerRequestsNavigatesAndAppliesSelection(t *testing.T) {
 	if err := model.applyFilePickerSelection(); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := model.inputText(), "inspect @"+selected.reference+" "; got != want {
+	if got, want := model.inputText(), "inspect @"+selected.Reference+" "; got != want {
 		t.Fatalf("input = %q, want %q", got, want)
 	}
 	if model.filePickerVisible() || model.cursor != len(model.input) {
@@ -79,12 +80,12 @@ func TestFilePickerPreservesSelectionAcrossSearchUpdates(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
-	model.applyFileSearchResult(fileSearchResult{id: request.id, matches: testFileSearchMatches("a.go", "b.go"), state: fileSearchDiscovering})
+	model.applyFileSearchResult(filesearch.Result{ID: request.ID, Matches: testFileSearchMatches("a.go", "b.go"), State: filesearch.StateDiscovering})
 	model.moveFilePickerSelection(1)
-	selected := model.filePicker.matches[model.filePicker.selected].identity()
+	selected := fileSearchMatchIdentity(model.filePicker.matches[model.filePicker.selected])
 
-	model.applyFileSearchResult(fileSearchResult{id: request.id, matches: testFileSearchMatches("b.go", "c.go"), state: fileSearchComplete})
-	if got := model.filePicker.matches[model.filePicker.selected].identity(); got != selected {
+	model.applyFileSearchResult(filesearch.Result{ID: request.ID, Matches: testFileSearchMatches("b.go", "c.go"), State: filesearch.StateComplete})
+	if got := fileSearchMatchIdentity(model.filePicker.matches[model.filePicker.selected]); got != selected {
 		t.Fatalf("selected match = %q, want %q", got, selected)
 	}
 }
@@ -97,7 +98,7 @@ func TestFilePickerReplacesWholeTokenFromMiddle(t *testing.T) {
 	model.cursor = len([]rune("inspect @fo"))
 	model.refreshFilePicker(true)
 	request := takePickerRequest(t, model)
-	model.applyFileSearchResult(testFileSearchResult(request.id, "foo_test.go"))
+	model.applyFileSearchResult(testFileSearchResult(request.ID, "foo_test.go"))
 	if err := model.applyFilePickerSelection(); err != nil {
 		t.Fatal(err)
 	}
@@ -113,8 +114,8 @@ func TestFilePickerDrillsIntoDirectory(t *testing.T) {
 	}
 	request := takePickerRequest(t, model)
 	match := testFileSearchMatches("../other/")[0]
-	match.reference = "/tmp/other/"
-	model.applyFileSearchResult(fileSearchResult{id: request.id, matches: []fileSearchMatch{match}, state: fileSearchComplete})
+	match.Reference = "/tmp/other/"
+	model.applyFileSearchResult(filesearch.Result{ID: request.ID, Matches: []filesearch.Match{match}, State: filesearch.StateComplete})
 
 	if err := model.drillIntoFilePickerDirectory(); err != nil {
 		t.Fatal(err)
@@ -123,7 +124,7 @@ func TestFilePickerDrillsIntoDirectory(t *testing.T) {
 		t.Fatalf("input = %q, want %q", got, want)
 	}
 	next := takePickerRequest(t, model)
-	if next.query != "../other/" || next.refresh {
+	if next.Query != "../other/" || next.Refresh {
 		t.Fatalf("drill request = %+v", next)
 	}
 }
@@ -138,8 +139,8 @@ func TestFilePickerRemovesStaleSelection(t *testing.T) {
 	}
 	request := takePickerRequest(t, model)
 	match := testFileSearchMatches("gone.go")[0]
-	match.path = path
-	model.applyFileSearchResult(fileSearchResult{id: request.id, matches: []fileSearchMatch{match}, state: fileSearchComplete})
+	match.Path = path
+	model.applyFileSearchResult(filesearch.Result{ID: request.ID, Matches: []filesearch.Match{match}, State: filesearch.StateComplete})
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +164,7 @@ func TestFilePickerReplacementStopsBeforeImage(t *testing.T) {
 	model.cursor = len(editorItemsFromText("@tu"))
 	model.refreshFilePicker(true)
 	request := takePickerRequest(t, model)
-	model.applyFileSearchResult(testFileSearchResult(request.id, "terminal/tui.go"))
+	model.applyFileSearchResult(testFileSearchResult(request.ID, "terminal/tui.go"))
 
 	if err := model.applyFilePickerSelection(); err != nil {
 		t.Fatal(err)
@@ -184,10 +185,10 @@ func TestFilePickerRejectsStaleSearchResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := takePickerRequest(t, model)
-	if model.applyFileSearchResult(testFileSearchResult(first.id, "stale.go")) {
+	if model.applyFileSearchResult(testFileSearchResult(first.ID, "stale.go")) {
 		t.Fatal("stale search result was accepted")
 	}
-	if !model.applyFileSearchResult(testFileSearchResult(second.id, "terminal/tui.go")) {
+	if !model.applyFileSearchResult(testFileSearchResult(second.ID, "terminal/tui.go")) {
 		t.Fatal("current search result was rejected")
 	}
 }
@@ -224,7 +225,7 @@ func TestFilePickerQuotesSpacesAndCanBeDismissed(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
-	model.applyFileSearchResult(testFileSearchResult(request.id, "my folder/file.go"))
+	model.applyFileSearchResult(testFileSearchResult(request.ID, "my folder/file.go"))
 	if !model.filePickerVisible() {
 		t.Fatal("picker did not reopen after editing")
 	}
@@ -236,7 +237,7 @@ func TestFilePickerQuotesSpacesAndCanBeDismissed(t *testing.T) {
 	}
 }
 
-func takePickerRequest(t *testing.T, model *tuiModel) fileSearchRequest {
+func takePickerRequest(t *testing.T, model *tuiModel) filesearch.Request {
 	t.Helper()
 	command := model.takeFileSearchCommand()
 	if command.request == nil {
