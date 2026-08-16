@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/filesearch"
 )
 
 func TestMultilineInputExpandsEditorAndMovesCursor(t *testing.T) {
@@ -42,7 +43,7 @@ func TestFilePickerExpandsBetweenInputAndStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
-	model.applyFileSearchResult(testFileSearchResult(request.id, "a.go", "b.go", "c.go", "d.go", "e.go", "f.go"))
+	model.applyFileSearchResult(testFileSearchResult(request.ID, "a.go", "b.go", "c.go", "d.go", "e.go", "f.go"))
 
 	_, layout := modelInputLayout(model)
 	if layout.conversationHeight != 3 || layout.inputRow != 5 || layout.bottomRuleRow != 6 || layout.pickerRow != 7 || layout.pickerHeight != 5 || layout.statusRow != 12 {
@@ -77,7 +78,7 @@ func TestFilePickerKeepsStableHeightWhileSearching(t *testing.T) {
 	}
 	request := takePickerRequest(t, model)
 	height := model.filePickerHeight()
-	model.applyFileSearchResult(testFileSearchResult(request.id, "a.go", "b.go"))
+	model.applyFileSearchResult(testFileSearchResult(request.ID, "a.go", "b.go"))
 	if model.filePickerHeight() != height {
 		t.Fatalf("result height = %d, want %d", model.filePickerHeight(), height)
 	}
@@ -86,7 +87,7 @@ func TestFilePickerKeepsStableHeightWhileSearching(t *testing.T) {
 		t.Fatal(err)
 	}
 	request = takePickerRequest(t, model)
-	model.applyFileSearchResult(fileSearchResult{id: request.id, state: fileSearchComplete})
+	model.applyFileSearchResult(filesearch.Result{ID: request.ID, State: filesearch.StateComplete})
 	lines := renderFilePicker(model, model.filePickerHeight())
 	if !model.filePickerVisible() || model.filePickerHeight() != height || len(lines) != 1 || lines[0].style.foreground != currentTheme.muted {
 		t.Fatalf("empty picker: visible=%t height=%d lines=%+v", model.filePickerVisible(), model.filePickerHeight(), lines)

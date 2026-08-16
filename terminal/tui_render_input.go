@@ -5,6 +5,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/eul-ai/eul/filesearch"
 )
 
 type tuiLayout struct {
@@ -477,11 +479,11 @@ func renderFilePicker(model *tuiModel, height int) []styledLine {
 	if len(model.filePicker.matches) == 0 {
 		text := "  no matching files"
 		switch {
-		case !model.filePicker.matchesCurrent || model.filePicker.state == fileSearchDiscovering:
+		case !model.filePicker.matchesCurrent || model.filePicker.state == filesearch.StateDiscovering:
 			text = "  searching files…"
-		case model.filePicker.state == fileSearchLimited:
+		case model.filePicker.state == filesearch.StateLimited:
 			text = "  no matching files · search limited"
-		case model.filePicker.state == fileSearchFailed:
+		case model.filePicker.state == filesearch.StateFailed:
 			text = "  file search failed"
 			if model.filePicker.err != "" {
 				text += ": " + singleLine(model.filePicker.err, 120)
@@ -492,13 +494,13 @@ func renderFilePicker(model *tuiModel, height int) []styledLine {
 
 	selectedPath := ""
 	if model.filePicker.selected >= 0 && model.filePicker.selected < len(model.filePicker.matches) {
-		selectedPath = model.filePicker.matches[model.filePicker.selected].identity()
+		selectedPath = fileSearchMatchIdentity(model.filePicker.matches[model.filePicker.selected])
 	}
 	matches := model.visibleFilePickerMatches()
 	status := filePickerStatus(model)
 	lines := make([]styledLine, 0, min(height, len(matches)))
 	for index, match := range matches[:min(height, len(matches))] {
-		parent := filePickerParent(match.display)
+		parent := filePickerParent(match.Display)
 		if index == 0 && status != "" {
 			if parent != "" {
 				parent += " · "
@@ -512,7 +514,7 @@ func renderFilePicker(model *tuiModel, height int) []styledLine {
 			rightForeground: &currentTheme.muted,
 			style:           lineStyle{foreground: currentTheme.foreground},
 		}
-		if match.identity() == selectedPath {
+		if fileSearchMatchIdentity(match) == selectedPath {
 			line.prefixText = "> "
 			line.prefixForeground = &currentTheme.accent
 			line.style = lineStyle{
@@ -531,11 +533,11 @@ func filePickerStatus(model *tuiModel) string {
 		return "updating…"
 	}
 	switch model.filePicker.state {
-	case fileSearchDiscovering:
+	case filesearch.StateDiscovering:
 		return "searching…"
-	case fileSearchLimited:
+	case filesearch.StateLimited:
 		return "search limited"
-	case fileSearchFailed:
+	case filesearch.StateFailed:
 		return "refresh failed"
 	default:
 		return ""
@@ -554,15 +556,15 @@ func filePickerParent(display string) string {
 	return trimmed[:index]
 }
 
-func filePickerNameSpans(match fileSearchMatch) []inlineSpan {
-	name := match.name
-	if match.directory {
+func filePickerNameSpans(match filesearch.Match) []inlineSpan {
+	name := match.Name
+	if match.IsDir {
 		name += "/"
 	}
-	trimmed := strings.TrimSuffix(match.display, "/")
-	baseOffset := utf8.RuneCountInString(trimmed) - utf8.RuneCountInString(match.name)
-	matched := make(map[int]struct{}, len(match.positions))
-	for _, position := range match.positions {
+	trimmed := strings.TrimSuffix(match.Display, "/")
+	baseOffset := utf8.RuneCountInString(trimmed) - utf8.RuneCountInString(match.Name)
+	matched := make(map[int]struct{}, len(match.MatchPositions))
+	for _, position := range match.MatchPositions {
 		if position >= baseOffset {
 			matched[position-baseOffset] = struct{}{}
 		}

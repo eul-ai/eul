@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/filesearch"
 )
 
 const (
@@ -153,9 +154,9 @@ func runTUIWithKeys(
 	stopped <-chan struct{},
 ) (RunOutcome, error) {
 	model := newTUIModel(width, height, options)
-	fileSearch := newFileSearchRunner(options.Config.WorkingDirectory)
-	defer fileSearch.close()
-	fileSearchMessages := make(chan fileSearchResult, 64)
+	fileSearch := filesearch.New(options.Config.WorkingDirectory)
+	defer fileSearch.Close()
+	fileSearchResults := fileSearch.Results()
 	engineMessages := make(chan engineMessage, 256)
 	clipboardImages := make(chan tuiEvent, maxAttachedImages)
 
@@ -207,7 +208,6 @@ func runTUIWithKeys(
 		engineMessages:     engineMessages,
 		stopped:            stopped,
 		fileSearch:         fileSearch,
-		fileSearchMessages: fileSearchMessages,
 		usageRequests:      usageRequests,
 		clipboardImages:    clipboardImages,
 		operations:         options.Operations,
@@ -259,7 +259,7 @@ func runTUIWithKeys(
 			}
 			event = tuiEvent{kind: tuiEventPermission, permission: request}
 		case event = <-clipboardImages:
-		case result := <-fileSearchMessages:
+		case result := <-fileSearchResults:
 			event = tuiEvent{kind: tuiEventFileSearch, fileSearch: result}
 		case <-spinnerTicker.C:
 			event = tuiEvent{kind: tuiEventSpinner}
