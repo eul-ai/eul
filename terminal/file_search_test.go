@@ -200,6 +200,19 @@ func TestRankFileCandidatesUsesRelevanceBeforeLimit(t *testing.T) {
 	}
 }
 
+func TestRankFileCandidatesPrefersMatchingUppercase(t *testing.T) {
+	cwd := t.TempDir()
+	candidates := []fileCandidate{
+		{path: filepath.Join(cwd, "agent"), name: "agent", directory: true},
+		{path: filepath.Join(cwd, "AGENTS.md"), name: "AGENTS.md"},
+	}
+
+	matches := rankFileCandidates(context.Background(), cwd, fileSearchSpec{directory: cwd, query: "AGENT", recursive: true}, candidates)
+	if len(matches) != 2 || matches[0].display != "AGENTS.md" {
+		t.Fatalf("matches = %+v, want AGENTS.md first", matches)
+	}
+}
+
 func TestRankFileCandidatesOrderingIsDeterministic(t *testing.T) {
 	cwd := t.TempDir()
 	candidates := []fileCandidate{

@@ -19,6 +19,7 @@ type fileSearchMatch struct {
 	name          string
 	directory     bool
 	hidden        bool
+	caseMatch     bool
 	score         int
 	positions     []int
 	depth         int
@@ -69,6 +70,9 @@ func rankFileCandidates(ctx context.Context, cwd string, spec fileSearchSpec, ca
 }
 
 func compareFileSearchMatches(spec fileSearchSpec, left, right fileSearchMatch) int {
+	if left.caseMatch != right.caseMatch {
+		return compareTrueFirst(left.caseMatch, right.caseMatch)
+	}
 	if order := cmp.Compare(right.score, left.score); order != 0 {
 		return order
 	}
@@ -159,6 +163,7 @@ func buildFileSearchMatch(cwd string, spec fileSearchSpec, queryRunes []rune, ca
 	if !ok {
 		return fileSearchMatch{}, false
 	}
+	caseMatch := matchesFileSearchCase(spec.query, scorePath, positions)
 
 	displayOffset := utf8.RuneCountInString(strings.TrimSuffix(display, scorePath))
 	for index := range positions {
@@ -187,6 +192,7 @@ func buildFileSearchMatch(cwd string, spec fileSearchSpec, queryRunes []rune, ca
 		name:          candidate.name,
 		directory:     candidate.directory,
 		hidden:        candidate.hidden,
+		caseMatch:     caseMatch,
 		score:         score,
 		positions:     positions,
 		depth:         strings.Count(strings.TrimSuffix(display, "/"), "/"),
@@ -238,6 +244,21 @@ func scoreFileSearchPath(query string, queryRunes []rune, candidatePath, basenam
 		return 300_000 + score - len(pathRunes), positions, true
 	}
 	return 0, nil, false
+}
+
+func matchesFileSearchCase(query, candidatePath string, positions []int) bool {
+	queryRunes := []rune(filepath.ToSlash(query))
+	if !slices.ContainsFunc(queryRunes, unicode.IsUpper) || len(positions) != len(queryRunes) {
+		return false
+	}
+
+	pathRunes := []rune(filepath.ToSlash(candidatePath))
+	for index, position := range positions {
+		if position >= len(pathRunes) || pathRunes[position] != queryRunes[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func foldedRunes(value string) []rune {
