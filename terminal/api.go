@@ -96,6 +96,7 @@ type Config struct {
 	InitialCheckpoint  *Checkpoint
 	SessionID          string
 	PreviousTurnActive bool
+	InitialPrompt      string
 }
 
 type Sessions struct {
