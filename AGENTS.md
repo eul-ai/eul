@@ -11,6 +11,7 @@
 - Preserve existing behavior unless the request requires changing it.
 - Do not update `README.md` unless the user explicitly asks for README changes.
 - Do not test exact user-facing prose, help text, or tool descriptions unless the exact wording is itself a required contract. Test behavior or essential semantics instead.
+- Design tests so they do not make network connections or require network permissions.
 - Treat questions as requests for information, not requests to modify code. Do not make changes unless the user explicitly asks for them.
 - If a materially larger design choice is unclear, ask before implementing it.
 
