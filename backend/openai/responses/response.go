@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/eul-ai/eul/agent"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 type createResponseEnvelope struct {
@@ -31,34 +32,7 @@ type responseErrorMetadata struct {
 	Raw          json.RawMessage `json:"raw"`
 }
 
-type errorCode string
-
-func (code *errorCode) UnmarshalJSON(data []byte) error {
-	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
-		*code = ""
-		return nil
-	}
-
-	var text string
-	if json.Unmarshal(data, &text) == nil {
-		*code = errorCode(text)
-		return nil
-	}
-
-	var number json.Number
-	if err := json.Unmarshal(data, &number); err != nil {
-		return err
-	}
-	*code = errorCode(number.String())
-	return nil
-}
-
-type responseFailureError struct {
-	message string
-	detail  responseError
-}
-
-func (e *responseFailureError) Error() string { return e.message }
+type errorCode = backendhttp.APIErrorCode
 
 type incompleteResponseDetails struct {
 	Reason string `json:"reason"`
@@ -107,22 +81,6 @@ func decodeCreateResponse(body []byte) (createResponseEnvelope, error) {
 	}
 
 	return response, nil
-}
-
-func validateCompactOutput(output []json.RawMessage) error {
-	if len(output) != 1 {
-		return fmt.Errorf("compact response must contain exactly one output item, got %d", len(output))
-	}
-
-	var item outputItem
-	if err := json.Unmarshal(output[0], &item); err != nil {
-		return fmt.Errorf("decode compact response output: %w", err)
-	}
-	if item.Type != "compaction" {
-		return fmt.Errorf("compact response output has type %q", item.Type)
-	}
-
-	return nil
 }
 
 func normalizeResponse(response createResponseEnvelope) (string, []agent.ToolCall, agent.Usage, error) {

@@ -1,4 +1,4 @@
-package codex
+package client
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/backend/codex/oauth"
 	"github.com/eul-ai/eul/backend/testhttp"
 )
 
@@ -94,30 +93,28 @@ func TestUsageClientHandlesOptionalAndInvalidWindows(t *testing.T) {
 }
 
 func TestUsageClientEndpointFollowsBaseURLStyle(t *testing.T) {
-	manager := &fakeManager{}
-	chatGPT, err := newUsageClient(manager, usageClientOptions{baseURL: "https://chatgpt.com/backend-api/"})
+	chatGPT, err := New(testTokenSource("token"), Options{BaseURL: "https://chatgpt.com/backend-api/"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	codexAPI, err := newUsageClient(manager, usageClientOptions{baseURL: "https://example.com/"})
+	codexAPI, err := New(testTokenSource("token"), Options{BaseURL: "https://example.com/"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hostCollision, err := newUsageClient(manager, usageClientOptions{baseURL: "https://backend-api.example.com/"})
+	hostCollision, err := New(testTokenSource("token"), Options{BaseURL: "https://backend-api.example.com/"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if chatGPT.endpoint != "https://chatgpt.com/backend-api/wham/usage" ||
-		codexAPI.endpoint != "https://example.com/api/codex/usage" ||
-		hostCollision.endpoint != "https://backend-api.example.com/api/codex/usage" {
-		t.Fatalf("usage endpoints = %q, %q, %q", chatGPT.endpoint, codexAPI.endpoint, hostCollision.endpoint)
+	if chatGPT.usageEndpoint != "https://chatgpt.com/backend-api/wham/usage" ||
+		codexAPI.usageEndpoint != "https://example.com/api/codex/usage" ||
+		hostCollision.usageEndpoint != "https://backend-api.example.com/api/codex/usage" {
+		t.Fatalf("usage endpoints = %q, %q, %q", chatGPT.usageEndpoint, codexAPI.usageEndpoint, hostCollision.usageEndpoint)
 	}
 }
 
-func newTestUsageClient(t *testing.T, token string, server *testhttp.Server) *usageClient {
+func newTestUsageClient(t *testing.T, token string, server *testhttp.Server) *Client {
 	t.Helper()
-	manager := &fakeManager{credential: oauth.AccessCredential{AccessToken: token, AccountID: "account"}}
-	client, err := newUsageClient(manager, usageClientOptions{httpClient: server.Client(), baseURL: server.URL})
+	client, err := New(testTokenSource(token), Options{HTTPClient: server.Client(), BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}

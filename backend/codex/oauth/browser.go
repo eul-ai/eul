@@ -4,17 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
 	"net/url"
-	"strconv"
-	"time"
 )
 
 func (m *Manager) loginBrowser(ctx context.Context, presentURL func(string) error) (credentials, error) {
@@ -30,104 +24,28 @@ func (m *Manager) loginBrowser(ctx context.Context, presentURL func(string) erro
 		return credentials{}, err
 	}
 
-	listener, err := m.listen("tcp", m.callbackAddress)
+	callback, err := m.startLoopbackCallback(state)
 	if err != nil {
-		return credentials{}, fmt.Errorf("oauth: start loopback callback: %w", err)
+		return credentials{}, err
 	}
-	defer listener.Close()
-	port := listener.Addr().(*net.TCPAddr).Port
-	redirectURI := "http://localhost:" + strconv.Itoa(port) + browserCallbackPath
-	result := make(chan callbackResult, 1)
-	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: callbackHandler(state, result)}
-	serveResult := make(chan error, 1)
-	serveDone := make(chan struct{})
-	go func() {
-		defer close(serveDone)
-		serveResult <- server.Serve(listener)
-	}()
-	defer stopBrowserCallbackServer(server, serveDone)
+	defer callback.stop()
 
-	authURL := m.authorizationURL(redirectURI, challenge, state)
 	if presentURL == nil {
 		return credentials{}, errors.New("oauth: browser login interaction is unavailable")
 	}
+	authURL := m.authorizationURL(callback.redirectURI, challenge, state)
 	if err := presentURL(authURL); err != nil {
 		return credentials{}, fmt.Errorf("oauth: present authorization URL: %w", err)
 	}
 
-	select {
-	case <-loginCtx.Done():
-		if ctx.Err() != nil {
-			return credentials{}, ctx.Err()
-		}
+	code, err := callback.wait(loginCtx)
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 		return credentials{}, errors.New("oauth: browser authorization timed out")
-	case serveErr := <-serveResult:
-		if errors.Is(serveErr, http.ErrServerClosed) {
-			return credentials{}, errors.New("oauth: loopback callback stopped before authorization completed")
-		}
-		return credentials{}, errors.New("oauth: loopback callback failed")
-	case callback := <-result:
-		if callback.err != nil {
-			return credentials{}, callback.err
-		}
-		return m.exchangeCode(loginCtx, callback.code, verifier, redirectURI)
 	}
-}
-
-func stopBrowserCallbackServer(server *http.Server, done <-chan struct{}) {
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		_ = server.Close()
+	if err != nil {
+		return credentials{}, err
 	}
-	<-done
-}
-
-type callbackResult struct {
-	code string
-	err  error
-}
-
-func callbackHandler(expectedState string, result chan<- callbackResult) http.Handler {
-	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-		if request.Method != http.MethodGet || request.URL.Path != browserCallbackPath {
-			http.Error(writer, "Callback route not found.", http.StatusNotFound)
-			return
-		}
-
-		state := request.URL.Query().Get("state")
-		if len(state) != len(expectedState) || subtle.ConstantTimeCompare([]byte(state), []byte(expectedState)) != 1 {
-			http.Error(writer, "OAuth state mismatch.", http.StatusBadRequest)
-			return
-		}
-
-		if request.URL.Query().Get("error") != "" {
-			http.Error(writer, "OpenAI authorization failed.", http.StatusBadRequest)
-			select {
-			case result <- callbackResult{err: errors.New("oauth: OpenAI authorization failed")}:
-			default:
-			}
-			return
-		}
-
-		code := request.URL.Query().Get("code")
-		if code == "" {
-			http.Error(writer, "Missing authorization code.", http.StatusBadRequest)
-			select {
-			case result <- callbackResult{err: errors.New("oauth: callback is missing an authorization code")}:
-			default:
-			}
-			return
-		}
-
-		_, _ = io.WriteString(writer, "OpenAI authentication completed. You can close this window.")
-		select {
-		case result <- callbackResult{code: code}:
-		default:
-		}
-	})
+	return m.exchangeCode(loginCtx, code, verifier, callback.redirectURI)
 }
 
 func (m *Manager) authorizationURL(redirectURI, challenge, state string) string {

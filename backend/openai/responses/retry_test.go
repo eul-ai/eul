@@ -306,7 +306,7 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		delay, retry := client.RetryGeneration(err, 1)
-		if err == nil || !retry || delay != generationRetryMaxDelay {
+		if err == nil || !retry || delay != generationRetryPolicy.MaximumDelay {
 			t.Fatalf("Generate() error = %v, delay = %s, retry = %t", err, delay, retry)
 		}
 	})
@@ -314,11 +314,11 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 
 func TestGenerationRetryAllowsExtendedRecovery(t *testing.T) {
 	transient := &retryableOperationError{cause: errors.New("temporary")}
-	delay, retry := (&Client{}).RetryGeneration(transient, maximumGenerationAttempts-1)
+	delay, retry := (&Client{}).RetryGeneration(transient, generationRetryPolicy.MaximumAttempts-1)
 	if !retry {
 		t.Fatal("retry policy stopped before the final attempt")
 	}
-	if delay < generationRetryMaxDelay*3/4 {
+	if delay < generationRetryPolicy.MaximumDelay*3/4 {
 		t.Fatalf("final retry delay = %s", delay)
 	}
 }
@@ -345,7 +345,7 @@ func TestClientDoesNotRetryPermanentOrObserverErrors(t *testing.T) {
 	}
 
 	transient := &retryableOperationError{cause: errors.New("temporary")}
-	if _, retry := client.RetryGeneration(transient, maximumGenerationAttempts); retry {
+	if _, retry := client.RetryGeneration(transient, generationRetryPolicy.MaximumAttempts); retry {
 		t.Fatal("retry policy exceeded maximum attempts")
 	}
 }

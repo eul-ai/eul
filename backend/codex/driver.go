@@ -28,7 +28,7 @@ type oauthManager interface {
 type Driver struct {
 	newManager     func(string) (oauthManager, error)
 	newClient      func(client.TokenSource) (*client.Client, error)
-	newUsageClient func(oauthManager) (*usageClient, error)
+	newUsageClient func(client.TokenSource) (*client.Client, error)
 }
 
 var (
@@ -50,8 +50,8 @@ func New() *Driver {
 		newClient: func(source client.TokenSource) (*client.Client, error) {
 			return client.New(source, client.Options{})
 		},
-		newUsageClient: func(manager oauthManager) (*usageClient, error) {
-			return newUsageClient(manager, usageClientOptions{})
+		newUsageClient: func(source client.TokenSource) (*client.Client, error) {
+			return client.New(source, client.Options{})
 		},
 	}
 }
@@ -73,12 +73,14 @@ func (driver *Driver) Open(options backend.Options) (backend.Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	usage, err := driver.newUsageClient(manager)
+	source := oauthTokenSource{manager: manager}
+	usage, err := driver.newUsageClient(source)
 	if err != nil {
 		return nil, err
 	}
 	return &runtime{
 		manager:     manager,
+		tokenSource: source,
 		newClient:   driver.newClient,
 		usageClient: usage,
 	}, nil
@@ -86,8 +88,9 @@ func (driver *Driver) Open(options backend.Options) (backend.Runtime, error) {
 
 type runtime struct {
 	manager     oauthManager
+	tokenSource client.TokenSource
 	newClient   func(client.TokenSource) (*client.Client, error)
-	usageClient *usageClient
+	usageClient *client.Client
 }
 
 func (configured *runtime) LoginBrowser(ctx context.Context, presentURL func(string) error) error {
@@ -108,7 +111,7 @@ func (configured *runtime) CheckCredentials(ctx context.Context) error {
 }
 
 func (configured *runtime) NewProvider() (agent.Provider, error) {
-	return configured.newClient(oauthTokenSource{manager: configured.manager})
+	return configured.newClient(configured.tokenSource)
 }
 
 func (configured *runtime) ModelMetadata(model string) backend.ModelMetadata {

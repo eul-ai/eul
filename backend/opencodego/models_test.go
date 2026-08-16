@@ -32,22 +32,19 @@ func TestBuildModelsUsesLiveCatalogIntersectionAndRichMetadata(t *testing.T) {
 	}
 
 	grok := models["grok-4.5"]
-	grokConfig, ok := grok.protocol.(responsesConfig)
-	if !ok || grok.contextWindow != 500_000 || grokConfig.maxOutputTokens != 500_000 || !slices.Equal(grok.thinking.levels, []agent.ThinkingLevel{agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh}) {
+	if grok.protocol != protocolResponses || grok.contextWindow != 500_000 || grok.maxOutputTokens != 500_000 || !slices.Equal(grok.thinking.levels, []agent.ThinkingLevel{agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh}) {
 		t.Fatalf("Grok = %+v", grok)
 	}
 	gpt := models["gpt-5.6-luna"]
-	gptConfig, ok := gpt.protocol.(responsesConfig)
-	if !ok || !gptConfig.lowTextVerbosity || gpt.thinking.efforts[agent.ThinkingOff] != "none" || !slices.Contains(gpt.thinking.levels, agent.ThinkingMax) {
+	if gpt.protocol != protocolResponses || !gpt.lowTextVerbosity || gpt.thinking.efforts[agent.ThinkingOff] != "none" || !slices.Contains(gpt.thinking.levels, agent.ThinkingMax) {
 		t.Fatalf("GPT = %+v", gpt)
 	}
 	hy := models["hy3"]
-	if _, ok := hy.protocol.(chatCompletionsConfig); !ok || hy.thinking.mode != thinkingEffort || hy.thinking.efforts[agent.ThinkingOff] != "none" {
+	if hy.protocol != protocolChatCompletions || hy.thinking.mode != thinkingEffort || hy.thinking.efforts[agent.ThinkingOff] != "none" {
 		t.Fatalf("Hy = %+v", hy)
 	}
 	deepseek := models["deepseek-v4-pro"]
-	deepseekConfig, ok := deepseek.protocol.(chatCompletionsConfig)
-	if !ok || !deepseekConfig.serializeReasoningContent {
+	if deepseek.protocol != protocolChatCompletions || !deepseek.serializeReasoningContent {
 		t.Fatalf("DeepSeek = %+v", deepseek)
 	}
 	kimi := models["kimi-k3"]
@@ -59,12 +56,11 @@ func TestBuildModelsUsesLiveCatalogIntersectionAndRichMetadata(t *testing.T) {
 		t.Fatalf("Kimi K2.6 = %+v", fixedKimi)
 	}
 	minimax := models["minimax-m3"]
-	if _, ok := minimax.protocol.(anthropicMessagesConfig); !ok || minimax.thinking.mode != thinkingAdaptive || !slices.Equal(minimax.thinking.levels, []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh}) {
+	if minimax.protocol != protocolAnthropicMessages || minimax.thinking.mode != thinkingAdaptive || !slices.Equal(minimax.thinking.levels, []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh}) {
 		t.Fatalf("MiniMax = %+v", minimax)
 	}
 	qwen := models["qwen3.8-max"]
-	qwenConfig, ok := qwen.protocol.(anthropicMessagesConfig)
-	if !ok || qwen.thinking.mode != thinkingBudget || qwen.thinking.maxBudgetTokens != qwenConfig.maxOutputTokens-maxThinkingOutputHeadroom || !slices.Equal(qwen.thinking.levels, []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax}) {
+	if qwen.protocol != protocolAnthropicMessages || qwen.thinking.mode != thinkingBudget || qwen.thinking.maxBudgetTokens != qwen.maxOutputTokens-maxThinkingOutputHeadroom || !slices.Equal(qwen.thinking.levels, []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax}) {
 		t.Fatalf("Qwen = %+v", qwen)
 	}
 }

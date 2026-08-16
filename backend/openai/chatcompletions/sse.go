@@ -118,7 +118,7 @@ func (decoder *streamDecoder) handleData(data []byte) (bool, error) {
 		return false, fmt.Errorf("decode Chat Completions SSE event: %w", err)
 	}
 	if chunk.Error != nil {
-		return false, &responseFailureError{message: "chat completions SSE error: " + formatAPIError(*chunk.Error), detail: *chunk.Error}
+		return false, &responseFailureError{message: "chat completions SSE error: " + backendhttp.FormatAPIError(*chunk.Error), detail: *chunk.Error}
 	}
 	if chunk.Usage != nil {
 		decoder.usage = chunk.Usage

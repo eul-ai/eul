@@ -118,7 +118,7 @@ func (decoder *streamDecoder) handleData(data []byte) (bool, error) {
 		if event.Error != nil {
 			detail = *event.Error
 		}
-		return false, &responseFailureError{message: "anthropic messages SSE error: " + formatAPIError(detail), detail: detail}
+		return false, &responseFailureError{message: "anthropic messages SSE error: " + backendhttp.FormatAPIError(detail), detail: detail}
 	}
 
 	switch event.Type {

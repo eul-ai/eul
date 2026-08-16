@@ -10,6 +10,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend/compaction"
+	"github.com/eul-ai/eul/backend/continuation"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
@@ -19,7 +20,6 @@ const (
 	defaultMaxResponseBytes     = int64(16 * 1024 * 1024)
 	defaultMaxErrorBytes        = int64(64 * 1024)
 	defaultMaxStateBytes        = 16 * 1024 * 1024
-	defaultStateOutputHeadroom  = 1024 * 1024
 	minimumThinkingBudgetTokens = 1024
 )
 
@@ -51,13 +51,12 @@ type Options struct {
 type Client struct {
 	httpClient          *http.Client
 	endpoint            string
-	errorPrefix         string
+	errorConfig         backendhttp.APIErrorConfig
 	prepareRequest      PrepareRequestFunc
 	requestOptions      RequestOptionsFunc
 	promptCaching       bool
 	maxRequestBytes     int64
 	maxResponseBytes    int64
-	maxErrorBytes       int64
 	maxStateBytes       int
 	stateOutputHeadroom int
 }
@@ -84,36 +83,30 @@ func New(options Options) (*Client, error) {
 	if maxStateBytes <= 0 {
 		maxStateBytes = defaultMaxStateBytes
 	}
-	stateOutputHeadroom := options.StateOutputHeadroom
-	if stateOutputHeadroom <= 0 {
-		stateOutputHeadroom = defaultStateOutputHeadroom
-	}
-
 	return &Client{
-		httpClient:          backendhttp.CloneNoRedirects(options.HTTPClient, defaultHTTPTimeout),
-		endpoint:            endpoint,
-		errorPrefix:         strings.TrimSpace(options.ErrorPrefix),
+		httpClient: backendhttp.CloneNoRedirects(options.HTTPClient, defaultHTTPTimeout),
+		endpoint:   endpoint,
+		errorConfig: backendhttp.APIErrorConfig{
+			Prefix:          strings.TrimSpace(options.ErrorPrefix),
+			Maximum:         maxErrorBytes,
+			ParseRetryAfter: parseRetryAfterHeaders,
+		},
 		prepareRequest:      options.PrepareRequest,
 		requestOptions:      options.RequestOptions,
 		promptCaching:       options.PromptCaching,
 		maxRequestBytes:     maxRequestBytes,
 		maxResponseBytes:    maxResponseBytes,
-		maxErrorBytes:       maxErrorBytes,
 		maxStateBytes:       maxStateBytes,
-		stateOutputHeadroom: stateOutputHeadroom,
+		stateOutputHeadroom: options.StateOutputHeadroom,
 	}, nil
 }
 
-func (client *Client) stateOutputBudget() int {
-	budget := client.stateOutputHeadroom
-	if budget <= 0 {
-		budget = min(defaultStateOutputHeadroom, client.maxStateBytes/4)
-	}
-	return min(budget, max(0, client.maxStateBytes-continuationStateEnvelopeBytes))
-}
-
 func (client *Client) generationStateBytes() int {
-	return max(0, client.maxStateBytes-client.stateOutputBudget())
+	return continuation.GenerationStateBytes(
+		client.maxStateBytes,
+		client.stateOutputHeadroom,
+		continuationStateEnvelopeBytes,
+	)
 }
 
 func (client *Client) ShouldCompactState(request agent.Request) bool {

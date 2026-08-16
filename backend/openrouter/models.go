@@ -62,10 +62,6 @@ func (metadata modelMetadata) backendMetadata() backend.ModelMetadata {
 	return backend.ModelMetadata{ContextWindow: metadata.contextWindow, ThinkingLevels: levels}
 }
 
-func (metadata modelMetadata) contextWindowTokens() int64 {
-	return metadata.contextWindow
-}
-
 func (metadata modelMetadata) resolveThinkingLevel(level agent.ThinkingLevel) (agent.ThinkingLevel, bool) {
 	if level == "" {
 		level = metadata.defaultThinkingLevel
@@ -85,22 +81,11 @@ func (metadata modelMetadata) resolveThinkingLevel(level agent.ThinkingLevel) (a
 	return level, false
 }
 
-func (metadata modelMetadata) usesReasoning() bool {
-	return metadata.reasoning
-}
-
-func (metadata modelMetadata) reasoningEffort(level agent.ThinkingLevel) (string, bool) {
-	level, ok := metadata.resolveThinkingLevel(level)
-	if !ok {
-		return "", false
-	}
-	if !metadata.reasoning {
-		return "", true
-	}
+func (metadata modelMetadata) effortForResolvedLevel(level agent.ThinkingLevel) string {
 	if level == agent.ThinkingOff {
-		return "none", true
+		return "none"
 	}
-	return string(level), true
+	return string(level)
 }
 
 func thinkingMetadata(reasoning modelReasoning) ([]agent.ThinkingLevel, agent.ThinkingLevel) {

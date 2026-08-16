@@ -254,6 +254,25 @@ func TestRuntimeUsageRejectsTrailingData(t *testing.T) {
 	}
 }
 
+func TestCredentialCheckRejectsMalformedResponse(t *testing.T) {
+	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(writer, `{`)
+	}))
+	defer server.Close()
+
+	driver := New()
+	driver.getenv = func(string) string { return "secret" }
+	driver.baseURL = server.URL
+	driver.httpClient = server.Client()
+	backendRuntime, err := driver.Open(backend.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := backendRuntime.(backend.CredentialChecker).CheckCredentials(context.Background()); err == nil {
+		t.Fatal("malformed credential response was accepted")
+	}
+}
+
 func TestCredentialCheckReportsInvalidKey(t *testing.T) {
 	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/models" {

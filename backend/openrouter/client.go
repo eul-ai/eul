@@ -45,7 +45,7 @@ func (c *client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
 	return compaction.ShouldCompact(
 		request,
 		usage,
-		c.metadata(request.Model).contextWindowTokens(),
+		c.metadata(request.Model).contextWindow,
 		c.responses.ShouldCompactState(request),
 	)
 }
@@ -85,9 +85,8 @@ func requestOptions(metadataFor func(string) modelMetadata) responses.RequestOpt
 		}
 
 		options := responses.RequestOptions{SessionID: request.SessionID, ToolChoice: "auto", ParallelToolCalls: true}
-		if metadata.usesReasoning() {
-			effort, _ := metadata.reasoningEffort(level)
-			options.Reasoning = &responses.Reasoning{Effort: effort}
+		if metadata.reasoning {
+			options.Reasoning = &responses.Reasoning{Effort: metadata.effortForResolvedLevel(level)}
 			options.Include = []string{"reasoning.encrypted_content"}
 		}
 		return options, nil

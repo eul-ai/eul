@@ -100,11 +100,3 @@ func (c *Client) wrapf(cause error, format string, arguments ...any) error {
 func (c *Client) errorMessage(format string, arguments ...any) string {
 	return backendhttp.FormatErrorMessage(c.errorPrefix, c.maxErrorBytes, format, arguments...)
 }
-
-type wrappedError struct {
-	message string
-	cause   error
-}
-
-func (e *wrappedError) Error() string { return e.message }
-func (e *wrappedError) Unwrap() error { return e.cause }

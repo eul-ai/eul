@@ -89,7 +89,6 @@ func responseRequestOptions(models map[string]modelInfo, request agent.Request) 
 		return responses.RequestOptions{}, err
 	}
 
-	config := info.protocol.(responsesConfig)
 	options := responses.RequestOptions{
 		SessionID:         request.SessionID,
 		Include:           []string{"reasoning.encrypted_content"},
@@ -103,7 +102,7 @@ func responseRequestOptions(models map[string]modelInfo, request agent.Request) 
 		}
 		options.Reasoning = reasoning
 	}
-	if config.lowTextVerbosity {
+	if info.lowTextVerbosity {
 		options.TextVerbosity = "low"
 	}
 	return options, nil
@@ -115,12 +114,11 @@ func chatRequestOptions(models map[string]modelInfo, request agent.Request) (cha
 		return chatcompletions.RequestOptions{}, err
 	}
 
-	config := info.protocol.(chatCompletionsConfig)
 	options := chatcompletions.RequestOptions{
-		MaxTokens:                 config.maxOutputTokens,
+		MaxTokens:                 info.maxOutputTokens,
 		ToolChoice:                "auto",
 		ParallelToolCalls:         true,
-		SerializeReasoningContent: config.serializeReasoningContent,
+		SerializeReasoningContent: info.serializeReasoningContent,
 	}
 	if info.thinking.mode == thinkingEffort {
 		options.ReasoningEffort = info.thinking.efforts[request.ThinkingLevel]
@@ -134,9 +132,8 @@ func anthropicRequestOptions(models map[string]modelInfo, request agent.Request)
 		return anthropic.RequestOptions{}, err
 	}
 
-	config := info.protocol.(anthropicMessagesConfig)
 	options := anthropic.RequestOptions{
-		MaxTokens:  config.maxOutputTokens,
+		MaxTokens:  info.maxOutputTokens,
 		ToolChoice: &anthropic.ToolChoice{Type: "auto"},
 	}
 	switch info.thinking.mode {
@@ -158,7 +155,7 @@ func anthropicRequestOptions(models map[string]modelInfo, request agent.Request)
 
 func validateRequestModel(models map[string]modelInfo, request agent.Request, expected protocol) (modelInfo, error) {
 	info, ok := models[request.Model]
-	if !ok || info.protocol.protocol() != expected {
+	if !ok || info.protocol != expected {
 		return modelInfo{}, fmt.Errorf("model %q does not use the requested protocol", request.Model)
 	}
 	if !slices.Contains(info.thinking.levels, request.ThinkingLevel) {

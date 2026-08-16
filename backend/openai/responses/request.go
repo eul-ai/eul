@@ -1,13 +1,12 @@
 package responses
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend/continuation"
 )
 
 const (
@@ -76,9 +75,30 @@ type requestBuild struct {
 	newItems []json.RawMessage
 }
 
-type compactRequestBuild struct {
-	wire  createResponseRequest
-	input []json.RawMessage
+func (client *Client) buildGenerationRequest(request agent.Request) (requestBuild, error) {
+	build, err := buildRequest(request, client.maxStateBytes, client.generationStateBytes())
+	if err != nil {
+		return requestBuild{}, fmt.Errorf("build request: %w", err)
+	}
+	options, err := client.optionsFor(request)
+	if err != nil {
+		return requestBuild{}, err
+	}
+	build.wire = configureGenerationRequest(configureCommonRequest(build.wire, options), options)
+	return build, nil
+}
+
+func (client *Client) buildSummaryRequest(request agent.Request) (requestBuild, error) {
+	build, err := buildRequestUnchecked(request, client.maxStateBytes)
+	if err != nil {
+		return requestBuild{}, fmt.Errorf("build summary request: %w", err)
+	}
+	options, err := client.optionsFor(request)
+	if err != nil {
+		return requestBuild{}, err
+	}
+	build.wire = configureCommonRequest(build.wire, options)
+	return build, nil
 }
 
 func buildRequest(request agent.Request, maxStateBytes, generationStateBytes int) (requestBuild, error) {
@@ -129,39 +149,6 @@ func buildRequestUnchecked(request agent.Request, maxStateBytes int) (requestBui
 		history:  history,
 		newItems: newItems,
 	}, nil
-}
-
-func buildCompactRequest(request agent.Request, maxStateBytes int) (compactRequestBuild, error) {
-	build, err := buildRequestUnchecked(request, maxStateBytes)
-	if err != nil {
-		return compactRequestBuild{}, err
-	}
-
-	trigger, _ := json.Marshal(struct {
-		Type string `json:"type"`
-	}{Type: "compaction_trigger"})
-	input := append([]json.RawMessage(nil), build.wire.Input...)
-	build.wire.Input = append(build.wire.Input, trigger)
-
-	return compactRequestBuild{wire: build.wire, input: input}, nil
-}
-
-func compactedStateItems(input, output []json.RawMessage) []json.RawMessage {
-	items := make([]json.RawMessage, 0, len(input)+len(output))
-	for _, raw := range input {
-		var item struct {
-			Type string `json:"type"`
-			Role string `json:"role"`
-		}
-		if json.Unmarshal(raw, &item) != nil {
-			continue
-		}
-		if item.Type == "agent_message" || item.Role == "user" || item.Role == "developer" || item.Role == "system" {
-			items = append(items, raw)
-		}
-	}
-
-	return append(items, output...)
 }
 
 func encodeInputs(inputs []agent.Input) ([]json.RawMessage, error) {
@@ -248,22 +235,30 @@ func encodeState(history, newInputs, output []json.RawMessage, maxStateBytes int
 }
 
 func continuationStateItems(groups ...[]json.RawMessage) []json.RawMessage {
-	total := 0
-	for _, group := range groups {
-		total += len(group)
-	}
-	items := make([]json.RawMessage, 0, total)
-	for _, group := range groups {
-		items = append(items, group...)
-	}
-	return items
+	return continuation.RawMessages(groups...)
 }
 
 func validateRawObject(value json.RawMessage) error {
-	trimmed := bytes.TrimSpace(value)
-	if len(trimmed) == 0 || trimmed[0] != '{' || !json.Valid(trimmed) {
-		return errors.New("must be a JSON object")
-	}
+	return continuation.ValidateRawObject(value)
+}
 
-	return nil
+func configureCommonRequest(wireRequest createResponseRequest, options RequestOptions) createResponseRequest {
+	wireRequest.SessionID = options.SessionID
+	wireRequest.ServiceTier = options.ServiceTier
+	wireRequest.Stream = true
+	if options.Reasoning != nil {
+		reasoning := *options.Reasoning
+		wireRequest.Reasoning = &reasoning
+	}
+	wireRequest.Include = append([]string(nil), options.Include...)
+	if options.TextVerbosity != "" {
+		wireRequest.Text = &responseText{Verbosity: options.TextVerbosity}
+	}
+	return wireRequest
+}
+
+func configureGenerationRequest(wireRequest createResponseRequest, options RequestOptions) createResponseRequest {
+	wireRequest.ToolChoice = options.ToolChoice
+	wireRequest.ParallelToolCalls = options.ParallelToolCalls
+	return wireRequest
 }

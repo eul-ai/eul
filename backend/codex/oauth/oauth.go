@@ -99,7 +99,7 @@ func (m *Manager) LoginBrowser(ctx context.Context, presentURL func(string) erro
 	if err != nil {
 		return err
 	}
-	return m.store.withLock(ctx, func() error { return m.store.write(credential) })
+	return m.store.writeLocked(ctx, credential)
 }
 
 func (m *Manager) LoginDevice(ctx context.Context, presentCode func(backend.DeviceCode) error) error {
@@ -111,7 +111,7 @@ func (m *Manager) LoginDevice(ctx context.Context, presentCode func(backend.Devi
 	if err != nil {
 		return err
 	}
-	return m.store.withLock(ctx, func() error { return m.store.write(credential) })
+	return m.store.writeLocked(ctx, credential)
 }
 
 func (m *Manager) Resolve(ctx context.Context) (AccessCredential, error) {

@@ -2,10 +2,8 @@ package openrouter
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -86,15 +84,15 @@ type runtime struct {
 }
 
 func (configured *runtime) CheckCredentials(ctx context.Context) error {
-	if err := configured.get(ctx, "/key", nil, true); err != nil {
+	if _, err := configured.loadKey(ctx); err != nil {
 		return fmt.Errorf("openrouter: validate API key: %w", err)
 	}
 	return nil
 }
 
 func (configured *runtime) InitializeModels(ctx context.Context) error {
-	var catalog modelCatalog
-	if err := configured.get(ctx, "/models", &catalog, false); err != nil {
+	catalog, err := configured.loadModelCatalog(ctx)
+	if err != nil {
 		return fmt.Errorf("openrouter: load models: %w", err)
 	}
 
@@ -104,18 +102,9 @@ func (configured *runtime) InitializeModels(ctx context.Context) error {
 	return nil
 }
 
-type keyResponse struct {
-	Data keyUsage `json:"data"`
-}
-
-type keyUsage struct {
-	MonthlyUsage   float64  `json:"usage_monthly"`
-	LimitRemaining *float64 `json:"limit_remaining"`
-}
-
 func (configured *runtime) Usage(ctx context.Context) (backend.AccountUsage, error) {
-	var response keyResponse
-	if err := configured.get(ctx, "/key", &response, true); err != nil {
+	response, err := configured.loadKey(ctx)
+	if err != nil {
 		return backend.AccountUsage{}, fmt.Errorf("openrouter: load usage: %w", err)
 	}
 
@@ -145,47 +134,5 @@ func (configured *runtime) ModelMetadata(model string) backend.ModelMetadata {
 }
 
 func (*runtime) Close() error {
-	return nil
-}
-
-func (configured *runtime) get(ctx context.Context, path string, target any, authenticated bool) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, configured.baseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	if authenticated {
-		request.Header.Set("Authorization", "Bearer "+configured.apiKey)
-	}
-	request.Header.Set("Accept", "application/json")
-	setCommonHeaders(request)
-
-	response, err := configured.credentialClient.Do(request)
-	if err != nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return contextErr
-		}
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 64*1024))
-		detail := strings.TrimSpace(string(body))
-		if detail == "" {
-			detail = "empty response"
-		}
-		return fmt.Errorf("HTTP %s: %s", response.Status, detail)
-	}
-	body, truncated, err := backendhttp.ReadBounded(response.Body, maxResponseBytes)
-	if err != nil {
-		return err
-	}
-	if truncated {
-		return fmt.Errorf("response exceeds %d bytes", maxResponseBytes)
-	}
-	if target != nil {
-		if err := json.Unmarshal(body, target); err != nil {
-			return err
-		}
-	}
 	return nil
 }

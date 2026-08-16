@@ -50,34 +50,13 @@ type thinkingConfig struct {
 	maxBudgetTokens int
 }
 
-type protocolConfig interface {
-	protocol() protocol
-}
-
-type responsesConfig struct {
-	maxOutputTokens  int
-	lowTextVerbosity bool
-}
-
-func (responsesConfig) protocol() protocol { return protocolResponses }
-
-type chatCompletionsConfig struct {
-	maxOutputTokens           int
-	serializeReasoningContent bool
-}
-
-func (chatCompletionsConfig) protocol() protocol { return protocolChatCompletions }
-
-type anthropicMessagesConfig struct {
-	maxOutputTokens int
-}
-
-func (anthropicMessagesConfig) protocol() protocol { return protocolAnthropicMessages }
-
 type modelInfo struct {
-	contextWindow int64
-	thinking      thinkingConfig
-	protocol      protocolConfig
+	contextWindow             int64
+	thinking                  thinkingConfig
+	protocol                  protocol
+	maxOutputTokens           int
+	lowTextVerbosity          bool
+	serializeReasoningContent bool
 }
 
 type catalogProvider struct {
@@ -140,33 +119,34 @@ func buildModelInfo(defaultNPM, id string, model catalogModel) (modelInfo, bool)
 		return modelInfo{}, false
 	}
 
-	var config protocolConfig
+	info := modelInfo{
+		contextWindow:   model.Limit.Context,
+		thinking:        thinking,
+		maxOutputTokens: model.Limit.Output,
+	}
 	switch npm {
 	case "@ai-sdk/openai":
 		if thinking.mode == thinkingBudget || thinking.mode == thinkingAdaptive {
 			return modelInfo{}, false
 		}
-		_, lowTextVerbosity := lowTextVerbosityModels[id]
-		config = responsesConfig{maxOutputTokens: model.Limit.Output, lowTextVerbosity: lowTextVerbosity}
+		info.protocol = protocolResponses
+		_, info.lowTextVerbosity = lowTextVerbosityModels[id]
 	case "@ai-sdk/openai-compatible":
 		if thinking.mode == thinkingBudget || thinking.mode == thinkingAdaptive {
 			return modelInfo{}, false
 		}
-		_, serializeReasoningContent := serializeReasoningContentModels[id]
-		config = chatCompletionsConfig{
-			maxOutputTokens:           model.Limit.Output,
-			serializeReasoningContent: serializeReasoningContent,
-		}
+		info.protocol = protocolChatCompletions
+		_, info.serializeReasoningContent = serializeReasoningContentModels[id]
 	case "@ai-sdk/anthropic":
 		if thinking.mode == thinkingEffort {
 			return modelInfo{}, false
 		}
-		config = anthropicMessagesConfig{maxOutputTokens: model.Limit.Output}
+		info.protocol = protocolAnthropicMessages
 	default:
 		return modelInfo{}, false
 	}
 
-	return modelInfo{contextWindow: model.Limit.Context, thinking: thinking, protocol: config}, true
+	return info, true
 }
 
 func modelThinking(model catalogModel) (thinkingConfig, bool) {

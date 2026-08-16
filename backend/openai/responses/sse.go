@@ -27,21 +27,6 @@ type responseStreamResult struct {
 	observed     bool
 }
 
-type observerDeliveryError struct {
-	operation string
-	cause     error
-}
-
-func (e *observerDeliveryError) Error() string { return e.operation + ": " + e.cause.Error() }
-func (e *observerDeliveryError) Unwrap() error { return e.cause }
-
-type partialResponseError struct {
-	cause error
-}
-
-func (e *partialResponseError) Error() string { return e.cause.Error() }
-func (e *partialResponseError) Unwrap() error { return e.cause }
-
 type responseStreamEvent struct {
 	Type        string          `json:"type"`
 	OutputIndex int             `json:"output_index"`
@@ -54,28 +39,21 @@ type responseStreamEvent struct {
 	Message     string          `json:"message"`
 }
 
-type streamedToolCall struct {
-	id        string
-	name      string
-	arguments string
-	complete  bool
-}
-
 type streamedOutputItem struct {
 	index int
 	item  json.RawMessage
 }
 
 type responseStreamDecoder struct {
-	observer    *streamObserver
-	response    createResponseEnvelope
-	output      []streamedOutputItem
-	toolStreams map[int]streamedToolCall
+	observer  *streamObserver
+	response  createResponseEnvelope
+	output    []streamedOutputItem
+	toolCalls toolCallAccumulator
 }
 
 func readResponsesSSE(reader io.Reader, maximum int64, observer agent.StreamObserver) (responseStreamResult, error) {
 	tracked := &streamObserver{observer: observer}
-	decoder := responseStreamDecoder{observer: tracked, toolStreams: make(map[int]streamedToolCall)}
+	decoder := responseStreamDecoder{observer: tracked, toolCalls: newToolCallAccumulator()}
 	done, err := backendhttp.ReadSSE(reader, maximum, decoder.handleData)
 	if err != nil {
 		err = fmt.Errorf("read Responses SSE: %w", err)
@@ -145,65 +123,24 @@ func (decoder *responseStreamDecoder) handleEvent(data []byte) (createResponseEn
 }
 
 func (decoder *responseStreamDecoder) startToolCall(event responseStreamEvent) error {
-	var item outputItem
-	if len(event.Item) == 0 || json.Unmarshal(event.Item, &item) != nil || item.Type != "function_call" {
+	streamed, deliver := decoder.toolCalls.start(event.OutputIndex, event.Item)
+	if !deliver {
 		return nil
 	}
-	if item.CallID == "" || item.Name == "" {
-		return nil
-	}
-
-	streamed := streamedToolCall{id: item.CallID, name: item.Name, arguments: item.Arguments}
-	decoder.toolStreams[event.OutputIndex] = streamed
 	return decoder.observer.deliverToolCall(streamed, false)
 }
 
 func (decoder *responseStreamDecoder) updateToolCall(event responseStreamEvent, complete bool) error {
-	streamed, exists := decoder.toolStreams[event.OutputIndex]
-	if !exists {
+	streamed, deliver := decoder.toolCalls.update(event.OutputIndex, event.Delta, event.Arguments, complete)
+	if !deliver {
 		return nil
 	}
-	previousArguments := streamed.arguments
-	if complete {
-		if event.Arguments != "" {
-			streamed.arguments = event.Arguments
-		}
-		if streamed.complete && streamed.arguments == previousArguments {
-			return nil
-		}
-		streamed.complete = true
-	} else {
-		streamed.arguments += event.Delta
-		if streamed.arguments == previousArguments {
-			return nil
-		}
-	}
-	decoder.toolStreams[event.OutputIndex] = streamed
 	return decoder.observer.deliverToolCall(streamed, complete)
 }
 
 func (decoder *responseStreamDecoder) finishToolCall(event responseStreamEvent) error {
-	var item outputItem
-	if json.Unmarshal(event.Item, &item) != nil || item.Type != "function_call" {
-		return nil
-	}
-	streamed, exists := decoder.toolStreams[event.OutputIndex]
-	if !exists {
-		streamed = streamedToolCall{id: item.CallID, name: item.Name}
-	}
-	previousArguments := streamed.arguments
-	wasComplete := streamed.complete
-	if item.CallID != "" {
-		streamed.id = item.CallID
-	}
-	if item.Name != "" {
-		streamed.name = item.Name
-	}
-	if item.Arguments != "" {
-		streamed.arguments = item.Arguments
-	}
-	delete(decoder.toolStreams, event.OutputIndex)
-	if streamed.id == "" || streamed.name == "" || wasComplete && streamed.arguments == previousArguments {
+	streamed, deliver := decoder.toolCalls.finish(event.OutputIndex, event.Item)
+	if !deliver {
 		return nil
 	}
 	return decoder.observer.deliverToolCall(streamed, true)

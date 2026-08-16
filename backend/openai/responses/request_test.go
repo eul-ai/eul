@@ -236,6 +236,21 @@ func TestBuildCreateRequestRejectsInputsThatCannotFitState(t *testing.T) {
 	}
 }
 
+func TestConfiguredRequestOwnsMutableOptions(t *testing.T) {
+	reasoning := &Reasoning{Effort: "high", Summary: "auto"}
+	include := []string{"reasoning.encrypted_content"}
+	configured := configureCommonRequest(createResponseRequest{}, RequestOptions{
+		Reasoning: reasoning,
+		Include:   include,
+	})
+
+	reasoning.Effort = "low"
+	include[0] = "changed"
+	if configured.Reasoning == reasoning || configured.Reasoning.Effort != "high" || configured.Include[0] != "reasoning.encrypted_content" {
+		t.Fatalf("configured request retained mutable options: %+v", configured)
+	}
+}
+
 func TestContinuationStateVersionAndBounds(t *testing.T) {
 	for _, test := range []struct {
 		name  string

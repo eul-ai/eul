@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	defaultBaseURL       = "https://chatgpt.com/backend-api"
-	defaultHTTPTimeout   = 10 * time.Minute
-	defaultMaxErrorBytes = int64(64 * 1024)
+	defaultBaseURL               = "https://chatgpt.com/backend-api"
+	defaultHTTPTimeout           = 10 * time.Minute
+	defaultMaxUsageResponseBytes = int64(16 * 1024 * 1024)
+	defaultMaxErrorBytes         = int64(64 * 1024)
 )
 
 type Options struct {
@@ -36,10 +37,13 @@ type TokenSource interface {
 }
 
 type Client struct {
-	tokenSource      TokenSource
-	responses        *responses.Client
-	maxErrorBytes    int64
-	reasoningSummary ReasoningSummary
+	tokenSource           TokenSource
+	httpClient            *http.Client
+	responses             *responses.Client
+	usageEndpoint         string
+	maxUsageResponseBytes int64
+	maxErrorBytes         int64
+	reasoningSummary      ReasoningSummary
 }
 
 var (
@@ -63,15 +67,24 @@ func New(source TokenSource, options Options) (*Client, error) {
 		baseURL = defaultBaseURL
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
-	if _, err := url.Parse(baseURL); err != nil {
+	parsedBaseURL, err := url.Parse(baseURL)
+	if err != nil {
 		return nil, fmt.Errorf("openai: parse base URL: %w", err)
+	}
+
+	usageEndpoint := baseURL + "/api/codex/usage"
+	if strings.HasSuffix(strings.TrimRight(parsedBaseURL.Path, "/"), "/backend-api") {
+		usageEndpoint = baseURL + "/wham/usage"
 	}
 
 	httpClient := backendhttp.CloneNoRedirects(options.HTTPClient, defaultHTTPTimeout)
 	client := &Client{
-		tokenSource:      source,
-		maxErrorBytes:    defaultMaxErrorBytes,
-		reasoningSummary: reasoningSummary,
+		tokenSource:           source,
+		httpClient:            httpClient,
+		usageEndpoint:         usageEndpoint,
+		maxUsageResponseBytes: defaultMaxUsageResponseBytes,
+		maxErrorBytes:         defaultMaxErrorBytes,
+		reasoningSummary:      reasoningSummary,
 	}
 	client.responses, err = responses.New(responses.Options{
 		HTTPClient:     httpClient,

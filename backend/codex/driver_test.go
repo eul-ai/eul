@@ -118,7 +118,7 @@ func TestRuntimeLoadsAccountUsage(t *testing.T) {
 		}, nil
 	})}
 
-	usage, err := newUsageClient(manager, usageClientOptions{httpClient: httpClient, baseURL: "https://example.test"})
+	usage, err := client.New(oauthTokenSource{manager: manager}, client.Options{HTTPClient: httpClient, BaseURL: "https://example.test"})
 	if err != nil {
 		t.Fatal(err)
 	}

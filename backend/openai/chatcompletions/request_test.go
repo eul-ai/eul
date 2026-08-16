@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend/continuation"
 )
 
 func TestBuildRequestEncodesInputsToolsAndState(t *testing.T) {
@@ -32,7 +33,7 @@ func TestBuildRequestEncodesInputsToolsAndState(t *testing.T) {
 			Description: "Read a file",
 			Parameters:  agent.JSONSchema{Type: "object"},
 		}},
-	}, defaultMaxStateBytes, defaultMaxStateBytes-defaultStateOutputHeadroom)
+	}, defaultMaxStateBytes, continuation.GenerationStateBytes(defaultMaxStateBytes, 0, continuationStateEnvelopeBytes))
 	if err != nil {
 		t.Fatal(err)
 	}

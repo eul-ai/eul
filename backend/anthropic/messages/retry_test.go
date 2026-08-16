@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 func TestHTTPErrorRetryAndContextClassification(t *testing.T) {
@@ -77,7 +78,7 @@ func TestHTTPErrorRetryAndContextClassification(t *testing.T) {
 
 func TestContextLimitAPIErrorDoesNotClassifyOutputTokenError(t *testing.T) {
 	detail := apiError{Type: "invalid_request_error", Message: "max_tokens is too large: too many tokens requested"}
-	if contextLimitAPIError(detail) {
+	if backendhttp.IsContextLimitAPIError(detail) {
 		t.Fatal("output token error was classified as an input context limit")
 	}
 }

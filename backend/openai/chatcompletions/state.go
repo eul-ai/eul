@@ -1,4 +1,4 @@
-package messages
+package chatcompletions
 
 import (
 	"encoding/json"
@@ -14,8 +14,4 @@ func decodeState(encoded []byte, maximum int) ([]json.RawMessage, error) {
 
 func encodeState(history, newMessages, output []json.RawMessage, maximum int) ([]byte, error) {
 	return continuation.EncodeMessages(maximum, history, newMessages, output)
-}
-
-func validateRawObject(value json.RawMessage) error {
-	return continuation.ValidateRawObject(value)
 }

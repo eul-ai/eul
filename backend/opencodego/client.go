@@ -45,7 +45,7 @@ func (provider *provider) modelClient(model string) (modelInfo, protocolClient, 
 	if !ok {
 		return modelInfo{}, nil, fmt.Errorf("opencode go: model %q is not supported", model)
 	}
-	selected, ok := provider.clients[info.protocol.protocol()]
+	selected, ok := provider.clients[info.protocol]
 	if !ok {
 		return modelInfo{}, nil, fmt.Errorf("opencode go: model %q has no protocol", model)
 	}

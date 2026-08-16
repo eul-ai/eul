@@ -27,7 +27,7 @@ func testModelInfos() map[string]modelInfo {
 				levels:  []agent.ThinkingLevel{agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh},
 				efforts: effortValues(agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh),
 			},
-			protocol: responsesConfig{},
+			protocol: protocolResponses,
 		},
 		"gpt-5.6-luna": {
 			contextWindow: 1_050_000,
@@ -36,7 +36,8 @@ func testModelInfos() map[string]modelInfo {
 				levels:  []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh, agent.ThinkingXHigh, agent.ThinkingMax},
 				efforts: effortValues(agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh, agent.ThinkingXHigh, agent.ThinkingMax),
 			},
-			protocol: responsesConfig{lowTextVerbosity: true},
+			protocol:         protocolResponses,
+			lowTextVerbosity: true,
 		},
 		"glm-5.2": {
 			contextWindow: 1_000_000,
@@ -45,7 +46,8 @@ func testModelInfos() map[string]modelInfo {
 				levels:  []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax},
 				efforts: effortValues(agent.ThinkingHigh, agent.ThinkingMax),
 			},
-			protocol: chatCompletionsConfig{maxOutputTokens: 131_072},
+			protocol:        protocolChatCompletions,
+			maxOutputTokens: 131_072,
 		},
 		"hy3": {
 			contextWindow: 256_000,
@@ -58,7 +60,8 @@ func testModelInfos() map[string]modelInfo {
 					agent.ThinkingHigh: "high",
 				},
 			},
-			protocol: chatCompletionsConfig{maxOutputTokens: 64_000},
+			protocol:        protocolChatCompletions,
+			maxOutputTokens: 64_000,
 		},
 		"deepseek-v4-pro": {
 			contextWindow: 1_000_000,
@@ -67,7 +70,9 @@ func testModelInfos() map[string]modelInfo {
 				levels:  []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax},
 				efforts: effortValues(agent.ThinkingHigh, agent.ThinkingMax),
 			},
-			protocol: chatCompletionsConfig{maxOutputTokens: 384_000, serializeReasoningContent: true},
+			protocol:                  protocolChatCompletions,
+			maxOutputTokens:           384_000,
+			serializeReasoningContent: true,
 		},
 		"minimax-m3": {
 			contextWindow: 1_000_000,
@@ -75,7 +80,8 @@ func testModelInfos() map[string]modelInfo {
 				mode:   thinkingAdaptive,
 				levels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh},
 			},
-			protocol: anthropicMessagesConfig{maxOutputTokens: 131_072},
+			protocol:        protocolAnthropicMessages,
+			maxOutputTokens: 131_072,
 		},
 		"qwen3.8-max": {
 			contextWindow: 1_000_000,
@@ -84,7 +90,8 @@ func testModelInfos() map[string]modelInfo {
 				levels:          []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax},
 				maxBudgetTokens: 32_000,
 			},
-			protocol: anthropicMessagesConfig{maxOutputTokens: 131_072},
+			protocol:        protocolAnthropicMessages,
+			maxOutputTokens: 131_072,
 		},
 	}
 }
@@ -126,7 +133,7 @@ func TestProviderRoutesProtocols(t *testing.T) {
 		info := models[payload.Model]
 
 		var stream string
-		switch info.protocol.protocol() {
+		switch info.protocol {
 		case protocolResponses:
 			if request.URL.Path != "/zen/go/v1/responses" || request.Header.Get("Authorization") != "Bearer secret" || request.Header.Get("x-api-key") != "" || payload.SessionID != "session-id" {
 				t.Errorf("Responses request path=%q session=%q headers=%v", request.URL.Path, payload.SessionID, request.Header)
@@ -240,7 +247,7 @@ func TestOpenCodeRequestOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if chat.ReasoningEffort != "max" || chat.MaxTokens != client.models["glm-5.2"].protocol.(chatCompletionsConfig).maxOutputTokens || chat.SerializeReasoningContent {
+	if chat.ReasoningEffort != "max" || chat.MaxTokens != client.models["glm-5.2"].maxOutputTokens || chat.SerializeReasoningContent {
 		t.Fatalf("Chat options = %+v", chat)
 	}
 	hy, err := chatRequestOptions(client.models, agent.Request{Model: "hy3", ThinkingLevel: agent.ThinkingOff})
@@ -276,7 +283,7 @@ func TestOpenCodeRequestOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	qwenInfo := client.models["qwen3.8-max"]
-	if qwenMax.MaxTokens != qwenInfo.protocol.(anthropicMessagesConfig).maxOutputTokens || qwenMax.Thinking == nil || qwenMax.Thinking.Type != "enabled" || qwenMax.Thinking.BudgetTokens != qwenInfo.thinking.maxBudgetTokens || qwenMax.MaxTokens-qwenMax.Thinking.BudgetTokens < maxThinkingOutputHeadroom {
+	if qwenMax.MaxTokens != qwenInfo.maxOutputTokens || qwenMax.Thinking == nil || qwenMax.Thinking.Type != "enabled" || qwenMax.Thinking.BudgetTokens != qwenInfo.thinking.maxBudgetTokens || qwenMax.MaxTokens-qwenMax.Thinking.BudgetTokens < maxThinkingOutputHeadroom {
 		t.Fatalf("Qwen max options = %+v", qwenMax)
 	}
 }
@@ -326,7 +333,7 @@ func TestProviderSemanticCompactionUsesMaxThinkingBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	info := models["qwen3.8-max"]
-	if len(compacted.State) == 0 || received.MaxTokens != info.protocol.(anthropicMessagesConfig).maxOutputTokens || received.Thinking.Type != "enabled" || received.Thinking.BudgetTokens != info.thinking.maxBudgetTokens {
+	if len(compacted.State) == 0 || received.MaxTokens != info.maxOutputTokens || received.Thinking.Type != "enabled" || received.Thinking.BudgetTokens != info.thinking.maxBudgetTokens {
 		t.Fatalf("compacted=%+v request=%+v", compacted, received)
 	}
 }
