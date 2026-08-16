@@ -20,7 +20,6 @@ const (
 	defaultMaxErrorBytes       = int64(64 * 1024)
 	defaultMaxStateBytes       = 16 * 1024 * 1024
 	defaultStateOutputHeadroom = 1024 * 1024
-	semanticCompactionQuestion = "What happened earlier in this conversation?"
 )
 
 type RequestOptions struct {
@@ -199,7 +198,7 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
 
-	questionRaw, _ := json.Marshal(message{Role: "user", Content: semanticCompactionQuestion})
+	questionRaw, _ := json.Marshal(message{Role: "user", Content: compaction.SummaryQuestion})
 	summaryRaw, _ := json.Marshal(assistantMessage{
 		Role:             "assistant",
 		Content:          compaction.FormatSummary(summary),

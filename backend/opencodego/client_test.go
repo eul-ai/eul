@@ -23,6 +23,7 @@ func testModelInfos() map[string]modelInfo {
 		"grok-4.5": {
 			protocol:              protocolResponses,
 			contextWindow:         500_000,
+			maxOutputTokens:       500_000,
 			thinkingLevels:        []agent.ThinkingLevel{agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh},
 			thinkingMode:          thinkingEffort,
 			thinkingEfforts:       effortValues(agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh),
@@ -31,6 +32,7 @@ func testModelInfos() map[string]modelInfo {
 		"gpt-5.6-luna": {
 			protocol:              protocolResponses,
 			contextWindow:         1_050_000,
+			maxOutputTokens:       128_000,
 			thinkingLevels:        []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh, agent.ThinkingXHigh, agent.ThinkingMax},
 			thinkingMode:          thinkingEffort,
 			thinkingEfforts:       effortValues(agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh, agent.ThinkingXHigh, agent.ThinkingMax),
@@ -40,15 +42,17 @@ func testModelInfos() map[string]modelInfo {
 		"glm-5.2": {
 			protocol:        protocolChatCompletions,
 			contextWindow:   1_000_000,
+			maxOutputTokens: 131_072,
 			thinkingLevels:  []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax},
 			thinkingMode:    thinkingEffort,
 			thinkingEfforts: effortValues(agent.ThinkingHigh, agent.ThinkingMax),
 		},
 		"hy3": {
-			protocol:       protocolChatCompletions,
-			contextWindow:  256_000,
-			thinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh},
-			thinkingMode:   thinkingEffort,
+			protocol:        protocolChatCompletions,
+			contextWindow:   256_000,
+			maxOutputTokens: 64_000,
+			thinkingLevels:  []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh},
+			thinkingMode:    thinkingEffort,
 			thinkingEfforts: map[agent.ThinkingLevel]string{
 				agent.ThinkingOff:  "none",
 				agent.ThinkingLow:  "low",
@@ -58,22 +62,25 @@ func testModelInfos() map[string]modelInfo {
 		"deepseek-v4-pro": {
 			protocol:                  protocolChatCompletions,
 			contextWindow:             1_000_000,
+			maxOutputTokens:           384_000,
 			thinkingLevels:            []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax},
 			thinkingMode:              thinkingEffort,
 			thinkingEfforts:           effortValues(agent.ThinkingHigh, agent.ThinkingMax),
 			serializeReasoningContent: true,
 		},
 		"minimax-m3": {
-			protocol:       protocolAnthropicMessages,
-			contextWindow:  1_000_000,
-			thinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh},
-			thinkingMode:   thinkingAdaptive,
+			protocol:        protocolAnthropicMessages,
+			contextWindow:   1_000_000,
+			maxOutputTokens: 131_072,
+			thinkingLevels:  []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh},
+			thinkingMode:    thinkingAdaptive,
 		},
 		"qwen3.8-max": {
-			protocol:       protocolAnthropicMessages,
-			contextWindow:  1_000_000,
-			thinkingLevels: []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax},
-			thinkingMode:   thinkingBudget,
+			protocol:        protocolAnthropicMessages,
+			contextWindow:   1_000_000,
+			maxOutputTokens: 131_072,
+			thinkingLevels:  []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax},
+			thinkingMode:    thinkingBudget,
 		},
 	}
 }
@@ -211,7 +218,7 @@ func TestOpenCodeRequestOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if chat.ReasoningEffort != "max" || chat.MaxTokens != maxOutputTokens || chat.SerializeReasoningContent {
+	if chat.ReasoningEffort != "max" || chat.MaxTokens != client.models["glm-5.2"].maxOutputTokens || chat.SerializeReasoningContent {
 		t.Fatalf("Chat options = %+v", chat)
 	}
 	hy, err := client.chatRequestOptions(agent.Request{Model: "hy3", ThinkingLevel: agent.ThinkingOff})
@@ -239,7 +246,8 @@ func TestOpenCodeRequestOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if qwen.MaxTokens != maxOutputTokens || qwen.Thinking == nil || qwen.Thinking.Type != "enabled" || qwen.Thinking.BudgetTokens != maxOutputTokens-maxThinkingOutputHeadroom || qwen.MaxTokens-qwen.Thinking.BudgetTokens != maxThinkingOutputHeadroom {
+	qwenOutputTokens := client.models["qwen3.8-max"].maxOutputTokens
+	if qwen.MaxTokens != qwenOutputTokens || qwen.Thinking == nil || qwen.Thinking.Type != "enabled" || qwen.Thinking.BudgetTokens != qwenOutputTokens-maxThinkingOutputHeadroom || qwen.MaxTokens-qwen.Thinking.BudgetTokens != maxThinkingOutputHeadroom {
 		t.Fatalf("Qwen options = %+v", qwen)
 	}
 }
@@ -275,7 +283,8 @@ func TestProviderSemanticCompactionReservesMaxThinkingOutput(t *testing.T) {
 		}, nil
 	})}
 
-	client, err := newProvider("secret", "https://example.test/zen/go/v1", httpClient, testModelInfos())
+	models := testModelInfos()
+	client, err := newProvider("secret", "https://example.test/zen/go/v1", httpClient, models)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,6 +296,7 @@ func TestProviderSemanticCompactionReservesMaxThinkingOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	maxOutputTokens := models["qwen3.8-max"].maxOutputTokens
 	if len(compacted.State) == 0 || received.MaxTokens != maxOutputTokens || received.Thinking.Type != "enabled" || received.Thinking.BudgetTokens != maxOutputTokens-maxThinkingOutputHeadroom {
 		t.Fatalf("compacted=%+v request=%+v", compacted, received)
 	}

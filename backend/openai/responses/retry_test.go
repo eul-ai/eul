@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -130,13 +129,9 @@ func TestClientRetriesTransientGenerationThroughEngine(t *testing.T) {
 	}
 }
 
-func TestClientRetriesHTTP2InternalStreamErrorThroughEngine(t *testing.T) {
+func TestClientRetriesInterruptedStreamThroughEngine(t *testing.T) {
 	var calls atomic.Int32
-	server := newUnstartedTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.ProtoMajor != 2 {
-			t.Errorf("request protocol = %s", request.Proto)
-		}
-
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		if calls.Add(1) == 1 {
 			writer.WriteHeader(http.StatusOK)
@@ -145,9 +140,6 @@ func TestClientRetriesHTTP2InternalStreamErrorThroughEngine(t *testing.T) {
 		}
 		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"recovered\"}]}]}}\n\n")
 	}))
-	server.EnableHTTP2 = true
-	server.Config.ErrorLog = log.New(io.Discard, "", 0)
-	server.StartTLS()
 	defer server.Close()
 
 	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})

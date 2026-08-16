@@ -15,6 +15,22 @@ const (
 	protocolAnthropicMessages
 )
 
+const (
+	reasoningOptionTypeEffort       = "effort"
+	reasoningOptionTypeBudgetTokens = "budget_tokens"
+	reasoningOptionTypeToggle       = "toggle"
+)
+
+var (
+	lowTextVerbosityModels = map[string]struct{}{
+		"gpt-5.6-luna": {},
+	}
+	serializeReasoningContentModels = map[string]struct{}{
+		"deepseek-v4-pro":   {},
+		"deepseek-v4-flash": {},
+	}
+)
+
 type thinkingMode uint8
 
 const (
@@ -27,6 +43,7 @@ const (
 type modelInfo struct {
 	protocol                  protocol
 	contextWindow             int64
+	maxOutputTokens           int
 	thinkingLevels            []agent.ThinkingLevel
 	thinkingMode              thinkingMode
 	thinkingEfforts           map[agent.ThinkingLevel]string
@@ -56,6 +73,7 @@ type catalogReasoningOption struct {
 
 type catalogLimit struct {
 	Context int64 `json:"context"`
+	Output  int   `json:"output"`
 }
 
 type catalogModelProvider struct {
@@ -79,7 +97,7 @@ func buildModels(catalog catalogProvider, live map[string]struct{}) map[string]m
 }
 
 func buildModelInfo(defaultNPM, id string, model catalogModel) (modelInfo, bool) {
-	if model.Limit.Context <= 0 {
+	if model.Limit.Context <= 0 || model.Limit.Output <= 0 {
 		return modelInfo{}, false
 	}
 
@@ -115,21 +133,19 @@ func buildModelInfo(defaultNPM, id string, model catalogModel) (modelInfo, bool)
 		}
 	}
 
-	info := modelInfo{
-		protocol:              selectedProtocol,
-		contextWindow:         model.Limit.Context,
-		thinkingLevels:        levels,
-		thinkingMode:          mode,
-		thinkingEfforts:       efforts,
-		includeEncryptedState: selectedProtocol == protocolResponses,
-	}
-	switch id {
-	case "gpt-5.6-luna":
-		info.lowTextVerbosity = true
-	case "deepseek-v4-pro", "deepseek-v4-flash":
-		info.serializeReasoningContent = true
-	}
-	return info, true
+	_, lowTextVerbosity := lowTextVerbosityModels[id]
+	_, serializeReasoningContent := serializeReasoningContentModels[id]
+	return modelInfo{
+		protocol:                  selectedProtocol,
+		contextWindow:             model.Limit.Context,
+		maxOutputTokens:           model.Limit.Output,
+		thinkingLevels:            levels,
+		thinkingMode:              mode,
+		thinkingEfforts:           efforts,
+		includeEncryptedState:     selectedProtocol == protocolResponses,
+		lowTextVerbosity:          lowTextVerbosity,
+		serializeReasoningContent: serializeReasoningContent,
+	}, true
 }
 
 func modelThinking(model catalogModel) ([]agent.ThinkingLevel, thinkingMode, map[agent.ThinkingLevel]string, bool) {
@@ -142,7 +158,7 @@ func modelThinking(model catalogModel) ([]agent.ThinkingLevel, thinkingMode, map
 
 	options := *model.ReasoningOptions
 	for _, option := range options {
-		if option.Type != "effort" {
+		if option.Type != reasoningOptionTypeEffort {
 			continue
 		}
 
@@ -168,12 +184,12 @@ func modelThinking(model catalogModel) ([]agent.ThinkingLevel, thinkingMode, map
 	}
 
 	for _, option := range options {
-		if option.Type == "budget_tokens" {
+		if option.Type == reasoningOptionTypeBudgetTokens {
 			return []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax}, thinkingBudget, nil, true
 		}
 	}
 	for _, option := range options {
-		if option.Type == "toggle" {
+		if option.Type == reasoningOptionTypeToggle {
 			return []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh}, thinkingAdaptive, nil, true
 		}
 	}

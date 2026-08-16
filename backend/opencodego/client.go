@@ -15,16 +15,19 @@ import (
 	"github.com/eul-ai/eul/backend/openai/responses"
 )
 
-const (
-	maxOutputTokens           = 32_000
-	maxThinkingOutputHeadroom = 8_000
-)
+const maxThinkingOutputHeadroom = 8_000
+
+type protocolClient interface {
+	Generate(context.Context, agent.Request, agent.StreamObserver) (agent.Response, error)
+	RetryGeneration(error, int) (time.Duration, bool)
+	ShouldCompactState(agent.Request) bool
+	SemanticCompact(context.Context, agent.Request, string) (agent.CompactResponse, error)
+	IsContextLimitError(error) bool
+}
 
 type provider struct {
-	models    map[string]modelInfo
-	responses *responses.Client
-	chat      *chatcompletions.Client
-	anthropic *anthropic.Client
+	models  map[string]modelInfo
+	clients map[protocol]protocolClient
 }
 
 type routedError struct {
@@ -75,9 +78,11 @@ func newProvider(apiKey, baseURL string, httpClient *http.Client, models map[str
 		return nil, err
 	}
 
-	client.responses = responsesClient
-	client.chat = chatClient
-	client.anthropic = anthropicClient
+	client.clients = map[protocol]protocolClient{
+		protocolResponses:         responsesClient,
+		protocolChatCompletions:   chatClient,
+		protocolAnthropicMessages: anthropicClient,
+	}
 	return client, nil
 }
 
@@ -87,18 +92,11 @@ func (client *provider) Generate(ctx context.Context, request agent.Request, obs
 		return agent.Response{}, fmt.Errorf("opencode go: model %q is not supported", request.Model)
 	}
 
-	var response agent.Response
-	var err error
-	switch info.protocol {
-	case protocolResponses:
-		response, err = client.responses.Generate(ctx, request, observer)
-	case protocolChatCompletions:
-		response, err = client.chat.Generate(ctx, request, observer)
-	case protocolAnthropicMessages:
-		response, err = client.anthropic.Generate(ctx, request, observer)
-	default:
+	selectedClient, ok := client.clients[info.protocol]
+	if !ok {
 		return agent.Response{}, fmt.Errorf("opencode go: model %q has no protocol", request.Model)
 	}
+	response, err := selectedClient.Generate(ctx, request, observer)
 	if err != nil {
 		return agent.Response{}, &routedError{protocol: info.protocol, cause: err}
 	}
@@ -110,16 +108,11 @@ func (client *provider) RetryGeneration(err error, failedAttempts int) (time.Dur
 	if !errors.As(err, &routed) {
 		return 0, false
 	}
-	switch routed.protocol {
-	case protocolResponses:
-		return client.responses.RetryGeneration(routed.cause, failedAttempts)
-	case protocolChatCompletions:
-		return client.chat.RetryGeneration(routed.cause, failedAttempts)
-	case protocolAnthropicMessages:
-		return client.anthropic.RetryGeneration(routed.cause, failedAttempts)
-	default:
+	selectedClient, ok := client.clients[routed.protocol]
+	if !ok {
 		return 0, false
 	}
+	return selectedClient.RetryGeneration(routed.cause, failedAttempts)
 }
 
 func (client *provider) ShouldCompact(request agent.Request, usage agent.Usage) bool {
@@ -128,16 +121,11 @@ func (client *provider) ShouldCompact(request agent.Request, usage agent.Usage) 
 		return false
 	}
 
-	var stateFull bool
-	switch info.protocol {
-	case protocolResponses:
-		stateFull = client.responses.ShouldCompactState(request)
-	case protocolChatCompletions:
-		stateFull = client.chat.ShouldCompactState(request)
-	case protocolAnthropicMessages:
-		stateFull = client.anthropic.ShouldCompactState(request)
+	selectedClient, ok := client.clients[info.protocol]
+	if !ok {
+		return false
 	}
-	if stateFull {
+	if selectedClient.ShouldCompactState(request) {
 		return true
 	}
 	if usage.TotalTokens <= 0 || info.contextWindow <= 0 {
@@ -157,18 +145,11 @@ func (client *provider) Compact(ctx context.Context, request agent.Request) (age
 		return agent.CompactResponse{}, fmt.Errorf("opencode go: model %q is not supported", request.Model)
 	}
 
-	var response agent.CompactResponse
-	var err error
-	switch info.protocol {
-	case protocolResponses:
-		response, err = client.responses.SemanticCompact(ctx, request, compaction.Instructions)
-	case protocolChatCompletions:
-		response, err = client.chat.SemanticCompact(ctx, request, compaction.Instructions)
-	case protocolAnthropicMessages:
-		response, err = client.anthropic.SemanticCompact(ctx, request, compaction.Instructions)
-	default:
+	selectedClient, ok := client.clients[info.protocol]
+	if !ok {
 		return agent.CompactResponse{}, fmt.Errorf("opencode go: model %q has no protocol", request.Model)
 	}
+	response, err := selectedClient.SemanticCompact(ctx, request, compaction.Instructions)
 	if err != nil {
 		return agent.CompactResponse{}, &routedError{protocol: info.protocol, cause: err}
 	}
@@ -185,16 +166,8 @@ func (client *provider) ShouldCompactAfterError(request agent.Request, err error
 		return false
 	}
 
-	switch info.protocol {
-	case protocolResponses:
-		return client.responses.IsContextLimitError(routed.cause)
-	case protocolChatCompletions:
-		return client.chat.IsContextLimitError(routed.cause)
-	case protocolAnthropicMessages:
-		return client.anthropic.IsContextLimitError(routed.cause)
-	default:
-		return false
-	}
+	selectedClient, ok := client.clients[info.protocol]
+	return ok && selectedClient.IsContextLimitError(routed.cause)
 }
 
 func prepareBearerRequest(apiKey string) func(context.Context, *http.Request) error {
@@ -246,7 +219,7 @@ func (client *provider) chatRequestOptions(request agent.Request) (chatcompletio
 	}
 
 	options := chatcompletions.RequestOptions{
-		MaxTokens:                 maxOutputTokens,
+		MaxTokens:                 info.maxOutputTokens,
 		ToolChoice:                "auto",
 		ParallelToolCalls:         true,
 		SerializeReasoningContent: info.serializeReasoningContent,
@@ -264,14 +237,14 @@ func (client *provider) anthropicRequestOptions(request agent.Request) (anthropi
 	}
 
 	options := anthropic.RequestOptions{
-		MaxTokens:  maxOutputTokens,
+		MaxTokens:  info.maxOutputTokens,
 		ToolChoice: &anthropic.ToolChoice{Type: "auto"},
 	}
 	switch info.thinkingMode {
 	case thinkingBudget:
 		budget := 16_000
 		if request.ThinkingLevel == agent.ThinkingMax {
-			budget = maxOutputTokens - maxThinkingOutputHeadroom
+			budget = info.maxOutputTokens - maxThinkingOutputHeadroom
 		}
 		options.Thinking = &anthropic.Thinking{Type: "enabled", BudgetTokens: budget}
 	case thinkingAdaptive:

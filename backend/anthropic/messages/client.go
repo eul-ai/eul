@@ -21,7 +21,6 @@ const (
 	defaultMaxStateBytes        = 16 * 1024 * 1024
 	defaultStateOutputHeadroom  = 1024 * 1024
 	minimumThinkingBudgetTokens = 1024
-	semanticCompactionQuestion  = "What happened earlier in this conversation?"
 )
 
 type RequestOptions struct {
@@ -201,7 +200,7 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
 
-	questionContent, _ := json.Marshal([]contentBlock{{Type: "text", Text: semanticCompactionQuestion}})
+	questionContent, _ := json.Marshal([]contentBlock{{Type: "text", Text: compaction.SummaryQuestion}})
 	question, _ := json.Marshal(wireMessage{Role: "user", Content: questionContent})
 	summaryContent, _ := json.Marshal([]contentBlock{{
 		Type: "text",

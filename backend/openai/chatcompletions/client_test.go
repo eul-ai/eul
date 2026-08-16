@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend/compaction"
 )
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
@@ -212,7 +213,7 @@ func TestSemanticCompactDisablesToolsAndStoresContinuation(t *testing.T) {
 	}
 	summaryText, summaryOK := summary.Content.(string)
 	continuationText, continuationOK := continuation.Content.(string)
-	if question.Role != "user" || question.Content != semanticCompactionQuestion || summary.Role != "assistant" || summary.ReasoningContent == nil || *summary.ReasoningContent != "" || !summaryOK || !strings.Contains(summaryText, "summary") || continuation.Role != "user" || !continuationOK || continuationText == "" {
+	if question.Role != "user" || question.Content != compaction.SummaryQuestion || summary.Role != "assistant" || summary.ReasoningContent == nil || *summary.ReasoningContent != "" || !summaryOK || !strings.Contains(summaryText, "summary") || continuation.Role != "user" || !continuationOK || continuationText == "" {
 		t.Fatalf("compacted messages = %s", messages)
 	}
 }

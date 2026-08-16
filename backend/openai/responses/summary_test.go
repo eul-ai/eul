@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -12,7 +11,7 @@ import (
 )
 
 func TestClientCompactsBySummarizing(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		var wire createResponseRequest
 		if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
 			t.Fatal(err)
@@ -125,7 +124,7 @@ func TestManualSemanticCompactionPreservesTurnBoundary(t *testing.T) {
 
 func TestSemanticCompactAcceptsStateThatCannotReserveGenerationOutput(t *testing.T) {
 	calls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		calls++
 		var wire createResponseRequest
 		if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {

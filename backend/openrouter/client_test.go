@@ -6,11 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend/testhttp"
 )
 
 func testMetadata(reasoning bool, contextWindow int64) func(string) modelMetadata {
@@ -38,7 +38,7 @@ func testMetadata(reasoning bool, contextWindow int64) func(string) modelMetadat
 
 func TestClientUsesOpenRouterResponsesEndpointHeadersAndState(t *testing.T) {
 	calls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		calls++
 		if request.URL.Path != "/responses" || request.Method != http.MethodPost {
 			t.Errorf("request = %s %s", request.Method, request.URL.Path)
@@ -127,7 +127,7 @@ func TestClientUsesOpenRouterResponsesEndpointHeadersAndState(t *testing.T) {
 }
 
 func TestClientStreamsInterleavedToolCalls(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(writer, "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"one\",\"name\":\"read\",\"arguments\":\"\"}}\n\n")
 		fmt.Fprint(writer, "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"call_id\":\"two\",\"name\":\"read\",\"arguments\":\"\"}}\n\n")
@@ -156,7 +156,7 @@ func TestClientStreamsInterleavedToolCalls(t *testing.T) {
 }
 
 func TestClientEncodesImageInput(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		var wire struct {
 			Input []json.RawMessage `json:"input"`
 		}
@@ -193,7 +193,7 @@ func TestClientEncodesImageInput(t *testing.T) {
 
 func TestClientHandlesNumericRateLimitErrorAndRedactsKey(t *testing.T) {
 	const key = "secret-openrouter-key"
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprintf(writer, "data: {\"type\":\"error\",\"error\":{\"code\":429,\"message\":\"rate limited %s\"}}\n\n", key)
 	}))
@@ -218,7 +218,7 @@ func TestClientHandlesNumericRateLimitErrorAndRedactsKey(t *testing.T) {
 }
 
 func TestClientClassifiesContextLimitErrorForCompaction(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(writer, "data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"context_length_exceeded\",\"message\":\"too long\"}}\n\n")
 	}))
@@ -305,7 +305,7 @@ func TestClientShouldCompactAtModelContextThreshold(t *testing.T) {
 
 func TestClientSemanticallyCompactsAndReplaysSummary(t *testing.T) {
 	calls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		calls++
 		if request.Header.Get("Authorization") != "Bearer secret" || request.Header.Get("HTTP-Referer") == "" {
 			t.Errorf("headers = %v", request.Header)

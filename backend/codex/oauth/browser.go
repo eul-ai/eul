@@ -32,7 +32,7 @@ func (m *Manager) loginBrowser(ctx context.Context, interaction backend.LoginInt
 		return credentials{}, err
 	}
 
-	listener, err := net.Listen("tcp", m.callbackAddress)
+	listener, err := m.listen("tcp", m.callbackAddress)
 	if err != nil {
 		return credentials{}, fmt.Errorf("oauth: start loopback callback: %w", err)
 	}

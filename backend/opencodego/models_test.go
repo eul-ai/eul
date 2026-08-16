@@ -32,7 +32,7 @@ func TestBuildModelsUsesLiveCatalogIntersectionAndRichMetadata(t *testing.T) {
 	}
 
 	grok := models["grok-4.5"]
-	if grok.protocol != protocolResponses || grok.contextWindow != 500_000 || !grok.includeEncryptedState || !slices.Equal(grok.thinkingLevels, []agent.ThinkingLevel{agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh}) {
+	if grok.protocol != protocolResponses || grok.contextWindow != 500_000 || grok.maxOutputTokens != 500_000 || !grok.includeEncryptedState || !slices.Equal(grok.thinkingLevels, []agent.ThinkingLevel{agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh}) {
 		t.Fatalf("Grok = %+v", grok)
 	}
 	gpt := models["gpt-5.6-luna"]
@@ -70,14 +70,14 @@ func TestBuildModelsSkipsCatalogControlsEulCannotRoute(t *testing.T) {
 	catalog.Models["missing-options"] = catalogModel{
 		ID:        "missing-options",
 		Reasoning: true,
-		Limit:     catalogLimit{Context: 100_000},
+		Limit:     catalogLimit{Context: 100_000, Output: 32_000},
 	}
 	toggleOptions := []catalogReasoningOption{{Type: "toggle"}}
 	catalog.Models["chat-toggle"] = catalogModel{
 		ID:               "chat-toggle",
 		Reasoning:        true,
 		ReasoningOptions: &toggleOptions,
-		Limit:            catalogLimit{Context: 100_000},
+		Limit:            catalogLimit{Context: 100_000, Output: 32_000},
 	}
 	effort := "high"
 	effortOptions := []catalogReasoningOption{{Type: "effort", Values: []*string{&effort}}}
@@ -85,7 +85,7 @@ func TestBuildModelsSkipsCatalogControlsEulCannotRoute(t *testing.T) {
 		ID:               "anthropic-effort",
 		Reasoning:        true,
 		ReasoningOptions: &effortOptions,
-		Limit:            catalogLimit{Context: 100_000},
+		Limit:            catalogLimit{Context: 100_000, Output: 32_000},
 		Provider:         catalogModelProvider{NPM: "@ai-sdk/anthropic"},
 	}
 	fixedOptions := []catalogReasoningOption{}
@@ -93,7 +93,7 @@ func TestBuildModelsSkipsCatalogControlsEulCannotRoute(t *testing.T) {
 		ID:               "unknown-sdk",
 		Reasoning:        false,
 		ReasoningOptions: &fixedOptions,
-		Limit:            catalogLimit{Context: 100_000},
+		Limit:            catalogLimit{Context: 100_000, Output: 32_000},
 		Provider:         catalogModelProvider{NPM: "@ai-sdk/unknown"},
 	}
 

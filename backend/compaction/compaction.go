@@ -13,6 +13,7 @@ Preserve only continuation-critical facts: the user's current goal, requirements
 
 const (
 	Continuation        = "Continue the task from the compacted summary."
+	SummaryQuestion     = "What happened earlier in this conversation?"
 	summaryIntroduction = "The earlier conversation was compacted into the following summary. Continue the task from this context:"
 	summaryRequest      = "Produce the requested handoff summary now."
 )

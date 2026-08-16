@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend/testhttp"
 )
 
 func generate(client *Client, ctx context.Context, request agent.Request, onText, onReasoning agent.TextSink, onToolCall agent.ToolCallSink) (agent.Response, error) {
@@ -481,7 +481,7 @@ func baseRequest() agent.Request {
 	}
 }
 
-func responseServer(t *testing.T, status int, body string) *httptest.Server {
+func responseServer(t *testing.T, status int, body string) *testhttp.Server {
 	t.Helper()
 	return newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if status >= 200 && status < 300 {
@@ -504,7 +504,7 @@ func responseServer(t *testing.T, status int, body string) *httptest.Server {
 	}))
 }
 
-func compactResponseServer(t *testing.T, status int, body string) *httptest.Server {
+func compactResponseServer(t *testing.T, status int, body string) *testhttp.Server {
 	t.Helper()
 	return newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		if status < 200 || status >= 300 {

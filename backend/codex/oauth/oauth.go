@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -54,6 +55,7 @@ type Manager struct {
 	callbackAddress string
 	now             func() time.Time
 	sleep           func(context.Context, time.Duration) error
+	listen          func(string, string) (net.Listener, error)
 }
 
 func NewManager(path string, options Options) *Manager {
@@ -93,6 +95,7 @@ func NewManager(path string, options Options) *Manager {
 		callbackAddress: callback,
 		now:             now,
 		sleep:           sleep,
+		listen:          net.Listen,
 	}
 }
 

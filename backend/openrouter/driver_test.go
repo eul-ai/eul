@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/backend/testhttp"
 )
 
 type driverRoundTripperFunc func(*http.Request) (*http.Response, error)
@@ -49,7 +49,7 @@ func TestThinkingMetadataUsesCatalogEfforts(t *testing.T) {
 
 func TestRuntimeChecksCredentialsLoadsModelsAndCreatesProvider(t *testing.T) {
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requests++
 		if request.Header.Get("HTTP-Referer") == "" || request.Header.Get("X-Title") != "Eul" {
 			t.Errorf("headers = %v", request.Header)
@@ -147,7 +147,7 @@ func TestRuntimeChecksCredentialsLoadsModelsAndCreatesProvider(t *testing.T) {
 
 func TestModelCatalogIsCached(t *testing.T) {
 	models := 0
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/key":
 			fmt.Fprint(writer, `{"data":{}}`)
@@ -192,7 +192,7 @@ func TestRuntimeLoadsAccountUsage(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				if request.Method != http.MethodGet || request.URL.Path != "/key" || request.Header.Get("Authorization") != "Bearer secret" {
 					t.Errorf("request = %s %s, authorization = %q", request.Method, request.URL.Path, request.Header.Get("Authorization"))
 				}
@@ -246,7 +246,7 @@ func TestRuntimeUsageRejectsTrailingData(t *testing.T) {
 }
 
 func TestCredentialCheckReportsInvalidKey(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/models" {
 			fmt.Fprint(writer, `{"data":[]}`)
 			return
