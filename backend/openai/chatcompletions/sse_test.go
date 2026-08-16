@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 type fragmentedReader struct {
@@ -163,7 +164,7 @@ func TestReadCompletionSSERequiresFinishReason(t *testing.T) {
 func TestReadCompletionSSEDoesNotRetryAfterDelivery(t *testing.T) {
 	stream := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n"
 	_, err := readCompletionSSE(strings.NewReader(stream), 1024, agent.StreamObserver{Text: func(string) error { return nil }}, false)
-	var partial *partialResponseError
+	var partial *backendhttp.PartialResponseError
 	if !errors.As(err, &partial) {
 		t.Fatalf("error = %v", err)
 	}
@@ -175,7 +176,7 @@ func TestReadCompletionSSEDoesNotRetryAfterDelivery(t *testing.T) {
 func TestReadCompletionSSERetriesWhenNothingWasDelivered(t *testing.T) {
 	stream := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n"
 	_, err := readCompletionSSE(strings.NewReader(stream), 1024, agent.StreamObserver{}, false)
-	var partial *partialResponseError
+	var partial *backendhttp.PartialResponseError
 	if errors.As(err, &partial) {
 		t.Fatalf("undelivered response was marked partial: %v", err)
 	}

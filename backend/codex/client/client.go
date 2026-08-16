@@ -2,23 +2,11 @@ package client
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
-	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 	"github.com/eul-ai/eul/backend/openai/responses"
-)
-
-const (
-	defaultBaseURL               = "https://chatgpt.com/backend-api"
-	defaultHTTPTimeout           = 10 * time.Minute
-	defaultMaxUsageResponseBytes = int64(16 * 1024 * 1024)
-	defaultMaxErrorBytes         = int64(64 * 1024)
 )
 
 type Options struct {
@@ -27,23 +15,10 @@ type Options struct {
 	ReasoningSummary ReasoningSummary
 }
 
-type Credential struct {
-	AccessToken string
-	AccountID   string
-}
-
-type TokenSource interface {
-	Token(context.Context) (Credential, error)
-}
-
 type Client struct {
-	tokenSource           TokenSource
-	httpClient            *http.Client
-	responses             *responses.Client
-	usageEndpoint         string
-	maxUsageResponseBytes int64
-	maxErrorBytes         int64
-	reasoningSummary      ReasoningSummary
+	requests         *requestClient
+	responses        *responses.Client
+	reasoningSummary ReasoningSummary
 }
 
 var (
@@ -58,36 +33,18 @@ func New(source TokenSource, options Options) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	if source == nil {
-		return nil, errors.New("openai: token source is required")
-	}
-
-	baseURL := options.BaseURL
-	if baseURL == "" {
-		baseURL = defaultBaseURL
-	}
-	baseURL = strings.TrimRight(baseURL, "/")
-	parsedBaseURL, err := url.Parse(baseURL)
+	requests, err := newRequestClient(source, options.HTTPClient)
 	if err != nil {
-		return nil, fmt.Errorf("openai: parse base URL: %w", err)
+		return nil, err
+	}
+	baseURL, _, err := normalizeBaseURL(options.BaseURL)
+	if err != nil {
+		return nil, err
 	}
 
-	usageEndpoint := baseURL + "/api/codex/usage"
-	if strings.HasSuffix(strings.TrimRight(parsedBaseURL.Path, "/"), "/backend-api") {
-		usageEndpoint = baseURL + "/wham/usage"
-	}
-
-	httpClient := backendhttp.CloneNoRedirects(options.HTTPClient, defaultHTTPTimeout)
-	client := &Client{
-		tokenSource:           source,
-		httpClient:            httpClient,
-		usageEndpoint:         usageEndpoint,
-		maxUsageResponseBytes: defaultMaxUsageResponseBytes,
-		maxErrorBytes:         defaultMaxErrorBytes,
-		reasoningSummary:      reasoningSummary,
-	}
+	client := &Client{requests: requests, reasoningSummary: reasoningSummary}
 	client.responses, err = responses.New(responses.Options{
-		HTTPClient:     httpClient,
+		HTTPClient:     requests.httpClient,
 		Endpoint:       baseURL + "/codex/responses",
 		ErrorPrefix:    "openai",
 		PrepareRequest: client.prepareResponsesRequest,
@@ -139,46 +96,10 @@ func (c *Client) responsesRequestOptions(request agent.Request) (responses.Reque
 }
 
 func (c *Client) prepareResponsesRequest(ctx context.Context, request *http.Request) error {
-	credential, err := c.resolveCredential(ctx)
-	if err != nil {
+	if err := c.requests.authenticate(ctx, request); err != nil {
 		return err
 	}
-	setCredentialHeaders(request, credential)
 	request.Header.Set("x-codex-beta-features", "remote_compaction_v2")
 	request.Header.Set("OpenAI-Beta", "responses=experimental")
 	return nil
 }
-
-func setCredentialHeaders(request *http.Request, credential Credential) {
-	request.Header.Set("Authorization", "Bearer "+credential.AccessToken)
-	request.Header.Set("chatgpt-account-id", credential.AccountID)
-	request.Header.Set("originator", "eul")
-	request.Header.Set("User-Agent", "eul")
-}
-
-func (c *Client) resolveCredential(ctx context.Context) (Credential, error) {
-	credential, err := c.tokenSource.Token(ctx)
-	if err == nil {
-		return credential, nil
-	}
-	if contextErr := ctx.Err(); contextErr != nil {
-		return Credential{}, contextErr
-	}
-	return Credential{}, c.wrapf(err, "resolve authentication: %v", err)
-}
-
-func (c *Client) wrapf(cause error, format string, arguments ...any) error {
-	return &wrappedError{message: c.errorMessage(format, arguments...), cause: cause}
-}
-
-func (c *Client) errorMessage(format string, arguments ...any) string {
-	return backendhttp.FormatErrorMessage("openai", c.maxErrorBytes, format, arguments...)
-}
-
-type wrappedError struct {
-	message string
-	cause   error
-}
-
-func (e *wrappedError) Error() string { return e.message }
-func (e *wrappedError) Unwrap() error { return e.cause }

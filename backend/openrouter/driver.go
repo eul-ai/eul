@@ -21,7 +21,6 @@ const (
 
 	defaultBaseURL        = "https://openrouter.ai/api/v1"
 	credentialHTTPTimeout = 30 * time.Second
-	maxResponseBytes      = int64(16 * 1024 * 1024)
 )
 
 type Driver struct {

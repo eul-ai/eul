@@ -34,9 +34,10 @@ func (code *APIErrorCode) UnmarshalJSON(data []byte) error {
 }
 
 type APIError struct {
-	Type    string       `json:"type"`
-	Code    APIErrorCode `json:"code"`
-	Message string       `json:"message"`
+	Type     string          `json:"type"`
+	Code     APIErrorCode    `json:"code"`
+	Message  string          `json:"message"`
+	Metadata json.RawMessage `json:"metadata"`
 }
 
 func FormatAPIError(detail APIError) string {
@@ -89,6 +90,7 @@ type APIErrorConfig struct {
 	Prefix          string
 	Maximum         int64
 	ParseRetryAfter func(http.Header, time.Time) time.Duration
+	FormatDetail    func(APIError) string
 }
 
 type APIResponseError struct {
@@ -152,7 +154,11 @@ func (config APIErrorConfig) decodeAPIResponseError(response *http.Response) err
 			Error APIError `json:"error"`
 		}
 		if json.Unmarshal(body, &envelope) == nil {
-			if formatted := FormatAPIError(envelope.Error); formatted != "" {
+			formatDetail := config.FormatDetail
+			if formatDetail == nil {
+				formatDetail = FormatAPIError
+			}
+			if formatted := formatDetail(envelope.Error); formatted != "" {
 				detail = envelope.Error
 				detailText = formatted
 			}

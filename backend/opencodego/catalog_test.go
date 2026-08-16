@@ -204,7 +204,7 @@ func TestProviderKeepsRuntimeModelSnapshot(t *testing.T) {
 		baseURL:          "https://example.test/zen/go/v1",
 		generationClient: &http.Client{},
 		models: map[string]modelInfo{
-			"grok-4.5": testModelInfos()["grok-4.5"],
+			"grok-4.5": testModelInfos(t)["grok-4.5"],
 		},
 	}
 	created, err := configured.NewProvider()
@@ -215,7 +215,7 @@ func TestProviderKeepsRuntimeModelSnapshot(t *testing.T) {
 
 	configured.modelsMu.Lock()
 	configured.models = map[string]modelInfo{
-		"qwen3.8-max": testModelInfos()["qwen3.8-max"],
+		"qwen3.8-max": testModelInfos(t)["qwen3.8-max"],
 	}
 	configured.modelsMu.Unlock()
 

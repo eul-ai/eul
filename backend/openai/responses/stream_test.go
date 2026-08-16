@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 func TestResponsesSSEOrdersCompletedItemsByOutputIndex(t *testing.T) {
@@ -62,7 +63,7 @@ func TestResponsesSSEDoesNotRetryAfterDelivery(t *testing.T) {
 				},
 			}
 			_, err := readResponsesSSE(strings.NewReader(test.body), 1024, observer)
-			var partial *partialResponseError
+			var partial *backendhttp.PartialResponseError
 			if deliveries != 1 || !errors.As(err, &partial) {
 				t.Fatalf("deliveries=%d error=%v", deliveries, err)
 			}
@@ -73,7 +74,7 @@ func TestResponsesSSEDoesNotRetryAfterDelivery(t *testing.T) {
 	}
 
 	_, err := readResponsesSSE(strings.NewReader(tests[0].body), 1024, agent.StreamObserver{})
-	var partial *partialResponseError
+	var partial *backendhttp.PartialResponseError
 	if errors.As(err, &partial) {
 		t.Fatalf("undelivered response was marked partial: %v", err)
 	}

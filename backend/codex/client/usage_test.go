@@ -93,15 +93,15 @@ func TestUsageClientHandlesOptionalAndInvalidWindows(t *testing.T) {
 }
 
 func TestUsageClientEndpointFollowsBaseURLStyle(t *testing.T) {
-	chatGPT, err := New(testTokenSource("token"), Options{BaseURL: "https://chatgpt.com/backend-api/"})
+	chatGPT, err := NewUsage(testTokenSource("token"), UsageOptions{BaseURL: "https://chatgpt.com/backend-api/"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	codexAPI, err := New(testTokenSource("token"), Options{BaseURL: "https://example.com/"})
+	codexAPI, err := NewUsage(testTokenSource("token"), UsageOptions{BaseURL: "https://example.com/"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hostCollision, err := New(testTokenSource("token"), Options{BaseURL: "https://backend-api.example.com/"})
+	hostCollision, err := NewUsage(testTokenSource("token"), UsageOptions{BaseURL: "https://backend-api.example.com/"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,9 +112,9 @@ func TestUsageClientEndpointFollowsBaseURLStyle(t *testing.T) {
 	}
 }
 
-func newTestUsageClient(t *testing.T, token string, server *testhttp.Server) *Client {
+func newTestUsageClient(t *testing.T, token string, server *testhttp.Server) *UsageClient {
 	t.Helper()
-	client, err := New(testTokenSource(token), Options{HTTPClient: server.Client(), BaseURL: server.URL})
+	client, err := NewUsage(testTokenSource(token), UsageOptions{HTTPClient: server.Client(), BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}

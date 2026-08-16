@@ -12,6 +12,17 @@ import (
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
+type UsageOptions struct {
+	HTTPClient *http.Client
+	BaseURL    string
+}
+
+type UsageClient struct {
+	requests         *requestClient
+	usageEndpoint    string
+	maxResponseBytes int64
+}
+
 type usageResponse struct {
 	RateLimit *usageRateLimit `json:"rate_limit"`
 }
@@ -27,80 +38,84 @@ type providerUsageWindow struct {
 	ResetAt            int64 `json:"reset_at"`
 }
 
-func (c *Client) Usage(ctx context.Context) (backend.AccountUsage, error) {
+func NewUsage(source TokenSource, options UsageOptions) (*UsageClient, error) {
+	requests, err := newRequestClient(source, options.HTTPClient)
+	if err != nil {
+		return nil, err
+	}
+	baseURL, parsedBaseURL, err := normalizeBaseURL(options.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+
+	usageEndpoint := baseURL + "/api/codex/usage"
+	if strings.HasSuffix(strings.TrimRight(parsedBaseURL.Path, "/"), "/backend-api") {
+		usageEndpoint = baseURL + "/wham/usage"
+	}
+	return &UsageClient{
+		requests:         requests,
+		usageEndpoint:    usageEndpoint,
+		maxResponseBytes: backendhttp.DefaultResponseBytes,
+	}, nil
+}
+
+func (client *UsageClient) Usage(ctx context.Context) (backend.AccountUsage, error) {
 	if err := ctx.Err(); err != nil {
 		return backend.AccountUsage{}, err
 	}
 
-	credential, err := c.resolveCredential(ctx)
+	credential, err := client.requests.resolveCredential(ctx)
 	if err != nil {
 		return backend.AccountUsage{}, err
 	}
-	response, err := c.getUsage(ctx, credential)
+	response, err := client.get(ctx, credential)
 	if err != nil {
 		return backend.AccountUsage{}, err
 	}
 	defer response.Body.Close()
 
-	body, truncated, err := backendhttp.ReadBounded(response.Body, c.maxUsageResponseBytes)
+	body, truncated, err := backendhttp.ReadBounded(response.Body, client.maxResponseBytes)
 	if err != nil {
-		if classified := c.contextError(ctx, err, "read usage response"); classified != nil {
+		if classified := client.requests.contextError(ctx, err, "read usage response"); classified != nil {
 			return backend.AccountUsage{}, classified
 		}
-		return backend.AccountUsage{}, c.errorf("read usage response: %v", err)
+		return backend.AccountUsage{}, client.requests.errorf("read usage response: %v", err)
 	}
 	if truncated {
-		return backend.AccountUsage{}, c.errorf("usage response exceeds %d bytes", c.maxUsageResponseBytes)
+		return backend.AccountUsage{}, client.requests.errorf("usage response exceeds %d bytes", client.maxResponseBytes)
 	}
 
 	var wire usageResponse
 	if err := json.Unmarshal(body, &wire); err != nil {
-		return backend.AccountUsage{}, c.errorf("decode usage response: %v", err)
+		return backend.AccountUsage{}, client.requests.errorf("decode usage response: %v", err)
 	}
 	return normalizeProviderUsage(wire)
 }
 
-func (c *Client) getUsage(ctx context.Context, credential Credential) (*http.Response, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.usageEndpoint, nil)
+func (client *UsageClient) get(ctx context.Context, credential Credential) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.usageEndpoint, nil)
 	if err != nil {
-		return nil, c.errorf("create usage request: %v", err)
+		return nil, client.requests.errorf("create usage request: %v", err)
 	}
 	setCredentialHeaders(request, credential)
 	request.Header.Set("Accept", "application/json")
 
-	response, err := c.httpClient.Do(request)
+	response, err := client.requests.httpClient.Do(request)
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return nil, contextErr
 		}
-		return nil, c.wrapf(err, "usage request failed: %v", err)
+		return nil, client.requests.wrapf(err, "usage request failed: %v", err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		defer response.Body.Close()
-		body, _, readErr := backendhttp.ReadBounded(response.Body, c.maxErrorBytes)
+		body, _, readErr := backendhttp.ReadBounded(response.Body, client.requests.maxErrorBytes)
 		if readErr != nil {
-			return nil, c.wrapf(readErr, "HTTP %s; read error response: %v", response.Status, readErr)
+			return nil, client.requests.wrapf(readErr, "HTTP %s; read error response: %v", response.Status, readErr)
 		}
-		return nil, c.errorf("HTTP %s: %s", response.Status, strings.TrimSpace(string(body)))
+		return nil, client.requests.errorf("HTTP %s: %s", response.Status, strings.TrimSpace(string(body)))
 	}
 	return response, nil
-}
-
-func (c *Client) contextError(ctx context.Context, err error, operation string) error {
-	if contextErr := ctx.Err(); contextErr != nil {
-		return contextErr
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return c.wrapf(context.DeadlineExceeded, "%s: %v", operation, err)
-	}
-	if errors.Is(err, context.Canceled) {
-		return c.wrapf(context.Canceled, "%s: %v", operation, err)
-	}
-	return nil
-}
-
-func (c *Client) errorf(format string, arguments ...any) error {
-	return errors.New(c.errorMessage(format, arguments...))
 }
 
 func normalizeProviderUsage(response usageResponse) (backend.AccountUsage, error) {
@@ -137,4 +152,4 @@ func normalizeProviderUsage(response usageResponse) (backend.AccountUsage, error
 	return backend.AccountUsage{Windows: windows}, nil
 }
 
-var _ backend.UsageProvider = (*Client)(nil)
+var _ backend.UsageProvider = (*UsageClient)(nil)

@@ -10,7 +10,7 @@ import (
 )
 
 func TestBuildRequestEncodesAnthropicInputs(t *testing.T) {
-	request, history, newMessages, err := buildRequest(agent.Request{
+	build, err := buildGenerationRequest(agent.Request{
 		Model:        "model",
 		Instructions: "instructions",
 		Inputs: []agent.Input{
@@ -25,16 +25,16 @@ func TestBuildRequestEncodesAnthropicInputs(t *testing.T) {
 			Description: "Read a file",
 			Parameters:  agent.JSONSchema{Type: "object"},
 		}},
-	}, defaultMaxStateBytes, continuation.GenerationStateBytes(defaultMaxStateBytes, 0, continuationStateEnvelopeBytes))
+	}, continuation.DefaultMaximumBytes, continuation.GenerationStateBytes(continuation.DefaultMaximumBytes, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if request.Model != "model" || len(request.System) != 1 || request.System[0].Text != "instructions" || len(request.Messages) != 1 || len(history) != 0 || len(newMessages) != 1 || len(request.Tools) != 1 {
-		t.Fatalf("request=%+v history=%d new=%d", request, len(history), len(newMessages))
+	if build.wire.Model != "model" || len(build.wire.System) != 1 || build.wire.System[0].Text != "instructions" || len(build.wire.Messages) != 1 || len(build.history) != 0 || len(build.newMessages) != 1 || len(build.wire.Tools) != 1 {
+		t.Fatalf("request=%+v history=%d new=%d", build.wire, len(build.history), len(build.newMessages))
 	}
 
 	var encoded wireMessage
-	if err := json.Unmarshal(request.Messages[0], &encoded); err != nil {
+	if err := json.Unmarshal(build.wire.Messages[0], &encoded); err != nil {
 		t.Fatal(err)
 	}
 	var blocks []contentBlock
@@ -121,18 +121,12 @@ func TestConfigureRequestValidatesThinkingBudget(t *testing.T) {
 func TestShouldCompactOversizedState(t *testing.T) {
 	content, _ := json.Marshal([]contentBlock{{Type: "text", Text: strings.Repeat("x", 200)}})
 	large, _ := json.Marshal(wireMessage{Role: "assistant", Content: content})
-	state, err := encodeState(nil, nil, []json.RawMessage{large}, defaultMaxStateBytes)
+	state, err := continuation.Encode(continuation.DefaultMaximumBytes, []json.RawMessage{large})
 	if err != nil {
 		t.Fatal(err)
 	}
 	client := &Client{maxStateBytes: 128, stateOutputHeadroom: 32}
 	if !client.ShouldCompactState(agent.Request{State: state, Inputs: []agent.Input{agent.NewTextInput("next")}}) {
 		t.Fatal("oversized state did not trigger compaction")
-	}
-}
-
-func TestContinuationStateRejectsWrongVersion(t *testing.T) {
-	if _, err := decodeState([]byte(`{"version":2,"messages":[]}`), defaultMaxStateBytes); err == nil {
-		t.Fatal("wrong state version was accepted")
 	}
 }

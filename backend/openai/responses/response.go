@@ -21,15 +21,23 @@ type createResponseEnvelope struct {
 }
 
 type responseError struct {
-	Code     errorCode             `json:"code"`
-	Message  string                `json:"message"`
-	Type     string                `json:"type"`
+	backendhttp.APIError
 	Metadata responseErrorMetadata `json:"metadata"`
 }
 
 type responseErrorMetadata struct {
 	ProviderName string          `json:"provider_name"`
 	Raw          json.RawMessage `json:"raw"`
+}
+
+func responseErrorFromAPI(detail backendhttp.APIError) responseError {
+	var metadata responseErrorMetadata
+	_ = json.Unmarshal(detail.Metadata, &metadata)
+	return responseError{APIError: detail, Metadata: metadata}
+}
+
+func formatHTTPErrorDetail(detail backendhttp.APIError) string {
+	return formatResponseError(responseErrorFromAPI(detail))
 }
 
 type errorCode = backendhttp.APIErrorCode

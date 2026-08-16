@@ -18,98 +18,8 @@ func (function roundTripperFunc) RoundTrip(request *http.Request) (*http.Respons
 	return function(request)
 }
 
-func testModelInfos() map[string]modelInfo {
-	return map[string]modelInfo{
-		"grok-4.5": {
-			contextWindow: 500_000,
-			thinking: thinkingConfig{
-				mode:    thinkingEffort,
-				levels:  []agent.ThinkingLevel{agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh},
-				efforts: effortValues(agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh),
-			},
-			protocol: protocolResponses,
-		},
-		"gpt-5.6-luna": {
-			contextWindow: 1_050_000,
-			thinking: thinkingConfig{
-				mode:    thinkingEffort,
-				levels:  []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh, agent.ThinkingXHigh, agent.ThinkingMax},
-				efforts: effortValues(agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh, agent.ThinkingXHigh, agent.ThinkingMax),
-			},
-			protocol:         protocolResponses,
-			lowTextVerbosity: true,
-		},
-		"glm-5.2": {
-			contextWindow: 1_000_000,
-			thinking: thinkingConfig{
-				mode:    thinkingEffort,
-				levels:  []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax},
-				efforts: effortValues(agent.ThinkingHigh, agent.ThinkingMax),
-			},
-			protocol:        protocolChatCompletions,
-			maxOutputTokens: 131_072,
-		},
-		"hy3": {
-			contextWindow: 256_000,
-			thinking: thinkingConfig{
-				mode:   thinkingEffort,
-				levels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh},
-				efforts: map[agent.ThinkingLevel]string{
-					agent.ThinkingOff:  "none",
-					agent.ThinkingLow:  "low",
-					agent.ThinkingHigh: "high",
-				},
-			},
-			protocol:        protocolChatCompletions,
-			maxOutputTokens: 64_000,
-		},
-		"deepseek-v4-pro": {
-			contextWindow: 1_000_000,
-			thinking: thinkingConfig{
-				mode:    thinkingEffort,
-				levels:  []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax},
-				efforts: effortValues(agent.ThinkingHigh, agent.ThinkingMax),
-			},
-			protocol:                  protocolChatCompletions,
-			maxOutputTokens:           384_000,
-			serializeReasoningContent: true,
-		},
-		"minimax-m3": {
-			contextWindow: 1_000_000,
-			thinking: thinkingConfig{
-				mode:   thinkingAdaptive,
-				levels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh},
-			},
-			protocol:        protocolAnthropicMessages,
-			maxOutputTokens: 131_072,
-		},
-		"qwen3.8-max": {
-			contextWindow: 1_000_000,
-			thinking: thinkingConfig{
-				mode:            thinkingBudget,
-				levels:          []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax},
-				maxBudgetTokens: 32_000,
-			},
-			protocol:        protocolAnthropicMessages,
-			maxOutputTokens: 131_072,
-		},
-	}
-}
-
-func effortValues(levels ...agent.ThinkingLevel) map[agent.ThinkingLevel]string {
-	values := make(map[agent.ThinkingLevel]string, len(levels))
-	for _, level := range levels {
-		if level == agent.ThinkingOff {
-			values[level] = "none"
-		} else {
-			values[level] = string(level)
-		}
-	}
-	return values
-}
-
 func TestProviderRoutesProtocols(t *testing.T) {
-	models := testModelInfos()
+	models := testModelInfos(t)
 	expected := map[protocol]string{
 		protocolResponses:         "grok-4.5",
 		protocolChatCompletions:   "glm-5.2",
@@ -195,7 +105,7 @@ func TestProviderRoutesProtocols(t *testing.T) {
 }
 
 func TestProviderCompactionRequiresState(t *testing.T) {
-	client, err := newProvider("secret", "https://example.test/zen/go/v1", &http.Client{}, testModelInfos())
+	client, err := newProvider("secret", "https://example.test/zen/go/v1", &http.Client{}, testModelInfos(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +125,7 @@ func TestProviderRejectsUnknownModelBeforeRequest(t *testing.T) {
 	client, err := newProvider("secret", "https://example.test/zen/go/v1", &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 		requests++
 		return nil, nil
-	})}, testModelInfos())
+	})}, testModelInfos(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +138,7 @@ func TestProviderRejectsUnknownModelBeforeRequest(t *testing.T) {
 }
 
 func TestOpenCodeRequestOptions(t *testing.T) {
-	client := &provider{models: testModelInfos()}
+	client := &provider{models: testModelInfos(t)}
 	grok, err := responseRequestOptions(client.models, agent.Request{SessionID: "session-id", Model: "grok-4.5", ThinkingLevel: agent.ThinkingMedium})
 	if err != nil {
 		t.Fatal(err)
@@ -319,7 +229,7 @@ func TestProviderSemanticCompactionUsesMaxThinkingBudget(t *testing.T) {
 		}, nil
 	})}
 
-	models := testModelInfos()
+	models := testModelInfos(t)
 	client, err := newProvider("secret", "https://example.test/zen/go/v1", httpClient, models)
 	if err != nil {
 		t.Fatal(err)
@@ -339,7 +249,7 @@ func TestProviderSemanticCompactionUsesMaxThinkingBudget(t *testing.T) {
 }
 
 func TestModelMetadataMatchesRuntimeModels(t *testing.T) {
-	models := testModelInfos()
+	models := testModelInfos(t)
 	for model, info := range models {
 		metadata := metadataFor(models, model)
 		if metadata.ContextWindow != info.contextWindow || !slices.Equal(metadata.ThinkingLevels, info.thinking.levels) {

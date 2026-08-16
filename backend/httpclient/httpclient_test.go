@@ -31,6 +31,18 @@ func TestCloneNoRedirectsDoesNotApplyZeroTimeout(t *testing.T) {
 	}
 }
 
+func TestGenerationLimitsUseSharedDefaults(t *testing.T) {
+	limits := (GenerationLimits{}).WithDefaults()
+	if limits.RequestBytes != DefaultRequestBytes || limits.ResponseBytes != DefaultResponseBytes || limits.ErrorBytes != DefaultErrorResponseBytes {
+		t.Fatalf("limits = %+v", limits)
+	}
+
+	configured := (GenerationLimits{RequestBytes: 1, ResponseBytes: 2, ErrorBytes: 3}).WithDefaults()
+	if configured != (GenerationLimits{RequestBytes: 1, ResponseBytes: 2, ErrorBytes: 3}) {
+		t.Fatalf("configured limits = %+v", configured)
+	}
+}
+
 func TestReadBounded(t *testing.T) {
 	data, truncated, err := ReadBounded(strings.NewReader("abcd"), 4)
 	if err != nil || truncated || string(data) != "abcd" {

@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend/continuation"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 	"github.com/eul-ai/eul/backend/testhttp"
 )
 
@@ -152,7 +154,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	if len(first.ToolCalls) != 2 || first.ToolCalls[0].ID != "call_read" || first.ToolCalls[0].Name != "read" || string(first.ToolCalls[0].Arguments) != `{"path":"file.go"}` || first.ToolCalls[1].ID != "call_bash" {
 		t.Fatalf("first tool calls = %+v", first.ToolCalls)
 	}
-	firstState, err := decodeState(first.State, defaultMaxStateBytes)
+	firstState, err := continuation.Decode(first.State, continuation.DefaultMaximumBytes)
 	if err != nil || len(firstState) != 6 {
 		t.Fatalf("first state items = %d, error = %v", len(firstState), err)
 	}
@@ -329,8 +331,8 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		defer origin.Close()
 		client := newTestClient(t, "key", origin.URL, Options{HTTPClient: origin.Client()})
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
-		var responseErr *httpResponseError
-		if !errors.As(err, &responseErr) || responseErr.statusCode != http.StatusTemporaryRedirect || destinationCalls.Load() != 0 {
+		var responseErr *backendhttp.APIResponseError
+		if !errors.As(err, &responseErr) || responseErr.StatusCode() != http.StatusTemporaryRedirect || destinationCalls.Load() != 0 {
 			t.Fatalf("Generate() error = %v, destination calls = %d", err, destinationCalls.Load())
 		}
 	})
@@ -380,7 +382,7 @@ func TestNewCopiesInjectedClientBeforeApplyingPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.httpClient == injected || client.httpClient.Transport != transport || client.httpClient.Timeout != defaultHTTPTimeout {
+	if client.httpClient == injected || client.httpClient.Transport != transport || client.httpClient.Timeout != backendhttp.DefaultGenerationHTTPTimeout {
 		t.Fatalf("owned client=%p injected=%p transport=%T timeout=%s", client.httpClient, injected, client.httpClient.Transport, client.httpClient.Timeout)
 	}
 	if injected.Timeout != 0 || injected.CheckRedirect == nil {

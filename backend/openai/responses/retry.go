@@ -19,33 +19,6 @@ var generationRetryPolicy = backendhttp.RetryPolicy{
 	MaximumDelay:    5 * time.Minute,
 }
 
-type wrappedError struct {
-	message string
-	cause   error
-}
-
-func (e *wrappedError) Error() string { return e.message }
-func (e *wrappedError) Unwrap() error { return e.cause }
-
-type retryableOperationError struct {
-	cause error
-}
-
-func (e *retryableOperationError) Error() string { return e.cause.Error() }
-func (e *retryableOperationError) Unwrap() error { return e.cause }
-
-type httpResponseError struct {
-	message    string
-	statusCode int
-	retryAfter time.Duration
-	detail     responseError
-	cause      error
-}
-
-func (e *httpResponseError) Error() string             { return e.message }
-func (e *httpResponseError) Unwrap() error             { return e.cause }
-func (e *httpResponseError) RetryAfter() time.Duration { return e.retryAfter }
-
 type responseFailureError struct {
 	message string
 	detail  responseError
@@ -53,28 +26,8 @@ type responseFailureError struct {
 
 func (e *responseFailureError) Error() string { return e.message }
 
-type observerDeliveryError struct {
-	operation string
-	cause     error
-}
-
-func (e *observerDeliveryError) Error() string { return e.operation + ": " + e.cause.Error() }
-func (e *observerDeliveryError) Unwrap() error { return e.cause }
-
-type partialResponseError struct {
-	cause error
-}
-
-func (e *partialResponseError) Error() string { return e.cause.Error() }
-func (e *partialResponseError) Unwrap() error { return e.cause }
-
 func (c *Client) generationReadError(ctx context.Context, err error, _ string) error {
-	var observerErr *observerDeliveryError
-	if errors.As(err, &observerErr) {
-		return c.wrapf(err, "%v", err)
-	}
-	var partialErr *partialResponseError
-	if errors.As(err, &partialErr) {
+	if backendhttp.IsNonRetryableStreamError(err) {
 		return c.wrapf(err, "%v", err)
 	}
 
@@ -108,22 +61,13 @@ func (c *Client) RetryGeneration(err error, failedAttempts int) (time.Duration, 
 }
 
 func retryableGenerationError(err error) bool {
-	if contextLimitError(err) {
+	if contextLimitError(err) || backendhttp.IsNonRetryableStreamError(err) {
 		return false
 	}
 
-	var observerErr *observerDeliveryError
-	if errors.As(err, &observerErr) {
-		return false
-	}
-	var partialErr *partialResponseError
-	if errors.As(err, &partialErr) {
-		return false
-	}
-
-	var httpErr *httpResponseError
+	var httpErr *backendhttp.APIResponseError
 	if errors.As(err, &httpErr) {
-		return backendhttp.RetryableHTTPStatus(httpErr.statusCode)
+		return backendhttp.RetryableHTTPStatus(httpErr.StatusCode())
 	}
 
 	var responseErr *responseFailureError
@@ -131,8 +75,7 @@ func retryableGenerationError(err error) bool {
 		return retryableResponseError(responseErr.detail)
 	}
 
-	var operationErr *retryableOperationError
-	return errors.As(err, &operationErr) || errors.Is(err, errResponsesSSEIncomplete)
+	return backendhttp.IsRetryableOperation(err) || errors.Is(err, errResponsesSSEIncomplete)
 }
 
 func (c *Client) IsContextLimitError(err error) bool {
@@ -140,8 +83,8 @@ func (c *Client) IsContextLimitError(err error) bool {
 }
 
 func contextLimitError(err error) bool {
-	var httpErr *httpResponseError
-	if errors.As(err, &httpErr) && contextLimitResponseError(httpErr.detail) {
+	var httpErr *backendhttp.APIResponseError
+	if errors.As(err, &httpErr) && contextLimitResponseError(responseErrorFromAPI(httpErr.Detail())) {
 		return true
 	}
 
@@ -165,10 +108,6 @@ func retryableResponseError(detail responseError) bool {
 		}
 	}
 	return false
-}
-
-func (c *Client) retryableWrapf(cause error, format string, arguments ...any) error {
-	return &retryableOperationError{cause: c.wrapf(cause, format, arguments...)}
 }
 
 var _ agent.GenerationRetryPolicy = (*Client)(nil)

@@ -59,17 +59,6 @@ func TestDriverOpensRuntimeWithAuthenticationAndProviderCreation(t *testing.T) {
 		managerPath = path
 		return manager, nil
 	}
-	driver.newClient = func(source client.TokenSource) (*client.Client, error) {
-		credential, err := source.Token(context.Background())
-		if err != nil {
-			return nil, err
-		}
-		if credential.AccessToken != "access" || credential.AccountID != "account" {
-			t.Fatalf("credential = %+v", credential)
-		}
-		return client.New(source, client.Options{})
-	}
-
 	backendRuntime, err := driver.Open(backend.Options{Home: "/config/eul"})
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +80,7 @@ func TestDriverOpensRuntimeWithAuthenticationAndProviderCreation(t *testing.T) {
 	if err := backendRuntime.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if managerPath != "/config/eul/auth.json" || manager.resolveCalls != 2 {
+	if managerPath != "/config/eul/auth.json" || manager.resolveCalls != 1 {
 		t.Fatalf("path=%q resolveCalls=%d", managerPath, manager.resolveCalls)
 	}
 }
@@ -118,7 +107,7 @@ func TestRuntimeLoadsAccountUsage(t *testing.T) {
 		}, nil
 	})}
 
-	usage, err := client.New(oauthTokenSource{manager: manager}, client.Options{HTTPClient: httpClient, BaseURL: "https://example.test"})
+	usage, err := client.NewUsage(oauthTokenSource{manager: manager}, client.UsageOptions{HTTPClient: httpClient, BaseURL: "https://example.test"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -43,7 +43,7 @@ func TestAPIErrorCodeAndClassification(t *testing.T) {
 }
 
 func TestAPIErrorConfigDecodesResponseAndRetryPolicy(t *testing.T) {
-	body := &trackingReadCloser{Reader: strings.NewReader(`{"error":{"type":"rate_limit_error","code":429,"message":"slow down"}}`)}
+	body := &trackingReadCloser{Reader: strings.NewReader(`{"error":{"type":"rate_limit_error","code":429,"message":"slow down","metadata":{"provider":"test"}}}`)}
 	client := &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusTooManyRequests,
@@ -57,10 +57,19 @@ func TestAPIErrorConfigDecodesResponseAndRetryPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = (APIErrorConfig{Prefix: "provider", Maximum: 1024}).Do(context.Background(), client, request, "request")
+	formatted := false
+	config := APIErrorConfig{
+		Prefix:  "provider",
+		Maximum: 1024,
+		FormatDetail: func(detail APIError) string {
+			formatted = true
+			return FormatAPIError(detail)
+		},
+	}
+	_, err = config.Do(context.Background(), client, request, "request")
 	var responseErr *APIResponseError
-	if !errors.As(err, &responseErr) || responseErr.StatusCode() != http.StatusTooManyRequests || responseErr.RetryAfter() != 2*time.Second || responseErr.Detail().Code != "429" || !body.closed {
-		t.Fatalf("response error = %#v, closed=%t", err, body.closed)
+	if !errors.As(err, &responseErr) || responseErr.StatusCode() != http.StatusTooManyRequests || responseErr.RetryAfter() != 2*time.Second || responseErr.Detail().Code != "429" || string(responseErr.Detail().Metadata) != `{"provider":"test"}` || !body.closed || !formatted {
+		t.Fatalf("response error = %#v, closed=%t, formatted=%t", err, body.closed, formatted)
 	}
 
 	policy := RetryPolicy{MaximumAttempts: 20, BaseDelay: time.Millisecond, MaximumDelay: time.Second}
@@ -69,6 +78,44 @@ func TestAPIErrorConfigDecodesResponseAndRetryPolicy(t *testing.T) {
 	}
 	if _, retry := policy.Next(err, 20, true); retry {
 		t.Fatal("retry policy exceeded its attempt limit")
+	}
+}
+
+func TestCompleteJSONSSEOwnsRequestLifecycle(t *testing.T) {
+	body := &trackingReadCloser{Reader: strings.NewReader("stream")}
+	var requests int
+	client := &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if request.Header.Get("Authorization") != "Bearer token" {
+			t.Fatalf("authorization header = %q", request.Header.Get("Authorization"))
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: body}, nil
+	})}
+	config := JSONSSEConfig{
+		HTTPClient:       client,
+		Endpoint:         "https://example.test/responses",
+		ErrorConfig:      APIErrorConfig{Maximum: 1024},
+		MaxRequestBytes:  1024,
+		MaxResponseBytes: 1024,
+		PrepareRequest: func(_ context.Context, request *http.Request) error {
+			request.Header.Set("Authorization", "Bearer token")
+			return nil
+		},
+	}
+
+	result, err := CompleteJSONSSE(context.Background(), config, map[string]string{"model": "test"}, "request", func(reader io.Reader, maximum int64) (string, error) {
+		data, err := io.ReadAll(reader)
+		return string(data), err
+	}, IsNonRetryableStreamError)
+	if err != nil || result != "stream" || requests != 1 || !body.closed {
+		t.Fatalf("result=%q requests=%d closed=%t err=%v", result, requests, body.closed, err)
+	}
+
+	config.MaxRequestBytes = 1
+	if _, err := CompleteJSONSSE(context.Background(), config, map[string]string{"model": "test"}, "request", func(io.Reader, int64) (string, error) {
+		return "", nil
+	}, nil); err == nil || requests != 1 {
+		t.Fatalf("oversized request error=%v requests=%d", err, requests)
 	}
 }
 

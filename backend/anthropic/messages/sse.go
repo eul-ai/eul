@@ -21,21 +21,6 @@ func (contextWindowExceededError) Error() string {
 	return "anthropic message exceeded the model context window"
 }
 
-type observerDeliveryError struct {
-	operation string
-	cause     error
-}
-
-func (err *observerDeliveryError) Error() string { return err.operation + ": " + err.cause.Error() }
-func (err *observerDeliveryError) Unwrap() error { return err.cause }
-
-type partialResponseError struct {
-	cause error
-}
-
-func (err *partialResponseError) Error() string { return err.cause.Error() }
-func (err *partialResponseError) Unwrap() error { return err.cause }
-
 type streamEvent struct {
 	Type         string          `json:"type"`
 	Index        int             `json:"index,omitempty"`
@@ -88,7 +73,7 @@ type streamDecoder struct {
 	usage      usageAccumulator
 	stopReason string
 	stopped    bool
-	observed   bool
+	delivery   backendhttp.DeliveryTracker
 }
 
 func readMessagesSSE(reader io.Reader, maximum int64, observer agent.StreamObserver) (streamResult, error) {
@@ -205,38 +190,32 @@ func (decoder *streamDecoder) deliverText(delta string) error {
 	if delta == "" || decoder.observer.Text == nil {
 		return nil
 	}
-	if err := decoder.observer.Text(delta); err != nil {
-		return &observerDeliveryError{operation: "deliver text", cause: err}
-	}
-	decoder.observed = true
-	return nil
+	return decoder.delivery.Deliver("deliver text", func() error {
+		return decoder.observer.Text(delta)
+	})
 }
 
 func (decoder *streamDecoder) deliverReasoning(delta string) error {
 	if delta == "" || decoder.observer.Reasoning == nil {
 		return nil
 	}
-	if err := decoder.observer.Reasoning(delta); err != nil {
-		return &observerDeliveryError{operation: "deliver reasoning", cause: err}
-	}
-	decoder.observed = true
-	return nil
+	return decoder.delivery.Deliver("deliver reasoning", func() error {
+		return decoder.observer.Reasoning(delta)
+	})
 }
 
 func (decoder *streamDecoder) deliverToolCall(block *blockAccumulator, complete bool) error {
 	if decoder.observer.ToolCall == nil {
 		return nil
 	}
-	if err := decoder.observer.ToolCall(agent.ToolCallSnapshot{
-		ID:           block.toolID,
-		Name:         block.toolName,
-		RawArguments: block.toolArguments(),
-		Complete:     complete,
-	}); err != nil {
-		return &observerDeliveryError{operation: "deliver tool call", cause: err}
-	}
-	decoder.observed = true
-	return nil
+	return decoder.delivery.Deliver("deliver tool call", func() error {
+		return decoder.observer.ToolCall(agent.ToolCallSnapshot{
+			ID:           block.toolID,
+			Name:         block.toolName,
+			RawArguments: block.toolArguments(),
+			Complete:     complete,
+		})
+	})
 }
 
 func (decoder *streamDecoder) finish() (streamResult, error) {
@@ -314,12 +293,5 @@ func (decoder *streamDecoder) normalizeUsage() (agent.Usage, error) {
 }
 
 func (decoder *streamDecoder) wrapPartial(err error) error {
-	if err == nil || !decoder.observed {
-		return err
-	}
-	var observerErr *observerDeliveryError
-	if errors.As(err, &observerErr) {
-		return err
-	}
-	return &partialResponseError{cause: err}
+	return decoder.delivery.WrapPartial(err)
 }

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
 	"github.com/eul-ai/eul/agent"
@@ -14,21 +13,6 @@ import (
 )
 
 var errSSEIncomplete = errors.New("chat completions SSE stream ended without a terminal event")
-
-type observerDeliveryError struct {
-	operation string
-	cause     error
-}
-
-func (err *observerDeliveryError) Error() string { return err.operation + ": " + err.cause.Error() }
-func (err *observerDeliveryError) Unwrap() error { return err.cause }
-
-type partialResponseError struct {
-	cause error
-}
-
-func (err *partialResponseError) Error() string { return err.cause.Error() }
-func (err *partialResponseError) Unwrap() error { return err.cause }
 
 type completionChunk struct {
 	Choices []completionChoice `json:"choices"`
@@ -63,12 +47,6 @@ type completionUsage struct {
 	TotalTokens      int64 `json:"total_tokens"`
 }
 
-type streamedToolCall struct {
-	id        string
-	name      string
-	arguments string
-}
-
 type streamResult struct {
 	text      string
 	reasoning string
@@ -81,17 +59,17 @@ type streamDecoder struct {
 	observer                  agent.StreamObserver
 	text                      strings.Builder
 	reasoning                 strings.Builder
-	toolCalls                 map[int]streamedToolCall
+	toolCalls                 toolCallAccumulator
 	usage                     *completionUsage
 	finishReason              string
-	observed                  bool
+	delivery                  backendhttp.DeliveryTracker
 	serializeReasoningContent bool
 }
 
 func readCompletionSSE(reader io.Reader, maximum int64, observer agent.StreamObserver, serializeReasoningContent bool) (streamResult, error) {
 	decoder := streamDecoder{
 		observer:                  observer,
-		toolCalls:                 make(map[int]streamedToolCall),
+		toolCalls:                 newToolCallAccumulator(),
 		serializeReasoningContent: serializeReasoningContent,
 	}
 	done, err := backendhttp.ReadSSE(reader, maximum, decoder.handleData)
@@ -146,10 +124,11 @@ func (decoder *streamDecoder) consumeDelta(delta completionDelta) error {
 	if visible != "" {
 		decoder.text.WriteString(visible)
 		if decoder.observer.Text != nil {
-			if err := decoder.observer.Text(visible); err != nil {
-				return &observerDeliveryError{operation: "deliver text", cause: err}
+			if err := decoder.delivery.Deliver("deliver text", func() error {
+				return decoder.observer.Text(visible)
+			}); err != nil {
+				return err
 			}
-			decoder.observed = true
 		}
 	}
 
@@ -160,23 +139,16 @@ func (decoder *streamDecoder) consumeDelta(delta completionDelta) error {
 	if reasoning != "" {
 		decoder.reasoning.WriteString(reasoning)
 		if decoder.observer.Reasoning != nil {
-			if err := decoder.observer.Reasoning(reasoning); err != nil {
-				return &observerDeliveryError{operation: "deliver reasoning", cause: err}
+			if err := decoder.delivery.Deliver("deliver reasoning", func() error {
+				return decoder.observer.Reasoning(reasoning)
+			}); err != nil {
+				return err
 			}
-			decoder.observed = true
 		}
 	}
 
 	for _, deltaCall := range delta.ToolCalls {
-		call := decoder.toolCalls[deltaCall.Index]
-		if deltaCall.ID != "" {
-			call.id = deltaCall.ID
-		}
-		if deltaCall.Function.Name != "" {
-			call.name = deltaCall.Function.Name
-		}
-		call.arguments += deltaCall.Function.Arguments
-		decoder.toolCalls[deltaCall.Index] = call
+		call := decoder.toolCalls.apply(deltaCall)
 		if err := decoder.deliverToolCall(call, false); err != nil {
 			return err
 		}
@@ -188,16 +160,14 @@ func (decoder *streamDecoder) deliverToolCall(call streamedToolCall, complete bo
 	if decoder.observer.ToolCall == nil || call.id == "" || call.name == "" {
 		return nil
 	}
-	if err := decoder.observer.ToolCall(agent.ToolCallSnapshot{
-		ID:           call.id,
-		Name:         call.name,
-		RawArguments: call.arguments,
-		Complete:     complete,
-	}); err != nil {
-		return &observerDeliveryError{operation: "deliver tool call", cause: err}
-	}
-	decoder.observed = true
-	return nil
+	return decoder.delivery.Deliver("deliver tool call", func() error {
+		return decoder.observer.ToolCall(agent.ToolCallSnapshot{
+			ID:           call.id,
+			Name:         call.name,
+			RawArguments: call.arguments,
+			Complete:     complete,
+		})
+	})
 }
 
 func (decoder *streamDecoder) finish() (streamResult, error) {
@@ -212,9 +182,18 @@ func (decoder *streamDecoder) finish() (streamResult, error) {
 		return streamResult{}, fmt.Errorf("chat completion has unsupported finish reason %q", decoder.finishReason)
 	}
 
-	calls, wireCalls, err := decoder.finalizeToolCalls()
+	finalizedCalls, err := decoder.toolCalls.finalize()
 	if err != nil {
 		return streamResult{}, err
+	}
+	calls := make([]agent.ToolCall, 0, len(finalizedCalls))
+	wireCalls := make([]toolCall, 0, len(finalizedCalls))
+	for _, finalized := range finalizedCalls {
+		if err := decoder.deliverToolCall(finalized.streamed, true); err != nil {
+			return streamResult{}, err
+		}
+		calls = append(calls, finalized.call)
+		wireCalls = append(wireCalls, finalized.wire)
 	}
 
 	text := decoder.text.String()
@@ -235,45 +214,6 @@ func (decoder *streamDecoder) finish() (streamResult, error) {
 		assistant: assistant,
 		usage:     usage,
 	}, nil
-}
-
-func (decoder *streamDecoder) finalizeToolCalls() ([]agent.ToolCall, []toolCall, error) {
-	indexes := make([]int, 0, len(decoder.toolCalls))
-	for index := range decoder.toolCalls {
-		indexes = append(indexes, index)
-	}
-	sort.Ints(indexes)
-
-	calls := make([]agent.ToolCall, 0, len(indexes))
-	wireCalls := make([]toolCall, 0, len(indexes))
-	seen := make(map[string]struct{}, len(indexes))
-	for _, index := range indexes {
-		call := decoder.toolCalls[index]
-		if call.id == "" || call.name == "" {
-			return nil, nil, fmt.Errorf("chat completion tool call %d is incomplete", index)
-		}
-		if _, exists := seen[call.id]; exists {
-			return nil, nil, fmt.Errorf("chat completion has duplicate tool call ID %q", call.id)
-		}
-		seen[call.id] = struct{}{}
-		if err := decoder.deliverToolCall(call, true); err != nil {
-			return nil, nil, err
-		}
-		arguments := call.arguments
-		if arguments == "" {
-			arguments = "{}"
-		}
-		calls = append(calls, agent.ToolCall{ID: call.id, Name: call.name, Arguments: json.RawMessage(arguments)})
-		wireCalls = append(wireCalls, toolCall{
-			ID:   call.id,
-			Type: "function",
-			Function: toolFunction{
-				Name:      call.name,
-				Arguments: arguments,
-			},
-		})
-	}
-	return calls, wireCalls, nil
 }
 
 func encodeAssistantMessage(text, reasoning string, calls []toolCall, serializeReasoning bool) (json.RawMessage, error) {
@@ -312,12 +252,5 @@ func normalizeUsage(usage *completionUsage) (agent.Usage, error) {
 }
 
 func (decoder *streamDecoder) wrapPartial(err error) error {
-	if err == nil || !decoder.observed {
-		return err
-	}
-	var observerErr *observerDeliveryError
-	if errors.As(err, &observerErr) {
-		return err
-	}
-	return &partialResponseError{cause: err}
+	return decoder.delivery.WrapPartial(err)
 }

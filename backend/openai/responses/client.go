@@ -5,19 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend/continuation"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
-)
-
-const (
-	defaultHTTPTimeout      = 10 * time.Minute
-	defaultMaxRequestBytes  = int64(32 * 1024 * 1024)
-	defaultMaxResponseBytes = int64(16 * 1024 * 1024)
-	defaultMaxErrorBytes    = int64(64 * 1024)
-	defaultMaxStateBytes    = 16 * 1024 * 1024
 )
 
 type RequestOptions struct {
@@ -50,12 +41,11 @@ type Options struct {
 type Client struct {
 	httpClient          *http.Client
 	endpoint            string
-	errorPrefix         string
+	errorConfig         backendhttp.APIErrorConfig
 	prepareRequest      PrepareRequestFunc
 	requestOptions      RequestOptionsFunc
 	maxRequestBytes     int64
 	maxResponseBytes    int64
-	maxErrorBytes       int64
 	maxStateBytes       int
 	stateOutputHeadroom int
 }
@@ -65,57 +55,47 @@ func New(options Options) (*Client, error) {
 		return nil, errors.New("responses: endpoint is required")
 	}
 
-	httpClient := backendhttp.CloneNoRedirects(options.HTTPClient, defaultHTTPTimeout)
-
-	maxRequestBytes := options.MaxRequestBytes
-	if maxRequestBytes <= 0 {
-		maxRequestBytes = defaultMaxRequestBytes
-	}
-	maxResponseBytes := options.MaxResponseBytes
-	if maxResponseBytes <= 0 {
-		maxResponseBytes = defaultMaxResponseBytes
-	}
-	maxErrorBytes := options.MaxErrorBytes
-	if maxErrorBytes <= 0 {
-		maxErrorBytes = defaultMaxErrorBytes
-	}
+	limits := (backendhttp.GenerationLimits{
+		RequestBytes:  options.MaxRequestBytes,
+		ResponseBytes: options.MaxResponseBytes,
+		ErrorBytes:    options.MaxErrorBytes,
+	}).WithDefaults()
 	maxStateBytes := options.MaxStateBytes
 	if maxStateBytes <= 0 {
-		maxStateBytes = defaultMaxStateBytes
+		maxStateBytes = continuation.DefaultMaximumBytes
 	}
 	return &Client{
-		httpClient:          httpClient,
-		endpoint:            options.Endpoint,
-		errorPrefix:         strings.TrimSpace(options.ErrorPrefix),
+		httpClient: backendhttp.CloneNoRedirects(options.HTTPClient, backendhttp.DefaultGenerationHTTPTimeout),
+		endpoint:   options.Endpoint,
+		errorConfig: backendhttp.APIErrorConfig{
+			Prefix:       strings.TrimSpace(options.ErrorPrefix),
+			Maximum:      limits.ErrorBytes,
+			FormatDetail: formatHTTPErrorDetail,
+		},
 		prepareRequest:      options.PrepareRequest,
 		requestOptions:      options.RequestOptions,
-		maxRequestBytes:     maxRequestBytes,
-		maxResponseBytes:    maxResponseBytes,
-		maxErrorBytes:       maxErrorBytes,
+		maxRequestBytes:     limits.RequestBytes,
+		maxResponseBytes:    limits.ResponseBytes,
 		maxStateBytes:       maxStateBytes,
 		stateOutputHeadroom: options.StateOutputHeadroom,
 	}, nil
 }
 
 func (client *Client) generationStateBytes() int {
-	return continuation.GenerationStateBytes(
-		client.maxStateBytes,
-		client.stateOutputHeadroom,
-		continuationStateEnvelopeBytes,
-	)
+	return continuation.GenerationStateBytes(client.maxStateBytes, client.stateOutputHeadroom)
 }
 
 func (client *Client) ShouldCompactState(request agent.Request) bool {
 	if len(request.State) == 0 {
 		return false
 	}
-	if _, err := buildRequest(request, client.maxStateBytes, client.generationStateBytes()); err == nil {
+	if _, err := buildGenerationWireRequest(request, client.maxStateBytes, client.generationStateBytes()); err == nil {
 		return false
 	}
 
 	withoutState := request
 	withoutState.State = nil
-	_, err := buildRequest(withoutState, client.maxStateBytes, client.generationStateBytes())
+	_, err := buildGenerationWireRequest(withoutState, client.maxStateBytes, client.generationStateBytes())
 	return err == nil
 }
 
@@ -137,19 +117,19 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 	text, calls, usage, err := normalizeResponse(stream.response)
 	if err != nil {
 		if stream.observed {
-			err = &partialResponseError{cause: err}
+			err = backendhttp.NewPartialResponseError(err)
 		}
 		return agent.Response{}, client.wrapf(err, "%v", err)
 	}
 
-	state, err := encodeState(build.history, build.newItems, stream.response.Output, client.maxStateBytes)
+	state, err := continuation.Encode(client.maxStateBytes, build.history, build.newItems, stream.response.Output)
 	if err != nil {
 		return agent.Response{}, client.errorf("%v", err)
 	}
 
 	if text != "" && observer.Text != nil && !stream.sawTextDelta {
 		if err := observer.Text(text); err != nil {
-			deliveryErr := &observerDeliveryError{operation: "deliver text", cause: err}
+			deliveryErr := backendhttp.NewObserverError("deliver text", err)
 			return agent.Response{}, client.wrapf(deliveryErr, "%v", deliveryErr)
 		}
 	}

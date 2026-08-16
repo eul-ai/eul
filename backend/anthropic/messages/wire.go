@@ -1,7 +1,9 @@
 package messages
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/eul-ai/eul/agent"
@@ -28,6 +30,14 @@ type systemBlock struct {
 type wireMessage struct {
 	Role    string          `json:"role"`
 	Content json.RawMessage `json:"content"`
+}
+
+func validateRawObject(value json.RawMessage) error {
+	trimmed := bytes.TrimSpace(value)
+	if len(trimmed) == 0 || trimmed[0] != '{' || !json.Valid(trimmed) {
+		return errors.New("must be a JSON object")
+	}
+	return nil
 }
 
 func marshalWireMessage(role string, blocks []contentBlock) (json.RawMessage, error) {

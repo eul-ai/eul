@@ -81,7 +81,7 @@ func TestDriverRequiresAPIKey(t *testing.T) {
 }
 
 func TestRuntimeValidatesModels(t *testing.T) {
-	configured := &runtime{models: testModelInfos()}
+	configured := &runtime{models: testModelInfos(t)}
 	if err := configured.ValidateModel("qwen3.8-max"); err != nil {
 		t.Fatal(err)
 	}

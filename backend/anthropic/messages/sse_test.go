@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 type fragmentedReader struct {
@@ -154,7 +155,7 @@ func TestReadMessagesSSEDoesNotRetryAfterDelivery(t *testing.T) {
 		sseContentBlockDelta(0, streamDelta{Type: "text_delta", Text: "partial"}),
 	)
 	_, err := readMessagesSSE(strings.NewReader(stream), 1<<20, agent.StreamObserver{Text: func(string) error { return nil }})
-	var partial *partialResponseError
+	var partial *backendhttp.PartialResponseError
 	if !errors.As(err, &partial) {
 		t.Fatalf("error = %v", err)
 	}
@@ -171,7 +172,7 @@ func TestReadMessagesSSERetriesWhenNothingWasDelivered(t *testing.T) {
 		sseContentBlockDelta(0, streamDelta{Type: "text_delta", Text: "partial"}),
 	)
 	_, err := readMessagesSSE(strings.NewReader(stream), 1<<20, agent.StreamObserver{})
-	var partial *partialResponseError
+	var partial *backendhttp.PartialResponseError
 	if errors.As(err, &partial) {
 		t.Fatalf("undelivered response was marked partial: %v", err)
 	}

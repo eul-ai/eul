@@ -7,6 +7,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend/compaction"
+	"github.com/eul-ai/eul/backend/continuation"
 )
 
 type compactRequestBuild struct {
@@ -28,7 +29,7 @@ func (client *Client) buildNativeCompactRequest(request agent.Request) (compactR
 }
 
 func buildCompactRequest(request agent.Request, maxStateBytes int) (compactRequestBuild, error) {
-	build, err := buildRequestUnchecked(request, maxStateBytes)
+	build, err := buildWireRequest(request, maxStateBytes)
 	if err != nil {
 		return compactRequestBuild{}, err
 	}
@@ -84,7 +85,7 @@ func (client *Client) Compact(ctx context.Context, request agent.Request) (agent
 	if err := validateCompactOutput(stream.response.Output); err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
-	state, err := encodeState(nil, nil, compactedStateItems(build.input, stream.response.Output), client.generationStateBytes())
+	state, err := continuation.Encode(client.generationStateBytes(), compactedStateItems(build.input, stream.response.Output))
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
@@ -121,7 +122,7 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("encode summary state: %v", err)
 	}
-	state, err := encodeState(nil, nil, items, client.generationStateBytes())
+	state, err := continuation.Encode(client.generationStateBytes(), items)
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("encode summary state: %v", err)
 	}

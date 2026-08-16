@@ -4,27 +4,34 @@ import (
 	"encoding/json"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend/continuation"
 )
 
-func buildRequest(request agent.Request, maxStateBytes, generationStateBytes int) (createRequest, []json.RawMessage, []json.RawMessage, error) {
-	created, history, newMessages, err := buildRequestUnchecked(request, maxStateBytes)
-	if err != nil {
-		return createRequest{}, nil, nil, err
-	}
-	if _, err := encodeState(history, newMessages, nil, generationStateBytes); err != nil {
-		return createRequest{}, nil, nil, err
-	}
-	return created, history, newMessages, nil
+type requestBuild struct {
+	wire        createRequest
+	history     []json.RawMessage
+	newMessages []json.RawMessage
 }
 
-func buildRequestUnchecked(request agent.Request, maxStateBytes int) (createRequest, []json.RawMessage, []json.RawMessage, error) {
-	history, err := decodeState(request.State, maxStateBytes)
+func buildGenerationRequest(request agent.Request, maxStateBytes, generationStateBytes int) (requestBuild, error) {
+	build, err := buildWireRequest(request, maxStateBytes)
 	if err != nil {
-		return createRequest{}, nil, nil, err
+		return requestBuild{}, err
+	}
+	if _, err := continuation.Encode(generationStateBytes, build.history, build.newMessages); err != nil {
+		return requestBuild{}, err
+	}
+	return build, nil
+}
+
+func buildWireRequest(request agent.Request, maxStateBytes int) (requestBuild, error) {
+	history, err := continuation.Decode(request.State, maxStateBytes)
+	if err != nil {
+		return requestBuild{}, err
 	}
 	newMessages, err := encodeInputs(request.Inputs)
 	if err != nil {
-		return createRequest{}, nil, nil, err
+		return requestBuild{}, err
 	}
 
 	messages := make([]json.RawMessage, 0, len(history)+len(newMessages))
@@ -44,10 +51,14 @@ func buildRequestUnchecked(request agent.Request, maxStateBytes int) (createRequ
 	if request.Instructions != "" {
 		system = []systemBlock{{Type: "text", Text: request.Instructions}}
 	}
-	return createRequest{
-		Model:    request.Model,
-		System:   system,
-		Messages: messages,
-		Tools:    tools,
-	}, history, newMessages, nil
+	return requestBuild{
+		wire: createRequest{
+			Model:    request.Model,
+			System:   system,
+			Messages: messages,
+			Tools:    tools,
+		},
+		history:     history,
+		newMessages: newMessages,
+	}, nil
 }

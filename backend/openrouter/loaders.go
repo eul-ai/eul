@@ -9,8 +9,6 @@ import (
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
-const maxErrorResponseBytes = int64(64 * 1024)
-
 type keyResponse struct {
 	Data keyUsage `json:"data"`
 }
@@ -78,15 +76,15 @@ func (configured *runtime) doGET(request *http.Request) ([]byte, error) {
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, backendhttp.ReadHTTPStatusError(response, maxErrorResponseBytes)
+		return nil, backendhttp.ReadHTTPStatusError(response, backendhttp.DefaultErrorResponseBytes)
 	}
 
-	body, truncated, err := backendhttp.ReadBounded(response.Body, maxResponseBytes)
+	body, truncated, err := backendhttp.ReadBounded(response.Body, backendhttp.DefaultResponseBytes)
 	if err != nil {
 		return nil, err
 	}
 	if truncated {
-		return nil, fmt.Errorf("response exceeds %d bytes", maxResponseBytes)
+		return nil, fmt.Errorf("response exceeds %d bytes", backendhttp.DefaultResponseBytes)
 	}
 	return body, nil
 }

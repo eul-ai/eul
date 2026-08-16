@@ -8,17 +8,18 @@ import (
 )
 
 const (
-	MessagesEnvelopeBytes = len(`{"version":1,"messages":[]}`)
+	DefaultMaximumBytes   = 16 * 1024 * 1024
+	envelopeBytes         = len(`{"version":1,"items":[]}`)
 	defaultOutputHeadroom = 1024 * 1024
 	version               = 1
 )
 
-type messagesState struct {
-	Version  int               `json:"version"`
-	Messages []json.RawMessage `json:"messages"`
+type state struct {
+	Version int               `json:"version"`
+	Items   []json.RawMessage `json:"items"`
 }
 
-func DecodeMessages(encoded []byte, maximum int) ([]json.RawMessage, error) {
+func Decode(encoded []byte, maximum int) ([]json.RawMessage, error) {
 	if len(encoded) == 0 {
 		return nil, nil
 	}
@@ -26,31 +27,31 @@ func DecodeMessages(encoded []byte, maximum int) ([]json.RawMessage, error) {
 		return nil, fmt.Errorf("continuation state exceeds %d bytes", maximum)
 	}
 
-	var state messagesState
-	if err := json.Unmarshal(encoded, &state); err != nil {
+	var decoded state
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		return nil, fmt.Errorf("decode continuation state: %w", err)
 	}
-	if state.Version != version {
-		return nil, fmt.Errorf("unsupported continuation state version %d", state.Version)
+	if decoded.Version != version {
+		return nil, fmt.Errorf("unsupported continuation state version %d", decoded.Version)
 	}
-	for index, message := range state.Messages {
-		if err := ValidateRawObject(message); err != nil {
-			return nil, fmt.Errorf("continuation state message %d: %w", index, err)
+	for index, item := range decoded.Items {
+		if err := validateObject(item); err != nil {
+			return nil, fmt.Errorf("continuation state item %d: %w", index, err)
 		}
 	}
 
-	return state.Messages, nil
+	return decoded.Items, nil
 }
 
-func EncodeMessages(maximum int, groups ...[]json.RawMessage) ([]byte, error) {
-	messages := RawMessages(groups...)
-	for index, message := range messages {
-		if err := ValidateRawObject(message); err != nil {
-			return nil, fmt.Errorf("continuation state message %d: %w", index, err)
+func Encode(maximum int, groups ...[]json.RawMessage) ([]byte, error) {
+	items := join(groups...)
+	for index, item := range items {
+		if err := validateObject(item); err != nil {
+			return nil, fmt.Errorf("continuation state item %d: %w", index, err)
 		}
 	}
 
-	encoded, err := json.Marshal(messagesState{Version: version, Messages: messages})
+	encoded, err := json.Marshal(state{Version: version, Items: items})
 	if err != nil {
 		return nil, fmt.Errorf("encode continuation state: %w", err)
 	}
@@ -61,20 +62,20 @@ func EncodeMessages(maximum int, groups ...[]json.RawMessage) ([]byte, error) {
 	return encoded, nil
 }
 
-func RawMessages(groups ...[]json.RawMessage) []json.RawMessage {
+func join(groups ...[]json.RawMessage) []json.RawMessage {
 	total := 0
 	for _, group := range groups {
 		total += len(group)
 	}
 
-	messages := make([]json.RawMessage, 0, total)
+	items := make([]json.RawMessage, 0, total)
 	for _, group := range groups {
-		messages = append(messages, group...)
+		items = append(items, group...)
 	}
-	return messages
+	return items
 }
 
-func ValidateRawObject(value json.RawMessage) error {
+func validateObject(value json.RawMessage) error {
 	trimmed := bytes.TrimSpace(value)
 	if len(trimmed) == 0 || trimmed[0] != '{' || !json.Valid(trimmed) {
 		return errors.New("must be a JSON object")
@@ -82,7 +83,7 @@ func ValidateRawObject(value json.RawMessage) error {
 	return nil
 }
 
-func GenerationStateBytes(maximum, outputHeadroom, envelopeBytes int) int {
+func GenerationStateBytes(maximum, outputHeadroom int) int {
 	if outputHeadroom <= 0 {
 		outputHeadroom = min(defaultOutputHeadroom, maximum/4)
 	}

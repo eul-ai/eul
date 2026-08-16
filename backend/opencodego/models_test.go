@@ -9,17 +9,8 @@ import (
 
 func TestBuildModelsUsesLiveCatalogIntersectionAndRichMetadata(t *testing.T) {
 	catalog := testCatalogProvider(t)
-	live := map[string]struct{}{
-		"grok-4.5":        {},
-		"gpt-5.6-luna":    {},
-		"hy3":             {},
-		"deepseek-v4-pro": {},
-		"kimi-k3":         {},
-		"kimi-k2.6":       {},
-		"minimax-m3":      {},
-		"qwen3.8-max":     {},
-		"live-only":       {},
-	}
+	live := testLiveModelIDs()
+	live["live-only"] = struct{}{}
 	models := buildModels(catalog, live)
 	if len(models) != len(live)-1 {
 		t.Fatalf("models = %#v", models)

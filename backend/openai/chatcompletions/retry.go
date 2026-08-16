@@ -23,12 +23,7 @@ func retryableGenerationError(err error) bool {
 		return false
 	}
 
-	var observerErr *observerDeliveryError
-	if errors.As(err, &observerErr) {
-		return false
-	}
-	var partialErr *partialResponseError
-	if errors.As(err, &partialErr) {
+	if backendhttp.IsNonRetryableStreamError(err) {
 		return false
 	}
 

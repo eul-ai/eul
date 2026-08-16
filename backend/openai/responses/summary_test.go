@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend/continuation"
 )
 
 func TestClientCompactsBySummarizing(t *testing.T) {
@@ -39,7 +40,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 	defer server.Close()
 
 	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
-	state, err := encodeState(nil, nil, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)}, defaultMaxStateBytes)
+	state, err := continuation.Encode(continuation.DefaultMaximumBytes, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +60,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 		t.Fatalf("usage = %+v", compacted.Usage)
 	}
 
-	items, err := decodeState(compacted.State, defaultMaxStateBytes)
+	items, err := continuation.Decode(compacted.State, continuation.DefaultMaximumBytes)
 	if err != nil || len(items) != 2 {
 		t.Fatalf("summary state items = %d, error = %v", len(items), err)
 	}
@@ -76,7 +77,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 		t.Fatalf("continuation message = %s, error = %v", items[1], err)
 	}
 
-	continued, err := buildRequest(agent.Request{State: compacted.State}, defaultMaxStateBytes, defaultMaxStateBytes)
+	continued, err := buildGenerationWireRequest(agent.Request{State: compacted.State}, continuation.DefaultMaximumBytes, continuation.DefaultMaximumBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +91,7 @@ func TestManualSemanticCompactionPreservesTurnBoundary(t *testing.T) {
 	defer server.Close()
 
 	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
-	state, err := encodeState(nil, nil, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)}, defaultMaxStateBytes)
+	state, err := continuation.Encode(continuation.DefaultMaximumBytes, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,10 +104,10 @@ func TestManualSemanticCompactionPreservesTurnBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	continued, err := buildRequest(agent.Request{
+	continued, err := buildGenerationWireRequest(agent.Request{
 		State:  compacted.State,
 		Inputs: []agent.Input{agent.NewTextInput("new request")},
-	}, defaultMaxStateBytes, defaultMaxStateBytes)
+	}, continuation.DefaultMaximumBytes, continuation.DefaultMaximumBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +150,7 @@ func TestSemanticCompactAcceptsStateThatCannotReserveGenerationOutput(t *testing
 	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 	client.maxStateBytes = 600
 	client.stateOutputHeadroom = 250
-	state, err := encodeState(nil, nil, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"` + strings.Repeat("x", 300) + `"}`)}, client.maxStateBytes)
+	state, err := continuation.Encode(client.maxStateBytes, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"` + strings.Repeat("x", 300) + `"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

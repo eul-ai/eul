@@ -18,7 +18,7 @@ type streamObserver struct {
 	observer     agent.StreamObserver
 	sawDelta     bool
 	sawReasoning bool
-	observed     bool
+	delivery     backendhttp.DeliveryTracker
 }
 
 type responseStreamResult struct {
@@ -66,7 +66,7 @@ func readResponsesSSE(reader io.Reader, maximum int64, observer agent.StreamObse
 	return responseStreamResult{
 		response:     decoder.response,
 		sawTextDelta: tracked.sawDelta,
-		observed:     tracked.observed,
+		observed:     tracked.delivery.Observed(),
 	}, nil
 }
 
@@ -156,11 +156,9 @@ func (observer *streamObserver) deliverToolCall(streamed streamedToolCall, compl
 		RawArguments: streamed.arguments,
 		Complete:     complete,
 	}
-	if err := observer.observer.ToolCall(snapshot); err != nil {
-		return &observerDeliveryError{operation: "deliver tool call", cause: err}
-	}
-	observer.observed = true
-	return nil
+	return observer.delivery.Deliver("deliver tool call", func() error {
+		return observer.observer.ToolCall(snapshot)
+	})
 }
 
 func (observer *streamObserver) deliverText(delta string) error {
@@ -169,10 +167,11 @@ func (observer *streamObserver) deliverText(delta string) error {
 	}
 
 	if observer.observer.Text != nil {
-		if err := observer.observer.Text(delta); err != nil {
-			return &observerDeliveryError{operation: "deliver text", cause: err}
+		if err := observer.delivery.Deliver("deliver text", func() error {
+			return observer.observer.Text(delta)
+		}); err != nil {
+			return err
 		}
-		observer.observed = true
 	}
 
 	observer.sawDelta = true
@@ -185,10 +184,11 @@ func (observer *streamObserver) deliverReasoning(delta string) error {
 	}
 
 	if observer.observer.Reasoning != nil {
-		if err := observer.observer.Reasoning(delta); err != nil {
-			return &observerDeliveryError{operation: "deliver reasoning", cause: err}
+		if err := observer.delivery.Deliver("deliver reasoning", func() error {
+			return observer.observer.Reasoning(delta)
+		}); err != nil {
+			return err
 		}
-		observer.observed = true
 	}
 
 	observer.sawReasoning = true
@@ -231,18 +231,11 @@ func (decoder *responseStreamDecoder) terminal(event responseStreamEvent) (creat
 }
 
 func (observer *streamObserver) wrapPartial(err error) error {
-	if err == nil || !observer.observed {
-		return err
-	}
-	var observerErr *observerDeliveryError
-	if errors.As(err, &observerErr) {
-		return err
-	}
-	return &partialResponseError{cause: err}
+	return observer.delivery.WrapPartial(err)
 }
 
 func streamError(event responseStreamEvent) error {
-	errorDetail := responseError{Code: event.Code, Message: event.Message}
+	errorDetail := responseError{APIError: backendhttp.APIError{Code: event.Code, Message: event.Message}}
 	if event.Error != nil && formatResponseError(*event.Error) != "" {
 		errorDetail = *event.Error
 	}

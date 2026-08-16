@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend/compaction"
@@ -14,14 +14,7 @@ import (
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
-const (
-	defaultHTTPTimeout          = 10 * time.Minute
-	defaultMaxRequestBytes      = int64(32 * 1024 * 1024)
-	defaultMaxResponseBytes     = int64(16 * 1024 * 1024)
-	defaultMaxErrorBytes        = int64(64 * 1024)
-	defaultMaxStateBytes        = 16 * 1024 * 1024
-	minimumThinkingBudgetTokens = 1024
-)
+const minimumThinkingBudgetTokens = 1024
 
 type RequestOptions struct {
 	MaxTokens    int
@@ -67,59 +60,48 @@ func New(options Options) (*Client, error) {
 		return nil, errors.New("anthropic messages: endpoint is required")
 	}
 
-	maxRequestBytes := options.MaxRequestBytes
-	if maxRequestBytes <= 0 {
-		maxRequestBytes = defaultMaxRequestBytes
-	}
-	maxResponseBytes := options.MaxResponseBytes
-	if maxResponseBytes <= 0 {
-		maxResponseBytes = defaultMaxResponseBytes
-	}
-	maxErrorBytes := options.MaxErrorBytes
-	if maxErrorBytes <= 0 {
-		maxErrorBytes = defaultMaxErrorBytes
-	}
+	limits := (backendhttp.GenerationLimits{
+		RequestBytes:  options.MaxRequestBytes,
+		ResponseBytes: options.MaxResponseBytes,
+		ErrorBytes:    options.MaxErrorBytes,
+	}).WithDefaults()
 	maxStateBytes := options.MaxStateBytes
 	if maxStateBytes <= 0 {
-		maxStateBytes = defaultMaxStateBytes
+		maxStateBytes = continuation.DefaultMaximumBytes
 	}
 	return &Client{
-		httpClient: backendhttp.CloneNoRedirects(options.HTTPClient, defaultHTTPTimeout),
+		httpClient: backendhttp.CloneNoRedirects(options.HTTPClient, backendhttp.DefaultGenerationHTTPTimeout),
 		endpoint:   endpoint,
 		errorConfig: backendhttp.APIErrorConfig{
 			Prefix:          strings.TrimSpace(options.ErrorPrefix),
-			Maximum:         maxErrorBytes,
+			Maximum:         limits.ErrorBytes,
 			ParseRetryAfter: parseRetryAfterHeaders,
 		},
 		prepareRequest:      options.PrepareRequest,
 		requestOptions:      options.RequestOptions,
 		promptCaching:       options.PromptCaching,
-		maxRequestBytes:     maxRequestBytes,
-		maxResponseBytes:    maxResponseBytes,
+		maxRequestBytes:     limits.RequestBytes,
+		maxResponseBytes:    limits.ResponseBytes,
 		maxStateBytes:       maxStateBytes,
 		stateOutputHeadroom: options.StateOutputHeadroom,
 	}, nil
 }
 
 func (client *Client) generationStateBytes() int {
-	return continuation.GenerationStateBytes(
-		client.maxStateBytes,
-		client.stateOutputHeadroom,
-		continuationStateEnvelopeBytes,
-	)
+	return continuation.GenerationStateBytes(client.maxStateBytes, client.stateOutputHeadroom)
 }
 
 func (client *Client) ShouldCompactState(request agent.Request) bool {
 	if len(request.State) == 0 {
 		return false
 	}
-	if _, _, _, err := buildRequest(request, client.maxStateBytes, client.generationStateBytes()); err == nil {
+	if _, err := buildGenerationRequest(request, client.maxStateBytes, client.generationStateBytes()); err == nil {
 		return false
 	}
 
 	withoutState := request
 	withoutState.State = nil
-	_, _, _, err := buildRequest(withoutState, client.maxStateBytes, client.generationStateBytes())
+	_, err := buildGenerationRequest(withoutState, client.maxStateBytes, client.generationStateBytes())
 	return err == nil
 }
 
@@ -128,21 +110,21 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 		return agent.Response{}, err
 	}
 
-	wireRequest, history, newMessages, err := buildRequest(request, client.maxStateBytes, client.generationStateBytes())
+	build, err := buildGenerationRequest(request, client.maxStateBytes, client.generationStateBytes())
 	if err != nil {
 		return agent.Response{}, client.errorf("build request: %v", err)
 	}
-	if err := client.configureRequest(request, &wireRequest); err != nil {
+	if err := client.configureRequest(request, &build.wire); err != nil {
 		return agent.Response{}, client.errorf("%v", err)
 	}
 
-	result, err := client.complete(ctx, wireRequest, observer, "request")
+	result, err := client.complete(ctx, build.wire, observer, "request")
 	if err != nil {
 		return agent.Response{}, err
 	}
 
 	output := []json.RawMessage{result.assistant}
-	state, err := encodeState(history, newMessages, output, client.maxStateBytes)
+	state, err := continuation.Encode(client.maxStateBytes, build.history, build.newMessages, output)
 	if err != nil {
 		return agent.Response{}, client.errorf("%v", err)
 	}
@@ -161,17 +143,17 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 	}
 
 	request, continueAfterCompaction := compaction.Prepare(request, instructions)
-	wireRequest, _, _, err := buildRequestUnchecked(request, client.maxStateBytes)
+	build, err := buildWireRequest(request, client.maxStateBytes)
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("build summary request: %v", err)
 	}
-	if err := client.configureRequest(request, &wireRequest); err != nil {
+	if err := client.configureRequest(request, &build.wire); err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
-	wireRequest.Tools = nil
-	wireRequest.ToolChoice = nil
+	build.wire.Tools = nil
+	build.wire.ToolChoice = nil
 
-	result, err := client.complete(ctx, wireRequest, agent.StreamObserver{}, "summary request")
+	result, err := client.complete(ctx, build.wire, agent.StreamObserver{}, "summary request")
 	if err != nil {
 		return agent.CompactResponse{}, err
 	}
@@ -196,7 +178,7 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 		}
 		messages = append(messages, continuation)
 	}
-	state, err := encodeState(nil, nil, messages, client.generationStateBytes())
+	state, err := continuation.Encode(client.generationStateBytes(), messages)
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("encode summary state: %v", err)
 	}
@@ -212,40 +194,31 @@ func (client *Client) complete(ctx context.Context, wireRequest createRequest, o
 		}
 	}
 
-	requestBody, oversized, err := backendhttp.MarshalBoundedJSON(wireRequest, client.maxRequestBytes)
-	if err != nil {
-		return streamResult{}, client.errorf("encode %s: %v", operation, err)
+	config := backendhttp.JSONSSEConfig{
+		HTTPClient:       client.httpClient,
+		Endpoint:         client.endpoint,
+		ErrorConfig:      client.errorConfig,
+		MaxRequestBytes:  client.maxRequestBytes,
+		MaxResponseBytes: client.maxResponseBytes,
 	}
-	if oversized {
-		return streamResult{}, client.errorf("%s exceeds %d bytes", operation, client.maxRequestBytes)
+	if client.prepareRequest != nil {
+		config.PrepareRequest = func(ctx context.Context, request *http.Request) error {
+			if err := client.prepareRequest(ctx, request); err != nil {
+				return client.wrapf(err, "prepare %s: %v", operation, err)
+			}
+			return nil
+		}
 	}
-
-	httpResponse, err := client.post(ctx, requestBody, operation)
-	if err != nil {
-		return streamResult{}, err
-	}
-	defer httpResponse.Body.Close()
-
-	result, err := readMessagesSSE(httpResponse.Body, client.maxResponseBytes, observer)
-	if err == nil {
-		return result, nil
-	}
-	var observerErr *observerDeliveryError
-	if errors.As(err, &observerErr) {
-		return streamResult{}, client.wrapf(err, "%v", err)
-	}
-	var partialErr *partialResponseError
-	if errors.As(err, &partialErr) {
-		return streamResult{}, client.wrapf(err, "%v", err)
-	}
-	classified := backendhttp.ClassifyTransportError(ctx, err)
-	if classified.ReturnDirectly {
-		return streamResult{}, classified.Cause
-	}
-	if classified.Retryable {
-		return streamResult{}, client.retryableWrapf(classified.Cause, "%v", err)
-	}
-	return streamResult{}, client.wrapf(classified.Cause, "%v", err)
+	return backendhttp.CompleteJSONSSE(
+		ctx,
+		config,
+		wireRequest,
+		operation,
+		func(reader io.Reader, maximum int64) (streamResult, error) {
+			return readMessagesSSE(reader, maximum, observer)
+		},
+		backendhttp.IsNonRetryableStreamError,
+	)
 }
 
 func (client *Client) configureRequest(request agent.Request, wireRequest *createRequest) error {

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 func TestClientBoundsHTTPErrors(t *testing.T) {
@@ -20,13 +21,13 @@ func TestClientBoundsHTTPErrors(t *testing.T) {
 	server := responseServer(t, http.StatusBadRequest, strings.Repeat(key+" ", 100))
 	defer server.Close()
 	client := newTestClient(t, key, server.URL, Options{HTTPClient: server.Client()})
-	client.maxErrorBytes = 160
+	client.errorConfig.Maximum = 160
 	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	if err == nil {
 		t.Fatal("Generate() succeeded")
 	}
-	var responseErr *httpResponseError
-	if !errors.As(err, &responseErr) || responseErr.statusCode != http.StatusBadRequest || len(err.Error()) > 160 {
+	var responseErr *backendhttp.APIResponseError
+	if !errors.As(err, &responseErr) || responseErr.StatusCode() != http.StatusBadRequest || len(err.Error()) > 160 {
 		t.Fatalf("bounded error = %q (%d bytes)", err, len(err.Error()))
 	}
 }
@@ -36,8 +37,8 @@ func TestClientParsesStructuredHTTPError(t *testing.T) {
 	defer server.Close()
 	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
-	var responseErr *httpResponseError
-	if !errors.As(err, &responseErr) || responseErr.statusCode != http.StatusTooManyRequests || responseErr.detail.Type != "rate_limit_error" || responseErr.detail.Code != "rate_limit" || responseErr.detail.Message != "slow down" {
+	var responseErr *backendhttp.APIResponseError
+	if !errors.As(err, &responseErr) || responseErr.StatusCode() != http.StatusTooManyRequests || responseErr.Detail().Type != "rate_limit_error" || responseErr.Detail().Code != "rate_limit" || responseErr.Detail().Message != "slow down" {
 		t.Fatalf("Generate() error = %v", err)
 	}
 }
@@ -49,8 +50,8 @@ func TestClientIncludesProviderHTTPErrorDetail(t *testing.T) {
 	client := newTestClient(t, key, server.URL, Options{HTTPClient: server.Client()})
 
 	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
-	var responseErr *httpResponseError
-	if !errors.As(err, &responseErr) || responseErr.statusCode != http.StatusBadRequest {
+	var responseErr *backendhttp.APIResponseError
+	if !errors.As(err, &responseErr) || responseErr.StatusCode() != http.StatusBadRequest {
 		t.Fatalf("Generate() error = %v", err)
 	}
 	if message := err.Error(); !strings.Contains(message, "Google AI Studio") || !strings.Contains(message, "Corrupted thought signature") {
@@ -185,7 +186,7 @@ func TestClientDoesNotRetryTerminalFailureAfterDelivery(t *testing.T) {
 		delivered++
 		return nil
 	}, nil, nil)
-	var partial *partialResponseError
+	var partial *backendhttp.PartialResponseError
 	if delivered != 1 || !errors.As(err, &partial) {
 		t.Fatalf("deliveries=%d error=%v", delivered, err)
 	}
@@ -212,7 +213,7 @@ func TestClientDoesNotRetryDeadlineAfterDelivery(t *testing.T) {
 		delivered++
 		return nil
 	}, nil, nil)
-	var partial *partialResponseError
+	var partial *backendhttp.PartialResponseError
 	if delivered != 1 || !errors.As(err, &partial) || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("deliveries=%d error=%v", delivered, err)
 	}
@@ -313,7 +314,7 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 }
 
 func TestGenerationRetryAllowsExtendedRecovery(t *testing.T) {
-	transient := &retryableOperationError{cause: errors.New("temporary")}
+	transient := backendhttp.APIErrorConfig{}.RetryableWrapf(errors.New("temporary"), "temporary")
 	delay, retry := (&Client{}).RetryGeneration(transient, generationRetryPolicy.MaximumAttempts-1)
 	if !retry {
 		t.Fatal("retry policy stopped before the final attempt")
@@ -344,7 +345,7 @@ func TestClientDoesNotRetryPermanentOrObserverErrors(t *testing.T) {
 		t.Fatalf("observer error = %v, retry = %t", err, retry)
 	}
 
-	transient := &retryableOperationError{cause: errors.New("temporary")}
+	transient := backendhttp.APIErrorConfig{}.RetryableWrapf(errors.New("temporary"), "temporary")
 	if _, retry := client.RetryGeneration(transient, generationRetryPolicy.MaximumAttempts); retry {
 		t.Fatal("retry policy exceeded maximum attempts")
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend/continuation"
 )
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
@@ -158,7 +159,7 @@ func TestSemanticCompactStoresValidAnthropicExchange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	messages, err := decodeState(compacted.State, defaultMaxStateBytes)
+	messages, err := continuation.Decode(compacted.State, continuation.DefaultMaximumBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
