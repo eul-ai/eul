@@ -1,16 +1,21 @@
-package client
+package codex
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/backend/codex/oauth"
+	"github.com/eul-ai/eul/backend/testhttp"
 )
 
-func TestClientUsageGetsSubscriptionWindows(t *testing.T) {
+func TestUsageClientGetsSubscriptionWindows(t *testing.T) {
 	const token = "secret-test-token"
-	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet || request.URL.Path != "/api/codex/usage" {
 			t.Errorf("request = %s %s", request.Method, request.URL.Path)
 		}
@@ -20,7 +25,7 @@ func TestClientUsageGetsSubscriptionWindows(t *testing.T) {
 		if request.Header.Get("Content-Type") != "" || request.Header.Get("OpenAI-Beta") != "" {
 			t.Errorf("GET content headers = %v", request.Header)
 		}
-		writeCompactJSON(t, writer, map[string]any{
+		writeUsageJSON(t, writer, map[string]any{
 			"plan_type": "unknown-future-plan",
 			"rate_limit": map[string]any{
 				"allowed":       true,
@@ -38,12 +43,12 @@ func TestClientUsageGetsSubscriptionWindows(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestClient(t, token, server.URL, Options{})
+	client := newTestUsageClient(t, token, server)
 	usage, err := client.Usage(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := AccountUsage{Windows: []UsageWindow{
+	want := backend.AccountUsage{Windows: []backend.UsageWindow{
 		{Duration: 5 * time.Hour, UsedPercent: 42, ResetsAt: time.Unix(1_760_000_000, 0)},
 		{Duration: 7 * 24 * time.Hour, UsedPercent: 84, ResetsAt: time.Unix(1_760_000_120, 0)},
 	}}
@@ -52,15 +57,15 @@ func TestClientUsageGetsSubscriptionWindows(t *testing.T) {
 	}
 }
 
-func TestClientUsageHandlesOptionalAndInvalidWindows(t *testing.T) {
+func TestUsageClientHandlesOptionalAndInvalidWindows(t *testing.T) {
 	tests := []struct {
 		name    string
 		body    string
-		want    AccountUsage
+		want    backend.AccountUsage
 		wantErr bool
 	}{
 		{name: "no rate limit", body: `{"plan_type":"plus","rate_limit":null}`},
-		{name: "one window", body: `{"rate_limit":{"primary_window":{"used_percent":0,"limit_window_seconds":3600}}}`, want: AccountUsage{Windows: []UsageWindow{{Duration: time.Hour}}}},
+		{name: "one window", body: `{"rate_limit":{"primary_window":{"used_percent":0,"limit_window_seconds":3600}}}`, want: backend.AccountUsage{Windows: []backend.UsageWindow{{Duration: time.Hour}}}},
 		{name: "negative percent", body: `{"rate_limit":{"primary_window":{"used_percent":-1,"limit_window_seconds":3600}}}`, wantErr: true},
 		{name: "percent over one hundred", body: `{"rate_limit":{"primary_window":{"used_percent":101,"limit_window_seconds":3600}}}`, wantErr: true},
 		{name: "zero duration", body: `{"rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":0}}}`, wantErr: true},
@@ -69,12 +74,12 @@ func TestClientUsageHandlesOptionalAndInvalidWindows(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 				_, _ = writer.Write([]byte(test.body))
 			}))
 			defer server.Close()
 
-			usage, err := newTestClient(t, "token", server.URL, Options{}).Usage(context.Background())
+			usage, err := newTestUsageClient(t, "token", server).Usage(context.Background())
 			if test.wantErr {
 				if err == nil {
 					t.Fatalf("Usage() error = %v", err)
@@ -88,22 +93,40 @@ func TestClientUsageHandlesOptionalAndInvalidWindows(t *testing.T) {
 	}
 }
 
-func TestClientUsageEndpointFollowsBaseURLStyle(t *testing.T) {
-	chatGPT, err := New(testTokenSource("token"), Options{BaseURL: "https://chatgpt.com/backend-api/"})
+func TestUsageClientEndpointFollowsBaseURLStyle(t *testing.T) {
+	manager := &fakeManager{}
+	chatGPT, err := newUsageClient(manager, usageClientOptions{baseURL: "https://chatgpt.com/backend-api/"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	codexAPI, err := New(testTokenSource("token"), Options{BaseURL: "https://example.com/"})
+	codexAPI, err := newUsageClient(manager, usageClientOptions{baseURL: "https://example.com/"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hostCollision, err := New(testTokenSource("token"), Options{BaseURL: "https://backend-api.example.com/"})
+	hostCollision, err := newUsageClient(manager, usageClientOptions{baseURL: "https://backend-api.example.com/"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if chatGPT.usageEndpoint != "https://chatgpt.com/backend-api/wham/usage" ||
-		codexAPI.usageEndpoint != "https://example.com/api/codex/usage" ||
-		hostCollision.usageEndpoint != "https://backend-api.example.com/api/codex/usage" {
-		t.Fatalf("usage endpoints = %q, %q, %q", chatGPT.usageEndpoint, codexAPI.usageEndpoint, hostCollision.usageEndpoint)
+	if chatGPT.endpoint != "https://chatgpt.com/backend-api/wham/usage" ||
+		codexAPI.endpoint != "https://example.com/api/codex/usage" ||
+		hostCollision.endpoint != "https://backend-api.example.com/api/codex/usage" {
+		t.Fatalf("usage endpoints = %q, %q, %q", chatGPT.endpoint, codexAPI.endpoint, hostCollision.endpoint)
+	}
+}
+
+func newTestUsageClient(t *testing.T, token string, server *testhttp.Server) *usageClient {
+	t.Helper()
+	manager := &fakeManager{credential: oauth.AccessCredential{AccessToken: token, AccountID: "account"}}
+	client, err := newUsageClient(manager, usageClientOptions{httpClient: server.Client(), baseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
+func writeUsageJSON(t *testing.T, writer http.ResponseWriter, value any) {
+	t.Helper()
+	if err := json.NewEncoder(writer).Encode(value); err != nil {
+		t.Fatal(err)
 	}
 }

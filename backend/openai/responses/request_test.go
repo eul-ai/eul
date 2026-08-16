@@ -14,26 +14,26 @@ func TestBuildCreateRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	request, newItems, err := buildCreateRequest(agent.Request{
+	build, err := buildRequest(agent.Request{
 		Model:    "model",
 		FastMode: true,
 		State:    state,
 		Inputs:   []agent.Input{{Kind: agent.InputToolResult, CallID: "call_1", Tool: "read", Text: "failed", IsError: true}},
 		Tools:    []agent.ToolDefinition{strictTestTool("read")},
-	}, defaultMaxStateBytes)
+	}, defaultMaxStateBytes, defaultMaxStateBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if request.Model != "model" || request.ServiceTier != "" || len(request.Input) != 2 || len(newItems) != 1 || len(request.Tools) != 1 || !request.Tools[0].Strict {
-		t.Fatalf("request=%+v newItems=%s", request, newItems)
+	if build.wire.Model != "model" || build.wire.ServiceTier != "" || len(build.wire.Input) != 2 || len(build.newItems) != 1 || len(build.wire.Tools) != 1 || !build.wire.Tools[0].Strict {
+		t.Fatalf("build=%+v", build)
 	}
 	compact, err := buildCompactRequest(agent.Request{Model: "model", FastMode: true}, defaultMaxStateBytes)
-	if err != nil || compact.ServiceTier != "" {
+	if err != nil || compact.wire.ServiceTier != "" {
 		t.Fatalf("compact request=%+v error=%v", compact, err)
 	}
-	if !strings.Contains(string(newItems[0]), `[tool error]\nfailed`) {
-		t.Fatalf("tool result = %s", newItems[0])
+	if !strings.Contains(string(build.newItems[0]), `[tool error]\nfailed`) {
+		t.Fatalf("tool result = %s", build.newItems[0])
 	}
 }
 
@@ -55,11 +55,11 @@ func TestEncodeInboxInputAsUserMessage(t *testing.T) {
 }
 
 func TestInboxInputSurvivesContinuationState(t *testing.T) {
-	request, newItems, err := buildCreateRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}}}, defaultMaxStateBytes)
+	build, err := buildRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}}}, defaultMaxStateBytes, defaultMaxStateBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := encodeState(nil, newItems, nil, defaultMaxStateBytes)
+	state, err := encodeState(nil, build.newItems, nil, defaultMaxStateBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,8 +67,8 @@ func TestInboxInputSurvivesContinuationState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(request.Input) != 1 || len(restored) != 1 || string(request.Input[0]) != string(restored[0]) {
-		t.Fatalf("request = %s, restored = %s", request.Input, restored)
+	if len(build.wire.Input) != 1 || len(restored) != 1 || string(build.wire.Input[0]) != string(restored[0]) {
+		t.Fatalf("request = %s, restored = %s", build.wire.Input, restored)
 	}
 }
 
@@ -77,7 +77,7 @@ func TestBuildCreateRequestRejectsInvalidInputKinds(t *testing.T) {
 		{Kind: "unknown", Text: "value"},
 		{Kind: agent.InputInbox, Content: []agent.ContentPart{{Kind: agent.ContentPartText, Text: "invalid"}}},
 	} {
-		if _, _, err := buildCreateRequest(agent.Request{Inputs: []agent.Input{input}}, defaultMaxStateBytes); err == nil {
+		if _, err := buildRequest(agent.Request{Inputs: []agent.Input{input}}, defaultMaxStateBytes, defaultMaxStateBytes); err == nil {
 			t.Fatalf("input %+v was accepted", input)
 		}
 	}
@@ -121,11 +121,11 @@ func TestOrderedInputContentSurvivesContinuationState(t *testing.T) {
 		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("one")}},
 		{Kind: agent.ContentPartText, Text: "after"},
 	}
-	request, newItems, err := buildCreateRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputUser, Content: parts}}}, defaultMaxStateBytes)
+	build, err := buildRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputUser, Content: parts}}}, defaultMaxStateBytes, defaultMaxStateBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := encodeState(nil, newItems, nil, defaultMaxStateBytes)
+	state, err := encodeState(nil, build.newItems, nil, defaultMaxStateBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,8 +133,8 @@ func TestOrderedInputContentSurvivesContinuationState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(request.Input) != 1 || len(restored) != 1 || string(request.Input[0]) != string(restored[0]) {
-		t.Fatalf("request = %s, restored = %s", request.Input, restored)
+	if len(build.wire.Input) != 1 || len(restored) != 1 || string(build.wire.Input[0]) != string(restored[0]) {
+		t.Fatalf("request = %s, restored = %s", build.wire.Input, restored)
 	}
 }
 
@@ -169,22 +169,22 @@ func TestEncodeTextAndImageOnlyContent(t *testing.T) {
 }
 
 func TestBuildCompactRequest(t *testing.T) {
-	request, err := buildCompactRequest(agent.Request{
+	build, err := buildCompactRequest(agent.Request{
 		Model:  "model",
 		Inputs: []agent.Input{agent.NewTextInput("hello")},
 	}, defaultMaxStateBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(request.Input) != 2 {
-		t.Fatalf("compact input count = %d, want 2", len(request.Input))
+	if len(build.wire.Input) != 2 || len(build.input) != 1 {
+		t.Fatalf("compact input count = %d, want 2", len(build.wire.Input))
 	}
 
 	var trigger struct {
 		Type string `json:"type"`
 	}
-	if err := json.Unmarshal(request.Input[1], &trigger); err != nil || trigger.Type != "compaction_trigger" {
-		t.Fatalf("compact trigger = %s, error = %v", request.Input[1], err)
+	if err := json.Unmarshal(build.wire.Input[1], &trigger); err != nil || trigger.Type != "compaction_trigger" {
+		t.Fatalf("compact trigger = %s, error = %v", build.wire.Input[1], err)
 	}
 }
 
@@ -210,10 +210,10 @@ func TestBuildCreateRequestReservesResponseOutput(t *testing.T) {
 	}
 	request := agent.Request{State: state, Inputs: []agent.Input{agent.NewTextInput(strings.Repeat("y", 30))}}
 
-	if _, _, err := buildCreateRequest(request, 240); err != nil {
+	if _, err := buildRequest(request, 240, 240); err != nil {
 		t.Fatalf("request did not fit full state limit: %v", err)
 	}
-	if _, _, err := buildCreateRequestWithLimit(request, 240, 100); err == nil {
+	if _, err := buildRequest(request, 240, 100); err == nil {
 		t.Fatalf("reserved request error = %v", err)
 	}
 	if _, err := buildCompactRequest(request, 240); err != nil {
@@ -222,7 +222,7 @@ func TestBuildCreateRequestReservesResponseOutput(t *testing.T) {
 }
 
 func TestBuildCreateRequestRejectsInputsThatCannotFitState(t *testing.T) {
-	_, _, err := buildCreateRequest(agent.Request{
+	_, err := buildRequest(agent.Request{
 		Inputs: []agent.Input{{
 			Kind: agent.InputUser,
 			Content: []agent.ContentPart{{
@@ -230,7 +230,7 @@ func TestBuildCreateRequestRejectsInputsThatCannotFitState(t *testing.T) {
 				Image: &agent.Image{MediaType: "image/png", Data: make([]byte, 100)},
 			}},
 		}},
-	}, 100)
+	}, 100, 100)
 	if err == nil {
 		t.Fatalf("error = %v", err)
 	}

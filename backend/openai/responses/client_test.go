@@ -127,7 +127,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestClient(t, token, server.URL, Options{})
+	client := newTestClient(t, token, server.URL, Options{HTTPClient: server.Client()})
 	tools := []agent.ToolDefinition{strictTestTool("read"), strictTestTool("bash")}
 	var sinkText []string
 	first, err := generate(client, context.Background(), agent.Request{
@@ -195,7 +195,7 @@ func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
 	t.Run("response", func(t *testing.T) {
 		server := responseServer(t, http.StatusOK, strings.Repeat("x", 101))
 		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{})
+		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 		client.maxResponseBytes = 100
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		if err == nil {
@@ -206,7 +206,7 @@ func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
 		var calls atomic.Int32
 		server := newTestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
 		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{})
+		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 		client.maxRequestBytes = 100
 		request := baseRequest()
 		request.Inputs[0].Content[0].Text = strings.Repeat("x", 200)
@@ -220,7 +220,7 @@ func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
 func TestClientRejectsOversizedReturnedStateBeforeTextSink(t *testing.T) {
 	server := responseServer(t, http.StatusOK, `{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"answer"}],"unknown":"`+strings.Repeat("x", 200)+`"}]}`)
 	defer server.Close()
-	client := newTestClient(t, "key", server.URL, Options{})
+	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 	client.maxStateBytes = 100
 	client.stateOutputHeadroom = 1
 	sinkCalled := false
@@ -248,7 +248,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		server := newTestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			<-release
 		}))
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: &http.Client{Timeout: 30 * time.Millisecond}})
+		client := newTestClient(t, "key", server.URL, Options{HTTPClient: &http.Client{Transport: server.Client().Transport, Timeout: 30 * time.Millisecond}})
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		close(release)
 		server.Close()
@@ -272,7 +272,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 	t.Run("sink", func(t *testing.T) {
 		server := responseServer(t, http.StatusOK, `{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"answer"}]}]}`)
 		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{})
+		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 		sinkError := errors.New("sink failed")
 		_, err := generate(client, context.Background(), baseRequest(), func(string) error { return sinkError }, nil, nil)
 		if !errors.Is(err, sinkError) {
@@ -285,7 +285,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 			fmt.Fprint(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"answer\"}\n\n")
 		}))
 		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{})
+		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 		sinkError := errors.New("streaming sink failed")
 		_, err := generate(client, context.Background(), baseRequest(), func(string) error { return sinkError }, nil, nil)
 		if !errors.Is(err, sinkError) {
@@ -300,7 +300,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 			<-request.Context().Done()
 		}))
 		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{})
+		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 		ctx, cancel := context.WithCancel(context.Background())
 		seen := make(chan struct{}, 1)
 		done := make(chan error, 1)
@@ -327,7 +327,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 			http.Redirect(writer, request, destination.URL, http.StatusTemporaryRedirect)
 		}))
 		defer origin.Close()
-		client := newTestClient(t, "key", origin.URL, Options{})
+		client := newTestClient(t, "key", origin.URL, Options{HTTPClient: origin.Client()})
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		var responseErr *httpResponseError
 		if !errors.As(err, &responseErr) || responseErr.statusCode != http.StatusTemporaryRedirect || destinationCalls.Load() != 0 {

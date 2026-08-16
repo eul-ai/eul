@@ -20,13 +20,13 @@ func TestCatalogCachesSelectedProviderAndReusesFreshCache(t *testing.T) {
 		response.Header.Set("ETag", `"catalog-v1"`)
 		return response, nil
 	})}
-	configured := &runtime{
-		catalogURL:       "https://catalog.test/api.json",
-		catalogCachePath: cachePath,
-		credentialClient: client,
-		now:              func() time.Time { return now },
+	configured := &catalogLoader{
+		url:       "https://catalog.test/api.json",
+		cachePath: cachePath,
+		client:    client,
+		now:       func() time.Time { return now },
 	}
-	provider, err := configured.loadCatalog(context.Background())
+	provider, err := configured.Load(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,12 +50,12 @@ func TestCatalogCachesSelectedProviderAndReusesFreshCache(t *testing.T) {
 		t.Fatalf("cache = %+v, present=%v", cached, ok)
 	}
 
-	configured.credentialClient = &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+	configured.client = &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 		t.Fatal("fresh cache made an HTTP request")
 		return nil, nil
 	})}
 	configured.now = func() time.Time { return now.Add(catalogCacheFreshness - time.Second) }
-	provider, err = configured.loadCatalog(context.Background())
+	provider, err = configured.Load(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,15 +69,15 @@ func TestCatalogDiscoverySucceedsWhenCacheCannotBeWritten(t *testing.T) {
 	if err := os.WriteFile(blockedDirectory, []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	configured := &runtime{
-		catalogURL:       "https://catalog.test/api.json",
-		catalogCachePath: filepath.Join(blockedDirectory, "opencode-go-models.json"),
-		credentialClient: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+	configured := &catalogLoader{
+		url:       "https://catalog.test/api.json",
+		cachePath: filepath.Join(blockedDirectory, "opencode-go-models.json"),
+		client: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 			return testHTTPResponse(http.StatusOK, testCatalogJSON(t)), nil
 		})},
 		now: time.Now,
 	}
-	provider, err := configured.loadCatalog(context.Background())
+	provider, err := configured.Load(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,10 +99,10 @@ func TestCatalogRevalidatesStaleCacheWithETag(t *testing.T) {
 	}
 
 	requests := 0
-	configured := &runtime{
-		catalogURL:       "https://catalog.test/api.json",
-		catalogCachePath: cachePath,
-		credentialClient: &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+	configured := &catalogLoader{
+		url:       "https://catalog.test/api.json",
+		cachePath: cachePath,
+		client: &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
 			requests++
 			if request.Header.Get("If-None-Match") != `"catalog-v1"` {
 				t.Fatalf("If-None-Match = %q", request.Header.Get("If-None-Match"))
@@ -111,7 +111,7 @@ func TestCatalogRevalidatesStaleCacheWithETag(t *testing.T) {
 		})},
 		now: func() time.Time { return now },
 	}
-	provider, err := configured.loadCatalog(context.Background())
+	provider, err := configured.Load(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,15 +132,15 @@ func TestCatalogFallsBackToValidStaleCache(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	configured := &runtime{
-		catalogURL:       "https://catalog.test/api.json",
-		catalogCachePath: cachePath,
-		credentialClient: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+	configured := &catalogLoader{
+		url:       "https://catalog.test/api.json",
+		cachePath: cachePath,
+		client: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 			return testHTTPResponse(http.StatusServiceUnavailable, "unavailable"), nil
 		})},
 		now: func() time.Time { return now },
 	}
-	provider, err := configured.loadCatalog(context.Background())
+	provider, err := configured.Load(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,29 +150,29 @@ func TestCatalogFallsBackToValidStaleCache(t *testing.T) {
 }
 
 func TestCatalogRefreshFailureWithoutCacheFails(t *testing.T) {
-	configured := &runtime{
-		catalogURL:       "https://catalog.test/api.json",
-		catalogCachePath: filepath.Join(t.TempDir(), "cache", "opencode-go-models.json"),
-		credentialClient: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+	configured := &catalogLoader{
+		url:       "https://catalog.test/api.json",
+		cachePath: filepath.Join(t.TempDir(), "cache", "opencode-go-models.json"),
+		client: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 			return testHTTPResponse(http.StatusServiceUnavailable, "unavailable"), nil
 		})},
 		now: time.Now,
 	}
-	if _, err := configured.loadCatalog(context.Background()); err == nil {
+	if _, err := configured.Load(context.Background()); err == nil {
 		t.Fatal("catalog refresh failure was accepted without a cache")
 	}
 }
 
 func TestCatalogNotModifiedWithoutCacheFails(t *testing.T) {
-	configured := &runtime{
-		catalogURL:       "https://catalog.test/api.json",
-		catalogCachePath: filepath.Join(t.TempDir(), "cache", "opencode-go-models.json"),
-		credentialClient: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+	configured := &catalogLoader{
+		url:       "https://catalog.test/api.json",
+		cachePath: filepath.Join(t.TempDir(), "cache", "opencode-go-models.json"),
+		client: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 			return testHTTPResponse(http.StatusNotModified, ""), nil
 		})},
 		now: time.Now,
 	}
-	if _, err := configured.loadCatalog(context.Background()); err == nil {
+	if _, err := configured.Load(context.Background()); err == nil {
 		t.Fatal("HTTP 304 was accepted without a cache")
 	}
 }
@@ -185,15 +185,15 @@ func TestCatalogDoesNotUseCorruptCacheAsFallback(t *testing.T) {
 	if err := os.WriteFile(cachePath, []byte(`{"version":1} trailing`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	configured := &runtime{
-		catalogURL:       "https://catalog.test/api.json",
-		catalogCachePath: cachePath,
-		credentialClient: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+	configured := &catalogLoader{
+		url:       "https://catalog.test/api.json",
+		cachePath: cachePath,
+		client: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 			return nil, errors.New("offline")
 		})},
 		now: time.Now,
 	}
-	if _, err := configured.loadCatalog(context.Background()); err == nil {
+	if _, err := configured.Load(context.Background()); err == nil {
 		t.Fatal("corrupt cache was used")
 	}
 }

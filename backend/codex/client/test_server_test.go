@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -34,11 +33,4 @@ func newTestClient(t *testing.T, token, baseURL string, options Options) *Client
 		t.Fatal(err)
 	}
 	return client
-}
-
-func writeCompactJSON(t *testing.T, writer http.ResponseWriter, value any) {
-	t.Helper()
-	if err := json.NewEncoder(writer).Encode(value); err != nil {
-		t.Fatal(err)
-	}
 }

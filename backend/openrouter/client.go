@@ -45,7 +45,7 @@ func (c *client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
 	return compaction.ShouldCompact(
 		request,
 		usage,
-		c.metadata(request.Model).contextWindow,
+		c.metadata(request.Model).contextWindowTokens(),
 		c.responses.ShouldCompactState(request),
 	)
 }
@@ -65,41 +65,28 @@ func (c *client) RetryGeneration(err error, failedAttempts int) (time.Duration, 
 func prepareRequest(apiKey string) responses.PrepareRequestFunc {
 	return func(_ context.Context, request *http.Request) error {
 		request.Header.Set("Authorization", "Bearer "+apiKey)
-		request.Header.Set("HTTP-Referer", "https://github.com/eul-ai/eul")
-		request.Header.Set("X-Title", "Eul")
-		request.Header.Set("User-Agent", "eul")
+		setCommonHeaders(request)
 		return nil
 	}
+}
+
+func setCommonHeaders(request *http.Request) {
+	request.Header.Set("HTTP-Referer", "https://github.com/eul-ai/eul")
+	request.Header.Set("X-Title", "Eul")
+	request.Header.Set("User-Agent", "eul")
 }
 
 func requestOptions(metadataFor func(string) modelMetadata) responses.RequestOptionsFunc {
 	return func(request agent.Request) (responses.RequestOptions, error) {
 		metadata := metadataFor(request.Model)
-		level := request.ThinkingLevel
-		if level == "" {
-			level = metadata.defaultThinkingLevel
-			if level == "" && !metadata.reasoning {
-				level = agent.ThinkingOff
-			}
-		}
-
-		supported := !metadata.reasoning && level == agent.ThinkingOff
-		for _, candidate := range metadata.thinkingLevels {
-			if candidate == level {
-				supported = true
-				break
-			}
-		}
+		level, supported := metadata.resolveThinkingLevel(request.ThinkingLevel)
 		if !supported {
 			return responses.RequestOptions{}, &unsupportedThinkingLevelError{level: level, model: request.Model}
 		}
 
 		options := responses.RequestOptions{SessionID: request.SessionID, ToolChoice: "auto", ParallelToolCalls: true}
-		if metadata.reasoning {
-			effort := string(level)
-			if level == agent.ThinkingOff {
-				effort = "none"
-			}
+		if metadata.usesReasoning() {
+			effort, _ := metadata.reasoningEffort(level)
 			options.Reasoning = &responses.Reasoning{Effort: effort}
 			options.Include = []string{"reasoning.encrypted_content"}
 		}

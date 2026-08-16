@@ -70,30 +70,37 @@ type continuationState struct {
 	Items   []json.RawMessage `json:"items"`
 }
 
-func buildCreateRequest(request agent.Request, maxStateBytes int) (createResponseRequest, []json.RawMessage, error) {
-	return buildCreateRequestWithLimit(request, maxStateBytes, maxStateBytes)
+type requestBuild struct {
+	wire     createResponseRequest
+	history  []json.RawMessage
+	newItems []json.RawMessage
 }
 
-func buildCreateRequestWithLimit(request agent.Request, maxStateBytes, generationStateBytes int) (createResponseRequest, []json.RawMessage, error) {
-	created, newItems, err := buildCreateRequestUnchecked(request, maxStateBytes)
+type compactRequestBuild struct {
+	wire  createResponseRequest
+	input []json.RawMessage
+}
+
+func buildRequest(request agent.Request, maxStateBytes, generationStateBytes int) (requestBuild, error) {
+	build, err := buildRequestUnchecked(request, maxStateBytes)
 	if err != nil {
-		return createResponseRequest{}, nil, err
+		return requestBuild{}, err
 	}
-	if _, err := encodeState(created.Input[:len(created.Input)-len(newItems)], newItems, nil, generationStateBytes); err != nil {
-		return createResponseRequest{}, nil, err
+	if _, err := encodeState(build.history, build.newItems, nil, generationStateBytes); err != nil {
+		return requestBuild{}, err
 	}
-	return created, newItems, nil
+	return build, nil
 }
 
-func buildCreateRequestUnchecked(request agent.Request, maxStateBytes int) (createResponseRequest, []json.RawMessage, error) {
+func buildRequestUnchecked(request agent.Request, maxStateBytes int) (requestBuild, error) {
 	history, err := decodeState(request.State, maxStateBytes)
 	if err != nil {
-		return createResponseRequest{}, nil, err
+		return requestBuild{}, err
 	}
 
 	newItems, err := encodeInputs(request.Inputs)
 	if err != nil {
-		return createResponseRequest{}, nil, err
+		return requestBuild{}, err
 	}
 	input := make([]json.RawMessage, 0, len(history)+len(newItems))
 	input = append(input, history...)
@@ -110,28 +117,33 @@ func buildCreateRequestUnchecked(request agent.Request, maxStateBytes int) (crea
 		}
 	}
 
-	return createResponseRequest{
-		Model:        request.Model,
-		Instructions: request.Instructions,
-		Input:        input,
-		Tools:        tools,
-		Store:        false,
-		Stream:       false,
-	}, newItems, nil
+	return requestBuild{
+		wire: createResponseRequest{
+			Model:        request.Model,
+			Instructions: request.Instructions,
+			Input:        input,
+			Tools:        tools,
+			Store:        false,
+			Stream:       false,
+		},
+		history:  history,
+		newItems: newItems,
+	}, nil
 }
 
-func buildCompactRequest(request agent.Request, maxStateBytes int) (createResponseRequest, error) {
-	compactRequest, _, err := buildCreateRequestUnchecked(request, maxStateBytes)
+func buildCompactRequest(request agent.Request, maxStateBytes int) (compactRequestBuild, error) {
+	build, err := buildRequestUnchecked(request, maxStateBytes)
 	if err != nil {
-		return createResponseRequest{}, err
+		return compactRequestBuild{}, err
 	}
 
 	trigger, _ := json.Marshal(struct {
 		Type string `json:"type"`
 	}{Type: "compaction_trigger"})
-	compactRequest.Input = append(compactRequest.Input, trigger)
+	input := append([]json.RawMessage(nil), build.wire.Input...)
+	build.wire.Input = append(build.wire.Input, trigger)
 
-	return compactRequest, nil
+	return compactRequestBuild{wire: build.wire, input: input}, nil
 }
 
 func compactedStateItems(input, output []json.RawMessage) []json.RawMessage {

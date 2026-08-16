@@ -1,6 +1,7 @@
 package messages
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -21,47 +22,27 @@ func (reader fragmentedReader) Read(buffer []byte) (int, error) {
 }
 
 func TestReadMessagesSSEStreamsAndPreservesBlocks(t *testing.T) {
-	stream := strings.Join([]string{
-		`event: message_start`,
-		`data: {"type":"message_start","message":{"usage":{"input_tokens":8,"cache_read_input_tokens":2,"cache_creation_input_tokens":1,"output_tokens":0}}}`,
-		"",
-		`event: content_block_start`,
-		`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`,
-		"",
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"consider "}}`,
-		"",
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"signed"}}`,
-		"",
-		`event: content_block_stop`,
-		`data: {"type":"content_block_stop","index":0}`,
-		"",
-		`event: content_block_start`,
-		`data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`,
-		"",
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"answer"}}`,
-		"",
-		`event: content_block_stop`,
-		`data: {"type":"content_block_stop","index":1}`,
-		"",
-		`event: content_block_start`,
-		`data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"call_1","name":"read","input":{}}}`,
-		"",
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"a\"}"}}`,
-		"",
-		`event: content_block_stop`,
-		`data: {"type":"content_block_stop","index":2}`,
-		"",
-		`event: message_delta`,
-		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}`,
-		"",
-		`event: message_stop`,
-		`data: {"type":"message_stop"}`,
-		"",
-	}, "\n")
+	stream := marshalSSE(
+		t,
+		sseMessageStart(&wireUsage{
+			InputTokens:              int64Pointer(8),
+			OutputTokens:             int64Pointer(0),
+			CacheReadInputTokens:     int64Pointer(2),
+			CacheCreationInputTokens: int64Pointer(1),
+		}),
+		sseContentBlockStart(t, 0, contentBlock{Type: "thinking"}),
+		sseContentBlockDelta(0, streamDelta{Type: "thinking_delta", Thinking: "consider "}),
+		sseContentBlockDelta(0, streamDelta{Type: "signature_delta", Signature: "signed"}),
+		sseContentBlockStop(0),
+		sseContentBlockStart(t, 1, contentBlock{Type: "text"}),
+		sseContentBlockDelta(1, streamDelta{Type: "text_delta", Text: "answer"}),
+		sseContentBlockStop(1),
+		sseContentBlockStart(t, 2, contentBlock{Type: "tool_use", ID: "call_1", Name: "read", Input: json.RawMessage(`{}`)}),
+		sseContentBlockDelta(2, streamDelta{Type: "input_json_delta", PartialJSON: `{"path":"a"}`}),
+		sseContentBlockStop(2),
+		sseMessageDelta("tool_use", &wireUsage{OutputTokens: int64Pointer(5)}),
+		sseMessageStop(),
+	)
 
 	var text, reasoning string
 	var snapshots []agent.ToolCallSnapshot
@@ -100,13 +81,14 @@ func TestReadMessagesSSEStreamsAndPreservesBlocks(t *testing.T) {
 }
 
 func TestReadMessagesSSEAcceptsRefusal(t *testing.T) {
-	stream := strings.Join([]string{
-		`data: {"type":"message_start","message":{}}`, "",
-		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"cannot help"}}`, "",
-		`data: {"type":"content_block_stop","index":0}`, "",
-		`data: {"type":"message_delta","delta":{"stop_reason":"refusal"}}`, "",
-		`data: {"type":"message_stop"}`, "",
-	}, "\n")
+	stream := marshalSSE(
+		t,
+		sseMessageStart(nil),
+		sseContentBlockStart(t, 0, contentBlock{Type: "text", Text: "cannot help"}),
+		sseContentBlockStop(0),
+		sseMessageDelta("refusal", nil),
+		sseMessageStop(),
+	)
 	result, err := readMessagesSSE(strings.NewReader(stream), 1024, agent.StreamObserver{})
 	if err != nil {
 		t.Fatal(err)
@@ -117,11 +99,12 @@ func TestReadMessagesSSEAcceptsRefusal(t *testing.T) {
 }
 
 func TestReadMessagesSSEClassifiesContextWindowStop(t *testing.T) {
-	stream := strings.Join([]string{
-		`data: {"type":"message_start","message":{}}`, "",
-		`data: {"type":"message_delta","delta":{"stop_reason":"model_context_window_exceeded"}}`, "",
-		`data: {"type":"message_stop"}`, "",
-	}, "\n")
+	stream := marshalSSE(
+		t,
+		sseMessageStart(nil),
+		sseMessageDelta("model_context_window_exceeded", nil),
+		sseMessageStop(),
+	)
 	_, err := readMessagesSSE(strings.NewReader(stream), 1024, agent.StreamObserver{})
 	if err == nil || !contextLimitError(err) {
 		t.Fatalf("error = %v", err)
@@ -129,15 +112,16 @@ func TestReadMessagesSSEClassifiesContextWindowStop(t *testing.T) {
 }
 
 func TestReadMessagesSSEOrdersMultipleToolCalls(t *testing.T) {
-	stream := strings.Join([]string{
-		`data: {"type":"message_start","message":{}}`, "",
-		`data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_2","name":"write","input":{"path":"b"}}}`, "",
-		`data: {"type":"content_block_stop","index":1}`, "",
-		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_1","name":"read","input":{"path":"a"}}}`, "",
-		`data: {"type":"content_block_stop","index":0}`, "",
-		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}`, "",
-		`data: {"type":"message_stop"}`, "",
-	}, "\n")
+	stream := marshalSSE(
+		t,
+		sseMessageStart(nil),
+		sseContentBlockStart(t, 1, contentBlock{Type: "tool_use", ID: "call_2", Name: "write", Input: json.RawMessage(`{"path":"b"}`)}),
+		sseContentBlockStop(1),
+		sseContentBlockStart(t, 0, contentBlock{Type: "tool_use", ID: "call_1", Name: "read", Input: json.RawMessage(`{"path":"a"}`)}),
+		sseContentBlockStop(0),
+		sseMessageDelta("tool_use", nil),
+		sseMessageStop(),
+	)
 	result, err := readMessagesSSE(strings.NewReader(stream), 1<<20, agent.StreamObserver{})
 	if err != nil {
 		t.Fatal(err)
@@ -148,25 +132,27 @@ func TestReadMessagesSSEOrdersMultipleToolCalls(t *testing.T) {
 }
 
 func TestReadMessagesSSERejectsMalformedToolInput(t *testing.T) {
-	stream := strings.Join([]string{
-		`data: {"type":"message_start","message":{}}`, "",
-		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_1","name":"read","input":{}}}`, "",
-		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{"}}`, "",
-		`data: {"type":"content_block_stop","index":0}`, "",
-		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}`, "",
-		`data: {"type":"message_stop"}`, "",
-	}, "\n")
+	stream := marshalSSE(
+		t,
+		sseMessageStart(nil),
+		sseContentBlockStart(t, 0, contentBlock{Type: "tool_use", ID: "call_1", Name: "read", Input: json.RawMessage(`{}`)}),
+		sseContentBlockDelta(0, streamDelta{Type: "input_json_delta", PartialJSON: "{"}),
+		sseContentBlockStop(0),
+		sseMessageDelta("tool_use", nil),
+		sseMessageStop(),
+	)
 	if _, err := readMessagesSSE(strings.NewReader(stream), 1<<20, agent.StreamObserver{}); err == nil {
 		t.Fatal("malformed tool input was accepted")
 	}
 }
 
 func TestReadMessagesSSEDoesNotRetryAfterDelivery(t *testing.T) {
-	stream := strings.Join([]string{
-		`data: {"type":"message_start","message":{}}`, "",
-		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`, "",
-		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}`, "",
-	}, "\n")
+	stream := marshalSSE(
+		t,
+		sseMessageStart(nil),
+		sseContentBlockStart(t, 0, contentBlock{Type: "text"}),
+		sseContentBlockDelta(0, streamDelta{Type: "text_delta", Text: "partial"}),
+	)
 	_, err := readMessagesSSE(strings.NewReader(stream), 1<<20, agent.StreamObserver{Text: func(string) error { return nil }})
 	var partial *partialResponseError
 	if !errors.As(err, &partial) {
@@ -178,11 +164,12 @@ func TestReadMessagesSSEDoesNotRetryAfterDelivery(t *testing.T) {
 }
 
 func TestReadMessagesSSERetriesWhenNothingWasDelivered(t *testing.T) {
-	stream := strings.Join([]string{
-		`data: {"type":"message_start","message":{}}`, "",
-		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`, "",
-		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}`, "",
-	}, "\n")
+	stream := marshalSSE(
+		t,
+		sseMessageStart(nil),
+		sseContentBlockStart(t, 0, contentBlock{Type: "text"}),
+		sseContentBlockDelta(0, streamDelta{Type: "text_delta", Text: "partial"}),
+	)
 	_, err := readMessagesSSE(strings.NewReader(stream), 1<<20, agent.StreamObserver{})
 	var partial *partialResponseError
 	if errors.As(err, &partial) {

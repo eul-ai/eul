@@ -43,15 +43,20 @@ func (runtime *fakeBackendRuntime) Close() error {
 	return runtime.closeErr
 }
 
-func (runtime *fakeBackendRuntime) Login(_ context.Context, method backend.LoginMethod, interaction backend.LoginInteraction) error {
-	runtime.loginDevice = method == backend.LoginDevice
-	if method == backend.LoginDevice && interaction.DeviceCode != nil {
+func (runtime *fakeBackendRuntime) LoginBrowser(_ context.Context, presentURL func(string) error) error {
+	runtime.loginDevice = false
+	if presentURL != nil {
 		runtime.interactionCall = true
-		_ = interaction.DeviceCode(backend.DeviceCode{VerificationURL: "https://example.test/device", UserCode: "ABCD-EFGH"})
+		_ = presentURL("https://example.test/authorize")
 	}
-	if method == backend.LoginBrowser && interaction.AuthURL != nil {
+	return runtime.loginErr
+}
+
+func (runtime *fakeBackendRuntime) LoginDevice(_ context.Context, presentCode func(backend.DeviceCode) error) error {
+	runtime.loginDevice = true
+	if presentCode != nil {
 		runtime.interactionCall = true
-		_ = interaction.AuthURL("https://example.test/authorize")
+		_ = presentCode(backend.DeviceCode{VerificationURL: "https://example.test/device", UserCode: "ABCD-EFGH"})
 	}
 	return runtime.loginErr
 }

@@ -19,7 +19,7 @@ func TestClientBoundsHTTPErrors(t *testing.T) {
 	const key = "top-secret-key"
 	server := responseServer(t, http.StatusBadRequest, strings.Repeat(key+" ", 100))
 	defer server.Close()
-	client := newTestClient(t, key, server.URL, Options{})
+	client := newTestClient(t, key, server.URL, Options{HTTPClient: server.Client()})
 	client.maxErrorBytes = 160
 	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	if err == nil {
@@ -34,7 +34,7 @@ func TestClientBoundsHTTPErrors(t *testing.T) {
 func TestClientParsesStructuredHTTPError(t *testing.T) {
 	server := responseServer(t, http.StatusTooManyRequests, `{"error":{"type":"rate_limit_error","code":"rate_limit","message":"slow down"}}`)
 	defer server.Close()
-	client := newTestClient(t, "key", server.URL, Options{})
+	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	var responseErr *httpResponseError
 	if !errors.As(err, &responseErr) || responseErr.statusCode != http.StatusTooManyRequests || responseErr.detail.Type != "rate_limit_error" || responseErr.detail.Code != "rate_limit" || responseErr.detail.Message != "slow down" {
@@ -46,7 +46,7 @@ func TestClientIncludesProviderHTTPErrorDetail(t *testing.T) {
 	const key = "provider-secret"
 	server := responseServer(t, http.StatusBadRequest, `{"error":{"code":400,"message":"Provider returned error","metadata":{"provider_name":"Google AI Studio","raw":"{\"error\":{\"code\":400,\"message\":\"Corrupted thought signature: provider-secret\",\"status\":\"INVALID_ARGUMENT\"}}"}}}`)
 	defer server.Close()
-	client := newTestClient(t, key, server.URL, Options{})
+	client := newTestClient(t, key, server.URL, Options{HTTPClient: server.Client()})
 
 	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	var responseErr *httpResponseError
@@ -62,7 +62,7 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 	t.Run("HTTP error", func(t *testing.T) {
 		server := responseServer(t, http.StatusBadRequest, `{"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too many tokens"}}`)
 		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{})
+		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		if err == nil || !client.IsContextLimitError(err) {
@@ -76,7 +76,7 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 	t.Run("HTTP error type", func(t *testing.T) {
 		server := responseServer(t, http.StatusBadRequest, `{"error":{"type":"context_length_exceeded","message":"too many tokens"}}`)
 		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{})
+		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		if err == nil || !client.IsContextLimitError(err) {
@@ -90,7 +90,7 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 			fmt.Fprint(writer, "data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"context_length_exceeded\",\"message\":\"too many tokens\"}}\n\n")
 		}))
 		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{})
+		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		if err == nil || !client.IsContextLimitError(err) {
@@ -101,7 +101,7 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 	t.Run("terminal response error", func(t *testing.T) {
 		server := responseServer(t, http.StatusOK, `{"status":"failed","error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too many tokens"},"output":[]}`)
 		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{})
+		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		if err == nil || !client.IsContextLimitError(err) {
@@ -122,7 +122,7 @@ func TestClientRetriesTransientGenerationThroughEngine(t *testing.T) {
 		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"recovered\"}]}]}}\n\n")
 	}))
 	defer server.Close()
-	client := newTestClient(t, "key", server.URL, Options{})
+	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 	engine := agent.New(client, emptyToolbox{}, agent.Options{Model: "test-model"})
 
 	var retries []agent.Event
@@ -248,7 +248,7 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 			fmt.Fprint(writer, "data: {\"type\":\"error\",\"error\":{\"type\":\"server_error\",\"code\":\"server_error\",\"message\":\"failed\"}}\n\n")
 		}))
 		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{})
+		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		delay, retry := client.RetryGeneration(err, 1)
@@ -263,7 +263,7 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 			fmt.Fprint(writer, "data: {\"type\":\"error\",\"error\":{\"code\":\"server_is_overloaded\",\"message\":\"overloaded\"}}\n\n")
 		}))
 		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{})
+		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		if _, retry := client.RetryGeneration(err, 1); err == nil || !retry {
@@ -302,7 +302,7 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 			fmt.Fprint(writer, `{"error":{"type":"rate_limit_error","message":"slow down"}}`)
 		}))
 		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{})
+		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		delay, retry := client.RetryGeneration(err, 1)
@@ -326,7 +326,7 @@ func TestGenerationRetryAllowsExtendedRecovery(t *testing.T) {
 func TestClientDoesNotRetryPermanentOrObserverErrors(t *testing.T) {
 	server := responseServer(t, http.StatusBadRequest, `{"error":{"type":"invalid_request_error","message":"bad request"}}`)
 	defer server.Close()
-	client := newTestClient(t, "key", server.URL, Options{})
+	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	if _, retry := client.RetryGeneration(err, 1); err == nil || retry {
 		t.Fatalf("HTTP error = %v, retry = %t", err, retry)
@@ -337,7 +337,7 @@ func TestClientDoesNotRetryPermanentOrObserverErrors(t *testing.T) {
 
 	server = responseServer(t, http.StatusOK, `{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"answer"}]}]}`)
 	defer server.Close()
-	client = newTestClient(t, "key", server.URL, Options{})
+	client = newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 	sinkErr := &net.DNSError{IsTimeout: true, Err: "sink timeout", Name: "sink"}
 	_, err = generate(client, context.Background(), baseRequest(), func(string) error { return sinkErr }, nil, nil)
 	if _, retry := client.RetryGeneration(err, 1); !errors.Is(err, sinkErr) || retry {

@@ -29,6 +29,28 @@ type providerOnlyDriver struct {
 	runtime *providerOnlyRuntime
 }
 
+type browserOnlyRuntime struct {
+	providerOnlyRuntime
+	loginCalls int
+}
+
+func (runtime *browserOnlyRuntime) LoginBrowser(_ context.Context, present func(string) error) error {
+	runtime.loginCalls++
+	return present("https://example.test/login")
+}
+
+type browserOnlyDriver struct {
+	runtime *browserOnlyRuntime
+}
+
+func (*browserOnlyDriver) Descriptor() backend.Descriptor {
+	return backend.Descriptor{ID: "browser-only", Name: "Browser Only"}
+}
+
+func (driver *browserOnlyDriver) Open(backend.Options) (backend.Runtime, error) {
+	return driver.runtime, nil
+}
+
 func (*providerOnlyDriver) Descriptor() backend.Descriptor {
 	return backend.Descriptor{ID: "provider-only", Name: "Provider Only"}
 }
@@ -52,6 +74,21 @@ func TestBackendAuthenticationCapabilitiesAreOptional(t *testing.T) {
 		if code := run([]string{command}, runtime); code != exitFailure || driver.runtime.closeCalls != index+1 {
 			t.Fatalf("command=%q code=%d close calls=%d stdout=%q stderr=%q", command, code, driver.runtime.closeCalls, stdout.String(), stderr.String())
 		}
+	}
+}
+
+func TestBrowserLoginDoesNotRequireLogoutCapability(t *testing.T) {
+	driver := &browserOnlyDriver{runtime: &browserOnlyRuntime{}}
+	registry, err := backend.NewRegistry("browser-only", driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	runtime := testRuntime(t.TempDir(), &stdout, &stderr, nil)
+	runtime.backends = registry
+
+	if code := run([]string{"login"}, runtime); code != exitSuccess || driver.runtime.loginCalls != 1 || driver.runtime.closeCalls != 1 {
+		t.Fatalf("code=%d login calls=%d close calls=%d stderr=%q", code, driver.runtime.loginCalls, driver.runtime.closeCalls, stderr.String())
 	}
 }
 

@@ -38,6 +38,7 @@ var (
 	_ backend.CredentialChecker     = (*runtime)(nil)
 	_ backend.UsageProvider         = (*runtime)(nil)
 	_ backend.ModelMetadataProvider = (*runtime)(nil)
+	_ backend.ModelInitializer      = (*runtime)(nil)
 )
 
 func New() *Driver {
@@ -62,8 +63,8 @@ func (driver *Driver) Open(backend.Options) (backend.Runtime, error) {
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
-	generationClient := backendhttp.New(driver.httpClient, 0)
-	credentialClient := backendhttp.New(generationClient, credentialHTTPTimeout)
+	generationClient := backendhttp.CloneNoRedirects(driver.httpClient, 0)
+	credentialClient := backendhttp.CloneNoRedirects(generationClient, credentialHTTPTimeout)
 
 	return &runtime{
 		apiKey:           apiKey,
@@ -85,28 +86,20 @@ type runtime struct {
 }
 
 func (configured *runtime) CheckCredentials(ctx context.Context) error {
-	if err := configured.get(ctx, "/key", nil); err != nil {
+	if err := configured.get(ctx, "/key", nil, true); err != nil {
 		return fmt.Errorf("openrouter: validate API key: %w", err)
 	}
+	return nil
+}
+
+func (configured *runtime) InitializeModels(ctx context.Context) error {
 	var catalog modelCatalog
-	if err := configured.get(ctx, "/models", &catalog); err != nil {
+	if err := configured.get(ctx, "/models", &catalog, false); err != nil {
 		return fmt.Errorf("openrouter: load models: %w", err)
 	}
-	models := make(map[string]modelMetadata, len(catalog.Data))
-	for _, model := range catalog.Data {
-		if strings.TrimSpace(model.ID) == "" || model.ContextLength < 0 {
-			continue
-		}
-		thinkingLevels, defaultThinkingLevel := thinkingMetadata(model.Reasoning)
-		models[model.ID] = modelMetadata{
-			contextWindow:        model.ContextLength,
-			reasoning:            len(model.Reasoning.SupportedEfforts) > 0,
-			thinkingLevels:       thinkingLevels,
-			defaultThinkingLevel: defaultThinkingLevel,
-		}
-	}
+
 	configured.mu.Lock()
-	configured.models = models
+	configured.models = buildModels(catalog)
 	configured.mu.Unlock()
 	return nil
 }
@@ -122,7 +115,7 @@ type keyUsage struct {
 
 func (configured *runtime) Usage(ctx context.Context) (backend.AccountUsage, error) {
 	var response keyResponse
-	if err := configured.get(ctx, "/key", &response); err != nil {
+	if err := configured.get(ctx, "/key", &response, true); err != nil {
 		return backend.AccountUsage{}, fmt.Errorf("openrouter: load usage: %w", err)
 	}
 
@@ -148,33 +141,23 @@ func (configured *runtime) modelMetadata(model string) modelMetadata {
 }
 
 func (configured *runtime) ModelMetadata(model string) backend.ModelMetadata {
-	metadata := configured.modelMetadata(model)
-	if len(metadata.thinkingLevels) == 0 {
-		return backend.ModelMetadata{ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff}}
-	}
-
-	return backend.ModelMetadata{
-		ContextWindow:  metadata.contextWindow,
-		ThinkingLevels: append([]agent.ThinkingLevel(nil), metadata.thinkingLevels...),
-	}
+	return configured.modelMetadata(model).backendMetadata()
 }
 
 func (*runtime) Close() error {
 	return nil
 }
 
-func (configured *runtime) get(ctx context.Context, path string, target any) error {
+func (configured *runtime) get(ctx context.Context, path string, target any, authenticated bool) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, configured.baseURL+path, nil)
 	if err != nil {
 		return err
 	}
-	if path != "/models" {
+	if authenticated {
 		request.Header.Set("Authorization", "Bearer "+configured.apiKey)
 	}
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("HTTP-Referer", "https://github.com/eul-ai/eul")
-	request.Header.Set("X-Title", "Eul")
-	request.Header.Set("User-Agent", "eul")
+	setCommonHeaders(request)
 
 	response, err := configured.credentialClient.Do(request)
 	if err != nil {
@@ -205,37 +188,4 @@ func (configured *runtime) get(ctx context.Context, path string, target any) err
 		}
 	}
 	return nil
-}
-
-func thinkingMetadata(reasoning modelReasoning) ([]agent.ThinkingLevel, agent.ThinkingLevel) {
-	supported := make(map[agent.ThinkingLevel]bool, len(reasoning.SupportedEfforts)+1)
-	if !reasoning.Mandatory {
-		supported[agent.ThinkingOff] = true
-	}
-	for _, effort := range reasoning.SupportedEfforts {
-		if level, ok := thinkingLevelForEffort(effort); ok {
-			supported[level] = true
-		}
-	}
-
-	levels := make([]agent.ThinkingLevel, 0, len(supported))
-	for _, level := range agent.ThinkingLevels() {
-		if supported[level] {
-			levels = append(levels, level)
-		}
-	}
-
-	defaultLevel, ok := thinkingLevelForEffort(reasoning.DefaultEffort)
-	if !ok && !reasoning.Mandatory {
-		defaultLevel = agent.ThinkingOff
-	}
-	return levels, defaultLevel
-}
-
-func thinkingLevelForEffort(effort string) (agent.ThinkingLevel, bool) {
-	if effort == "none" {
-		return agent.ThinkingOff, true
-	}
-	level := agent.ThinkingLevel(effort)
-	return level, level.Valid()
 }

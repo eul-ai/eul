@@ -38,34 +38,34 @@ func (err *partialResponseError) Unwrap() error { return err.cause }
 
 type streamEvent struct {
 	Type         string          `json:"type"`
-	Index        int             `json:"index"`
-	Message      *streamMessage  `json:"message"`
-	ContentBlock json.RawMessage `json:"content_block"`
-	Delta        streamDelta     `json:"delta"`
-	Usage        *wireUsage      `json:"usage"`
-	Error        *apiError       `json:"error"`
+	Index        int             `json:"index,omitempty"`
+	Message      *streamMessage  `json:"message,omitempty"`
+	ContentBlock json.RawMessage `json:"content_block,omitempty"`
+	Delta        streamDelta     `json:"delta,omitempty"`
+	Usage        *wireUsage      `json:"usage,omitempty"`
+	Error        *apiError       `json:"error,omitempty"`
 }
 
 type streamMessage struct {
-	StopReason string     `json:"stop_reason"`
-	Usage      *wireUsage `json:"usage"`
+	StopReason string     `json:"stop_reason,omitempty"`
+	Usage      *wireUsage `json:"usage,omitempty"`
 }
 
 type streamDelta struct {
-	Type        string     `json:"type"`
-	Text        string     `json:"text"`
-	Thinking    string     `json:"thinking"`
-	Signature   string     `json:"signature"`
-	PartialJSON string     `json:"partial_json"`
-	StopReason  string     `json:"stop_reason"`
-	Usage       *wireUsage `json:"usage"`
+	Type        string     `json:"type,omitempty"`
+	Text        string     `json:"text,omitempty"`
+	Thinking    string     `json:"thinking,omitempty"`
+	Signature   string     `json:"signature,omitempty"`
+	PartialJSON string     `json:"partial_json,omitempty"`
+	StopReason  string     `json:"stop_reason,omitempty"`
+	Usage       *wireUsage `json:"usage,omitempty"`
 }
 
 type wireUsage struct {
-	InputTokens              *int64 `json:"input_tokens"`
-	OutputTokens             *int64 `json:"output_tokens"`
-	CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
-	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
+	InputTokens              *int64 `json:"input_tokens,omitempty"`
+	OutputTokens             *int64 `json:"output_tokens,omitempty"`
+	CacheReadInputTokens     *int64 `json:"cache_read_input_tokens,omitempty"`
+	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens,omitempty"`
 }
 
 type usageAccumulator struct {
@@ -73,21 +73,6 @@ type usageAccumulator struct {
 	outputTokens        int64
 	cacheReadTokens     int64
 	cacheCreationTokens int64
-}
-
-type blockAccumulator struct {
-	index        int
-	kind         string
-	text         strings.Builder
-	thinking     strings.Builder
-	signature    strings.Builder
-	toolID       string
-	toolName     string
-	initialInput json.RawMessage
-	toolInput    strings.Builder
-	hasToolDelta bool
-	redacted     string
-	complete     bool
 }
 
 type streamResult struct {
@@ -168,42 +153,13 @@ func (decoder *streamDecoder) startBlock(index int, raw json.RawMessage) error {
 	if _, exists := decoder.blocks[index]; exists {
 		return fmt.Errorf("anthropic content block %d started more than once", index)
 	}
-	if err := validateRawObject(raw); err != nil {
-		return fmt.Errorf("anthropic content block %d: %w", index, err)
-	}
 
-	var block contentBlock
-	if err := json.Unmarshal(raw, &block); err != nil {
-		return fmt.Errorf("decode Anthropic content block %d: %w", index, err)
+	block, update, err := newBlockAccumulator(index, raw)
+	if err != nil {
+		return err
 	}
-	accumulator := &blockAccumulator{
-		index:        index,
-		kind:         block.Type,
-		toolID:       block.ID,
-		toolName:     block.Name,
-		initialInput: append(json.RawMessage(nil), block.Input...),
-		redacted:     block.Data,
-	}
-	accumulator.text.WriteString(block.Text)
-	accumulator.thinking.WriteString(block.Thinking)
-	accumulator.signature.WriteString(block.Signature)
-	decoder.blocks[index] = accumulator
-
-	switch block.Type {
-	case "text":
-		return decoder.deliverText(block.Text)
-	case "thinking":
-		return decoder.deliverReasoning(block.Thinking)
-	case "tool_use":
-		if block.ID == "" || block.Name == "" {
-			return fmt.Errorf("anthropic tool block %d starts without an ID and name", index)
-		}
-		return decoder.deliverToolCall(accumulator, false)
-	case "redacted_thinking":
-		return nil
-	default:
-		return fmt.Errorf("unsupported Anthropic content block type %q", block.Type)
-	}
+	decoder.blocks[index] = block
+	return decoder.deliverBlockUpdate(block, update, false)
 }
 
 func (decoder *streamDecoder) updateBlock(index int, delta streamDelta) error {
@@ -211,39 +167,12 @@ func (decoder *streamDecoder) updateBlock(index int, delta streamDelta) error {
 	if !exists {
 		return fmt.Errorf("anthropic content block %d received a delta before start", index)
 	}
-	if block.complete {
-		return fmt.Errorf("anthropic content block %d received a delta after stop", index)
-	}
 
-	switch delta.Type {
-	case "text_delta":
-		if block.kind != "text" {
-			return fmt.Errorf("anthropic content block %d received text for type %q", index, block.kind)
-		}
-		block.text.WriteString(delta.Text)
-		return decoder.deliverText(delta.Text)
-	case "thinking_delta":
-		if block.kind != "thinking" {
-			return fmt.Errorf("anthropic content block %d received thinking for type %q", index, block.kind)
-		}
-		block.thinking.WriteString(delta.Thinking)
-		return decoder.deliverReasoning(delta.Thinking)
-	case "signature_delta":
-		if block.kind != "thinking" {
-			return fmt.Errorf("anthropic content block %d received a signature for type %q", index, block.kind)
-		}
-		block.signature.WriteString(delta.Signature)
-	case "input_json_delta":
-		if block.kind != "tool_use" {
-			return fmt.Errorf("anthropic content block %d received tool input for type %q", index, block.kind)
-		}
-		block.hasToolDelta = true
-		block.toolInput.WriteString(delta.PartialJSON)
-		return decoder.deliverToolCall(block, false)
-	default:
-		return fmt.Errorf("unsupported Anthropic content block delta type %q", delta.Type)
+	update, err := block.apply(delta)
+	if err != nil {
+		return err
 	}
-	return nil
+	return decoder.deliverBlockUpdate(block, update, false)
 }
 
 func (decoder *streamDecoder) stopBlock(index int) error {
@@ -251,16 +180,23 @@ func (decoder *streamDecoder) stopBlock(index int) error {
 	if !exists {
 		return fmt.Errorf("anthropic content block %d stopped before start", index)
 	}
-	if block.complete {
-		return fmt.Errorf("anthropic content block %d stopped more than once", index)
+
+	update, err := block.stop()
+	if err != nil {
+		return err
 	}
-	block.complete = true
-	if block.kind == "tool_use" {
-		arguments := block.toolArguments()
-		if err := validateRawObject(json.RawMessage(arguments)); err != nil {
-			return fmt.Errorf("anthropic tool call %q input: %w", block.toolID, err)
-		}
-		return decoder.deliverToolCall(block, true)
+	return decoder.deliverBlockUpdate(block, update, true)
+}
+
+func (decoder *streamDecoder) deliverBlockUpdate(block *blockAccumulator, update blockUpdate, complete bool) error {
+	if err := decoder.deliverText(update.text); err != nil {
+		return err
+	}
+	if err := decoder.deliverReasoning(update.reasoning); err != nil {
+		return err
+	}
+	if update.tool {
+		return decoder.deliverToolCall(block, complete)
 	}
 	return nil
 }
@@ -303,19 +239,6 @@ func (decoder *streamDecoder) deliverToolCall(block *blockAccumulator, complete 
 	return nil
 }
 
-func (block *blockAccumulator) toolArguments() string {
-	if block.hasToolDelta {
-		arguments := block.toolInput.String()
-		if arguments != "" {
-			return arguments
-		}
-	}
-	if len(block.initialInput) != 0 && string(block.initialInput) != "null" {
-		return string(block.initialInput)
-	}
-	return "{}"
-}
-
 func (decoder *streamDecoder) finish() (streamResult, error) {
 	if !decoder.stopped || decoder.stopReason == "" {
 		return streamResult{}, errSSEIncomplete
@@ -341,34 +264,15 @@ func (decoder *streamDecoder) finish() (streamResult, error) {
 	wireBlocks := make([]contentBlock, 0, len(indexes))
 	seenCalls := make(map[string]struct{})
 	for _, index := range indexes {
-		block := decoder.blocks[index]
-		if !block.complete {
-			return streamResult{}, fmt.Errorf("anthropic content block %d did not stop", index)
+		wire, call, blockText, err := decoder.blocks[index].finalize(seenCalls)
+		if err != nil {
+			return streamResult{}, err
 		}
-
-		var value contentBlock
-		switch block.kind {
-		case "text":
-			value = contentBlock{Type: "text", Text: block.text.String()}
-			text.WriteString(value.Text)
-		case "thinking":
-			value = contentBlock{Type: "thinking", Thinking: block.thinking.String(), Signature: block.signature.String()}
-		case "redacted_thinking":
-			value = contentBlock{Type: "redacted_thinking", Data: block.redacted}
-		case "tool_use":
-			arguments := block.toolArguments()
-			rawInput := json.RawMessage(arguments)
-			if err := validateRawObject(rawInput); err != nil {
-				return streamResult{}, fmt.Errorf("anthropic tool call %q input: %w", block.toolID, err)
-			}
-			if _, exists := seenCalls[block.toolID]; exists {
-				return streamResult{}, fmt.Errorf("anthropic message has duplicate tool call ID %q", block.toolID)
-			}
-			seenCalls[block.toolID] = struct{}{}
-			calls = append(calls, agent.ToolCall{ID: block.toolID, Name: block.toolName, Arguments: rawInput})
-			value = contentBlock{Type: "tool_use", ID: block.toolID, Name: block.toolName, Input: rawInput}
+		wireBlocks = append(wireBlocks, wire)
+		text.WriteString(blockText)
+		if call != nil {
+			calls = append(calls, *call)
 		}
-		wireBlocks = append(wireBlocks, value)
 	}
 
 	assistant, err := marshalWireMessage("assistant", wireBlocks)

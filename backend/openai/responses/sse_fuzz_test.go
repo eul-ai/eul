@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 const fuzzSSEMaximum = 16 * 1024
@@ -74,8 +75,8 @@ func FuzzResponsesSSE(f *testing.F) {
 			return
 		}
 		maximum := int64(len(stream) / 2)
-		_, err := readSSE(bytes.NewReader(stream), maximum, func([]byte) (createResponseEnvelope, bool, error) {
-			return createResponseEnvelope{}, false, nil
+		_, err := backendhttp.ReadSSE(bytes.NewReader(stream), maximum, func([]byte) (bool, error) {
+			return false, nil
 		})
 		if err == nil {
 			t.Fatalf("stream of %d bytes with limit %d returned %v", len(stream), maximum, err)
@@ -85,7 +86,7 @@ func FuzzResponsesSSE(f *testing.F) {
 
 func decodeFuzzSSE(reader io.Reader) (createResponseEnvelope, fuzzSSECapture, error) {
 	var capture fuzzSSECapture
-	observer := &streamObserver{observer: agent.StreamObserver{
+	observer := agent.StreamObserver{
 		Text: func(delta string) error {
 			capture.text += delta
 			return nil
@@ -98,9 +99,9 @@ func decodeFuzzSSE(reader io.Reader) (createResponseEnvelope, fuzzSSECapture, er
 			capture.tools = append(capture.tools, snapshot)
 			return nil
 		},
-	}}
-	response, err := readResponsesSSE(reader, fuzzSSEMaximum, observer)
-	return response, capture, err
+	}
+	result, err := readResponsesSSE(reader, fuzzSSEMaximum, observer)
+	return result.response, capture, err
 }
 
 func (reader *fuzzChunkReader) Read(buffer []byte) (int, error) {

@@ -2,57 +2,51 @@ package testhttp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"sync"
-	"sync/atomic"
 )
 
-const scheme = "eul-test-http"
-
-var (
-	serverID atomic.Uint64
-	servers  sync.Map
-)
-
-func init() {
-	http.DefaultTransport.(*http.Transport).RegisterProtocol(scheme, transport{})
-}
+const serverURL = "eul-test-http://server"
 
 type Server struct {
 	URL     string
-	host    string
 	handler http.Handler
+	mu      sync.RWMutex
+	closed  bool
 }
 
 func NewServer(handler http.Handler) *Server {
-	host := fmt.Sprintf("server-%d", serverID.Add(1))
-	server := &Server{
-		URL:     scheme + "://" + host,
-		host:    host,
-		handler: handler,
-	}
-	servers.Store(host, server)
-	return server
+	return &Server{URL: serverURL, handler: handler}
 }
 
 func (server *Server) Client() *http.Client {
-	return &http.Client{Transport: transport{}}
+	return &http.Client{Transport: &transport{server: server}}
 }
 
 func (server *Server) Close() {
-	servers.Delete(server.host)
+	server.mu.Lock()
+	server.closed = true
+	server.mu.Unlock()
 }
 
-type transport struct{}
+func (server *Server) loadHandler() (http.Handler, bool) {
+	server.mu.RLock()
+	defer server.mu.RUnlock()
+	return server.handler, server.closed
+}
 
-func (transport) RoundTrip(request *http.Request) (*http.Response, error) {
-	value, ok := servers.Load(request.URL.Host)
-	if !ok {
-		return nil, fmt.Errorf("test HTTP server %q is closed", request.URL.Host)
+type transport struct {
+	server *Server
+}
+
+func (transport *transport) RoundTrip(request *http.Request) (*http.Response, error) {
+	handler, closed := transport.server.loadHandler()
+	if closed {
+		return nil, errClosedServer
 	}
-	server := value.(*Server)
 
 	reader, writer := io.Pipe()
 	responseWriter := &pipeResponseWriter{
@@ -81,7 +75,7 @@ func (transport) RoundTrip(request *http.Request) (*http.Response, error) {
 			}
 			_ = writer.Close()
 		}()
-		server.handler.ServeHTTP(responseWriter, handlerRequest)
+		handler.ServeHTTP(responseWriter, handlerRequest)
 	}()
 
 	select {
@@ -107,6 +101,8 @@ func (transport) RoundTrip(request *http.Request) (*http.Response, error) {
 		return nil, request.Context().Err()
 	}
 }
+
+var errClosedServer = errors.New("test HTTP server is closed")
 
 type contextBody struct {
 	reader *io.PipeReader

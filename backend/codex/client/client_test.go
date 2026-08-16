@@ -82,7 +82,7 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 	client, err := New(TokenSourceFunc(func(context.Context) (Credential, error) {
 		sourceCalls++
 		return Credential{AccessToken: token, AccountID: accountID}, nil
-	}), Options{BaseURL: server.URL})
+	}), Options{BaseURL: server.URL, HTTPClient: server.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,10 +15,9 @@ import (
 )
 
 const (
-	defaultBaseURL               = "https://chatgpt.com/backend-api"
-	defaultHTTPTimeout           = 10 * time.Minute
-	defaultMaxUsageResponseBytes = int64(16 * 1024 * 1024)
-	defaultMaxUsageErrorBytes    = int64(64 * 1024)
+	defaultBaseURL       = "https://chatgpt.com/backend-api"
+	defaultHTTPTimeout   = 10 * time.Minute
+	defaultMaxErrorBytes = int64(64 * 1024)
 )
 
 type Options struct {
@@ -37,13 +36,10 @@ type TokenSource interface {
 }
 
 type Client struct {
-	httpClient            *http.Client
-	usageEndpoint         string
-	tokenSource           TokenSource
-	responses             *responses.Client
-	maxUsageResponseBytes int64
-	maxUsageErrorBytes    int64
-	reasoningSummary      ReasoningSummary
+	tokenSource      TokenSource
+	responses        *responses.Client
+	maxErrorBytes    int64
+	reasoningSummary ReasoningSummary
 }
 
 var (
@@ -66,26 +62,16 @@ func New(source TokenSource, options Options) (*Client, error) {
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
-
-	httpClient := backendhttp.New(options.HTTPClient, defaultHTTPTimeout)
-
 	baseURL = strings.TrimRight(baseURL, "/")
-	parsedBaseURL, err := url.Parse(baseURL)
-	if err != nil {
+	if _, err := url.Parse(baseURL); err != nil {
 		return nil, fmt.Errorf("openai: parse base URL: %w", err)
 	}
-	usageEndpoint := baseURL + "/api/codex/usage"
-	if strings.HasSuffix(strings.TrimRight(parsedBaseURL.Path, "/"), "/backend-api") {
-		usageEndpoint = baseURL + "/wham/usage"
-	}
 
+	httpClient := backendhttp.CloneNoRedirects(options.HTTPClient, defaultHTTPTimeout)
 	client := &Client{
-		httpClient:            httpClient,
-		usageEndpoint:         usageEndpoint,
-		tokenSource:           source,
-		maxUsageResponseBytes: defaultMaxUsageResponseBytes,
-		maxUsageErrorBytes:    defaultMaxUsageErrorBytes,
-		reasoningSummary:      reasoningSummary,
+		tokenSource:      source,
+		maxErrorBytes:    defaultMaxErrorBytes,
+		reasoningSummary: reasoningSummary,
 	}
 	client.responses, err = responses.New(responses.Options{
 		HTTPClient:     httpClient,
@@ -157,45 +143,6 @@ func setCredentialHeaders(request *http.Request, credential Credential) {
 	request.Header.Set("User-Agent", "eul")
 }
 
-func (c *Client) get(ctx context.Context, endpoint string, credential Credential, operation string) (*http.Response, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, c.errorf("create %s: %v", operation, err)
-	}
-	setCredentialHeaders(request, credential)
-	request.Header.Set("Accept", "application/json")
-
-	response, err := c.httpClient.Do(request)
-	if err != nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return nil, contextErr
-		}
-		return nil, c.wrapf(err, "%s failed: %v", operation, err)
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		defer response.Body.Close()
-		body, _, readErr := backendhttp.ReadBounded(response.Body, c.maxUsageErrorBytes)
-		if readErr != nil {
-			return nil, c.wrapf(readErr, "HTTP %s; read error response: %v", response.Status, readErr)
-		}
-		return nil, c.errorf("HTTP %s: %s", response.Status, strings.TrimSpace(string(body)))
-	}
-	return response, nil
-}
-
-func (c *Client) contextError(ctx context.Context, err error, operation string) error {
-	if contextErr := ctx.Err(); contextErr != nil {
-		return contextErr
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return c.wrapf(context.DeadlineExceeded, "%s: %v", operation, err)
-	}
-	if errors.Is(err, context.Canceled) {
-		return c.wrapf(context.Canceled, "%s: %v", operation, err)
-	}
-	return nil
-}
-
 func (c *Client) resolveCredential(ctx context.Context) (Credential, error) {
 	credential, err := c.tokenSource.Token(ctx)
 	if err == nil {
@@ -207,17 +154,12 @@ func (c *Client) resolveCredential(ctx context.Context) (Credential, error) {
 	return Credential{}, c.wrapf(err, "resolve authentication: %v", err)
 }
 
-func (c *Client) errorf(format string, arguments ...any) error {
-	return errors.New(c.errorMessage(format, arguments...))
-}
-
 func (c *Client) wrapf(cause error, format string, arguments ...any) error {
 	return &wrappedError{message: c.errorMessage(format, arguments...), cause: cause}
 }
 
 func (c *Client) errorMessage(format string, arguments ...any) string {
-	message := strings.ToValidUTF8(fmt.Sprintf(format, arguments...), "�")
-	return backendhttp.TruncateUTF8("openai: "+message, int(c.maxUsageErrorBytes))
+	return backendhttp.FormatErrorMessage("openai", c.maxErrorBytes, format, arguments...)
 }
 
 type wrappedError struct {

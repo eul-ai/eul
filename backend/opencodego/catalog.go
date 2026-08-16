@@ -24,6 +24,13 @@ const (
 	maxCatalogErrorResponseBytes = int64(64 * 1024)
 )
 
+type catalogLoader struct {
+	url       string
+	cachePath string
+	client    *http.Client
+	now       func() time.Time
+}
+
 type catalogCache struct {
 	Version   int             `json:"version"`
 	ETag      string          `json:"etag,omitempty"`
@@ -56,7 +63,7 @@ func (configured *runtime) loadLiveModels(ctx context.Context) (map[string]struc
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, configured.responseError(response)
+		return nil, responseError(response)
 	}
 
 	body, truncated, err := backendhttp.ReadBounded(response.Body, maxLiveModelsResponseBytes)
@@ -83,14 +90,14 @@ func (configured *runtime) loadLiveModels(ctx context.Context) (map[string]struc
 	return models, nil
 }
 
-func (configured *runtime) loadCatalog(ctx context.Context) (catalogProvider, error) {
-	cached, hasCache := readCatalogCache(configured.catalogCachePath)
-	now := configured.currentTime()
+func (loader *catalogLoader) Load(ctx context.Context) (catalogProvider, error) {
+	cached, hasCache := readCatalogCache(loader.cachePath)
+	now := loader.currentTime()
 	if hasCache && catalogCacheFresh(cached, now) {
 		return cached.Provider, nil
 	}
 
-	refreshed, err := configured.refreshCatalog(ctx, cached, hasCache)
+	refreshed, err := loader.refresh(ctx, cached, hasCache)
 	if err == nil {
 		return refreshed.Provider, nil
 	}
@@ -103,8 +110,8 @@ func (configured *runtime) loadCatalog(ctx context.Context) (catalogProvider, er
 	return catalogProvider{}, err
 }
 
-func (configured *runtime) refreshCatalog(ctx context.Context, cached catalogCache, hasCache bool) (catalogCache, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, configured.catalogURL, nil)
+func (loader *catalogLoader) refresh(ctx context.Context, cached catalogCache, hasCache bool) (catalogCache, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, loader.url, nil)
 	if err != nil {
 		return catalogCache{}, err
 	}
@@ -114,7 +121,7 @@ func (configured *runtime) refreshCatalog(ctx context.Context, cached catalogCac
 		request.Header.Set("If-None-Match", cached.ETag)
 	}
 
-	response, err := configured.credentialClient.Do(request)
+	response, err := loader.client.Do(request)
 	if err != nil {
 		return catalogCache{}, err
 	}
@@ -124,12 +131,12 @@ func (configured *runtime) refreshCatalog(ctx context.Context, cached catalogCac
 		if !hasCache {
 			return catalogCache{}, errors.New("model catalog returned HTTP 304 without a cache")
 		}
-		cached.FetchedAt = configured.currentTime()
-		_ = writeCatalogCache(configured.catalogCachePath, cached)
+		cached.FetchedAt = loader.currentTime()
+		_ = writeCatalogCache(loader.cachePath, cached)
 		return cached, nil
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return catalogCache{}, configured.responseError(response)
+		return catalogCache{}, responseError(response)
 	}
 
 	body, truncated, err := backendhttp.ReadBounded(response.Body, maxCatalogResponseBytes)
@@ -159,10 +166,10 @@ func (configured *runtime) refreshCatalog(ctx context.Context, cached catalogCac
 	refreshed := catalogCache{
 		Version:   catalogCacheVersion,
 		ETag:      response.Header.Get("ETag"),
-		FetchedAt: configured.currentTime(),
+		FetchedAt: loader.currentTime(),
 		Provider:  provider,
 	}
-	_ = writeCatalogCache(configured.catalogCachePath, refreshed)
+	_ = writeCatalogCache(loader.cachePath, refreshed)
 	return refreshed, nil
 }
 
@@ -235,14 +242,14 @@ func validCatalogProvider(provider catalogProvider) bool {
 	return provider.ID == ID && len(provider.Models) > 0
 }
 
-func (configured *runtime) currentTime() time.Time {
-	if configured.now != nil {
-		return configured.now()
+func (loader *catalogLoader) currentTime() time.Time {
+	if loader.now != nil {
+		return loader.now()
 	}
 	return time.Now()
 }
 
-func (configured *runtime) responseError(response *http.Response) error {
+func responseError(response *http.Response) error {
 	body, _, _ := backendhttp.ReadBounded(response.Body, maxCatalogErrorResponseBytes)
 	detail := strings.TrimSpace(string(body))
 	if detail == "" {

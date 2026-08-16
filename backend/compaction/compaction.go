@@ -16,6 +16,9 @@ const (
 	SummaryQuestion     = "What happened earlier in this conversation?"
 	summaryIntroduction = "The earlier conversation was compacted into the following summary. Continue the task from this context:"
 	summaryRequest      = "Produce the requested handoff summary now."
+	compactionThreshold = 90
+	imageInputTokens    = 1_024
+	bytesPerToken       = 4
 )
 
 func Prepare(request agent.Request, instructions string) (agent.Request, bool) {
@@ -53,7 +56,7 @@ func ShouldCompact(request agent.Request, usage agent.Usage, contextWindow int64
 		return false
 	}
 
-	limit := contextWindow * 9 / 10
+	limit := contextWindow * compactionThreshold / 100
 	if usage.TotalTokens >= limit {
 		return true
 	}
@@ -68,13 +71,13 @@ func estimateInputTokens(inputs []agent.Input) int64 {
 			textBytes = len(input.PlainText())
 			for _, part := range input.Content {
 				if part.Kind == agent.ContentPartImage {
-					total += 1_024
+					total += imageInputTokens
 				}
 			}
 		}
 		bytes := int64(textBytes)
-		total += bytes / 4
-		if bytes%4 != 0 {
+		total += bytes / bytesPerToken
+		if bytes%bytesPerToken != 0 {
 			total++
 		}
 	}

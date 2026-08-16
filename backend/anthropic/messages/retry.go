@@ -21,11 +21,17 @@ func (client *Client) RetryGeneration(err error, failedAttempts int) (time.Durat
 		return 0, false
 	}
 
-	delay := backendhttp.RetryDelay(failedAttempts, generationRetryBaseDelay, generationRetryMaxDelay)
+	var retryAfter time.Duration
 	var responseErr *httpResponseError
-	if errors.As(err, &responseErr) && responseErr.retryAfter > delay {
-		delay = min(responseErr.retryAfter, generationRetryMaxDelay)
+	if errors.As(err, &responseErr) {
+		retryAfter = responseErr.retryAfter
 	}
+	delay := backendhttp.RetryDelayWithHint(
+		failedAttempts,
+		generationRetryBaseDelay,
+		generationRetryMaxDelay,
+		retryAfter,
+	)
 	return delay, true
 }
 

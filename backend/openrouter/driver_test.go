@@ -47,7 +47,7 @@ func TestThinkingMetadataUsesCatalogEfforts(t *testing.T) {
 	}
 }
 
-func TestRuntimeChecksCredentialsLoadsModelsAndCreatesProvider(t *testing.T) {
+func TestRuntimeChecksCredentialsInitializesModelsAndCreatesProvider(t *testing.T) {
 	requests := 0
 	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requests++
@@ -82,6 +82,7 @@ func TestRuntimeChecksCredentialsLoadsModelsAndCreatesProvider(t *testing.T) {
 	key := "secret"
 	driver.getenv = func(string) string { return key }
 	driver.baseURL = server.URL
+	driver.httpClient = server.Client()
 	backendRuntime, err := driver.Open(backend.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -92,6 +93,9 @@ func TestRuntimeChecksCredentialsLoadsModelsAndCreatesProvider(t *testing.T) {
 		t.Fatalf("HTTP timeouts: generation=%s credential=%s", configured.generationClient.Timeout, configured.credentialClient.Timeout)
 	}
 	if err := configured.CheckCredentials(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := configured.InitializeModels(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if requests != 2 {
@@ -161,12 +165,16 @@ func TestModelCatalogIsCached(t *testing.T) {
 	driver := New()
 	driver.getenv = func(string) string { return "secret" }
 	driver.baseURL = server.URL
+	driver.httpClient = server.Client()
 	opened, err := driver.Open(backend.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	configured := opened.(*runtime)
 	if err := configured.CheckCredentials(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := configured.InitializeModels(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -203,6 +211,7 @@ func TestRuntimeLoadsAccountUsage(t *testing.T) {
 			driver := New()
 			driver.getenv = func(string) string { return "secret" }
 			driver.baseURL = server.URL
+			driver.httpClient = server.Client()
 			opened, err := driver.Open(backend.Options{})
 			if err != nil {
 				t.Fatal(err)
@@ -259,6 +268,7 @@ func TestCredentialCheckReportsInvalidKey(t *testing.T) {
 	driver := New()
 	driver.getenv = func(string) string { return "secret" }
 	driver.baseURL = server.URL
+	driver.httpClient = server.Client()
 	backendRuntime, err := driver.Open(backend.Options{})
 	if err != nil {
 		t.Fatal(err)

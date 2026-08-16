@@ -212,6 +212,32 @@ func (decoder *streamDecoder) finish() (streamResult, error) {
 		return streamResult{}, fmt.Errorf("chat completion has unsupported finish reason %q", decoder.finishReason)
 	}
 
+	calls, wireCalls, err := decoder.finalizeToolCalls()
+	if err != nil {
+		return streamResult{}, err
+	}
+
+	text := decoder.text.String()
+	reasoning := decoder.reasoning.String()
+	assistant, err := encodeAssistantMessage(text, reasoning, wireCalls, decoder.serializeReasoningContent)
+	if err != nil {
+		return streamResult{}, err
+	}
+
+	usage, err := normalizeUsage(decoder.usage)
+	if err != nil {
+		return streamResult{}, err
+	}
+	return streamResult{
+		text:      text,
+		reasoning: reasoning,
+		calls:     calls,
+		assistant: assistant,
+		usage:     usage,
+	}, nil
+}
+
+func (decoder *streamDecoder) finalizeToolCalls() ([]agent.ToolCall, []toolCall, error) {
 	indexes := make([]int, 0, len(decoder.toolCalls))
 	for index := range decoder.toolCalls {
 		indexes = append(indexes, index)
@@ -224,14 +250,14 @@ func (decoder *streamDecoder) finish() (streamResult, error) {
 	for _, index := range indexes {
 		call := decoder.toolCalls[index]
 		if call.id == "" || call.name == "" {
-			return streamResult{}, fmt.Errorf("chat completion tool call %d is incomplete", index)
+			return nil, nil, fmt.Errorf("chat completion tool call %d is incomplete", index)
 		}
 		if _, exists := seen[call.id]; exists {
-			return streamResult{}, fmt.Errorf("chat completion has duplicate tool call ID %q", call.id)
+			return nil, nil, fmt.Errorf("chat completion has duplicate tool call ID %q", call.id)
 		}
 		seen[call.id] = struct{}{}
 		if err := decoder.deliverToolCall(call, true); err != nil {
-			return streamResult{}, err
+			return nil, nil, err
 		}
 		arguments := call.arguments
 		if arguments == "" {
@@ -247,9 +273,10 @@ func (decoder *streamDecoder) finish() (streamResult, error) {
 			},
 		})
 	}
+	return calls, wireCalls, nil
+}
 
-	text := decoder.text.String()
-	reasoning := decoder.reasoning.String()
+func encodeAssistantMessage(text, reasoning string, calls []toolCall, serializeReasoning bool) (json.RawMessage, error) {
 	var content any
 	if text != "" {
 		content = text
@@ -257,24 +284,13 @@ func (decoder *streamDecoder) finish() (streamResult, error) {
 	assistant, err := json.Marshal(assistantMessage{
 		Role:             "assistant",
 		Content:          content,
-		ReasoningContent: reasoningContent(reasoning, decoder.serializeReasoningContent),
-		ToolCalls:        wireCalls,
+		ReasoningContent: reasoningContent(reasoning, serializeReasoning),
+		ToolCalls:        calls,
 	})
 	if err != nil {
-		return streamResult{}, fmt.Errorf("encode assistant message: %w", err)
+		return nil, fmt.Errorf("encode assistant message: %w", err)
 	}
-
-	usage, err := normalizeUsage(decoder.usage)
-	if err != nil {
-		return streamResult{}, err
-	}
-	return streamResult{
-		text:      text,
-		reasoning: reasoning,
-		calls:     calls,
-		assistant: assistant,
-		usage:     usage,
-	}, nil
+	return assistant, nil
 }
 
 func normalizeUsage(usage *completionUsage) (agent.Usage, error) {

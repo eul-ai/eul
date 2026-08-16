@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -75,12 +74,10 @@ func (err *retryableOperationError) Error() string { return err.cause.Error() }
 func (err *retryableOperationError) Unwrap() error { return err.cause }
 
 func (client *Client) post(ctx context.Context, body []byte, operation string) (*http.Response, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.endpoint, bytes.NewReader(body))
+	request, err := backendhttp.NewJSONSSERequest(ctx, client.endpoint, body)
 	if err != nil {
 		return nil, client.errorf("create %s: %v", operation, err)
 	}
-	request.Header.Set("Accept", "text/event-stream")
-	request.Header.Set("Content-Type", "application/json")
 	if client.prepareRequest != nil {
 		if err := client.prepareRequest(ctx, request); err != nil {
 			if contextErr := ctx.Err(); contextErr != nil {
@@ -92,32 +89,20 @@ func (client *Client) post(ctx context.Context, body []byte, operation string) (
 
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		if classified := client.contextError(ctx, err, operation+" failed"); classified != nil {
-			return nil, classified
+		classified := backendhttp.ClassifyTransportError(ctx, err)
+		if classified.ReturnDirectly {
+			return nil, classified.Cause
 		}
-		if backendhttp.RetryableNetworkError(err) {
-			return nil, client.retryableWrapf(err, "%s failed: %v", operation, err)
+		if classified.Retryable {
+			return nil, client.retryableWrapf(classified.Cause, "%s failed: %v", operation, err)
 		}
-		return nil, client.wrapf(err, "%s failed: %v", operation, err)
+		return nil, client.wrapf(classified.Cause, "%s failed: %v", operation, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		defer response.Body.Close()
 		return nil, client.decodeHTTPError(response)
 	}
 	return response, nil
-}
-
-func (client *Client) contextError(ctx context.Context, err error, operation string) error {
-	if contextErr := ctx.Err(); contextErr != nil {
-		return contextErr
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return client.retryableWrapf(context.DeadlineExceeded, "%s: %v", operation, err)
-	}
-	if errors.Is(err, context.Canceled) {
-		return client.wrapf(context.Canceled, "%s: %v", operation, err)
-	}
-	return nil
 }
 
 func (client *Client) decodeHTTPError(response *http.Response) error {
@@ -171,11 +156,7 @@ func (client *Client) retryableWrapf(cause error, format string, arguments ...an
 }
 
 func (client *Client) errorMessage(format string, arguments ...any) string {
-	message := strings.ToValidUTF8(fmt.Sprintf(format, arguments...), "�")
-	if client.errorPrefix != "" {
-		message = client.errorPrefix + ": " + message
-	}
-	return backendhttp.TruncateUTF8(message, int(client.maxErrorBytes))
+	return backendhttp.FormatErrorMessage(client.errorPrefix, client.maxErrorBytes, format, arguments...)
 }
 
 func formatAPIError(detail apiError) string {

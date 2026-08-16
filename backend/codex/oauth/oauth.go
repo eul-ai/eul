@@ -2,11 +2,8 @@ package oauth
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -23,7 +20,7 @@ const (
 	maxAuthResponseBytes = int64(64 * 1024)
 	maxCredentialBytes   = int64(64 * 1024)
 	refreshSkew          = 5 * time.Minute
-	deviceTimeout        = 15 * time.Minute
+	authorizationTimeout = 15 * time.Minute
 	defaultHTTPTimeout   = 30 * time.Second
 )
 
@@ -50,7 +47,7 @@ type Options struct {
 }
 
 type Manager struct {
-	path            string
+	store           *credentialStore
 	httpClient      *http.Client
 	authBaseURL     string
 	callbackAddress string
@@ -65,7 +62,7 @@ func NewManager(path string, options Options) *Manager {
 		base = defaultAuthBaseURL
 	}
 
-	client := backendhttp.New(options.HTTPClient, defaultHTTPTimeout)
+	client := backendhttp.CloneNoRedirects(options.HTTPClient, defaultHTTPTimeout)
 
 	now := options.Now
 	if now == nil {
@@ -83,7 +80,7 @@ func NewManager(path string, options Options) *Manager {
 	}
 
 	return &Manager{
-		path:            path,
+		store:           &credentialStore{path: path, sleep: sleep},
 		httpClient:      client,
 		authBaseURL:     strings.TrimRight(base, "/"),
 		callbackAddress: callback,
@@ -93,35 +90,34 @@ func NewManager(path string, options Options) *Manager {
 	}
 }
 
-func (m *Manager) Login(ctx context.Context, method backend.LoginMethod, interaction backend.LoginInteraction) error {
+func (m *Manager) LoginBrowser(ctx context.Context, presentURL func(string) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	var (
-		credential credentials
-		err        error
-	)
-	switch method {
-	case backend.LoginBrowser:
-		credential, err = m.loginBrowser(ctx, interaction)
-	case backend.LoginDevice:
-		credential, err = m.loginDevice(ctx, interaction)
-	default:
-		return errors.New("oauth: unsupported login method")
-	}
-
+	credential, err := m.loginBrowser(ctx, presentURL)
 	if err != nil {
 		return err
 	}
+	return m.store.withLock(ctx, func() error { return m.store.write(credential) })
+}
 
-	return m.withFileLock(ctx, func() error { return writeCredentials(m.path, credential) })
+func (m *Manager) LoginDevice(ctx context.Context, presentCode func(backend.DeviceCode) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	credential, err := m.loginDevice(ctx, presentCode)
+	if err != nil {
+		return err
+	}
+	return m.store.withLock(ctx, func() error { return m.store.write(credential) })
 }
 
 func (m *Manager) Resolve(ctx context.Context) (AccessCredential, error) {
 	var result credentials
-	err := m.withFileLock(ctx, func() error {
-		credential, err := readCredentials(m.path)
+	err := m.store.withLock(ctx, func() error {
+		credential, err := m.store.read()
 		if err != nil {
 			return err
 		}
@@ -136,7 +132,7 @@ func (m *Manager) Resolve(ctx context.Context) (AccessCredential, error) {
 			return err
 		}
 
-		if err := writeCredentials(m.path, refreshed); err != nil {
+		if err := m.store.write(refreshed); err != nil {
 			return err
 		}
 
@@ -150,24 +146,7 @@ func (m *Manager) Resolve(ctx context.Context) (AccessCredential, error) {
 }
 
 func (m *Manager) Logout(ctx context.Context) error {
-	return m.withFileLock(ctx, func() error {
-		info, err := os.Lstat(m.path)
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("oauth: inspect credential file: %w", err)
-		}
-		if !info.Mode().IsRegular() {
-			return errors.New("oauth: credential path is not a regular file")
-		}
-
-		if err := os.Remove(m.path); err != nil {
-			return fmt.Errorf("oauth: remove credential file: %w", err)
-		}
-
-		return nil
-	})
+	return m.store.withLock(ctx, m.store.remove)
 }
 
 func sleepContext(ctx context.Context, duration time.Duration) error {
@@ -181,3 +160,9 @@ func sleepContext(ctx context.Context, duration time.Duration) error {
 		return nil
 	}
 }
+
+var (
+	_ backend.BrowserAuthenticator = (*Manager)(nil)
+	_ backend.DeviceAuthenticator  = (*Manager)(nil)
+	_ backend.Authenticator        = (*Manager)(nil)
+)

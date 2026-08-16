@@ -1,11 +1,9 @@
 package responses
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -14,12 +12,10 @@ import (
 )
 
 func (c *Client) post(ctx context.Context, body []byte, operation string) (*http.Response, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
+	request, err := backendhttp.NewJSONSSERequest(ctx, c.endpoint, body)
 	if err != nil {
 		return nil, c.errorf("create %s: %v", operation, err)
 	}
-	request.Header.Set("Accept", "text/event-stream")
-	request.Header.Set("Content-Type", "application/json")
 	if c.prepareRequest != nil {
 		if err := c.prepareRequest(ctx, request); err != nil {
 			if contextErr := ctx.Err(); contextErr != nil {
@@ -31,32 +27,20 @@ func (c *Client) post(ctx context.Context, body []byte, operation string) (*http
 
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		if classified := c.contextError(ctx, err, operation+" failed"); classified != nil {
-			return nil, classified
+		classified := backendhttp.ClassifyTransportError(ctx, err)
+		if classified.ReturnDirectly {
+			return nil, classified.Cause
 		}
-		if backendhttp.RetryableNetworkError(err) {
-			return nil, c.retryableWrapf(err, "%s failed: %v", operation, err)
+		if classified.Retryable {
+			return nil, c.retryableWrapf(classified.Cause, "%s failed: %v", operation, err)
 		}
-		return nil, c.wrapf(err, "%s failed: %v", operation, err)
+		return nil, c.wrapf(classified.Cause, "%s failed: %v", operation, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		defer response.Body.Close()
 		return nil, c.decodeHTTPError(response)
 	}
 	return response, nil
-}
-
-func (c *Client) contextError(ctx context.Context, err error, operation string) error {
-	if contextErr := ctx.Err(); contextErr != nil {
-		return contextErr
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return c.retryableWrapf(context.DeadlineExceeded, "%s: %v", operation, err)
-	}
-	if errors.Is(err, context.Canceled) {
-		return c.wrapf(context.Canceled, "%s: %v", operation, err)
-	}
-	return nil
 }
 
 func (c *Client) decodeHTTPError(response *http.Response) error {
@@ -114,11 +98,7 @@ func (c *Client) wrapf(cause error, format string, arguments ...any) error {
 }
 
 func (c *Client) errorMessage(format string, arguments ...any) string {
-	message := strings.ToValidUTF8(fmt.Sprintf(format, arguments...), "�")
-	if c.errorPrefix != "" {
-		message = c.errorPrefix + ": " + message
-	}
-	return backendhttp.TruncateUTF8(message, int(c.maxErrorBytes))
+	return backendhttp.FormatErrorMessage(c.errorPrefix, c.maxErrorBytes, format, arguments...)
 }
 
 type wrappedError struct {

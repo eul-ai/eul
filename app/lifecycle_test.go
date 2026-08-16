@@ -64,6 +64,40 @@ func (runner *runFailureRunner) Close() error {
 	return runner.closeErr
 }
 
+func TestOpenBackendRuntimeInitializesAfterCheckingCredentials(t *testing.T) {
+	var order []string
+	configured := &fakeBackendRuntime{initializationOrder: &order}
+	driver := &fakeBackendDriver{runtime: configured}
+
+	opened, err := openBackendRuntime(context.Background(), driver, t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened != configured || !slices.Equal(order, []string{"credentials", "models"}) {
+		t.Fatalf("opened=%v order=%v", opened, order)
+	}
+}
+
+func TestOpenBackendRuntimeStopsAndClosesAfterInitializationFailure(t *testing.T) {
+	credentialFailure := errors.New("credentials failed")
+	configured := &fakeBackendRuntime{checkCredentialsErr: credentialFailure}
+	driver := &fakeBackendDriver{runtime: configured}
+
+	_, err := openBackendRuntime(context.Background(), driver, t.TempDir(), nil)
+	if !errors.Is(err, credentialFailure) || configured.initializeModelsCalls != 0 || configured.closeCalls != 1 {
+		t.Fatalf("credential error=%v runtime=%+v", err, configured)
+	}
+
+	modelFailure := errors.New("models failed")
+	closeFailure := errors.New("close failed")
+	configured = &fakeBackendRuntime{initializeModelsErr: modelFailure, closeErr: closeFailure}
+	driver.runtime = configured
+	_, err = openBackendRuntime(context.Background(), driver, t.TempDir(), nil)
+	if !errors.Is(err, modelFailure) || !errors.Is(err, closeFailure) || configured.checkCredentialsCalls != 1 || configured.initializeModelsCalls != 1 || configured.closeCalls != 1 {
+		t.Fatalf("model error=%v runtime=%+v", err, configured)
+	}
+}
+
 func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 	ctx := context.Background()
 	cwd := t.TempDir()

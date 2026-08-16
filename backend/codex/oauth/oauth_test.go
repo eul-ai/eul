@@ -66,9 +66,9 @@ func TestBrowserLoginPKCEStorageAndRefreshRotation(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, "private", "auth.json")
 	callbackListener := newPipeListener()
-	manager := NewManager(path, Options{AuthBaseURL: server.URL, CallbackAddress: "127.0.0.1:0", Now: func() time.Time { return now }})
+	manager := NewManager(path, Options{HTTPClient: server.Client(), AuthBaseURL: server.URL, CallbackAddress: "127.0.0.1:0", Now: func() time.Time { return now }})
 	manager.listen = func(string, string) (net.Listener, error) { return callbackListener, nil }
-	err := manager.Login(context.Background(), backend.LoginBrowser, backend.LoginInteraction{AuthURL: func(raw string) error {
+	err := manager.LoginBrowser(context.Background(), func(raw string) error {
 		parsed, err := url.Parse(raw)
 		if err != nil {
 			return err
@@ -91,7 +91,7 @@ func TestBrowserLoginPKCEStorageAndRefreshRotation(t *testing.T) {
 			t.Errorf("callback status = %d", response.StatusCode)
 		}
 		return nil
-	}})
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,9 +144,9 @@ func TestBrowserCallbackRejectsWrongStateThenAcceptsValidState(t *testing.T) {
 	defer server.Close()
 
 	callbackListener := newPipeListener()
-	manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{AuthBaseURL: server.URL, CallbackAddress: "127.0.0.1:0"})
+	manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{HTTPClient: server.Client(), AuthBaseURL: server.URL, CallbackAddress: "127.0.0.1:0"})
 	manager.listen = func(string, string) (net.Listener, error) { return callbackListener, nil }
-	err := manager.Login(context.Background(), backend.LoginBrowser, backend.LoginInteraction{AuthURL: func(raw string) error {
+	err := manager.LoginBrowser(context.Background(), func(raw string) error {
 		parsed, _ := url.Parse(raw)
 		redirect := parsed.Query().Get("redirect_uri")
 		wrong, err := requestCallback(callbackListener, redirect+"?code=secret-code&state=wrong")
@@ -163,7 +163,7 @@ func TestBrowserCallbackRejectsWrongStateThenAcceptsValidState(t *testing.T) {
 		}
 		valid.Body.Close()
 		return nil
-	}})
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,9 +216,9 @@ func TestDeviceLoginAndLogout(t *testing.T) {
 	defer server.Close()
 
 	path := filepath.Join(t.TempDir(), "eul", "auth.json")
-	manager := NewManager(path, Options{AuthBaseURL: server.URL, Sleep: func(context.Context, time.Duration) error { return nil }})
+	manager := NewManager(path, Options{HTTPClient: server.Client(), AuthBaseURL: server.URL, Sleep: func(context.Context, time.Duration) error { return nil }})
 	shown := backend.DeviceCode{}
-	if err := manager.Login(context.Background(), backend.LoginDevice, backend.LoginInteraction{DeviceCode: func(code backend.DeviceCode) error { shown = code; return nil }}); err != nil {
+	if err := manager.LoginDevice(context.Background(), func(code backend.DeviceCode) error { shown = code; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	credential, err := manager.Resolve(context.Background())
@@ -248,7 +248,7 @@ func TestRefreshPersistsRotatedcredentials(t *testing.T) {
 	defer server.Close()
 
 	path := filepath.Join(t.TempDir(), "auth.json")
-	manager := NewManager(path, Options{AuthBaseURL: server.URL, Now: func() time.Time { return time.Unix(2000, 0) }})
+	manager := NewManager(path, Options{HTTPClient: server.Client(), AuthBaseURL: server.URL, Now: func() time.Time { return time.Unix(2000, 0) }})
 	old := credentials{Version: 1, Type: "oauth", AccessToken: oldAccess, RefreshToken: "old-refresh", ExpiresAt: 1, AccountID: "old-account"}
 	if err := writeCredentials(path, old); err != nil {
 		t.Fatal(err)
@@ -301,23 +301,24 @@ func TestDeviceExchangeUsesPollingDeadline(t *testing.T) {
 	defer server.Close()
 
 	sawDeadline := false
+	baseTransport := server.Client().Transport
 	transport := oauthRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
 		if request.URL.Path == "/oauth/token" {
 			deadline, ok := request.Context().Deadline()
 			remaining := time.Until(deadline)
-			if !ok || remaining <= 0 || remaining > deviceTimeout {
+			if !ok || remaining <= 0 || remaining > authorizationTimeout {
 				t.Errorf("token exchange deadline ok=%t remaining=%s", ok, remaining)
 			}
 			sawDeadline = ok
 		}
-		return http.DefaultTransport.RoundTrip(request)
+		return baseTransport.RoundTrip(request)
 	})
 	manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{
 		AuthBaseURL: server.URL,
 		HTTPClient:  &http.Client{Transport: transport},
 		Sleep:       func(context.Context, time.Duration) error { return nil },
 	})
-	if err := manager.Login(context.Background(), backend.LoginDevice, backend.LoginInteraction{DeviceCode: func(backend.DeviceCode) error { return nil }}); err != nil {
+	if err := manager.LoginDevice(context.Background(), func(backend.DeviceCode) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if !sawDeadline {
@@ -355,8 +356,8 @@ func TestOAuthHTTPRedirectBoundsAndCancellation(t *testing.T) {
 			http.Redirect(writer, request, destination.URL, http.StatusTemporaryRedirect)
 		}))
 		defer origin.Close()
-		manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{AuthBaseURL: origin.URL})
-		err := manager.Login(context.Background(), backend.LoginDevice, backend.LoginInteraction{DeviceCode: func(backend.DeviceCode) error { return nil }})
+		manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{HTTPClient: origin.Client(), AuthBaseURL: origin.URL})
+		err := manager.LoginDevice(context.Background(), func(backend.DeviceCode) error { return nil })
 		if err == nil || !strings.Contains(err.Error(), "HTTP 307") || destinationCalls != 0 {
 			t.Fatalf("error=%v destinationCalls=%d", err, destinationCalls)
 		}
@@ -367,8 +368,8 @@ func TestOAuthHTTPRedirectBoundsAndCancellation(t *testing.T) {
 			_, _ = io.WriteString(writer, strings.Repeat("x", int(maxAuthResponseBytes)+1))
 		}))
 		defer server.Close()
-		manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{AuthBaseURL: server.URL})
-		err := manager.Login(context.Background(), backend.LoginDevice, backend.LoginInteraction{DeviceCode: func(backend.DeviceCode) error { return nil }})
+		manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{HTTPClient: server.Client(), AuthBaseURL: server.URL})
+		err := manager.LoginDevice(context.Background(), func(backend.DeviceCode) error { return nil })
 		if err == nil {
 			t.Fatalf("error=%v", err)
 		}
@@ -379,10 +380,10 @@ func TestOAuthHTTPRedirectBoundsAndCancellation(t *testing.T) {
 			writeTestJSON(t, writer, map[string]any{"device_auth_id": "device", "user_code": "code", "interval": "1"})
 		}))
 		defer server.Close()
-		manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{AuthBaseURL: server.URL})
+		manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{HTTPClient: server.Client(), AuthBaseURL: server.URL})
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		err := manager.Login(ctx, backend.LoginDevice, backend.LoginInteraction{DeviceCode: func(backend.DeviceCode) error { return nil }})
+		err := manager.LoginDevice(ctx, func(backend.DeviceCode) error { return nil })
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("error=%v", err)
 		}
@@ -405,8 +406,8 @@ func TestDeviceLoginStopsOnExplicitDenial(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{AuthBaseURL: server.URL, Sleep: func(context.Context, time.Duration) error { return nil }})
-	err := manager.Login(context.Background(), backend.LoginDevice, backend.LoginInteraction{DeviceCode: func(backend.DeviceCode) error { return nil }})
+	manager := NewManager(filepath.Join(t.TempDir(), "auth.json"), Options{HTTPClient: server.Client(), AuthBaseURL: server.URL, Sleep: func(context.Context, time.Duration) error { return nil }})
+	err := manager.LoginDevice(context.Background(), func(backend.DeviceCode) error { return nil })
 	if err == nil || !strings.Contains(err.Error(), "HTTP 403") || polls != 1 {
 		t.Fatalf("Login() error=%v polls=%d", err, polls)
 	}
@@ -420,7 +421,7 @@ func TestCredentialFileLockIsExclusiveAndCancelable(t *testing.T) {
 	release := make(chan struct{})
 	firstDone := make(chan error, 1)
 	go func() {
-		firstDone <- first.withFileLock(context.Background(), func() error {
+		firstDone <- first.store.withLock(context.Background(), func() error {
 			close(held)
 			<-release
 			return nil
@@ -429,7 +430,7 @@ func TestCredentialFileLockIsExclusiveAndCancelable(t *testing.T) {
 	<-held
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if err := second.withFileLock(ctx, func() error { return errors.New("must not enter") }); !errors.Is(err, context.DeadlineExceeded) {
+	if err := second.store.withLock(ctx, func() error { return errors.New("must not enter") }); !errors.Is(err, context.DeadlineExceeded) {
 		close(release)
 		t.Fatalf("contending lock error = %v", err)
 	}
@@ -438,7 +439,7 @@ func TestCredentialFileLockIsExclusiveAndCancelable(t *testing.T) {
 		t.Fatal(err)
 	}
 	entered := false
-	if err := second.withFileLock(context.Background(), func() error { entered = true; return nil }); err != nil || !entered {
+	if err := second.store.withLock(context.Background(), func() error { entered = true; return nil }); err != nil || !entered {
 		t.Fatalf("lock after release entered=%v error=%v", entered, err)
 	}
 }
@@ -460,7 +461,7 @@ func TestPreCanceledOperationsDoNotTouchcredentials(t *testing.T) {
 		t.Fatalf("Logout() error = %v", err)
 	}
 	interactionCalled := false
-	if err := manager.Login(ctx, backend.LoginBrowser, backend.LoginInteraction{AuthURL: func(string) error { interactionCalled = true; return nil }}); !errors.Is(err, context.Canceled) || interactionCalled {
+	if err := manager.LoginBrowser(ctx, func(string) error { interactionCalled = true; return nil }); !errors.Is(err, context.Canceled) || interactionCalled {
 		t.Fatalf("Login() error=%v interactionCalled=%v", err, interactionCalled)
 	}
 	if persisted, err := readCredentials(path); err != nil || persisted.AccessToken != credential.AccessToken {

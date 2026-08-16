@@ -48,20 +48,22 @@ var models = map[string]modelMetadata{
 	ModelGPT56Sol:   {contextWindow: 272_000, thinkingLevels: extendedThinkingLevelMap, fastMode: true},
 }
 
-func contextWindow(model string) int64 {
-	return models[model].contextWindow
+type ModelMetadata struct {
+	ContextWindow  int64
+	ThinkingLevels []agent.ThinkingLevel
+	FastMode       bool
 }
 
-func SupportedThinkingLevels(model string) []agent.ThinkingLevel {
-	return thinkingLevelMap(model).SupportedLevels()
-}
-
-func ContextWindow(model string) int64 {
-	return contextWindow(model)
-}
-
-func FastModeAvailable(model string) bool {
-	return models[model].fastMode
+func MetadataFor(model string) ModelMetadata {
+	metadata, ok := models[model]
+	if !ok {
+		return ModelMetadata{ThinkingLevels: standardThinkingLevelMap.SupportedLevels()}
+	}
+	return ModelMetadata{
+		ContextWindow:  metadata.contextWindow,
+		ThinkingLevels: metadata.thinkingLevels.SupportedLevels(),
+		FastMode:       metadata.fastMode,
+	}
 }
 
 func thinkingLevelMap(model string) agent.ThinkingLevelMap {
@@ -116,7 +118,7 @@ func (c *Client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
 	return compaction.ShouldCompact(
 		request,
 		usage,
-		contextWindow(request.Model),
+		models[request.Model].contextWindow,
 		c.responses.ShouldCompactState(request),
 	)
 }

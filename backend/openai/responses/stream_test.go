@@ -21,11 +21,11 @@ func TestResponsesSSEOrdersCompletedItemsByOutputIndex(t *testing.T) {
 		`data: {"type":"response.completed","response":{"status":"completed"}}`,
 	}, "\n\n") + "\n\n"
 
-	response, err := readResponsesSSE(strings.NewReader(body), 1<<20, nil)
+	response, err := readResponsesSSE(strings.NewReader(body), 1<<20, agent.StreamObserver{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	text, _, _, err := normalizeResponse(response)
+	text, _, _, err := normalizeResponse(response.response)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestResponsesSSEDoesNotRetryAfterDelivery(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			deliveries := 0
-			observer := &streamObserver{observer: agent.StreamObserver{
+			observer := agent.StreamObserver{
 				Text: func(string) error {
 					deliveries++
 					return nil
@@ -60,7 +60,7 @@ func TestResponsesSSEDoesNotRetryAfterDelivery(t *testing.T) {
 					deliveries++
 					return nil
 				},
-			}}
+			}
 			_, err := readResponsesSSE(strings.NewReader(test.body), 1024, observer)
 			var partial *partialResponseError
 			if deliveries != 1 || !errors.As(err, &partial) {
@@ -72,7 +72,7 @@ func TestResponsesSSEDoesNotRetryAfterDelivery(t *testing.T) {
 		})
 	}
 
-	_, err := readResponsesSSE(strings.NewReader(tests[0].body), 1024, &streamObserver{})
+	_, err := readResponsesSSE(strings.NewReader(tests[0].body), 1024, agent.StreamObserver{})
 	var partial *partialResponseError
 	if errors.As(err, &partial) {
 		t.Fatalf("undelivered response was marked partial: %v", err)
@@ -108,7 +108,7 @@ func TestClientStreamsTextDeltas(t *testing.T) {
 		}
 	}()
 
-	client := newTestClient(t, "key", server.URL, Options{})
+	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 	var deltas []string
 	seenDelta := make(chan string, 2)
 	type outcome struct {
@@ -152,7 +152,7 @@ func TestClientStreamsRefusal(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestClient(t, "key", server.URL, Options{})
+	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 	var delivered string
 	response, err := generate(client, context.Background(), baseRequest(), func(delta string) error { delivered += delta; return nil }, nil, nil)
 	if err != nil || response.Text != "Cannot comply." || delivered != response.Text {
@@ -169,7 +169,7 @@ func TestClientDecodesRefusalAndPreservesMalformedToolArguments(t *testing.T) {
 		]
 	}`)
 	defer server.Close()
-	client := newTestClient(t, "key", server.URL, Options{})
+	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 	response, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
@@ -198,7 +198,7 @@ func TestClientRejectsMalformedResponses(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			server := responseServer(t, http.StatusOK, test.body)
 			defer server.Close()
-			client := newTestClient(t, "key", server.URL, Options{})
+			client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 			_, err := generate(client, context.Background(), baseRequest(), func(string) error {
 				t.Fatal("text sink called for malformed response")
 				return nil

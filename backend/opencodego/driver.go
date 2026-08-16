@@ -70,25 +70,27 @@ func (driver *Driver) Open(options backend.Options) (backend.Runtime, error) {
 	if options.Home != "" {
 		catalogCachePath = filepath.Join(options.Home, "cache", "opencode-go-models.json")
 	}
+	credentialClient := backendhttp.CloneNoRedirects(driver.httpClient, credentialHTTPTimeout)
 	return &runtime{
 		apiKey:           apiKey,
 		baseURL:          baseURL,
-		catalogURL:       catalogURL,
-		catalogCachePath: catalogCachePath,
 		generationClient: driver.httpClient,
-		credentialClient: backendhttp.New(driver.httpClient, credentialHTTPTimeout),
-		now:              driver.now,
+		credentialClient: credentialClient,
+		catalog: &catalogLoader{
+			url:       catalogURL,
+			cachePath: catalogCachePath,
+			client:    credentialClient,
+			now:       driver.now,
+		},
 	}, nil
 }
 
 type runtime struct {
 	apiKey           string
 	baseURL          string
-	catalogURL       string
-	catalogCachePath string
 	generationClient *http.Client
 	credentialClient *http.Client
-	now              func() time.Time
+	catalog          *catalogLoader
 	modelsMu         sync.RWMutex
 	models           map[string]modelInfo
 }
@@ -97,13 +99,16 @@ func (configured *runtime) CheckCredentials(ctx context.Context) error {
 	if _, err := configured.loadUsage(ctx); err != nil {
 		return fmt.Errorf("opencode go: validate API key and subscription: %w", err)
 	}
+	return nil
+}
 
+func (configured *runtime) InitializeModels(ctx context.Context) error {
 	live, err := configured.loadLiveModels(ctx)
 	if err != nil {
 		return fmt.Errorf("opencode go: load available models: %w", err)
 	}
 
-	catalog, err := configured.loadCatalog(ctx)
+	catalog, err := configured.catalog.Load(ctx)
 	if err != nil {
 		return fmt.Errorf("opencode go: load model catalog: %w", err)
 	}
@@ -209,7 +214,7 @@ func (configured *runtime) loadUsage(ctx context.Context) (usageResponse, error)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return usageResponse{}, configured.responseError(response)
+		return usageResponse{}, responseError(response)
 	}
 
 	body, truncated, err := backendhttp.ReadBounded(response.Body, maxUsageResponseBytes)
@@ -233,5 +238,6 @@ var (
 	_ backend.CredentialChecker     = (*runtime)(nil)
 	_ backend.UsageProvider         = (*runtime)(nil)
 	_ backend.ModelMetadataProvider = (*runtime)(nil)
+	_ backend.ModelInitializer      = (*runtime)(nil)
 	_ backend.ModelValidator        = (*runtime)(nil)
 )

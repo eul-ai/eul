@@ -1,6 +1,7 @@
 package httpclient
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -11,9 +12,9 @@ import (
 	"time"
 )
 
-func TestNewCopiesClientDefaults(t *testing.T) {
+func TestCloneNoRedirectsCopiesClientDefaults(t *testing.T) {
 	source := &http.Client{}
-	client := New(source, time.Minute)
+	client := CloneNoRedirects(source, time.Minute)
 	if client == source || client.Timeout != time.Minute || source.Timeout != 0 {
 		t.Fatalf("source=%+v client=%+v", source, client)
 	}
@@ -22,9 +23,9 @@ func TestNewCopiesClientDefaults(t *testing.T) {
 	}
 }
 
-func TestNewDoesNotApplyZeroTimeout(t *testing.T) {
+func TestCloneNoRedirectsDoesNotApplyZeroTimeout(t *testing.T) {
 	source := &http.Client{Timeout: -time.Second}
-	client := New(source, 0)
+	client := CloneNoRedirects(source, 0)
 	if client.Timeout != -time.Second || source.Timeout != -time.Second {
 		t.Fatalf("source=%+v client=%+v", source, client)
 	}
@@ -38,6 +39,22 @@ func TestReadBounded(t *testing.T) {
 	data, truncated, err = ReadBounded(strings.NewReader("abcde"), 4)
 	if err != nil || !truncated || string(data) != "abcd" {
 		t.Fatalf("bounded read = %q, truncated=%v, error=%v", data, truncated, err)
+	}
+}
+
+func TestNewJSONSSERequest(t *testing.T) {
+	type contextKey struct{}
+	ctx := context.WithValue(context.Background(), contextKey{}, "value")
+	request, err := NewJSONSSERequest(ctx, "https://example.test/responses", []byte(`{"input":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(request.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Method != http.MethodPost || request.URL.String() != "https://example.test/responses" || string(body) != `{"input":[]}` || request.Header.Get("Accept") != "text/event-stream" || request.Header.Get("Content-Type") != "application/json" || request.Context() != ctx {
+		t.Fatalf("request = %+v body=%s", request, body)
 	}
 }
 
@@ -133,6 +150,24 @@ func TestRetryClassificationAndDelay(t *testing.T) {
 		if delay < nominal*3/4 || delay > maximum || nominal < maximum && delay > nominal*5/4 {
 			t.Fatalf("RetryDelay(%d) = %s for nominal %s", attempt+1, delay, nominal)
 		}
+	}
+	if delay := RetryDelayWithHint(1, base, maximum, 2*maximum); delay != maximum {
+		t.Fatalf("RetryDelayWithHint() = %s", delay)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	classified := ClassifyTransportError(ctx, io.EOF)
+	if !classified.ReturnDirectly || !errors.Is(classified.Cause, context.Canceled) {
+		t.Fatalf("caller context classification = %+v", classified)
+	}
+	classified = ClassifyTransportError(context.Background(), context.DeadlineExceeded)
+	if classified.ReturnDirectly || !classified.Retryable || !errors.Is(classified.Cause, context.DeadlineExceeded) {
+		t.Fatalf("deadline classification = %+v", classified)
+	}
+	classified = ClassifyTransportError(context.Background(), errors.New("permanent"))
+	if classified.ReturnDirectly || classified.Retryable {
+		t.Fatalf("permanent classification = %+v", classified)
 	}
 }
 

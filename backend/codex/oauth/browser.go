@@ -15,12 +15,10 @@ import (
 	"net/url"
 	"strconv"
 	"time"
-
-	"github.com/eul-ai/eul/backend"
 )
 
-func (m *Manager) loginBrowser(ctx context.Context, interaction backend.LoginInteraction) (credentials, error) {
-	loginCtx, cancelLogin := context.WithTimeout(ctx, deviceTimeout)
+func (m *Manager) loginBrowser(ctx context.Context, presentURL func(string) error) (credentials, error) {
+	loginCtx, cancelLogin := context.WithTimeout(ctx, authorizationTimeout)
 	defer cancelLogin()
 
 	verifier, challenge, err := generatePKCE()
@@ -50,10 +48,10 @@ func (m *Manager) loginBrowser(ctx context.Context, interaction backend.LoginInt
 	defer stopBrowserCallbackServer(server, serveDone)
 
 	authURL := m.authorizationURL(redirectURI, challenge, state)
-	if interaction.AuthURL == nil {
+	if presentURL == nil {
 		return credentials{}, errors.New("oauth: browser login interaction is unavailable")
 	}
-	if err := interaction.AuthURL(authURL); err != nil {
+	if err := presentURL(authURL); err != nil {
 		return credentials{}, fmt.Errorf("oauth: present authorization URL: %w", err)
 	}
 

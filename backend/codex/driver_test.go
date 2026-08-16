@@ -17,24 +17,26 @@ type fakeManager struct {
 	resolveErr   error
 	loginErr     error
 	logoutErr    error
-	loginMethod  backend.LoginMethod
+	loginMethod  string
 	loginCalls   int
 	logoutCalls  int
 	resolveCalls int
 }
 
-func (manager *fakeManager) Login(_ context.Context, method backend.LoginMethod, interaction backend.LoginInteraction) error {
+func (manager *fakeManager) LoginBrowser(_ context.Context, presentURL func(string) error) error {
 	manager.loginCalls++
-	manager.loginMethod = method
-	switch method {
-	case backend.LoginBrowser:
-		if interaction.AuthURL != nil {
-			_ = interaction.AuthURL("https://example.test/login")
-		}
-	case backend.LoginDevice:
-		if interaction.DeviceCode != nil {
-			_ = interaction.DeviceCode(backend.DeviceCode{VerificationURL: "https://example.test/device", UserCode: "CODE"})
-		}
+	manager.loginMethod = "browser"
+	if presentURL != nil {
+		_ = presentURL("https://example.test/login")
+	}
+	return manager.loginErr
+}
+
+func (manager *fakeManager) LoginDevice(_ context.Context, presentCode func(backend.DeviceCode) error) error {
+	manager.loginCalls++
+	manager.loginMethod = "device"
+	if presentCode != nil {
+		_ = presentCode(backend.DeviceCode{VerificationURL: "https://example.test/device", UserCode: "CODE"})
 	}
 	return manager.loginErr
 }
@@ -116,18 +118,17 @@ func TestRuntimeLoadsAccountUsage(t *testing.T) {
 		}, nil
 	})}
 
-	configured := &runtime{
-		manager: manager,
-		newClient: func(source client.TokenSource) (*client.Client, error) {
-			return client.New(source, client.Options{HTTPClient: httpClient, BaseURL: "https://example.test"})
-		},
-	}
-	usage, err := configured.Usage(context.Background())
+	usage, err := newUsageClient(manager, usageClientOptions{httpClient: httpClient, baseURL: "https://example.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(usage.Windows) != 1 || usage.Windows[0].UsedPercent != 25 {
-		t.Fatalf("usage = %+v", usage)
+	configured := &runtime{manager: manager, usageClient: usage}
+	got, err := configured.Usage(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Windows) != 1 || got.Windows[0].UsedPercent != 25 {
+		t.Fatalf("usage = %+v", got)
 	}
 }
 
@@ -142,28 +143,24 @@ func TestRuntimeBridgesLoginAndLogout(t *testing.T) {
 	configured := &runtime{manager: manager}
 
 	browserURL := ""
-	if err := configured.Login(context.Background(), backend.LoginBrowser, backend.LoginInteraction{
-		AuthURL: func(url string) error {
-			browserURL = url
-			return nil
-		},
+	if err := configured.LoginBrowser(context.Background(), func(url string) error {
+		browserURL = url
+		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if manager.loginMethod != backend.LoginBrowser || browserURL == "" {
+	if manager.loginMethod != "browser" || browserURL == "" {
 		t.Fatalf("browser method=%q URL=%q", manager.loginMethod, browserURL)
 	}
 
 	verificationURL, userCode := "", ""
-	if err := configured.Login(context.Background(), backend.LoginDevice, backend.LoginInteraction{
-		DeviceCode: func(code backend.DeviceCode) error {
-			verificationURL, userCode = code.VerificationURL, code.UserCode
-			return nil
-		},
+	if err := configured.LoginDevice(context.Background(), func(code backend.DeviceCode) error {
+		verificationURL, userCode = code.VerificationURL, code.UserCode
+		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if manager.loginMethod != backend.LoginDevice || verificationURL == "" || userCode != "CODE" {
+	if manager.loginMethod != "device" || verificationURL == "" || userCode != "CODE" {
 		t.Fatalf("device method=%q URL=%q code=%q", manager.loginMethod, verificationURL, userCode)
 	}
 

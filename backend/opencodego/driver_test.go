@@ -90,7 +90,7 @@ func TestRuntimeValidatesModels(t *testing.T) {
 	}
 }
 
-func TestRuntimeChecksCredentialsLoadsModelsAndUsage(t *testing.T) {
+func TestRuntimeChecksCredentialsInitializesModelsAndLoadsUsage(t *testing.T) {
 	var usageRequests, liveRequests, catalogRequests int
 	client := &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
 		switch {
@@ -133,8 +133,8 @@ func TestRuntimeChecksCredentialsLoadsModelsAndUsage(t *testing.T) {
 	}
 	key = "changed"
 	configured := opened.(*runtime)
-	if configured.apiKey != "secret" || configured.baseURL != "https://example.test/zen/go/v1" || configured.catalogCachePath != filepath.Join(home, "cache", "opencode-go-models.json") {
-		t.Fatalf("runtime key/base URL/cache path = %q %q %q", configured.apiKey, configured.baseURL, configured.catalogCachePath)
+	if configured.apiKey != "secret" || configured.baseURL != "https://example.test/zen/go/v1" || configured.catalog.cachePath != filepath.Join(home, "cache", "opencode-go-models.json") {
+		t.Fatalf("runtime key/base URL/cache path = %q %q %q", configured.apiKey, configured.baseURL, configured.catalog.cachePath)
 	}
 	if configured.credentialClient.Timeout != credentialHTTPTimeout || configured.generationClient != client {
 		t.Fatalf("runtime clients = credential timeout %s, generation %p", configured.credentialClient.Timeout, configured.generationClient)
@@ -143,6 +143,12 @@ func TestRuntimeChecksCredentialsLoadsModelsAndUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := configured.CheckCredentials(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := configured.InitializeModels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := configured.InitializeModels(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	for _, model := range []string{"grok-4.5", "glm-5.2", "minimax-m3"} {

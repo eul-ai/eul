@@ -39,7 +39,7 @@ func runLogin(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "login failed: %v", err)
 		return exitFailure
 	}
-	authenticator, backendRuntime, err := openAuthenticator(driver, home)
+	backendRuntime, err := driver.Open(backend.Options{Home: home})
 	if err != nil {
 		writeCLIError(runtime.stderr, "login failed: %v", err)
 		return exitFailure
@@ -48,26 +48,33 @@ func runLogin(arguments []string, runtime appRuntime) int {
 	ctx, cancel := contextWithInterrupt(runtime.interrupts)
 	defer cancel()
 	descriptor := driver.Descriptor()
-	method := backend.LoginBrowser
 	if *device {
-		method = backend.LoginDevice
-	}
-	err = authenticator.Login(ctx, method, backend.LoginInteraction{
-		AuthURL: func(url string) error {
-			fmt.Fprintf(runtime.stderr, "Open this URL to sign in with %s:\n%s\n", descriptor.Name, url)
-			if runtime.openURL != nil {
-				if err := runtime.openURL(url); err == nil {
-					return nil
+		deviceAuthenticator, ok := backendRuntime.(backend.DeviceAuthenticator)
+		if !ok {
+			err = fmt.Errorf("backend %q does not support device login", descriptor.ID)
+		} else {
+			err = deviceAuthenticator.LoginDevice(ctx, func(code backend.DeviceCode) error {
+				fmt.Fprintf(runtime.stderr, "Open %s and enter code: %s\n", code.VerificationURL, code.UserCode)
+				return nil
+			})
+		}
+	} else {
+		browserAuthenticator, ok := backendRuntime.(backend.BrowserAuthenticator)
+		if !ok {
+			err = fmt.Errorf("backend %q does not support browser login", descriptor.ID)
+		} else {
+			err = browserAuthenticator.LoginBrowser(ctx, func(url string) error {
+				fmt.Fprintf(runtime.stderr, "Open this URL to sign in with %s:\n%s\n", descriptor.Name, url)
+				if runtime.openURL != nil {
+					if err := runtime.openURL(url); err == nil {
+						return nil
+					}
 				}
-			}
-			fmt.Fprintln(runtime.stderr, "Browser could not be opened automatically; open the URL manually.")
-			return nil
-		},
-		DeviceCode: func(code backend.DeviceCode) error {
-			fmt.Fprintf(runtime.stderr, "Open %s and enter code: %s\n", code.VerificationURL, code.UserCode)
-			return nil
-		},
-	})
+				fmt.Fprintln(runtime.stderr, "Browser could not be opened automatically; open the URL manually.")
+				return nil
+			})
+		}
+	}
 	err = errors.Join(err, backendRuntime.Close())
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -136,7 +143,7 @@ func openAuthenticator(driver backend.Driver, home string) (backend.Authenticato
 	}
 	authenticator, ok := backendRuntime.(backend.Authenticator)
 	if !ok {
-		return nil, nil, errors.Join(fmt.Errorf("backend %q does not support login or logout", driver.Descriptor().ID), backendRuntime.Close())
+		return nil, nil, errors.Join(fmt.Errorf("backend %q does not support logout", driver.Descriptor().ID), backendRuntime.Close())
 	}
 	return authenticator, backendRuntime, nil
 }

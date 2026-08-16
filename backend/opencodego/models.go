@@ -43,17 +43,41 @@ const (
 	thinkingAdaptive
 )
 
-type modelInfo struct {
-	protocol                  protocol
-	contextWindow             int64
+type thinkingConfig struct {
+	mode            thinkingMode
+	levels          []agent.ThinkingLevel
+	efforts         map[agent.ThinkingLevel]string
+	maxBudgetTokens int
+}
+
+type protocolConfig interface {
+	protocol() protocol
+}
+
+type responsesConfig struct {
+	maxOutputTokens  int
+	lowTextVerbosity bool
+}
+
+func (responsesConfig) protocol() protocol { return protocolResponses }
+
+type chatCompletionsConfig struct {
 	maxOutputTokens           int
-	thinkingLevels            []agent.ThinkingLevel
-	thinkingMode              thinkingMode
-	thinkingEfforts           map[agent.ThinkingLevel]string
-	maxThinkingBudgetTokens   int
-	includeEncryptedState     bool
-	lowTextVerbosity          bool
 	serializeReasoningContent bool
+}
+
+func (chatCompletionsConfig) protocol() protocol { return protocolChatCompletions }
+
+type anthropicMessagesConfig struct {
+	maxOutputTokens int
+}
+
+func (anthropicMessagesConfig) protocol() protocol { return protocolAnthropicMessages }
+
+type modelInfo struct {
+	contextWindow int64
+	thinking      thinkingConfig
+	protocol      protocolConfig
 }
 
 type catalogProvider struct {
@@ -111,55 +135,46 @@ func buildModelInfo(defaultNPM, id string, model catalogModel) (modelInfo, bool)
 		npm = defaultNPM
 	}
 
-	var selectedProtocol protocol
+	thinking, ok := modelThinking(model)
+	if !ok {
+		return modelInfo{}, false
+	}
+
+	var config protocolConfig
 	switch npm {
 	case "@ai-sdk/openai":
-		selectedProtocol = protocolResponses
+		if thinking.mode == thinkingBudget || thinking.mode == thinkingAdaptive {
+			return modelInfo{}, false
+		}
+		_, lowTextVerbosity := lowTextVerbosityModels[id]
+		config = responsesConfig{maxOutputTokens: model.Limit.Output, lowTextVerbosity: lowTextVerbosity}
 	case "@ai-sdk/openai-compatible":
-		selectedProtocol = protocolChatCompletions
+		if thinking.mode == thinkingBudget || thinking.mode == thinkingAdaptive {
+			return modelInfo{}, false
+		}
+		_, serializeReasoningContent := serializeReasoningContentModels[id]
+		config = chatCompletionsConfig{
+			maxOutputTokens:           model.Limit.Output,
+			serializeReasoningContent: serializeReasoningContent,
+		}
 	case "@ai-sdk/anthropic":
-		selectedProtocol = protocolAnthropicMessages
+		if thinking.mode == thinkingEffort {
+			return modelInfo{}, false
+		}
+		config = anthropicMessagesConfig{maxOutputTokens: model.Limit.Output}
 	default:
 		return modelInfo{}, false
 	}
 
-	levels, mode, efforts, maxThinkingBudgetTokens, ok := modelThinking(model)
-	if !ok {
-		return modelInfo{}, false
-	}
-	switch selectedProtocol {
-	case protocolResponses, protocolChatCompletions:
-		if mode == thinkingBudget || mode == thinkingAdaptive {
-			return modelInfo{}, false
-		}
-	case protocolAnthropicMessages:
-		if mode == thinkingEffort {
-			return modelInfo{}, false
-		}
-	}
-
-	_, lowTextVerbosity := lowTextVerbosityModels[id]
-	_, serializeReasoningContent := serializeReasoningContentModels[id]
-	return modelInfo{
-		protocol:                  selectedProtocol,
-		contextWindow:             model.Limit.Context,
-		maxOutputTokens:           model.Limit.Output,
-		thinkingLevels:            levels,
-		thinkingMode:              mode,
-		thinkingEfforts:           efforts,
-		maxThinkingBudgetTokens:   maxThinkingBudgetTokens,
-		includeEncryptedState:     selectedProtocol == protocolResponses,
-		lowTextVerbosity:          lowTextVerbosity,
-		serializeReasoningContent: serializeReasoningContent,
-	}, true
+	return modelInfo{contextWindow: model.Limit.Context, thinking: thinking, protocol: config}, true
 }
 
-func modelThinking(model catalogModel) ([]agent.ThinkingLevel, thinkingMode, map[agent.ThinkingLevel]string, int, bool) {
+func modelThinking(model catalogModel) (thinkingConfig, bool) {
 	if !model.Reasoning {
-		return []agent.ThinkingLevel{agent.ThinkingOff}, thinkingFixed, nil, 0, true
+		return thinkingConfig{mode: thinkingFixed, levels: []agent.ThinkingLevel{agent.ThinkingOff}}, true
 	}
 	if model.ReasoningOptions == nil {
-		return nil, thinkingFixed, nil, 0, false
+		return thinkingConfig{}, false
 	}
 
 	options := *model.ReasoningOptions
@@ -186,7 +201,7 @@ func modelThinking(model catalogModel) ([]agent.ThinkingLevel, thinkingMode, map
 			}
 		}
 		levels := orderedThinkingLevels(efforts)
-		return levels, thinkingEffort, efforts, 0, len(levels) > 0
+		return thinkingConfig{mode: thinkingEffort, levels: levels, efforts: efforts}, len(levels) > 0
 	}
 
 	for _, option := range options {
@@ -195,19 +210,26 @@ func modelThinking(model catalogModel) ([]agent.ThinkingLevel, thinkingMode, map
 		}
 		maximum := min(option.Max, model.Limit.Output-maxThinkingOutputHeadroom)
 		if maximum <= highThinkingBudgetTokens {
-			return nil, thinkingFixed, nil, 0, false
+			return thinkingConfig{}, false
 		}
-		return []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax}, thinkingBudget, nil, maximum, true
+		return thinkingConfig{
+			mode:            thinkingBudget,
+			levels:          []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax},
+			maxBudgetTokens: maximum,
+		}, true
 	}
 	for _, option := range options {
 		if option.Type == reasoningOptionTypeToggle {
-			return []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh}, thinkingAdaptive, nil, 0, true
+			return thinkingConfig{
+				mode:   thinkingAdaptive,
+				levels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh},
+			}, true
 		}
 	}
 	if len(options) == 0 {
-		return []agent.ThinkingLevel{agent.ThinkingHigh}, thinkingFixed, nil, 0, true
+		return thinkingConfig{mode: thinkingFixed, levels: []agent.ThinkingLevel{agent.ThinkingHigh}}, true
 	}
-	return nil, thinkingFixed, nil, 0, false
+	return thinkingConfig{}, false
 }
 
 func orderedThinkingLevels(efforts map[agent.ThinkingLevel]string) []agent.ThinkingLevel {
@@ -227,6 +249,6 @@ func metadataFor(models map[string]modelInfo, model string) backend.ModelMetadat
 	}
 	return backend.ModelMetadata{
 		ContextWindow:  info.contextWindow,
-		ThinkingLevels: slices.Clone(info.thinkingLevels),
+		ThinkingLevels: slices.Clone(info.thinking.levels),
 	}
 }

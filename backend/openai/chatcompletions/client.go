@@ -87,7 +87,7 @@ func New(options Options) (*Client, error) {
 	}
 
 	return &Client{
-		httpClient:          backendhttp.New(options.HTTPClient, defaultHTTPTimeout),
+		httpClient:          backendhttp.CloneNoRedirects(options.HTTPClient, defaultHTTPTimeout),
 		endpoint:            options.Endpoint,
 		errorPrefix:         strings.TrimSpace(options.ErrorPrefix),
 		prepareRequest:      options.PrepareRequest,
@@ -135,9 +135,11 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 	if err != nil {
 		return agent.Response{}, client.errorf("build request: %v", err)
 	}
-	if err := client.configureRequest(request, &wireRequest); err != nil {
+	options, err := client.optionsFor(request)
+	if err != nil {
 		return agent.Response{}, client.errorf("%v", err)
 	}
+	wireRequest = configureGenerationRequest(configureCommonRequest(wireRequest, options), options)
 
 	result, err := client.complete(ctx, wireRequest, observer, "request")
 	if err != nil {
@@ -168,12 +170,11 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("build summary request: %v", err)
 	}
-	if err := client.configureRequest(request, &wireRequest); err != nil {
+	options, err := client.optionsFor(request)
+	if err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
-	wireRequest.Tools = nil
-	wireRequest.ToolChoice = ""
-	wireRequest.ParallelToolCalls = nil
+	wireRequest = configureCommonRequest(wireRequest, options)
 
 	result, err := client.complete(ctx, wireRequest, agent.StreamObserver{}, "summary request")
 	if err != nil {
@@ -234,36 +235,40 @@ func (client *Client) complete(ctx context.Context, wireRequest createRequest, o
 	if errors.As(err, &partialErr) {
 		return streamResult{}, client.wrapf(err, "%v", err)
 	}
-	if classified := client.contextError(ctx, err, "read "+operation); classified != nil {
-		return streamResult{}, classified
+	classified := backendhttp.ClassifyTransportError(ctx, err)
+	if classified.ReturnDirectly {
+		return streamResult{}, classified.Cause
 	}
-	if backendhttp.RetryableNetworkError(err) {
-		return streamResult{}, client.retryableWrapf(err, "%v", err)
+	if classified.Retryable {
+		return streamResult{}, client.retryableWrapf(classified.Cause, "%v", err)
 	}
-	return streamResult{}, client.wrapf(err, "%v", err)
+	return streamResult{}, client.wrapf(classified.Cause, "%v", err)
 }
 
-func (client *Client) configureRequest(request agent.Request, wireRequest *createRequest) error {
-	options := RequestOptions{}
-	if client.requestOptions != nil {
-		var err error
-		options, err = client.requestOptions(request)
-		if err != nil {
-			return err
-		}
+func (client *Client) optionsFor(request agent.Request) (RequestOptions, error) {
+	if client.requestOptions == nil {
+		return RequestOptions{}, nil
 	}
+	return client.requestOptions(request)
+}
 
+func configureCommonRequest(wireRequest createRequest, options RequestOptions) createRequest {
 	wireRequest.Stream = true
 	wireRequest.StreamOptions = &streamOptions{IncludeUsage: true}
 	wireRequest.MaxTokens = options.MaxTokens
 	wireRequest.ReasoningEffort = options.ReasoningEffort
 	wireRequest.serializeReasoningContent = options.SerializeReasoningContent
-	if len(wireRequest.Tools) != 0 {
-		wireRequest.ToolChoice = options.ToolChoice
-		if options.ParallelToolCalls {
-			enabled := true
-			wireRequest.ParallelToolCalls = &enabled
-		}
+	return wireRequest
+}
+
+func configureGenerationRequest(wireRequest createRequest, options RequestOptions) createRequest {
+	if len(wireRequest.Tools) == 0 {
+		return wireRequest
 	}
-	return nil
+	wireRequest.ToolChoice = options.ToolChoice
+	if options.ParallelToolCalls {
+		enabled := true
+		wireRequest.ParallelToolCalls = &enabled
+	}
+	return wireRequest
 }

@@ -11,25 +11,20 @@ type CredentialChecker interface {
 	CheckCredentials(context.Context) error
 }
 
-type LoginMethod string
-
-const (
-	LoginBrowser LoginMethod = "browser"
-	LoginDevice  LoginMethod = "device"
-)
-
 type DeviceCode struct {
 	VerificationURL string
 	UserCode        string
 }
 
-type LoginInteraction struct {
-	AuthURL    func(string) error
-	DeviceCode func(DeviceCode) error
+type BrowserAuthenticator interface {
+	LoginBrowser(context.Context, func(string) error) error
+}
+
+type DeviceAuthenticator interface {
+	LoginDevice(context.Context, func(DeviceCode) error) error
 }
 
 type Authenticator interface {
-	Login(context.Context, LoginMethod, LoginInteraction) error
 	Logout(context.Context) error
 }
 
@@ -61,6 +56,10 @@ func (metadata ModelMetadata) ClampThinkingLevel(level agent.ThinkingLevel) agen
 
 type ModelMetadataProvider interface {
 	ModelMetadata(model string) ModelMetadata
+}
+
+type ModelInitializer interface {
+	InitializeModels(context.Context) error
 }
 
 type ModelValidator interface {

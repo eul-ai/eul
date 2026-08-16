@@ -41,7 +41,7 @@ func TestCodexClientCompactsAndReplaysSharedState(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestClient(t, "token", server.URL, Options{})
+	client := newTestClient(t, "token", server.URL, Options{HTTPClient: server.Client()})
 	compacted, err := client.Compact(context.Background(), agent.Request{
 		Model: ModelGPT56Sol, Inputs: []agent.Input{agent.NewTextInput("compact me")},
 	})

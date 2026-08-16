@@ -40,17 +40,18 @@ func TestClientContinuesThinkingAndToolUse(t *testing.T) {
 				if len(wire.Messages) != 1 || len(wire.System) != 1 {
 					t.Fatalf("first request = %+v", wire)
 				}
-				stream = strings.Join([]string{
-					`data: {"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":0}}}`,
-					`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`,
-					`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"check "}}`,
-					`data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"signed"}}`,
-					`data: {"type":"content_block_stop","index":0}`,
-					`data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_1","name":"read","input":{"path":"a"}}}`,
-					`data: {"type":"content_block_stop","index":1}`,
-					`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":2}}`,
-					`data: {"type":"message_stop"}`,
-				}, "\n\n") + "\n\n"
+				stream = marshalSSE(
+					t,
+					sseMessageStart(&wireUsage{InputTokens: int64Pointer(10), OutputTokens: int64Pointer(0)}),
+					sseContentBlockStart(t, 0, contentBlock{Type: "thinking"}),
+					sseContentBlockDelta(0, streamDelta{Type: "thinking_delta", Thinking: "check "}),
+					sseContentBlockDelta(0, streamDelta{Type: "signature_delta", Signature: "signed"}),
+					sseContentBlockStop(0),
+					sseContentBlockStart(t, 1, contentBlock{Type: "tool_use", ID: "call_1", Name: "read", Input: json.RawMessage(`{"path":"a"}`)}),
+					sseContentBlockStop(1),
+					sseMessageDelta("tool_use", &wireUsage{OutputTokens: int64Pointer(2)}),
+					sseMessageStop(),
+				)
 			case 2:
 				if len(wire.Messages) != 3 {
 					t.Fatalf("second messages = %s", wire.Messages)
@@ -69,14 +70,15 @@ func TestClientContinuesThinkingAndToolUse(t *testing.T) {
 				if len(blocks) != 1 || blocks[0].Type != "tool_result" || blocks[0].ToolUseID != "call_1" || blocks[0].Content != "contents" {
 					t.Fatalf("tool result = %+v", blocks)
 				}
-				stream = strings.Join([]string{
-					`data: {"type":"message_start","message":{"usage":{"input_tokens":12,"output_tokens":0}}}`,
-					`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
-					`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}}`,
-					`data: {"type":"content_block_stop","index":0}`,
-					`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}`,
-					`data: {"type":"message_stop"}`,
-				}, "\n\n") + "\n\n"
+				stream = marshalSSE(
+					t,
+					sseMessageStart(&wireUsage{InputTokens: int64Pointer(12), OutputTokens: int64Pointer(0)}),
+					sseContentBlockStart(t, 0, contentBlock{Type: "text"}),
+					sseContentBlockDelta(0, streamDelta{Type: "text_delta", Text: "done"}),
+					sseContentBlockStop(0),
+					sseMessageDelta("end_turn", &wireUsage{OutputTokens: int64Pointer(1)}),
+					sseMessageStop(),
+				)
 			}
 			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(stream))}, nil
 		})},
@@ -130,13 +132,14 @@ func TestSemanticCompactStoresValidAnthropicExchange(t *testing.T) {
 			if strings.Contains(string(body), `"tools"`) || strings.Contains(string(body), `"tool_choice"`) {
 				t.Fatalf("summary request contains tool settings: %s", body)
 			}
-			stream := strings.Join([]string{
-				`data: {"type":"message_start","message":{}}`,
-				`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"summary"}}`,
-				`data: {"type":"content_block_stop","index":0}`,
-				`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}`,
-				`data: {"type":"message_stop"}`,
-			}, "\n\n") + "\n\n"
+			stream := marshalSSE(
+				t,
+				sseMessageStart(nil),
+				sseContentBlockStart(t, 0, contentBlock{Type: "text", Text: "summary"}),
+				sseContentBlockStop(0),
+				sseMessageDelta("end_turn", nil),
+				sseMessageStop(),
+			)
 			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(stream))}, nil
 		})},
 		RequestOptions: func(agent.Request) (RequestOptions, error) {

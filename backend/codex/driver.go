@@ -19,20 +19,24 @@ const (
 )
 
 type oauthManager interface {
-	Login(context.Context, backend.LoginMethod, backend.LoginInteraction) error
+	LoginBrowser(context.Context, func(string) error) error
+	LoginDevice(context.Context, func(backend.DeviceCode) error) error
 	Resolve(context.Context) (oauth.AccessCredential, error)
 	Logout(context.Context) error
 }
 
 type Driver struct {
-	newManager func(string) (oauthManager, error)
-	newClient  func(client.TokenSource) (*client.Client, error)
+	newManager     func(string) (oauthManager, error)
+	newClient      func(client.TokenSource) (*client.Client, error)
+	newUsageClient func(oauthManager) (*usageClient, error)
 }
 
 var (
 	_ backend.Driver                = (*Driver)(nil)
 	_ backend.Runtime               = (*runtime)(nil)
 	_ backend.CredentialChecker     = (*runtime)(nil)
+	_ backend.BrowserAuthenticator  = (*runtime)(nil)
+	_ backend.DeviceAuthenticator   = (*runtime)(nil)
 	_ backend.Authenticator         = (*runtime)(nil)
 	_ backend.UsageProvider         = (*runtime)(nil)
 	_ backend.ModelMetadataProvider = (*runtime)(nil)
@@ -45,6 +49,9 @@ func New() *Driver {
 		},
 		newClient: func(source client.TokenSource) (*client.Client, error) {
 			return client.New(source, client.Options{})
+		},
+		newUsageClient: func(manager oauthManager) (*usageClient, error) {
+			return newUsageClient(manager, usageClientOptions{})
 		},
 	}
 }
@@ -66,19 +73,29 @@ func (driver *Driver) Open(options backend.Options) (backend.Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	usage, err := driver.newUsageClient(manager)
+	if err != nil {
+		return nil, err
+	}
 	return &runtime{
-		manager:   manager,
-		newClient: driver.newClient,
+		manager:     manager,
+		newClient:   driver.newClient,
+		usageClient: usage,
 	}, nil
 }
 
 type runtime struct {
-	manager   oauthManager
-	newClient func(client.TokenSource) (*client.Client, error)
+	manager     oauthManager
+	newClient   func(client.TokenSource) (*client.Client, error)
+	usageClient *usageClient
 }
 
-func (configured *runtime) Login(ctx context.Context, method backend.LoginMethod, interaction backend.LoginInteraction) error {
-	return configured.manager.Login(ctx, method, interaction)
+func (configured *runtime) LoginBrowser(ctx context.Context, presentURL func(string) error) error {
+	return configured.manager.LoginBrowser(ctx, presentURL)
+}
+
+func (configured *runtime) LoginDevice(ctx context.Context, presentCode func(backend.DeviceCode) error) error {
+	return configured.manager.LoginDevice(ctx, presentCode)
 }
 
 func (configured *runtime) Logout(ctx context.Context) error {
@@ -95,28 +112,16 @@ func (configured *runtime) NewProvider() (agent.Provider, error) {
 }
 
 func (configured *runtime) ModelMetadata(model string) backend.ModelMetadata {
+	metadata := client.MetadataFor(model)
 	return backend.ModelMetadata{
-		ContextWindow:  client.ContextWindow(model),
-		ThinkingLevels: client.SupportedThinkingLevels(model),
-		FastMode:       client.FastModeAvailable(model),
+		ContextWindow:  metadata.ContextWindow,
+		ThinkingLevels: metadata.ThinkingLevels,
+		FastMode:       metadata.FastMode,
 	}
 }
 
 func (configured *runtime) Usage(ctx context.Context) (backend.AccountUsage, error) {
-	client, err := configured.newClient(oauthTokenSource{manager: configured.manager})
-	if err != nil {
-		return backend.AccountUsage{}, err
-	}
-	usage, err := client.Usage(ctx)
-	windows := make([]backend.UsageWindow, len(usage.Windows))
-	for index, window := range usage.Windows {
-		windows[index] = backend.UsageWindow{
-			Duration:    window.Duration,
-			UsedPercent: window.UsedPercent,
-			ResetsAt:    window.ResetsAt,
-		}
-	}
-	return backend.AccountUsage{Windows: windows}, err
+	return configured.usageClient.Usage(ctx)
 }
 
 func (*runtime) Close() error {

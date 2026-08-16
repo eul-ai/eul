@@ -218,24 +218,32 @@ func openBackendRuntime(ctx context.Context, driver backend.Driver, home string,
 	if err != nil {
 		return nil, err
 	}
-	checker, ok := backendRuntime.(backend.CredentialChecker)
-	if !ok {
+	checker, checksCredentials := backendRuntime.(backend.CredentialChecker)
+	initializer, initializesModels := backendRuntime.(backend.ModelInitializer)
+	if !checksCredentials && !initializesModels {
 		return backendRuntime, nil
 	}
 
-	credentialCtx, cancel := context.WithCancel(ctx)
+	initializationCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
 		select {
-		case <-credentialCtx.Done():
+		case <-initializationCtx.Done():
 		case _, ok := <-interrupts:
 			if ok {
 				cancel()
 			}
 		}
 	}()
-	if err := checker.CheckCredentials(credentialCtx); err != nil {
-		return nil, errors.Join(fmt.Errorf("authentication required: %w", err), closeBackendRuntime(backendRuntime))
+	if checksCredentials {
+		if err := checker.CheckCredentials(initializationCtx); err != nil {
+			return nil, errors.Join(fmt.Errorf("authentication required: %w", err), closeBackendRuntime(backendRuntime))
+		}
+	}
+	if initializesModels {
+		if err := initializer.InitializeModels(initializationCtx); err != nil {
+			return nil, errors.Join(fmt.Errorf("initialize models: %w", err), closeBackendRuntime(backendRuntime))
+		}
 	}
 	return backendRuntime, nil
 }

@@ -90,7 +90,7 @@ func New(options Options) (*Client, error) {
 	}
 
 	return &Client{
-		httpClient:          backendhttp.New(options.HTTPClient, defaultHTTPTimeout),
+		httpClient:          backendhttp.CloneNoRedirects(options.HTTPClient, defaultHTTPTimeout),
 		endpoint:            endpoint,
 		errorPrefix:         strings.TrimSpace(options.ErrorPrefix),
 		prepareRequest:      options.PrepareRequest,
@@ -245,13 +245,14 @@ func (client *Client) complete(ctx context.Context, wireRequest createRequest, o
 	if errors.As(err, &partialErr) {
 		return streamResult{}, client.wrapf(err, "%v", err)
 	}
-	if classified := client.contextError(ctx, err, "read "+operation); classified != nil {
-		return streamResult{}, classified
+	classified := backendhttp.ClassifyTransportError(ctx, err)
+	if classified.ReturnDirectly {
+		return streamResult{}, classified.Cause
 	}
-	if backendhttp.RetryableNetworkError(err) {
-		return streamResult{}, client.retryableWrapf(err, "%v", err)
+	if classified.Retryable {
+		return streamResult{}, client.retryableWrapf(classified.Cause, "%v", err)
 	}
-	return streamResult{}, client.wrapf(err, "%v", err)
+	return streamResult{}, client.wrapf(classified.Cause, "%v", err)
 }
 
 func (client *Client) configureRequest(request agent.Request, wireRequest *createRequest) error {

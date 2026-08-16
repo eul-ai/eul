@@ -27,6 +27,9 @@ func (providerFunction) ModelMetadata(string) backend.ModelMetadata {
 type fakeBackendRuntime struct {
 	checkCredentialsErr   error
 	checkCredentialsCalls int
+	initializeModelsErr   error
+	initializeModelsCalls int
+	initializationOrder   *[]string
 	closeErr              error
 	closeCalls            int
 	newProvider           func() (agent.Provider, error)
@@ -40,7 +43,18 @@ type metadataFreeBackendRuntime struct {
 
 func (runtime *fakeBackendRuntime) CheckCredentials(context.Context) error {
 	runtime.checkCredentialsCalls++
+	if runtime.initializationOrder != nil {
+		*runtime.initializationOrder = append(*runtime.initializationOrder, "credentials")
+	}
 	return runtime.checkCredentialsErr
+}
+
+func (runtime *fakeBackendRuntime) InitializeModels(context.Context) error {
+	runtime.initializeModelsCalls++
+	if runtime.initializationOrder != nil {
+		*runtime.initializationOrder = append(*runtime.initializationOrder, "models")
+	}
+	return runtime.initializeModelsErr
 }
 
 func (runtime *fakeBackendRuntime) NewProvider() (agent.Provider, error) {

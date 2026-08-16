@@ -38,7 +38,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestClient(t, "key", server.URL, Options{})
+	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 	state, err := encodeState(nil, nil, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)}, defaultMaxStateBytes)
 	if err != nil {
 		t.Fatal(err)
@@ -76,12 +76,12 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 		t.Fatalf("continuation message = %s, error = %v", items[1], err)
 	}
 
-	continued, _, err := buildCreateRequest(agent.Request{State: compacted.State}, defaultMaxStateBytes)
+	continued, err := buildRequest(agent.Request{State: compacted.State}, defaultMaxStateBytes, defaultMaxStateBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(continued.Input) != 2 {
-		t.Fatalf("continued input = %s", continued.Input)
+	if len(continued.wire.Input) != 2 {
+		t.Fatalf("continued input = %s", continued.wire.Input)
 	}
 }
 
@@ -89,7 +89,7 @@ func TestManualSemanticCompactionPreservesTurnBoundary(t *testing.T) {
 	server := responseServer(t, http.StatusOK, `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"concise handoff"}]}]}`)
 	defer server.Close()
 
-	client := newTestClient(t, "key", server.URL, Options{})
+	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 	state, err := encodeState(nil, nil, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)}, defaultMaxStateBytes)
 	if err != nil {
 		t.Fatal(err)
@@ -103,22 +103,22 @@ func TestManualSemanticCompactionPreservesTurnBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	continued, _, err := buildCreateRequest(agent.Request{
+	continued, err := buildRequest(agent.Request{
 		State:  compacted.State,
 		Inputs: []agent.Input{agent.NewTextInput("new request")},
-	}, defaultMaxStateBytes)
+	}, defaultMaxStateBytes, defaultMaxStateBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(continued.Input) != 2 {
-		t.Fatalf("continued input = %s", continued.Input)
+	if len(continued.wire.Input) != 2 {
+		t.Fatalf("continued input = %s", continued.wire.Input)
 	}
 	var summaryMessage, userMessage inputMessage
-	if err := json.Unmarshal(continued.Input[0], &summaryMessage); err != nil || summaryMessage.Role != "assistant" {
-		t.Fatalf("summary message = %s, error = %v", continued.Input[0], err)
+	if err := json.Unmarshal(continued.wire.Input[0], &summaryMessage); err != nil || summaryMessage.Role != "assistant" {
+		t.Fatalf("summary message = %s, error = %v", continued.wire.Input[0], err)
 	}
-	if err := json.Unmarshal(continued.Input[1], &userMessage); err != nil || userMessage.Role != "user" {
-		t.Fatalf("user message = %s, error = %v", continued.Input[1], err)
+	if err := json.Unmarshal(continued.wire.Input[1], &userMessage); err != nil || userMessage.Role != "user" {
+		t.Fatalf("user message = %s, error = %v", continued.wire.Input[1], err)
 	}
 }
 
@@ -146,7 +146,7 @@ func TestSemanticCompactAcceptsStateThatCannotReserveGenerationOutput(t *testing
 	}))
 	defer server.Close()
 
-	client := newTestClient(t, "key", server.URL, Options{})
+	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 	client.maxStateBytes = 600
 	client.stateOutputHeadroom = 250
 	state, err := encodeState(nil, nil, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"` + strings.Repeat("x", 300) + `"}`)}, client.maxStateBytes)

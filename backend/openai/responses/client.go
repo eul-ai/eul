@@ -67,7 +67,7 @@ func New(options Options) (*Client, error) {
 		return nil, errors.New("responses: endpoint is required")
 	}
 
-	httpClient := backendhttp.New(options.HTTPClient, defaultHTTPTimeout)
+	httpClient := backendhttp.CloneNoRedirects(options.HTTPClient, defaultHTTPTimeout)
 
 	maxRequestBytes := options.MaxRequestBytes
 	if maxRequestBytes <= 0 {
@@ -104,214 +104,217 @@ func New(options Options) (*Client, error) {
 	}, nil
 }
 
-func (c *Client) stateOutputBudget() int {
-	budget := c.stateOutputHeadroom
+func (client *Client) stateOutputBudget() int {
+	budget := client.stateOutputHeadroom
 	if budget <= 0 {
-		budget = min(defaultStateOutputHeadroom, c.maxStateBytes/4)
+		budget = min(defaultStateOutputHeadroom, client.maxStateBytes/4)
 	}
-	return min(budget, max(0, c.maxStateBytes-continuationStateEnvelopeBytes))
+	return min(budget, max(0, client.maxStateBytes-continuationStateEnvelopeBytes))
 }
 
-func (c *Client) generationStateBytes() int {
-	return max(0, c.maxStateBytes-c.stateOutputBudget())
+func (client *Client) generationStateBytes() int {
+	return max(0, client.maxStateBytes-client.stateOutputBudget())
 }
 
-func (c *Client) ShouldCompactState(request agent.Request) bool {
+func (client *Client) ShouldCompactState(request agent.Request) bool {
 	if len(request.State) == 0 {
 		return false
 	}
-	if _, _, err := buildCreateRequestWithLimit(request, c.maxStateBytes, c.generationStateBytes()); err == nil {
+	if _, err := buildRequest(request, client.maxStateBytes, client.generationStateBytes()); err == nil {
 		return false
 	}
 
 	withoutState := request
 	withoutState.State = nil
-	_, _, err := buildCreateRequestWithLimit(withoutState, c.maxStateBytes, c.generationStateBytes())
+	_, err := buildRequest(withoutState, client.maxStateBytes, client.generationStateBytes())
 	return err == nil
 }
 
-func (c *Client) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {
+func (client *Client) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.Response{}, err
 	}
 
-	wireRequest, newInputs, err := buildCreateRequestWithLimit(request, c.maxStateBytes, c.generationStateBytes())
+	build, err := buildRequest(request, client.maxStateBytes, client.generationStateBytes())
 	if err != nil {
-		return agent.Response{}, c.errorf("build request: %v", err)
+		return agent.Response{}, client.errorf("build request: %v", err)
 	}
-	if err := c.configureRequest(request, &wireRequest); err != nil {
-		return agent.Response{}, c.errorf("%v", err)
-	}
-
-	requestBody, oversized, err := backendhttp.MarshalBoundedJSON(wireRequest, c.maxRequestBytes)
+	options, err := client.optionsFor(request)
 	if err != nil {
-		return agent.Response{}, c.errorf("encode request: %v", err)
+		return agent.Response{}, client.errorf("%v", err)
 	}
-	if oversized {
-		return agent.Response{}, c.errorf("request exceeds %d bytes", c.maxRequestBytes)
-	}
+	wireRequest := configureGenerationRequest(configureCommonRequest(build.wire, options), options)
 
-	httpResponse, err := c.post(ctx, requestBody, "request")
+	stream, err := client.complete(ctx, wireRequest, observer, "request", client.generationReadError)
 	if err != nil {
 		return agent.Response{}, err
 	}
-	defer httpResponse.Body.Close()
 
-	stream := streamObserver{observer: observer}
-	wireResponse, err := readResponsesSSE(httpResponse.Body, c.maxResponseBytes, &stream)
-	if err != nil {
-		var observerErr *observerDeliveryError
-		if errors.As(err, &observerErr) {
-			return agent.Response{}, c.wrapf(err, "%v", err)
-		}
-		var partialErr *partialResponseError
-		if errors.As(err, &partialErr) {
-			return agent.Response{}, c.wrapf(err, "%v", err)
-		}
-		if classified := c.contextError(ctx, err, "read response"); classified != nil {
-			return agent.Response{}, classified
-		}
-		if backendhttp.RetryableNetworkError(err) {
-			return agent.Response{}, c.retryableWrapf(err, "%v", err)
-		}
-		return agent.Response{}, c.wrapf(err, "%v", err)
-	}
-
-	text, calls, usage, err := normalizeResponse(wireResponse)
+	text, calls, usage, err := normalizeResponse(stream.response)
 	if err != nil {
 		if stream.observed {
 			err = &partialResponseError{cause: err}
 		}
-		return agent.Response{}, c.wrapf(err, "%v", err)
+		return agent.Response{}, client.wrapf(err, "%v", err)
 	}
 
-	historyLength := len(wireRequest.Input) - len(newInputs)
-	history := wireRequest.Input[:historyLength]
-	state, err := encodeState(history, newInputs, wireResponse.Output, c.maxStateBytes)
+	state, err := encodeState(build.history, build.newItems, stream.response.Output, client.maxStateBytes)
 	if err != nil {
-		return agent.Response{}, c.errorf("%v", err)
+		return agent.Response{}, client.errorf("%v", err)
 	}
 
-	if text != "" && observer.Text != nil && !stream.sawDelta {
+	if text != "" && observer.Text != nil && !stream.sawTextDelta {
 		if err := observer.Text(text); err != nil {
 			deliveryErr := &observerDeliveryError{operation: "deliver text", cause: err}
-			return agent.Response{}, c.wrapf(deliveryErr, "%v", deliveryErr)
+			return agent.Response{}, client.wrapf(deliveryErr, "%v", deliveryErr)
 		}
 	}
 
 	return agent.Response{Text: text, ToolCalls: calls, State: state, Usage: usage}, nil
 }
 
-func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {
+func (client *Client) Compact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.CompactResponse{}, err
 	}
 
-	wireRequest, err := buildCompactRequest(request, c.maxStateBytes)
+	build, err := buildCompactRequest(request, client.maxStateBytes)
 	if err != nil {
-		return agent.CompactResponse{}, c.errorf("build compact request: %v", err)
+		return agent.CompactResponse{}, client.errorf("build compact request: %v", err)
 	}
-	if err := c.configureRequest(request, &wireRequest); err != nil {
-		return agent.CompactResponse{}, c.errorf("%v", err)
-	}
-
-	requestBody, oversized, err := backendhttp.MarshalBoundedJSON(wireRequest, c.maxRequestBytes)
+	options, err := client.optionsFor(request)
 	if err != nil {
-		return agent.CompactResponse{}, c.errorf("encode compact request: %v", err)
+		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
-	if oversized {
-		return agent.CompactResponse{}, c.errorf("compact request exceeds %d bytes", c.maxRequestBytes)
-	}
+	wireRequest := configureGenerationRequest(configureCommonRequest(build.wire, options), options)
 
-	httpResponse, err := c.post(ctx, requestBody, "compact request")
+	stream, err := client.complete(ctx, wireRequest, agent.StreamObserver{}, "compact request", client.compactionReadError)
 	if err != nil {
 		return agent.CompactResponse{}, err
 	}
-	defer httpResponse.Body.Close()
-
-	wireResponse, err := readResponsesSSE(httpResponse.Body, c.maxResponseBytes, nil)
+	if err := validateCompletedResponse(stream.response); err != nil {
+		return agent.CompactResponse{}, client.errorf("%v", err)
+	}
+	usage, err := normalizeUsage(stream.response.Usage)
 	if err != nil {
-		if classified := c.contextError(ctx, err, "read compact response"); classified != nil {
-			return agent.CompactResponse{}, classified
-		}
-		return agent.CompactResponse{}, c.errorf("read compact response: %v", err)
+		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
-	if err := validateCompletedResponse(wireResponse); err != nil {
-		return agent.CompactResponse{}, c.errorf("%v", err)
+	if err := validateCompactOutput(stream.response.Output); err != nil {
+		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
-	usage, err := normalizeUsage(wireResponse.Usage)
+	state, err := encodeState(nil, nil, compactedStateItems(build.input, stream.response.Output), client.generationStateBytes())
 	if err != nil {
-		return agent.CompactResponse{}, c.errorf("%v", err)
-	}
-	if err := validateCompactOutput(wireResponse.Output); err != nil {
-		return agent.CompactResponse{}, c.errorf("%v", err)
-	}
-	input := wireRequest.Input[:len(wireRequest.Input)-1]
-	state, err := encodeState(nil, nil, compactedStateItems(input, wireResponse.Output), c.generationStateBytes())
-	if err != nil {
-		return agent.CompactResponse{}, c.errorf("%v", err)
+		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
 
 	return agent.CompactResponse{State: state, Usage: usage}, nil
 }
 
-func (c *Client) SemanticCompact(ctx context.Context, request agent.Request, instructions string) (agent.CompactResponse, error) {
+func (client *Client) SemanticCompact(ctx context.Context, request agent.Request, instructions string) (agent.CompactResponse, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.CompactResponse{}, err
 	}
 
 	request, continueAfterCompaction := compaction.Prepare(request, instructions)
-	wireRequest, _, err := buildCreateRequestUnchecked(request, c.maxStateBytes)
+	build, err := buildRequestUnchecked(request, client.maxStateBytes)
 	if err != nil {
-		return agent.CompactResponse{}, c.errorf("build summary request: %v", err)
+		return agent.CompactResponse{}, client.errorf("build summary request: %v", err)
 	}
-	if err := c.configureRequest(request, &wireRequest); err != nil {
-		return agent.CompactResponse{}, c.errorf("%v", err)
-	}
-	wireRequest.ToolChoice = ""
-	wireRequest.ParallelToolCalls = false
-
-	requestBody, oversized, err := backendhttp.MarshalBoundedJSON(wireRequest, c.maxRequestBytes)
+	options, err := client.optionsFor(request)
 	if err != nil {
-		return agent.CompactResponse{}, c.errorf("encode summary request: %v", err)
+		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
-	if oversized {
-		return agent.CompactResponse{}, c.errorf("summary request exceeds %d bytes", c.maxRequestBytes)
-	}
+	wireRequest := configureCommonRequest(build.wire, options)
 
-	httpResponse, err := c.post(ctx, requestBody, "summary request")
+	stream, err := client.complete(ctx, wireRequest, agent.StreamObserver{}, "summary request", client.compactionReadError)
 	if err != nil {
 		return agent.CompactResponse{}, err
 	}
-	defer httpResponse.Body.Close()
 
-	wireResponse, err := readResponsesSSE(httpResponse.Body, c.maxResponseBytes, nil)
+	summary, calls, usage, err := normalizeResponse(stream.response)
 	if err != nil {
-		if classified := c.contextError(ctx, err, "read summary response"); classified != nil {
-			return agent.CompactResponse{}, classified
-		}
-		return agent.CompactResponse{}, c.errorf("read summary response: %v", err)
-	}
-
-	summary, calls, usage, err := normalizeResponse(wireResponse)
-	if err != nil {
-		return agent.CompactResponse{}, c.errorf("%v", err)
+		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
 	summary, err = compaction.ValidateSummary(summary, len(calls))
 	if err != nil {
-		return agent.CompactResponse{}, c.errorf("%v", err)
+		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
 
 	items, err := semanticCompactionStateItems(summary, continueAfterCompaction)
 	if err != nil {
-		return agent.CompactResponse{}, c.errorf("encode summary state: %v", err)
+		return agent.CompactResponse{}, client.errorf("encode summary state: %v", err)
 	}
-	state, err := encodeState(nil, nil, items, c.generationStateBytes())
+	state, err := encodeState(nil, nil, items, client.generationStateBytes())
 	if err != nil {
-		return agent.CompactResponse{}, c.errorf("encode summary state: %v", err)
+		return agent.CompactResponse{}, client.errorf("encode summary state: %v", err)
 	}
 
 	return agent.CompactResponse{State: state, Usage: usage}, nil
+}
+
+type responseReadErrorFunc func(context.Context, error, string) error
+
+func (client *Client) complete(
+	ctx context.Context,
+	wireRequest createResponseRequest,
+	observer agent.StreamObserver,
+	operation string,
+	readError responseReadErrorFunc,
+) (responseStreamResult, error) {
+	requestBody, oversized, err := backendhttp.MarshalBoundedJSON(wireRequest, client.maxRequestBytes)
+	if err != nil {
+		return responseStreamResult{}, client.errorf("encode %s: %v", operation, err)
+	}
+	if oversized {
+		return responseStreamResult{}, client.errorf("%s exceeds %d bytes", operation, client.maxRequestBytes)
+	}
+
+	httpResponse, err := client.post(ctx, requestBody, operation)
+	if err != nil {
+		return responseStreamResult{}, err
+	}
+	defer httpResponse.Body.Close()
+
+	result, err := readResponsesSSE(httpResponse.Body, client.maxResponseBytes, observer)
+	if err != nil {
+		return responseStreamResult{}, readError(ctx, err, operation)
+	}
+	return result, nil
+}
+
+func (client *Client) generationReadError(ctx context.Context, err error, _ string) error {
+	var observerErr *observerDeliveryError
+	if errors.As(err, &observerErr) {
+		return client.wrapf(err, "%v", err)
+	}
+	var partialErr *partialResponseError
+	if errors.As(err, &partialErr) {
+		return client.wrapf(err, "%v", err)
+	}
+
+	classified := backendhttp.ClassifyTransportError(ctx, err)
+	if classified.ReturnDirectly {
+		return classified.Cause
+	}
+	if classified.Retryable {
+		return client.retryableWrapf(classified.Cause, "%v", err)
+	}
+	return client.wrapf(classified.Cause, "%v", err)
+}
+
+func (client *Client) compactionReadError(ctx context.Context, err error, operation string) error {
+	classified := backendhttp.ClassifyTransportError(ctx, err)
+	if classified.ReturnDirectly {
+		return classified.Cause
+	}
+	switch {
+	case errors.Is(classified.Cause, context.DeadlineExceeded):
+		return client.retryableWrapf(context.DeadlineExceeded, "read %s: %v", operation, err)
+	case errors.Is(classified.Cause, context.Canceled):
+		return client.wrapf(context.Canceled, "read %s: %v", operation, err)
+	default:
+		return client.errorf("read %s: %v", operation, err)
+	}
 }
 
 func semanticCompactionStateItems(summary string, continueTask bool) ([]json.RawMessage, error) {
@@ -331,16 +334,14 @@ func semanticCompactionStateItems(summary string, continueTask bool) ([]json.Raw
 	return append(items, continuation...), nil
 }
 
-func (c *Client) configureRequest(request agent.Request, wireRequest *createResponseRequest) error {
-	options := RequestOptions{}
-	if c.requestOptions != nil {
-		var err error
-		options, err = c.requestOptions(request)
-		if err != nil {
-			return err
-		}
+func (client *Client) optionsFor(request agent.Request) (RequestOptions, error) {
+	if client.requestOptions == nil {
+		return RequestOptions{}, nil
 	}
+	return client.requestOptions(request)
+}
 
+func configureCommonRequest(wireRequest createResponseRequest, options RequestOptions) createResponseRequest {
 	wireRequest.SessionID = options.SessionID
 	wireRequest.ServiceTier = options.ServiceTier
 	wireRequest.Stream = true
@@ -349,7 +350,11 @@ func (c *Client) configureRequest(request agent.Request, wireRequest *createResp
 	if options.TextVerbosity != "" {
 		wireRequest.Text = &responseText{Verbosity: options.TextVerbosity}
 	}
+	return wireRequest
+}
+
+func configureGenerationRequest(wireRequest createResponseRequest, options RequestOptions) createResponseRequest {
 	wireRequest.ToolChoice = options.ToolChoice
 	wireRequest.ParallelToolCalls = options.ParallelToolCalls
-	return nil
+	return wireRequest
 }

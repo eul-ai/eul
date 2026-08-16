@@ -22,10 +22,11 @@ func TestClientReasoningSummaryAndModelMetadata(t *testing.T) {
 	if err != nil || defaultClient.reasoningSummary != ReasoningSummaryAuto {
 		t.Fatalf("default reasoning summary = %q, err = %v", defaultClient.reasoningSummary, err)
 	}
-	if ContextWindow("unknown") != 0 || FastModeAvailable("unknown") || !slices.Equal(SupportedThinkingLevels("unknown"), []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingMinimal, agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh}) {
+	unknown := MetadataFor("unknown")
+	if unknown.ContextWindow != 0 || unknown.FastMode || !slices.Equal(unknown.ThinkingLevels, []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingMinimal, agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh}) {
 		t.Fatal("unknown model metadata is invalid")
 	}
-	if !FastModeAvailable(ModelGPT56Sol) {
+	if !MetadataFor(ModelGPT56Sol).FastMode {
 		t.Fatalf("%s does not support fast mode", ModelGPT56Sol)
 	}
 
@@ -41,19 +42,19 @@ func TestNewRejectsNilTokenSource(t *testing.T) {
 	}
 }
 
-func TestContextWindow(t *testing.T) {
-	if got := contextWindow(ModelGPT56Sol); got != 272_000 {
-		t.Fatalf("contextWindow() = %d", got)
+func TestModelMetadata(t *testing.T) {
+	if got := MetadataFor(ModelGPT56Sol).ContextWindow; got != 272_000 {
+		t.Fatalf("context window = %d", got)
 	}
-	if got := contextWindow("unknown"); got != 0 {
-		t.Fatalf("contextWindow(unknown) = %d", got)
+	if got := MetadataFor("unknown").ContextWindow; got != 0 {
+		t.Fatalf("unknown context window = %d", got)
 	}
 }
 
 func TestThinkingLevelMappings(t *testing.T) {
 	allLevels := agent.ThinkingLevels()
 	for _, model := range []string{ModelGPT56Luna, ModelGPT56Terra, ModelGPT56Sol} {
-		if got := SupportedThinkingLevels(model); !slices.Equal(got, allLevels) {
+		if got := MetadataFor(model).ThinkingLevels; !slices.Equal(got, allLevels) {
 			t.Fatalf("%s levels = %v, want %v", model, got, allLevels)
 		}
 	}
@@ -64,7 +65,7 @@ func TestThinkingLevelMappings(t *testing.T) {
 		agent.ThinkingMedium,
 		agent.ThinkingHigh,
 	}
-	if got := SupportedThinkingLevels("unknown"); !slices.Equal(got, standardLevels) {
+	if got := MetadataFor("unknown").ThinkingLevels; !slices.Equal(got, standardLevels) {
 		t.Fatalf("unknown model levels = %v, want %v", got, standardLevels)
 	}
 

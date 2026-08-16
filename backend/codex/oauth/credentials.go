@@ -13,8 +13,13 @@ import (
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
-func readCredentials(path string) (credentials, error) {
-	info, err := os.Lstat(path)
+type credentialStore struct {
+	path  string
+	sleep func(context.Context, time.Duration) error
+}
+
+func (store *credentialStore) read() (credentials, error) {
+	info, err := os.Lstat(store.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return credentials{}, errors.New("oauth: not logged in; run 'eul login'")
 	}
@@ -28,7 +33,7 @@ func readCredentials(path string) (credentials, error) {
 		return credentials{}, errors.New("oauth: credential file permissions must be 0600")
 	}
 
-	file, err := os.Open(path)
+	file, err := os.Open(store.path)
 	if err != nil {
 		return credentials{}, fmt.Errorf("oauth: open credential file: %w", err)
 	}
@@ -50,13 +55,13 @@ func readCredentials(path string) (credentials, error) {
 	return credential, nil
 }
 
-func writeCredentials(path string, credential credentials) error {
-	directory := filepath.Dir(path)
+func (store *credentialStore) write(credential credentials) error {
+	directory := filepath.Dir(store.path)
 	if err := secureDirectory(directory, "credential directory"); err != nil {
 		return err
 	}
 
-	info, err := os.Lstat(path)
+	info, err := os.Lstat(store.path)
 	if err == nil && !info.Mode().IsRegular() {
 		return errors.New("oauth: credential path is not a regular file")
 	}
@@ -98,12 +103,30 @@ func writeCredentials(path string, credential credentials) error {
 		return fmt.Errorf("oauth: close credential temporary file: %w", err)
 	}
 
-	if err := os.Rename(temporaryPath, path); err != nil {
+	if err := os.Rename(temporaryPath, store.path); err != nil {
 		_ = os.Remove(temporaryPath)
 		return fmt.Errorf("oauth: replace credential file: %w", err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	if err := os.Chmod(store.path, 0o600); err != nil {
 		return fmt.Errorf("oauth: secure credential file: %w", err)
+	}
+	return nil
+}
+
+func (store *credentialStore) remove() error {
+	info, err := os.Lstat(store.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("oauth: inspect credential file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("oauth: credential path is not a regular file")
+	}
+
+	if err := os.Remove(store.path); err != nil {
+		return fmt.Errorf("oauth: remove credential file: %w", err)
 	}
 	return nil
 }
@@ -118,12 +141,12 @@ func secureDirectory(path, name string) error {
 	return nil
 }
 
-func (m *Manager) withFileLock(ctx context.Context, function func() error) error {
+func (store *credentialStore) withLock(ctx context.Context, function func() error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	lockPath := m.path + ".lock"
+	lockPath := store.path + ".lock"
 	lockDirectory := filepath.Dir(lockPath)
 	if err := secureDirectory(lockDirectory, "lock directory"); err != nil {
 		return err
@@ -147,7 +170,7 @@ func (m *Manager) withFileLock(ctx context.Context, function func() error) error
 		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
 			return fmt.Errorf("oauth: acquire credential lock: %w", err)
 		}
-		if err := m.sleep(ctx, 50*time.Millisecond); err != nil {
+		if err := store.sleep(ctx, 50*time.Millisecond); err != nil {
 			return err
 		}
 	}
