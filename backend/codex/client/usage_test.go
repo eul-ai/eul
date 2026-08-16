@@ -97,7 +97,13 @@ func TestClientUsageEndpointFollowsBaseURLStyle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if chatGPT.usageEndpoint != "https://chatgpt.com/backend-api/wham/usage" || codexAPI.usageEndpoint != "https://example.com/api/codex/usage" {
-		t.Fatalf("usage endpoints = %q, %q", chatGPT.usageEndpoint, codexAPI.usageEndpoint)
+	hostCollision, err := New(testTokenSource("token"), Options{BaseURL: "https://backend-api.example.com/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chatGPT.usageEndpoint != "https://chatgpt.com/backend-api/wham/usage" ||
+		codexAPI.usageEndpoint != "https://example.com/api/codex/usage" ||
+		hostCollision.usageEndpoint != "https://backend-api.example.com/api/codex/usage" {
+		t.Fatalf("usage endpoints = %q, %q, %q", chatGPT.usageEndpoint, codexAPI.usageEndpoint, hostCollision.usageEndpoint)
 	}
 }

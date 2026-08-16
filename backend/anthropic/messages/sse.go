@@ -338,7 +338,7 @@ func (decoder *streamDecoder) finish() (streamResult, error) {
 
 	var text strings.Builder
 	calls := make([]agent.ToolCall, 0)
-	wireBlocks := make([]json.RawMessage, 0, len(indexes))
+	wireBlocks := make([]contentBlock, 0, len(indexes))
 	seenCalls := make(map[string]struct{})
 	for _, index := range indexes {
 		block := decoder.blocks[index]
@@ -346,18 +346,15 @@ func (decoder *streamDecoder) finish() (streamResult, error) {
 			return streamResult{}, fmt.Errorf("anthropic content block %d did not stop", index)
 		}
 
-		var encoded json.RawMessage
+		var value contentBlock
 		switch block.kind {
 		case "text":
-			value := contentBlock{Type: "text", Text: block.text.String()}
-			encoded, _ = json.Marshal(value)
+			value = contentBlock{Type: "text", Text: block.text.String()}
 			text.WriteString(value.Text)
 		case "thinking":
-			value := contentBlock{Type: "thinking", Thinking: block.thinking.String(), Signature: block.signature.String()}
-			encoded, _ = json.Marshal(value)
+			value = contentBlock{Type: "thinking", Thinking: block.thinking.String(), Signature: block.signature.String()}
 		case "redacted_thinking":
-			value := contentBlock{Type: "redacted_thinking", Data: block.redacted}
-			encoded, _ = json.Marshal(value)
+			value = contentBlock{Type: "redacted_thinking", Data: block.redacted}
 		case "tool_use":
 			arguments := block.toolArguments()
 			rawInput := json.RawMessage(arguments)
@@ -369,14 +366,15 @@ func (decoder *streamDecoder) finish() (streamResult, error) {
 			}
 			seenCalls[block.toolID] = struct{}{}
 			calls = append(calls, agent.ToolCall{ID: block.toolID, Name: block.toolName, Arguments: rawInput})
-			value := contentBlock{Type: "tool_use", ID: block.toolID, Name: block.toolName, Input: rawInput}
-			encoded, _ = json.Marshal(value)
+			value = contentBlock{Type: "tool_use", ID: block.toolID, Name: block.toolName, Input: rawInput}
 		}
-		wireBlocks = append(wireBlocks, encoded)
+		wireBlocks = append(wireBlocks, value)
 	}
 
-	content, _ := json.Marshal(wireBlocks)
-	assistant, _ := json.Marshal(wireMessage{Role: "assistant", Content: content})
+	assistant, err := marshalWireMessage("assistant", wireBlocks)
+	if err != nil {
+		return streamResult{}, err
+	}
 	usage, err := decoder.normalizeUsage()
 	if err != nil {
 		return streamResult{}, err

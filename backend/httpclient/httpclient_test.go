@@ -136,10 +136,7 @@ func TestRetryClassificationAndDelay(t *testing.T) {
 	}
 }
 
-func TestRedactAndTruncateUTF8(t *testing.T) {
-	if got := Redact("token secret", []string{"secret"}); got != "token [redacted]" {
-		t.Fatalf("Redact() = %q", got)
-	}
+func TestTruncateUTF8(t *testing.T) {
 	if got := TruncateUTF8("a€b", 3); got != "a" {
 		t.Fatalf("TruncateUTF8() = %q", got)
 	}

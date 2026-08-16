@@ -11,7 +11,7 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-func TestHTTPErrorRedactionRetryAndContextClassification(t *testing.T) {
+func TestHTTPErrorRetryAndContextClassification(t *testing.T) {
 	tests := []struct {
 		name        string
 		status      int
@@ -37,7 +37,6 @@ func TestHTTPErrorRedactionRetryAndContextClassification(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			client, err := New(Options{
 				Endpoint: "https://example.test/v1/messages",
-				Redact:   []string{"secret"},
 				RequestOptions: func(agent.Request) (RequestOptions, error) {
 					return RequestOptions{MaxTokens: 100}, nil
 				},
@@ -59,8 +58,8 @@ func TestHTTPErrorRedactionRetryAndContextClassification(t *testing.T) {
 				Model:  "model",
 				Inputs: []agent.Input{agent.NewTextInput("hello")},
 			}, agent.StreamObserver{})
-			if err == nil || strings.Contains(err.Error(), "secret") {
-				t.Fatalf("Generate() error = %v", err)
+			if err == nil {
+				t.Fatal("Generate() succeeded")
 			}
 			delay, retry := client.RetryGeneration(err, 1)
 			if retry != test.wantRetry {

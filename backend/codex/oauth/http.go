@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
+
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 type boundedResponse struct {
@@ -46,7 +47,7 @@ func (m *Manager) do(request *http.Request) (boundedResponse, error) {
 
 	defer response.Body.Close()
 
-	body, truncated, err := readBounded(response.Body, maxAuthResponseBytes)
+	body, truncated, err := backendhttp.ReadBounded(response.Body, maxAuthResponseBytes)
 	if err != nil {
 		return boundedResponse{}, errors.New("oauth: read authentication response")
 	}
@@ -54,16 +55,4 @@ func (m *Manager) do(request *http.Request) (boundedResponse, error) {
 		return boundedResponse{}, errors.New("oauth: authentication response is too large")
 	}
 	return boundedResponse{status: response.StatusCode, body: body}, nil
-}
-
-func readBounded(reader io.Reader, maximum int64) ([]byte, bool, error) {
-	body, err := io.ReadAll(io.LimitReader(reader, maximum+1))
-	if err != nil {
-		return nil, false, err
-	}
-	if int64(len(body)) <= maximum {
-		return body, false, nil
-	}
-
-	return body[:maximum], true, nil
 }

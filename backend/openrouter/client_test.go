@@ -191,7 +191,7 @@ func TestClientEncodesImageInput(t *testing.T) {
 	}
 }
 
-func TestClientHandlesNumericRateLimitErrorAndRedactsKey(t *testing.T) {
+func TestClientHandlesNumericRateLimitError(t *testing.T) {
 	const key = "secret-openrouter-key"
 	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
@@ -206,7 +206,7 @@ func TestClientHandlesNumericRateLimitErrorAndRedactsKey(t *testing.T) {
 	_, err = provider.Generate(context.Background(), agent.Request{
 		Model: "vendor/plain", ThinkingLevel: agent.ThinkingOff,
 	}, agent.StreamObserver{})
-	if err == nil || !strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), key) {
+	if err == nil || !strings.Contains(err.Error(), "429") {
 		t.Fatalf("Generate() error = %v", err)
 	}
 	if _, retry := provider.RetryGeneration(err, 1); !retry {

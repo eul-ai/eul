@@ -38,6 +38,18 @@ type wireMessage struct {
 	Content json.RawMessage `json:"content"`
 }
 
+func marshalWireMessage(role string, blocks []contentBlock) (json.RawMessage, error) {
+	content, err := json.Marshal(blocks)
+	if err != nil {
+		return nil, fmt.Errorf("encode %s message content: %w", role, err)
+	}
+	message, err := json.Marshal(wireMessage{Role: role, Content: content})
+	if err != nil {
+		return nil, fmt.Errorf("encode %s message: %w", role, err)
+	}
+	return message, nil
+}
+
 type toolDefinition struct {
 	Name         string           `json:"name"`
 	Description  string           `json:"description,omitempty"`
@@ -228,8 +240,10 @@ func encodeInputs(inputs []agent.Input) ([]json.RawMessage, error) {
 		return nil, errors.New("inputs contain no Anthropic content blocks")
 	}
 
-	content, _ := json.Marshal(blocks)
-	message, _ := json.Marshal(wireMessage{Role: "user", Content: content})
+	message, err := marshalWireMessage("user", blocks)
+	if err != nil {
+		return nil, err
+	}
 	return []json.RawMessage{message}, nil
 }
 
@@ -269,18 +283,6 @@ func encodeState(history, newMessages, output []json.RawMessage, maximum int) ([
 		return nil, fmt.Errorf("continuation state exceeds %d bytes", maximum)
 	}
 	return encoded, nil
-}
-
-func encodedStateSize(groups ...[]json.RawMessage) (int, error) {
-	messages := make([]json.RawMessage, 0)
-	for _, group := range groups {
-		messages = append(messages, group...)
-	}
-	encoded, err := json.Marshal(continuationState{Version: continuationStateVersion, Messages: messages})
-	if err != nil {
-		return 0, fmt.Errorf("encode continuation state: %w", err)
-	}
-	return len(encoded), nil
 }
 
 func validateRawObject(value json.RawMessage) error {

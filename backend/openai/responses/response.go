@@ -227,10 +227,14 @@ func normalizeUsage(usage *responseUsage) (agent.Usage, error) {
 		return agent.Usage{}, errors.New("response usage contains negative token counts")
 	}
 
+	total := usage.TotalTokens
+	if total == 0 {
+		total = usage.InputTokens + usage.OutputTokens
+	}
 	return agent.Usage{
 		InputTokens:  usage.InputTokens,
 		OutputTokens: usage.OutputTokens,
-		TotalTokens:  usage.TotalTokens,
+		TotalTokens:  total,
 	}, nil
 }
 

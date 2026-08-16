@@ -197,10 +197,8 @@ func (configured *runtime) loadUsage(ctx context.Context) (usageResponse, error)
 	if err != nil {
 		return usageResponse{}, err
 	}
-	request.Header.Set("Authorization", "Bearer "+configured.apiKey)
+	setBearerHeaders(request, configured.apiKey)
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("User-Agent", "eul")
-	request.Header.Set("x-opencode-client", "eul")
 
 	response, err := configured.credentialClient.Do(request)
 	if err != nil {
@@ -227,10 +225,6 @@ func (configured *runtime) loadUsage(ctx context.Context) (usageResponse, error)
 		return usageResponse{}, err
 	}
 	return result, nil
-}
-
-func (configured *runtime) redact(message string) string {
-	return backendhttp.Redact(message, []string{configured.apiKey})
 }
 
 var (

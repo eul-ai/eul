@@ -186,7 +186,7 @@ func (configured *runtime) get(ctx context.Context, path string, target any) err
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 64*1024))
-		detail := configured.redact(strings.TrimSpace(string(body)))
+		detail := strings.TrimSpace(string(body))
 		if detail == "" {
 			detail = "empty response"
 		}
@@ -205,10 +205,6 @@ func (configured *runtime) get(ctx context.Context, path string, target any) err
 		}
 	}
 	return nil
-}
-
-func (configured *runtime) redact(message string) string {
-	return strings.ReplaceAll(message, configured.apiKey, "[redacted]")
 }
 
 func thinkingMetadata(reasoning modelReasoning) ([]agent.ThinkingLevel, agent.ThinkingLevel) {

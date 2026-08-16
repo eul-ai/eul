@@ -47,7 +47,6 @@ type Options struct {
 	MaxErrorBytes       int64
 	MaxStateBytes       int
 	StateOutputHeadroom int
-	Redact              []string
 }
 
 type Client struct {
@@ -61,7 +60,6 @@ type Client struct {
 	maxErrorBytes       int64
 	maxStateBytes       int
 	stateOutputHeadroom int
-	redact              []string
 }
 
 func New(options Options) (*Client, error) {
@@ -103,7 +101,6 @@ func New(options Options) (*Client, error) {
 		maxErrorBytes:       maxErrorBytes,
 		maxStateBytes:       maxStateBytes,
 		stateOutputHeadroom: stateOutputHeadroom,
-		redact:              append([]string(nil), options.Redact...),
 	}, nil
 }
 
@@ -163,7 +160,6 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, observer a
 	stream := streamObserver{observer: observer}
 	wireResponse, err := readResponsesSSE(httpResponse.Body, c.maxResponseBytes, &stream)
 	if err != nil {
-		c.redactResponseFailure(err)
 		var observerErr *observerDeliveryError
 		if errors.As(err, &observerErr) {
 			return agent.Response{}, c.wrapf(err, "%v", err)
@@ -186,23 +182,11 @@ func (c *Client) Generate(ctx context.Context, request agent.Request, observer a
 		if stream.observed {
 			err = &partialResponseError{cause: err}
 		}
-		c.redactResponseFailure(err)
 		return agent.Response{}, c.wrapf(err, "%v", err)
 	}
 
 	historyLength := len(wireRequest.Input) - len(newInputs)
 	history := wireRequest.Input[:historyLength]
-	outputStateBytes, err := encodedStateSize(wireResponse.Output)
-	if err != nil {
-		return agent.Response{}, c.errorf("%v", err)
-	}
-	inputStateBytes, err := encodedStateSize(history, newInputs)
-	if err != nil {
-		return agent.Response{}, c.errorf("%v", err)
-	}
-	if outputStateBytes-continuationStateEnvelopeBytes > c.maxStateBytes-inputStateBytes {
-		return agent.Response{}, c.errorf("response output cannot fit continuation state")
-	}
 	state, err := encodeState(history, newInputs, wireResponse.Output, c.maxStateBytes)
 	if err != nil {
 		return agent.Response{}, c.errorf("%v", err)
@@ -253,7 +237,6 @@ func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.Comp
 		return agent.CompactResponse{}, c.errorf("read compact response: %v", err)
 	}
 	if err := validateCompletedResponse(wireResponse); err != nil {
-		c.redactResponseFailure(err)
 		return agent.CompactResponse{}, c.errorf("%v", err)
 	}
 	usage, err := normalizeUsage(wireResponse.Usage)
@@ -312,7 +295,6 @@ func (c *Client) SemanticCompact(ctx context.Context, request agent.Request, ins
 
 	summary, calls, usage, err := normalizeResponse(wireResponse)
 	if err != nil {
-		c.redactResponseFailure(err)
 		return agent.CompactResponse{}, c.errorf("%v", err)
 	}
 	summary, err = compaction.ValidateSummary(summary, len(calls))

@@ -126,12 +126,13 @@ func (body *contextBody) Close() error {
 }
 
 type pipeResponseWriter struct {
-	header http.Header
-	writer *io.PipeWriter
-	ready  chan struct{}
-	once   sync.Once
-	mu     sync.Mutex
-	status int
+	header         http.Header
+	responseHeader http.Header
+	writer         *io.PipeWriter
+	ready          chan struct{}
+	once           sync.Once
+	mu             sync.Mutex
+	status         int
 }
 
 func (writer *pipeResponseWriter) Header() http.Header {
@@ -142,6 +143,7 @@ func (writer *pipeResponseWriter) WriteHeader(status int) {
 	writer.mu.Lock()
 	if writer.status == 0 {
 		writer.status = status
+		writer.responseHeader = writer.header.Clone()
 		writer.once.Do(func() { close(writer.ready) })
 	}
 	writer.mu.Unlock()
@@ -149,11 +151,7 @@ func (writer *pipeResponseWriter) WriteHeader(status int) {
 
 func (writer *pipeResponseWriter) Write(data []byte) (int, error) {
 	writer.WriteHeader(http.StatusOK)
-	written, err := writer.writer.Write(data)
-	if err != nil {
-		return len(data), nil
-	}
-	return written, nil
+	return writer.writer.Write(data)
 }
 
 func (writer *pipeResponseWriter) Flush() {
@@ -163,5 +161,5 @@ func (writer *pipeResponseWriter) Flush() {
 func (writer *pipeResponseWriter) response() (int, http.Header) {
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
-	return writer.status, writer.header.Clone()
+	return writer.status, writer.responseHeader
 }

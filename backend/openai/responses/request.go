@@ -212,6 +212,11 @@ func decodeState(encoded []byte, maxStateBytes int) ([]json.RawMessage, error) {
 	if state.Version != continuationStateVersion {
 		return nil, fmt.Errorf("unsupported continuation state version %d", state.Version)
 	}
+	for index, item := range state.Items {
+		if err := validateRawObject(item); err != nil {
+			return nil, fmt.Errorf("continuation state item %d: %w", index, err)
+		}
+	}
 
 	return state.Items, nil
 }
@@ -240,14 +245,6 @@ func continuationStateItems(groups ...[]json.RawMessage) []json.RawMessage {
 		items = append(items, group...)
 	}
 	return items
-}
-
-func encodedStateSize(groups ...[]json.RawMessage) (int, error) {
-	encoded, err := json.Marshal(continuationState{Version: continuationStateVersion, Items: continuationStateItems(groups...)})
-	if err != nil {
-		return 0, fmt.Errorf("encode continuation state: %w", err)
-	}
-	return len(encoded), nil
 }
 
 func validateRawObject(value json.RawMessage) error {

@@ -76,11 +76,12 @@ func testModelInfos() map[string]modelInfo {
 			thinkingMode:    thinkingAdaptive,
 		},
 		"qwen3.8-max": {
-			protocol:        protocolAnthropicMessages,
-			contextWindow:   1_000_000,
-			maxOutputTokens: 131_072,
-			thinkingLevels:  []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax},
-			thinkingMode:    thinkingBudget,
+			protocol:                protocolAnthropicMessages,
+			contextWindow:           1_000_000,
+			maxOutputTokens:         131_072,
+			thinkingLevels:          []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax},
+			thinkingMode:            thinkingBudget,
+			maxThinkingBudgetTokens: 32_000,
 		},
 	}
 }
@@ -113,7 +114,8 @@ func TestProviderRoutesProtocols(t *testing.T) {
 			t.Fatal(err)
 		}
 		var payload struct {
-			Model string `json:"model"`
+			Model     string `json:"model"`
+			SessionID string `json:"session_id"`
 		}
 		if err := json.Unmarshal(body, &payload); err != nil {
 			t.Fatal(err)
@@ -123,8 +125,8 @@ func TestProviderRoutesProtocols(t *testing.T) {
 		var stream string
 		switch info.protocol {
 		case protocolResponses:
-			if request.URL.Path != "/zen/go/v1/responses" || request.Header.Get("Authorization") != "Bearer secret" || request.Header.Get("x-api-key") != "" {
-				t.Errorf("Responses request path=%q headers=%v", request.URL.Path, request.Header)
+			if request.URL.Path != "/zen/go/v1/responses" || request.Header.Get("Authorization") != "Bearer secret" || request.Header.Get("x-api-key") != "" || payload.SessionID != "session-id" {
+				t.Errorf("Responses request path=%q session=%q headers=%v", request.URL.Path, payload.SessionID, request.Header)
 			}
 			stream = strings.Join([]string{
 				`data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","content":[{"type":"output_text","text":"ok"}]}}`,
@@ -165,6 +167,7 @@ func TestProviderRoutesProtocols(t *testing.T) {
 	}
 	for _, modelID := range expected {
 		response, err := client.Generate(context.Background(), agent.Request{
+			SessionID:     "session-id",
 			Model:         modelID,
 			ThinkingLevel: models[modelID].thinkingLevels[0],
 			Inputs:        []agent.Input{agent.NewTextInput("hello")},
@@ -178,6 +181,22 @@ func TestProviderRoutesProtocols(t *testing.T) {
 	}
 	if requests != len(expected) {
 		t.Fatalf("requests = %d, want %d", requests, len(expected))
+	}
+}
+
+func TestProviderCompactionRequiresState(t *testing.T) {
+	client, err := newProvider("secret", "https://example.test/zen/go/v1", &http.Client{}, testModelInfos())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := agent.Request{Model: "grok-4.5", ThinkingLevel: agent.ThinkingMedium}
+	usage := agent.Usage{TotalTokens: 900_000}
+	if client.ShouldCompact(request, usage) {
+		t.Fatal("request without state triggered compaction")
+	}
+	request.State = []byte(`{"version":1,"items":[]}`)
+	if !client.ShouldCompact(request, usage) {
+		t.Fatal("request at context threshold did not trigger compaction")
 	}
 }
 
@@ -200,11 +219,11 @@ func TestProviderRejectsUnknownModelBeforeRequest(t *testing.T) {
 
 func TestOpenCodeRequestOptions(t *testing.T) {
 	client := &provider{models: testModelInfos()}
-	grok, err := client.responseRequestOptions(agent.Request{Model: "grok-4.5", ThinkingLevel: agent.ThinkingMedium})
+	grok, err := client.responseRequestOptions(agent.Request{SessionID: "session-id", Model: "grok-4.5", ThinkingLevel: agent.ThinkingMedium})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if grok.Reasoning == nil || grok.Reasoning.Effort != "medium" || grok.Reasoning.Summary != "auto" || !slices.Equal(grok.Include, []string{"reasoning.encrypted_content"}) || grok.TextVerbosity != "" {
+	if grok.SessionID != "session-id" || grok.Reasoning == nil || grok.Reasoning.Effort != "medium" || grok.Reasoning.Summary != "auto" || !slices.Equal(grok.Include, []string{"reasoning.encrypted_content"}) || grok.TextVerbosity != "" {
 		t.Fatalf("Grok options = %+v", grok)
 	}
 	gpt, err := client.responseRequestOptions(agent.Request{Model: "gpt-5.6-luna", ThinkingLevel: agent.ThinkingOff})
@@ -242,17 +261,24 @@ func TestOpenCodeRequestOptions(t *testing.T) {
 	if minimax.Thinking == nil || minimax.Thinking.Type != "disabled" {
 		t.Fatalf("MiniMax options = %+v", minimax)
 	}
-	qwen, err := client.anthropicRequestOptions(agent.Request{Model: "qwen3.8-max", ThinkingLevel: agent.ThinkingMax})
+	qwenHigh, err := client.anthropicRequestOptions(agent.Request{Model: "qwen3.8-max", ThinkingLevel: agent.ThinkingHigh})
 	if err != nil {
 		t.Fatal(err)
 	}
-	qwenOutputTokens := client.models["qwen3.8-max"].maxOutputTokens
-	if qwen.MaxTokens != qwenOutputTokens || qwen.Thinking == nil || qwen.Thinking.Type != "enabled" || qwen.Thinking.BudgetTokens != qwenOutputTokens-maxThinkingOutputHeadroom || qwen.MaxTokens-qwen.Thinking.BudgetTokens != maxThinkingOutputHeadroom {
-		t.Fatalf("Qwen options = %+v", qwen)
+	if qwenHigh.Thinking == nil || qwenHigh.Thinking.BudgetTokens != highThinkingBudgetTokens {
+		t.Fatalf("Qwen high options = %+v", qwenHigh)
+	}
+	qwenMax, err := client.anthropicRequestOptions(agent.Request{Model: "qwen3.8-max", ThinkingLevel: agent.ThinkingMax})
+	if err != nil {
+		t.Fatal(err)
+	}
+	qwenInfo := client.models["qwen3.8-max"]
+	if qwenMax.MaxTokens != qwenInfo.maxOutputTokens || qwenMax.Thinking == nil || qwenMax.Thinking.Type != "enabled" || qwenMax.Thinking.BudgetTokens != qwenInfo.maxThinkingBudgetTokens || qwenMax.MaxTokens-qwenMax.Thinking.BudgetTokens < maxThinkingOutputHeadroom {
+		t.Fatalf("Qwen max options = %+v", qwenMax)
 	}
 }
 
-func TestProviderSemanticCompactionReservesMaxThinkingOutput(t *testing.T) {
+func TestProviderSemanticCompactionUsesMaxThinkingBudget(t *testing.T) {
 	var received struct {
 		MaxTokens int `json:"max_tokens"`
 		Thinking  struct {
@@ -296,8 +322,8 @@ func TestProviderSemanticCompactionReservesMaxThinkingOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	maxOutputTokens := models["qwen3.8-max"].maxOutputTokens
-	if len(compacted.State) == 0 || received.MaxTokens != maxOutputTokens || received.Thinking.Type != "enabled" || received.Thinking.BudgetTokens != maxOutputTokens-maxThinkingOutputHeadroom {
+	info := models["qwen3.8-max"]
+	if len(compacted.State) == 0 || received.MaxTokens != info.maxOutputTokens || received.Thinking.Type != "enabled" || received.Thinking.BudgetTokens != info.maxThinkingBudgetTokens {
 		t.Fatalf("compacted=%+v request=%+v", compacted, received)
 	}
 }

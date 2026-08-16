@@ -498,9 +498,7 @@ func responseServer(t *testing.T, status int, body string) *testhttp.Server {
 
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(status)
-		if _, err := io.WriteString(writer, body); err != nil {
-			t.Errorf("write response: %v", err)
-		}
+		_, _ = io.WriteString(writer, body)
 	}))
 }
 
@@ -510,9 +508,7 @@ func compactResponseServer(t *testing.T, status int, body string) *testhttp.Serv
 		if status < 200 || status >= 300 {
 			writer.Header().Set("Content-Type", "application/json")
 			writer.WriteHeader(status)
-			if _, err := io.WriteString(writer, body); err != nil {
-				t.Errorf("write compact response: %v", err)
-			}
+			_, _ = io.WriteString(writer, body)
 			return
 		}
 

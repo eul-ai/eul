@@ -142,15 +142,6 @@ func TruncateUTF8(text string, maximum int) string {
 	return text[:end]
 }
 
-func Redact(message string, values []string) string {
-	for _, value := range values {
-		if value != "" {
-			message = strings.ReplaceAll(message, value, "[redacted]")
-		}
-	}
-	return message
-}
-
 func ParseRetryAfter(value string, now time.Time) time.Duration {
 	value = strings.TrimSpace(value)
 	if value == "" {

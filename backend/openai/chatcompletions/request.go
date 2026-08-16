@@ -242,18 +242,6 @@ func encodeState(history, newMessages, output []json.RawMessage, maximum int) ([
 	return encoded, nil
 }
 
-func encodedStateSize(groups ...[]json.RawMessage) (int, error) {
-	messages := make([]json.RawMessage, 0)
-	for _, group := range groups {
-		messages = append(messages, group...)
-	}
-	encoded, err := json.Marshal(continuationState{Version: continuationStateVersion, Messages: messages})
-	if err != nil {
-		return 0, fmt.Errorf("encode continuation state: %w", err)
-	}
-	return len(encoded), nil
-}
-
 func validateRawObject(value json.RawMessage) error {
 	trimmed := bytes.TrimSpace(value)
 	if len(trimmed) == 0 || trimmed[0] != '{' || !json.Valid(trimmed) {

@@ -244,6 +244,7 @@ func TestContinuationStateVersionAndBounds(t *testing.T) {
 	}{
 		{name: "malformed", state: []byte(`{`), max: 100},
 		{name: "version", state: []byte(`{"version":2,"items":[]}`), max: 100},
+		{name: "non-object item", state: []byte(`{"version":1,"items":[null]}`), max: 100},
 		{name: "oversized", state: []byte(strings.Repeat("x", 11)), max: 10},
 	} {
 		t.Run(test.name, func(t *testing.T) {

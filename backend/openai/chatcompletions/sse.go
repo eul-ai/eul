@@ -64,7 +64,6 @@ type completionUsage struct {
 }
 
 type streamedToolCall struct {
-	index     int
 	id        string
 	name      string
 	arguments string
@@ -170,7 +169,6 @@ func (decoder *streamDecoder) consumeDelta(delta completionDelta) error {
 
 	for _, deltaCall := range delta.ToolCalls {
 		call := decoder.toolCalls[deltaCall.Index]
-		call.index = deltaCall.Index
 		if deltaCall.ID != "" {
 			call.id = deltaCall.ID
 		}

@@ -45,7 +45,6 @@ type Options struct {
 	MaxErrorBytes       int64
 	MaxStateBytes       int
 	StateOutputHeadroom int
-	Redact              []string
 }
 
 type Client struct {
@@ -59,7 +58,6 @@ type Client struct {
 	maxErrorBytes       int64
 	maxStateBytes       int
 	stateOutputHeadroom int
-	redact              []string
 }
 
 func New(options Options) (*Client, error) {
@@ -99,7 +97,6 @@ func New(options Options) (*Client, error) {
 		maxErrorBytes:       maxErrorBytes,
 		maxStateBytes:       maxStateBytes,
 		stateOutputHeadroom: stateOutputHeadroom,
-		redact:              append([]string(nil), options.Redact...),
 	}, nil
 }
 
@@ -148,17 +145,6 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 	}
 
 	output := []json.RawMessage{result.assistant}
-	outputStateBytes, err := encodedStateSize(output)
-	if err != nil {
-		return agent.Response{}, client.errorf("%v", err)
-	}
-	inputStateBytes, err := encodedStateSize(history, newMessages)
-	if err != nil {
-		return agent.Response{}, client.errorf("%v", err)
-	}
-	if outputStateBytes-continuationStateEnvelopeBytes > client.maxStateBytes-inputStateBytes {
-		return agent.Response{}, client.errorf("response output cannot fit continuation state")
-	}
 	state, err := encodeState(history, newMessages, output, client.maxStateBytes)
 	if err != nil {
 		return agent.Response{}, client.errorf("%v", err)
@@ -240,7 +226,6 @@ func (client *Client) complete(ctx context.Context, wireRequest createRequest, o
 	if err == nil {
 		return result, nil
 	}
-	client.redactResponseFailure(err)
 	var observerErr *observerDeliveryError
 	if errors.As(err, &observerErr) {
 		return streamResult{}, client.wrapf(err, "%v", err)

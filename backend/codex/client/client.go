@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/eul-ai/eul/agent"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 	"github.com/eul-ai/eul/backend/openai/responses"
 )
 
@@ -67,20 +67,15 @@ func New(source TokenSource, options Options) (*Client, error) {
 		baseURL = defaultBaseURL
 	}
 
-	httpClient := &http.Client{}
-	if options.HTTPClient != nil {
-		*httpClient = *options.HTTPClient
-	}
-	if httpClient.Timeout <= 0 {
-		httpClient.Timeout = defaultHTTPTimeout
-	}
-	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	}
+	httpClient := backendhttp.New(options.HTTPClient, defaultHTTPTimeout)
 
 	baseURL = strings.TrimRight(baseURL, "/")
+	parsedBaseURL, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("openai: parse base URL: %w", err)
+	}
 	usageEndpoint := baseURL + "/api/codex/usage"
-	if strings.Contains(baseURL, "/backend-api") {
+	if strings.HasSuffix(strings.TrimRight(parsedBaseURL.Path, "/"), "/backend-api") {
 		usageEndpoint = baseURL + "/wham/usage"
 	}
 
@@ -149,13 +144,17 @@ func (c *Client) prepareResponsesRequest(ctx context.Context, request *http.Requ
 	if err != nil {
 		return err
 	}
+	setCredentialHeaders(request, credential)
+	request.Header.Set("x-codex-beta-features", "remote_compaction_v2")
+	request.Header.Set("OpenAI-Beta", "responses=experimental")
+	return nil
+}
+
+func setCredentialHeaders(request *http.Request, credential Credential) {
 	request.Header.Set("Authorization", "Bearer "+credential.AccessToken)
 	request.Header.Set("chatgpt-account-id", credential.AccountID)
 	request.Header.Set("originator", "eul")
 	request.Header.Set("User-Agent", "eul")
-	request.Header.Set("x-codex-beta-features", "remote_compaction_v2")
-	request.Header.Set("OpenAI-Beta", "responses=experimental")
-	return nil
 }
 
 func (c *Client) get(ctx context.Context, endpoint string, credential Credential, operation string) (*http.Response, error) {
@@ -163,11 +162,8 @@ func (c *Client) get(ctx context.Context, endpoint string, credential Credential
 	if err != nil {
 		return nil, c.errorf("create %s: %v", operation, err)
 	}
-	request.Header.Set("Authorization", "Bearer "+credential.AccessToken)
+	setCredentialHeaders(request, credential)
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("chatgpt-account-id", credential.AccountID)
-	request.Header.Set("originator", "eul")
-	request.Header.Set("User-Agent", "eul")
 
 	response, err := c.httpClient.Do(request)
 	if err != nil {
@@ -178,7 +174,7 @@ func (c *Client) get(ctx context.Context, endpoint string, credential Credential
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		defer response.Body.Close()
-		body, _, readErr := readBounded(response.Body, c.maxUsageErrorBytes)
+		body, _, readErr := backendhttp.ReadBounded(response.Body, c.maxUsageErrorBytes)
 		if readErr != nil {
 			return nil, c.wrapf(readErr, "HTTP %s; read error response: %v", response.Status, readErr)
 		}
@@ -221,7 +217,7 @@ func (c *Client) wrapf(cause error, format string, arguments ...any) error {
 
 func (c *Client) errorMessage(format string, arguments ...any) string {
 	message := strings.ToValidUTF8(fmt.Sprintf(format, arguments...), "�")
-	return truncateUTF8("openai: "+message, int(c.maxUsageErrorBytes))
+	return backendhttp.TruncateUTF8("openai: "+message, int(c.maxUsageErrorBytes))
 }
 
 type wrappedError struct {
@@ -231,29 +227,3 @@ type wrappedError struct {
 
 func (e *wrappedError) Error() string { return e.message }
 func (e *wrappedError) Unwrap() error { return e.cause }
-
-func readBounded(reader io.Reader, maximum int64) ([]byte, bool, error) {
-	data, err := io.ReadAll(io.LimitReader(reader, maximum+1))
-	if err != nil {
-		return nil, false, err
-	}
-	if int64(len(data)) <= maximum {
-		return data, false, nil
-	}
-	return data[:maximum], true, nil
-}
-
-func truncateUTF8(text string, maximum int) string {
-	if maximum < 0 {
-		maximum = 0
-	}
-	if len(text) <= maximum {
-		return text
-	}
-
-	end := maximum
-	for end > 0 && end < len(text) && !utf8.RuneStart(text[end]) {
-		end--
-	}
-	return text[:end]
-}

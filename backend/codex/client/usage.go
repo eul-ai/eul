@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 type AccountUsage struct {
@@ -47,7 +49,7 @@ func (c *Client) Usage(ctx context.Context) (AccountUsage, error) {
 	}
 	defer response.Body.Close()
 
-	body, truncated, err := readBounded(response.Body, c.maxUsageResponseBytes)
+	body, truncated, err := backendhttp.ReadBounded(response.Body, c.maxUsageResponseBytes)
 	if err != nil {
 		if classified := c.contextError(ctx, err, "read usage response"); classified != nil {
 			return AccountUsage{}, classified

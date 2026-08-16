@@ -60,8 +60,21 @@ func TestBuildModelsUsesLiveCatalogIntersectionAndRichMetadata(t *testing.T) {
 		t.Fatalf("MiniMax = %+v", minimax)
 	}
 	qwen := models["qwen3.8-max"]
-	if qwen.protocol != protocolAnthropicMessages || qwen.thinkingMode != thinkingBudget || !slices.Equal(qwen.thinkingLevels, []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax}) {
+	if qwen.protocol != protocolAnthropicMessages || qwen.thinkingMode != thinkingBudget || qwen.maxThinkingBudgetTokens != qwen.maxOutputTokens-maxThinkingOutputHeadroom || !slices.Equal(qwen.thinkingLevels, []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax}) {
 		t.Fatalf("Qwen = %+v", qwen)
+	}
+}
+
+func TestBuildModelInfoHonorsThinkingBudgetMaximum(t *testing.T) {
+	options := []catalogReasoningOption{{Type: reasoningOptionTypeBudgetTokens, Max: 24_000}}
+	info, ok := buildModelInfo("@ai-sdk/anthropic", "budget-model", catalogModel{
+		ID:               "budget-model",
+		Reasoning:        true,
+		ReasoningOptions: &options,
+		Limit:            catalogLimit{Context: 100_000, Output: 64_000},
+	})
+	if !ok || info.maxThinkingBudgetTokens != 24_000 {
+		t.Fatalf("model info = %+v, ok = %t", info, ok)
 	}
 }
 
@@ -96,12 +109,40 @@ func TestBuildModelsSkipsCatalogControlsEulCannotRoute(t *testing.T) {
 		Limit:            catalogLimit{Context: 100_000, Output: 32_000},
 		Provider:         catalogModelProvider{NPM: "@ai-sdk/unknown"},
 	}
+	for id, model := range map[string]catalogModel{
+		"missing-budget-maximum": {
+			Limit: catalogLimit{Context: 100_000, Output: 32_000},
+		},
+		"low-budget-maximum": {
+			Limit: catalogLimit{Context: 100_000, Output: 32_000},
+		},
+		"small-budget-output": {
+			Limit: catalogLimit{Context: 100_000, Output: 24_000},
+		},
+	} {
+		model.ID = id
+		model.Reasoning = true
+		model.Provider.NPM = "@ai-sdk/anthropic"
+		maximum := 0
+		switch id {
+		case "low-budget-maximum":
+			maximum = highThinkingBudgetTokens
+		case "small-budget-output":
+			maximum = 100_000
+		}
+		options := []catalogReasoningOption{{Type: reasoningOptionTypeBudgetTokens, Max: maximum}}
+		model.ReasoningOptions = &options
+		catalog.Models[id] = model
+	}
 
 	live := map[string]struct{}{
-		"missing-options":  {},
-		"chat-toggle":      {},
-		"anthropic-effort": {},
-		"unknown-sdk":      {},
+		"missing-options":        {},
+		"chat-toggle":            {},
+		"anthropic-effort":       {},
+		"unknown-sdk":            {},
+		"missing-budget-maximum": {},
+		"low-budget-maximum":     {},
+		"small-budget-output":    {},
 	}
 	if models := buildModels(catalog, live); len(models) != 0 {
 		t.Fatalf("unsupported models = %#v", models)

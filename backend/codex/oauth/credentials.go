@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 func readCredentials(path string) (credentials, error) {
@@ -32,7 +34,7 @@ func readCredentials(path string) (credentials, error) {
 	}
 	defer file.Close()
 
-	body, truncated, err := readBounded(file, maxCredentialBytes)
+	body, truncated, err := backendhttp.ReadBounded(file, maxCredentialBytes)
 	if err != nil {
 		return credentials{}, fmt.Errorf("oauth: read credential file: %w", err)
 	}

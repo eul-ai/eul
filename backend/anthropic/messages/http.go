@@ -85,7 +85,7 @@ func (client *Client) post(ctx context.Context, body []byte, operation string) (
 			if contextErr := ctx.Err(); contextErr != nil {
 				return nil, contextErr
 			}
-			return nil, err
+			return nil, client.wrapf(err, "prepare %s: %v", operation, err)
 		}
 	}
 
@@ -148,7 +148,6 @@ func (client *Client) decodeHTTPError(response *http.Response) error {
 }
 
 func (client *Client) newHTTPResponseError(response *http.Response, cause error, detail apiError, format string, arguments ...any) error {
-	detail.Message = client.redactMessage(detail.Message)
 	return &httpResponseError{
 		message:    client.errorMessage(format, arguments...),
 		statusCode: response.StatusCode,
@@ -182,24 +181,11 @@ func (client *Client) retryableWrapf(cause error, format string, arguments ...an
 }
 
 func (client *Client) errorMessage(format string, arguments ...any) string {
-	message := client.redactMessage(strings.ToValidUTF8(fmt.Sprintf(format, arguments...), "�"))
+	message := strings.ToValidUTF8(fmt.Sprintf(format, arguments...), "�")
 	if client.errorPrefix != "" {
 		message = client.errorPrefix + ": " + message
 	}
 	return backendhttp.TruncateUTF8(message, int(client.maxErrorBytes))
-}
-
-func (client *Client) redactMessage(message string) string {
-	return backendhttp.Redact(message, client.redact)
-}
-
-func (client *Client) redactResponseFailure(err error) {
-	var responseErr *responseFailureError
-	if !errors.As(err, &responseErr) {
-		return
-	}
-	responseErr.message = client.redactMessage(responseErr.message)
-	responseErr.detail.Message = client.redactMessage(responseErr.detail.Message)
 }
 
 func formatAPIError(detail apiError) string {

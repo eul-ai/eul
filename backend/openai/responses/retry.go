@@ -90,7 +90,8 @@ func contextLimitError(err error) bool {
 }
 
 func contextLimitResponseError(detail responseError) bool {
-	return strings.EqualFold(string(detail.Code), "context_length_exceeded")
+	return strings.EqualFold(string(detail.Code), "context_length_exceeded") ||
+		strings.EqualFold(detail.Type, "context_length_exceeded")
 }
 
 func retryableResponseError(detail responseError) bool {

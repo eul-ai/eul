@@ -30,7 +30,6 @@ func newClient(apiKey, endpoint string, httpClient *http.Client, metadata func(s
 		ErrorPrefix:    "openrouter",
 		PrepareRequest: prepareRequest(apiKey),
 		RequestOptions: requestOptions(metadata),
-		Redact:         []string{apiKey},
 	})
 	if err != nil {
 		return nil, err
@@ -43,26 +42,12 @@ func (c *client) Generate(ctx context.Context, request agent.Request, observer a
 }
 
 func (c *client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
-	if len(request.State) == 0 {
-		return false
-	}
-	if c.responses.ShouldCompactState(request) {
-		return true
-	}
-	if usage.TotalTokens <= 0 {
-		return false
-	}
-
-	contextWindow := c.metadata(request.Model).contextWindow
-	if contextWindow <= 0 {
-		return false
-	}
-	limit := contextWindow * 9 / 10
-	if usage.TotalTokens >= limit {
-		return true
-	}
-
-	return estimateInputTokens(request.Inputs) >= limit-usage.TotalTokens
+	return compaction.ShouldCompact(
+		request,
+		usage,
+		c.metadata(request.Model).contextWindow,
+		c.responses.ShouldCompactState(request),
+	)
 }
 
 func (c *client) Compact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {
@@ -71,22 +56,6 @@ func (c *client) Compact(ctx context.Context, request agent.Request) (agent.Comp
 
 func (c *client) ShouldCompactAfterError(_ agent.Request, err error) bool {
 	return c.responses.IsContextLimitError(err)
-}
-
-func estimateInputTokens(inputs []agent.Input) int64 {
-	var total int64
-	for _, input := range inputs {
-		textBytes := len(input.Text)
-		if input.Kind == agent.InputUser {
-			textBytes = len(input.PlainText())
-		}
-		bytes := int64(textBytes)
-		total += bytes / 4
-		if bytes%4 != 0 {
-			total++
-		}
-	}
-	return total
 }
 
 func (c *client) RetryGeneration(err error, failedAttempts int) (time.Duration, bool) {

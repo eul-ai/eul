@@ -41,3 +41,42 @@ func ValidateSummary(text string, toolCallCount int) (string, error) {
 func FormatSummary(summary string) string {
 	return summaryIntroduction + "\n\n" + summary
 }
+
+func ShouldCompact(request agent.Request, usage agent.Usage, contextWindow int64, stateTooLarge bool) bool {
+	if len(request.State) == 0 {
+		return false
+	}
+	if stateTooLarge {
+		return true
+	}
+	if usage.TotalTokens <= 0 || contextWindow <= 0 {
+		return false
+	}
+
+	limit := contextWindow * 9 / 10
+	if usage.TotalTokens >= limit {
+		return true
+	}
+	return estimateInputTokens(request.Inputs) >= limit-usage.TotalTokens
+}
+
+func estimateInputTokens(inputs []agent.Input) int64 {
+	var total int64
+	for _, input := range inputs {
+		textBytes := len(input.Text)
+		if input.Kind == agent.InputUser {
+			textBytes = len(input.PlainText())
+			for _, part := range input.Content {
+				if part.Kind == agent.ContentPartImage {
+					total += 1_024
+				}
+			}
+		}
+		bytes := int64(textBytes)
+		total += bytes / 4
+		if bytes%4 != 0 {
+			total++
+		}
+	}
+	return total
+}

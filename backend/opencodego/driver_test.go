@@ -192,7 +192,7 @@ func TestLoadUsageRejectsTrailingData(t *testing.T) {
 	}
 }
 
-func TestCredentialErrorRedactsAPIKey(t *testing.T) {
+func TestCredentialErrorIncludesStatus(t *testing.T) {
 	client := &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 		return testHTTPResponse(http.StatusUnauthorized, `{"error":{"message":"bad secret"}}`), nil
 	})}
@@ -205,7 +205,7 @@ func TestCredentialErrorRedactsAPIKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = opened.(backend.CredentialChecker).CheckCredentials(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "secret") {
+	if err == nil || !strings.Contains(err.Error(), "401") {
 		t.Fatalf("CheckCredentials() error = %v", err)
 	}
 }

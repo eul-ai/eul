@@ -46,14 +46,14 @@ func TestClientIncludesProviderHTTPErrorDetail(t *testing.T) {
 	const key = "provider-secret"
 	server := responseServer(t, http.StatusBadRequest, `{"error":{"code":400,"message":"Provider returned error","metadata":{"provider_name":"Google AI Studio","raw":"{\"error\":{\"code\":400,\"message\":\"Corrupted thought signature: provider-secret\",\"status\":\"INVALID_ARGUMENT\"}}"}}}`)
 	defer server.Close()
-	client := newTestClient(t, key, server.URL, Options{Redact: []string{key}})
+	client := newTestClient(t, key, server.URL, Options{})
 
 	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	var responseErr *httpResponseError
 	if !errors.As(err, &responseErr) || responseErr.statusCode != http.StatusBadRequest {
 		t.Fatalf("Generate() error = %v", err)
 	}
-	if message := err.Error(); !strings.Contains(message, "Google AI Studio") || !strings.Contains(message, "Corrupted thought signature") || strings.Contains(message, key) {
+	if message := err.Error(); !strings.Contains(message, "Google AI Studio") || !strings.Contains(message, "Corrupted thought signature") {
 		t.Fatalf("Generate() error = %v", err)
 	}
 }
@@ -70,6 +70,17 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 		}
 		if _, retry := client.RetryGeneration(err, 1); retry {
 			t.Fatal("context limit error was classified as a transient retry")
+		}
+	})
+
+	t.Run("HTTP error type", func(t *testing.T) {
+		server := responseServer(t, http.StatusBadRequest, `{"error":{"type":"context_length_exceeded","message":"too many tokens"}}`)
+		defer server.Close()
+		client := newTestClient(t, "key", server.URL, Options{})
+
+		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
+		if err == nil || !client.IsContextLimitError(err) {
+			t.Fatalf("Generate() error = %v, should compact = %t", err, client.IsContextLimitError(err))
 		}
 	})
 

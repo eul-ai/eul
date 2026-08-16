@@ -244,7 +244,7 @@ func (configured *runtime) currentTime() time.Time {
 
 func (configured *runtime) responseError(response *http.Response) error {
 	body, _, _ := backendhttp.ReadBounded(response.Body, maxCatalogErrorResponseBytes)
-	detail := configured.redact(strings.TrimSpace(string(body)))
+	detail := strings.TrimSpace(string(body))
 	if detail == "" {
 		detail = "empty response"
 	}

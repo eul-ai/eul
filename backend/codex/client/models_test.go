@@ -134,20 +134,6 @@ func TestParseReasoningSummary(t *testing.T) {
 	}
 }
 
-func TestEstimateInputTokensUsesOrderedTextParts(t *testing.T) {
-	inputs := []agent.Input{{
-		Kind: agent.InputUser,
-		Content: []agent.ContentPart{
-			{Kind: agent.ContentPartText, Text: "12345"},
-			{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("image")}},
-			{Kind: agent.ContentPartText, Text: "678"},
-		},
-	}}
-	if got := estimateInputTokens(inputs); got != 2 {
-		t.Fatalf("tokens = %d, want 2", got)
-	}
-}
-
 func TestClientShouldCompactForContinuationStateHeadroom(t *testing.T) {
 	responsesClient, err := responses.New(responses.Options{
 		Endpoint:            "https://example.com/responses",

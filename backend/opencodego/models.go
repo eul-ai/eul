@@ -19,6 +19,9 @@ const (
 	reasoningOptionTypeEffort       = "effort"
 	reasoningOptionTypeBudgetTokens = "budget_tokens"
 	reasoningOptionTypeToggle       = "toggle"
+
+	highThinkingBudgetTokens  = 16_000
+	maxThinkingOutputHeadroom = 8_000
 )
 
 var (
@@ -47,6 +50,7 @@ type modelInfo struct {
 	thinkingLevels            []agent.ThinkingLevel
 	thinkingMode              thinkingMode
 	thinkingEfforts           map[agent.ThinkingLevel]string
+	maxThinkingBudgetTokens   int
 	includeEncryptedState     bool
 	lowTextVerbosity          bool
 	serializeReasoningContent bool
@@ -69,6 +73,7 @@ type catalogModel struct {
 type catalogReasoningOption struct {
 	Type   string    `json:"type"`
 	Values []*string `json:"values"`
+	Max    int       `json:"max"`
 }
 
 type catalogLimit struct {
@@ -118,7 +123,7 @@ func buildModelInfo(defaultNPM, id string, model catalogModel) (modelInfo, bool)
 		return modelInfo{}, false
 	}
 
-	levels, mode, efforts, ok := modelThinking(model)
+	levels, mode, efforts, maxThinkingBudgetTokens, ok := modelThinking(model)
 	if !ok {
 		return modelInfo{}, false
 	}
@@ -142,18 +147,19 @@ func buildModelInfo(defaultNPM, id string, model catalogModel) (modelInfo, bool)
 		thinkingLevels:            levels,
 		thinkingMode:              mode,
 		thinkingEfforts:           efforts,
+		maxThinkingBudgetTokens:   maxThinkingBudgetTokens,
 		includeEncryptedState:     selectedProtocol == protocolResponses,
 		lowTextVerbosity:          lowTextVerbosity,
 		serializeReasoningContent: serializeReasoningContent,
 	}, true
 }
 
-func modelThinking(model catalogModel) ([]agent.ThinkingLevel, thinkingMode, map[agent.ThinkingLevel]string, bool) {
+func modelThinking(model catalogModel) ([]agent.ThinkingLevel, thinkingMode, map[agent.ThinkingLevel]string, int, bool) {
 	if !model.Reasoning {
-		return []agent.ThinkingLevel{agent.ThinkingOff}, thinkingFixed, nil, true
+		return []agent.ThinkingLevel{agent.ThinkingOff}, thinkingFixed, nil, 0, true
 	}
 	if model.ReasoningOptions == nil {
-		return nil, thinkingFixed, nil, false
+		return nil, thinkingFixed, nil, 0, false
 	}
 
 	options := *model.ReasoningOptions
@@ -180,23 +186,28 @@ func modelThinking(model catalogModel) ([]agent.ThinkingLevel, thinkingMode, map
 			}
 		}
 		levels := orderedThinkingLevels(efforts)
-		return levels, thinkingEffort, efforts, len(levels) > 0
+		return levels, thinkingEffort, efforts, 0, len(levels) > 0
 	}
 
 	for _, option := range options {
-		if option.Type == reasoningOptionTypeBudgetTokens {
-			return []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax}, thinkingBudget, nil, true
+		if option.Type != reasoningOptionTypeBudgetTokens {
+			continue
 		}
+		maximum := min(option.Max, model.Limit.Output-maxThinkingOutputHeadroom)
+		if maximum <= highThinkingBudgetTokens {
+			return nil, thinkingFixed, nil, 0, false
+		}
+		return []agent.ThinkingLevel{agent.ThinkingHigh, agent.ThinkingMax}, thinkingBudget, nil, maximum, true
 	}
 	for _, option := range options {
 		if option.Type == reasoningOptionTypeToggle {
-			return []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh}, thinkingAdaptive, nil, true
+			return []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh}, thinkingAdaptive, nil, 0, true
 		}
 	}
 	if len(options) == 0 {
-		return []agent.ThinkingLevel{agent.ThinkingHigh}, thinkingFixed, nil, true
+		return []agent.ThinkingLevel{agent.ThinkingHigh}, thinkingFixed, nil, 0, true
 	}
-	return nil, thinkingFixed, nil, false
+	return nil, thinkingFixed, nil, 0, false
 }
 
 func orderedThinkingLevels(efforts map[agent.ThinkingLevel]string) []agent.ThinkingLevel {

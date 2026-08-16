@@ -96,7 +96,6 @@ func (c *Client) decodeHTTPError(response *http.Response) error {
 }
 
 func (c *Client) newHTTPResponseError(response *http.Response, cause error, detail responseError, format string, arguments ...any) error {
-	detail.Message = c.redactMessage(detail.Message)
 	return &httpResponseError{
 		message:    c.errorMessage(format, arguments...),
 		statusCode: response.StatusCode,
@@ -115,24 +114,11 @@ func (c *Client) wrapf(cause error, format string, arguments ...any) error {
 }
 
 func (c *Client) errorMessage(format string, arguments ...any) string {
-	message := c.redactMessage(strings.ToValidUTF8(fmt.Sprintf(format, arguments...), "�"))
+	message := strings.ToValidUTF8(fmt.Sprintf(format, arguments...), "�")
 	if c.errorPrefix != "" {
 		message = c.errorPrefix + ": " + message
 	}
 	return backendhttp.TruncateUTF8(message, int(c.maxErrorBytes))
-}
-
-func (c *Client) redactMessage(message string) string {
-	return backendhttp.Redact(message, c.redact)
-}
-
-func (c *Client) redactResponseFailure(err error) {
-	var responseErr *responseFailureError
-	if !errors.As(err, &responseErr) {
-		return
-	}
-	responseErr.message = c.redactMessage(responseErr.message)
-	responseErr.detail.Message = c.redactMessage(responseErr.detail.Message)
 }
 
 type wrappedError struct {

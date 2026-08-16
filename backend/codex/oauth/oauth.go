@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/backend"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 const (
@@ -64,14 +65,7 @@ func NewManager(path string, options Options) *Manager {
 		base = defaultAuthBaseURL
 	}
 
-	client := &http.Client{}
-	if options.HTTPClient != nil {
-		*client = *options.HTTPClient
-	}
-	if client.Timeout <= 0 {
-		client.Timeout = defaultHTTPTimeout
-	}
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client := backendhttp.New(options.HTTPClient, defaultHTTPTimeout)
 
 	now := options.Now
 	if now == nil {

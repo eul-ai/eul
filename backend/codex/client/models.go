@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend/compaction"
 )
 
 const (
@@ -112,39 +113,10 @@ func responseReasoningFor(model string, level agent.ThinkingLevel, summary Reaso
 }
 
 func (c *Client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
-	if len(request.State) == 0 {
-		return false
-	}
-	if c.responses.ShouldCompactState(request) {
-		return true
-	}
-	if usage.TotalTokens <= 0 {
-		return false
-	}
-
-	metadata, ok := models[request.Model]
-	if !ok {
-		return false
-	}
-	limit := metadata.contextWindow * 9 / 10
-	if usage.TotalTokens >= limit {
-		return true
-	}
-	return estimateInputTokens(request.Inputs) >= limit-usage.TotalTokens
-}
-
-func estimateInputTokens(inputs []agent.Input) int64 {
-	var total int64
-	for _, input := range inputs {
-		textBytes := len(input.Text)
-		if input.Kind == agent.InputUser {
-			textBytes = len(input.PlainText())
-		}
-		bytes := int64(textBytes)
-		total += bytes / 4
-		if bytes%4 != 0 {
-			total++
-		}
-	}
-	return total
+	return compaction.ShouldCompact(
+		request,
+		usage,
+		contextWindow(request.Model),
+		c.responses.ShouldCompactState(request),
+	)
 }
