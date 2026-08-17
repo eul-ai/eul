@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -52,14 +53,15 @@ func TestReadHandlesEmptyBinarySymlinkAndInvalidRanges(t *testing.T) {
 		t.Fatalf("symlink read = %+v", result)
 	}
 	for _, test := range []struct {
-		name string
-		args map[string]any
+		name          string
+		args          map[string]any
+		wantRequested string
 	}{
 		{name: "binary", args: map[string]any{"path": "binary.dat"}},
 		{name: "binary after result limit", args: map[string]any{"path": "late-binary.dat"}},
 		{name: "empty offset", args: map[string]any{"path": "empty.txt", "offset": 2}},
 		{name: "zero offset", args: map[string]any{"path": "target.txt", "offset": 0}},
-		{name: "large limit", args: map[string]any{"path": "target.txt", "limit": defaultMaxLines + 1}},
+		{name: "large limit", args: map[string]any{"path": "target.txt", "limit": defaultMaxLines + 1}, wantRequested: fmt.Sprint(defaultMaxLines + 1)},
 		{name: "directory", args: map[string]any{"path": "."}},
 		{name: "fifo", args: map[string]any{"path": "pipe"}},
 	} {
@@ -67,6 +69,9 @@ func TestReadHandlesEmptyBinarySymlinkAndInvalidRanges(t *testing.T) {
 			result := executeJSON(t, readTool, test.args)
 			if !result.IsError {
 				t.Fatalf("read succeeded: %+v", result)
+			}
+			if test.wantRequested != "" && !strings.Contains(result.Output, test.wantRequested) {
+				t.Fatalf("read error omits requested value %q: %+v", test.wantRequested, result)
 			}
 		})
 	}

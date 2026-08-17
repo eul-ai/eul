@@ -127,9 +127,9 @@ func (m *Manager) Start(tasks []Task) ([]Job, error) {
 		m.mu.Unlock()
 		return nil, errors.New("subagent manager is closed")
 	}
-	if len(m.active)+len(tasks) > maxActive {
+	if requested := len(m.active) + len(tasks); requested > maxActive {
 		m.mu.Unlock()
-		return nil, fmt.Errorf("active subagents must not exceed %d", maxActive)
+		return nil, fmt.Errorf("active subagents must not exceed %d (requested: %d)", maxActive, requested)
 	}
 
 	started := time.Now()
@@ -188,7 +188,7 @@ func (m *Manager) validateStart(tasks []Task) error {
 		return errors.New("at least one task is required")
 	}
 	if len(tasks) > maxActive {
-		return fmt.Errorf("tasks must not exceed %d", maxActive)
+		return fmt.Errorf("tasks must not exceed %d (requested: %d)", maxActive, len(tasks))
 	}
 	for _, task := range tasks {
 		if strings.TrimSpace(task.Description) == "" {
@@ -388,7 +388,7 @@ func validateCancellationIDs(ids []string) error {
 		return errors.New("at least one subagent ID is required")
 	}
 	if len(ids) > maxActive {
-		return fmt.Errorf("subagent IDs must not exceed %d", maxActive)
+		return fmt.Errorf("subagent IDs must not exceed %d (requested: %d)", maxActive, len(ids))
 	}
 	seen := make(map[string]struct{}, len(ids))
 	for _, id := range ids {

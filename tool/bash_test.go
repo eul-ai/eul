@@ -99,6 +99,16 @@ func TestBashAcceptsIntegerAndNumericStringTimeout(t *testing.T) {
 	}
 }
 
+func TestBashTimeoutErrorIncludesRequestedValue(t *testing.T) {
+	bashTool := newTestBash(t.TempDir())
+	requested := int(maximumBashTimeout/time.Second) + 1
+
+	result := executeJSON(t, bashTool, map[string]any{"command": "printf ok", "timeout": requested})
+	if !result.IsError || !strings.Contains(result.Output, fmt.Sprintf("%ds", requested)) {
+		t.Fatalf("bash timeout result = %+v", result)
+	}
+}
+
 func TestBashFinalPresentationShowsOutputTailAndDuration(t *testing.T) {
 	bashTool := newTestBash(t.TempDir())
 	arguments, err := json.Marshal(map[string]any{"command": `printf 'one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n'`, "network": true})

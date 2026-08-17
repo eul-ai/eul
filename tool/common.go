@@ -132,7 +132,7 @@ func optionalPositive(value *int, defaultValue, maximum int, field string) (int,
 		return 0, fmt.Errorf("%s must be positive", field)
 	}
 	if *value > maximum {
-		return 0, fmt.Errorf("%s must not exceed %d", field, maximum)
+		return 0, fmt.Errorf("%s must not exceed %d (requested: %d)", field, maximum, *value)
 	}
 	return *value, nil
 }

@@ -37,7 +37,7 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates a
 			return errorResult(bashToolName, fmt.Errorf("timeout must be positive")), nil
 		}
 		if time.Duration(seconds) > b.maxTimeout/time.Second {
-			return errorResult(bashToolName, fmt.Errorf("timeout must not exceed %s", b.maxTimeout)), nil
+			return errorResult(bashToolName, fmt.Errorf("timeout must not exceed %s (requested: %ds)", b.maxTimeout, seconds)), nil
 		}
 		timeout = time.Duration(seconds) * time.Second
 	}
