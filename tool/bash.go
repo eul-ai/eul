@@ -11,7 +11,7 @@ import (
 const (
 	bashToolName       = "bash"
 	defaultBashTimeout = 120 * time.Second
-	maximumBashTimeout = 10 * time.Minute
+	maximumBashTimeout = time.Hour
 	defaultWaitDelay   = time.Second
 	bashPreviewLines   = 5
 	bashUpdateInterval = 100 * time.Millisecond
