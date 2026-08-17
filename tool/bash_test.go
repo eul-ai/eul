@@ -134,6 +134,14 @@ func TestBashFinalPresentationShowsOutputTailAndDuration(t *testing.T) {
 	}
 }
 
+func TestBashPresentationNormalizesCRLF(t *testing.T) {
+	presentation := bashOutputPresentation("printf", "one\r\ntwo\r\n", "", time.Second, defaultBashTimeout)
+
+	if !slices.Equal(presentation.Lines, []string{"one", "two"}) {
+		t.Fatalf("presentation lines = %q", presentation.Lines)
+	}
+}
+
 func TestBashStreamsOutputBeforeCommandCompletes(t *testing.T) {
 	bashTool := newTestBash(t.TempDir())
 	arguments := json.RawMessage(`{"command":"printf 'first\\n'; sleep 0.4; printf 'second\\n'","network":true}`)

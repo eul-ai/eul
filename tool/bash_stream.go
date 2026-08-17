@@ -18,6 +18,7 @@ func setFinalBashPresentation(updates agent.ToolUpdateSink, command, output, out
 func bashOutputPresentation(command, output, outcome string, elapsed, timeout time.Duration) agent.ToolPresentation {
 	presentation := bashPresentation(command, timeout)
 	presentation.Outcome = outcome
+	output = strings.ReplaceAll(output, "\r\n", "\n")
 	if trimmed := strings.TrimSpace(output); trimmed != "" {
 		presentation.Lines = strings.Split(trimmed, "\n")
 	}
