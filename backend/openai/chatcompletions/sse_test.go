@@ -161,15 +161,15 @@ func TestReadCompletionSSERequiresFinishReason(t *testing.T) {
 	}
 }
 
-func TestReadCompletionSSEDoesNotRetryAfterDelivery(t *testing.T) {
+func TestReadCompletionSSERetriesAfterDelivery(t *testing.T) {
 	stream := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n"
 	_, err := readCompletionSSE(strings.NewReader(stream), 1024, agent.StreamObserver{Text: func(string) error { return nil }}, false)
 	var partial *backendhttp.PartialResponseError
 	if !errors.As(err, &partial) {
 		t.Fatalf("error = %v", err)
 	}
-	if _, retry := (&Client{}).RetryGeneration(err, 1); retry {
-		t.Fatal("partial stream is retryable")
+	if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {
+		t.Fatal("partial stream is not retryable")
 	}
 }
 

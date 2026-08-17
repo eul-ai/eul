@@ -141,12 +141,12 @@ func TestClientRetriesTransientGenerationThroughEngine(t *testing.T) {
 	}
 }
 
-func TestClientRetriesInterruptedStreamThroughEngine(t *testing.T) {
+func TestClientRetriesInterruptedStreamAfterToolCallDelivery(t *testing.T) {
 	var calls atomic.Int32
 	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		if calls.Add(1) == 1 {
-			writer.WriteHeader(http.StatusOK)
+			fmt.Fprint(writer, "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"write\",\"arguments\":\"\"}}\n\n")
 			writer.(http.Flusher).Flush()
 			panic("reset stream")
 		}
@@ -163,7 +163,7 @@ func TestClientRetriesInterruptedStreamThroughEngine(t *testing.T) {
 	}
 }
 
-func TestClientDoesNotRetryTerminalFailureAfterDelivery(t *testing.T) {
+func TestClientRetriesTerminalFailureAfterDelivery(t *testing.T) {
 	stream := strings.Join([]string{
 		`data: {"type":"response.output_text.delta","delta":"partial"}`,
 		"",
@@ -190,12 +190,12 @@ func TestClientDoesNotRetryTerminalFailureAfterDelivery(t *testing.T) {
 	if delivered != 1 || !errors.As(err, &partial) {
 		t.Fatalf("deliveries=%d error=%v", delivered, err)
 	}
-	if _, retry := client.RetryGeneration(err, 1); retry {
-		t.Fatal("partial terminal failure is retryable")
+	if _, retry := client.RetryGeneration(err, 1); !retry {
+		t.Fatal("partial terminal failure is not retryable")
 	}
 }
 
-func TestClientDoesNotRetryDeadlineAfterDelivery(t *testing.T) {
+func TestClientRetriesDeadlineAfterDelivery(t *testing.T) {
 	body := &deadlineAfterReadCloser{reader: strings.NewReader(`data: {"type":"response.output_text.delta","delta":"partial"}` + "\n\n")}
 	client := newTestClient(t, "key", "https://example.test", Options{
 		HTTPClient: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
@@ -217,8 +217,8 @@ func TestClientDoesNotRetryDeadlineAfterDelivery(t *testing.T) {
 	if delivered != 1 || !errors.As(err, &partial) || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("deliveries=%d error=%v", delivered, err)
 	}
-	if _, retry := client.RetryGeneration(err, 1); retry {
-		t.Fatal("partial deadline response is retryable")
+	if _, retry := client.RetryGeneration(err, 1); !retry {
+		t.Fatal("partial deadline response is not retryable")
 	}
 }
 

@@ -192,7 +192,7 @@ func (client *Client) complete(ctx context.Context, wireRequest createRequest, o
 		func(reader io.Reader, maximum int64) (streamResult, error) {
 			return readCompletionSSE(reader, maximum, observer, wireRequest.serializeReasoningContent)
 		},
-		backendhttp.IsNonRetryableStreamError,
+		backendhttp.IsObserverError,
 	)
 }
 

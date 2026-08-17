@@ -35,7 +35,7 @@ func TestResponsesSSEOrdersCompletedItemsByOutputIndex(t *testing.T) {
 	}
 }
 
-func TestResponsesSSEDoesNotRetryAfterDelivery(t *testing.T) {
+func TestResponsesSSERetriesAfterDelivery(t *testing.T) {
 	tests := []struct {
 		name string
 		body string
@@ -67,8 +67,8 @@ func TestResponsesSSEDoesNotRetryAfterDelivery(t *testing.T) {
 			if deliveries != 1 || !errors.As(err, &partial) {
 				t.Fatalf("deliveries=%d error=%v", deliveries, err)
 			}
-			if _, retry := (&Client{}).RetryGeneration(err, 1); retry {
-				t.Fatal("partial response is retryable")
+			if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {
+				t.Fatal("partial response is not retryable")
 			}
 		})
 	}

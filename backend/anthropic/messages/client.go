@@ -217,7 +217,7 @@ func (client *Client) complete(ctx context.Context, wireRequest createRequest, o
 		func(reader io.Reader, maximum int64) (streamResult, error) {
 			return readMessagesSSE(reader, maximum, observer)
 		},
-		backendhttp.IsNonRetryableStreamError,
+		backendhttp.IsObserverError,
 	)
 }
 

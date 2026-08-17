@@ -79,7 +79,7 @@ func CompleteJSONSSE[T any](
 		return zero, classified.Cause
 	}
 	if classified.Retryable {
-		return zero, config.ErrorConfig.RetryableWrapf(classified.Cause, "%v", err)
+		return zero, config.ErrorConfig.RetryableWrapf(err, "%v", err)
 	}
 	return zero, config.ErrorConfig.Wrapf(classified.Cause, "%v", err)
 }

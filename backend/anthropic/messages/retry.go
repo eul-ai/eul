@@ -23,7 +23,7 @@ func retryableGenerationError(err error) bool {
 		return false
 	}
 
-	if backendhttp.IsNonRetryableStreamError(err) {
+	if backendhttp.IsObserverError(err) {
 		return false
 	}
 

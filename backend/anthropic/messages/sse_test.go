@@ -147,7 +147,7 @@ func TestReadMessagesSSERejectsMalformedToolInput(t *testing.T) {
 	}
 }
 
-func TestReadMessagesSSEDoesNotRetryAfterDelivery(t *testing.T) {
+func TestReadMessagesSSERetriesAfterDelivery(t *testing.T) {
 	stream := marshalSSE(
 		t,
 		sseMessageStart(nil),
@@ -159,8 +159,8 @@ func TestReadMessagesSSEDoesNotRetryAfterDelivery(t *testing.T) {
 	if !errors.As(err, &partial) {
 		t.Fatalf("error = %v", err)
 	}
-	if _, retry := (&Client{}).RetryGeneration(err, 1); retry {
-		t.Fatal("partial stream is retryable")
+	if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {
+		t.Fatal("partial stream is not retryable")
 	}
 }
 

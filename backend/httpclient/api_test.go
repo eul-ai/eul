@@ -106,7 +106,7 @@ func TestCompleteJSONSSEOwnsRequestLifecycle(t *testing.T) {
 	result, err := CompleteJSONSSE(context.Background(), config, map[string]string{"model": "test"}, "request", func(reader io.Reader, maximum int64) (string, error) {
 		data, err := io.ReadAll(reader)
 		return string(data), err
-	}, IsNonRetryableStreamError)
+	}, IsObserverError)
 	if err != nil || result != "stream" || requests != 1 || !body.closed {
 		t.Fatalf("result=%q requests=%d closed=%t err=%v", result, requests, body.closed, err)
 	}

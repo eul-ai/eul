@@ -27,7 +27,7 @@ type responseFailureError struct {
 func (e *responseFailureError) Error() string { return e.message }
 
 func (c *Client) generationReadError(ctx context.Context, err error, _ string) error {
-	if backendhttp.IsNonRetryableStreamError(err) {
+	if backendhttp.IsObserverError(err) {
 		return c.wrapf(err, "%v", err)
 	}
 
@@ -36,7 +36,7 @@ func (c *Client) generationReadError(ctx context.Context, err error, _ string) e
 		return classified.Cause
 	}
 	if classified.Retryable {
-		return c.retryableWrapf(classified.Cause, "%v", err)
+		return c.retryableWrapf(err, "%v", err)
 	}
 	return c.wrapf(classified.Cause, "%v", err)
 }
@@ -61,7 +61,7 @@ func (c *Client) RetryGeneration(err error, failedAttempts int) (time.Duration, 
 }
 
 func retryableGenerationError(err error) bool {
-	if contextLimitError(err) || backendhttp.IsNonRetryableStreamError(err) {
+	if contextLimitError(err) || backendhttp.IsObserverError(err) {
 		return false
 	}
 

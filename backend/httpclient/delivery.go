@@ -57,7 +57,3 @@ func IsPartialResponseError(err error) bool {
 	var partialErr *PartialResponseError
 	return errors.As(err, &partialErr)
 }
-
-func IsNonRetryableStreamError(err error) bool {
-	return IsObserverError(err) || IsPartialResponseError(err)
-}
