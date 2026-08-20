@@ -32,7 +32,6 @@ const (
 	keyCtrlC
 	keyCtrlD
 	keyCtrlL
-	keyCtrlO
 	keyCtrlV
 	keyMouse
 	keyEOF
@@ -225,10 +224,6 @@ func (d *keyDecoder) feed(data []byte, final bool) []keyEvent {
 			continue
 		case 0x0c:
 			events = append(events, keyEvent{code: keyCtrlL})
-			d.buffer = d.buffer[1:]
-			continue
-		case 0x0f:
-			events = append(events, keyEvent{code: keyCtrlO})
 			d.buffer = d.buffer[1:]
 			continue
 		case 0x16:
@@ -524,8 +519,6 @@ func matchKittyKeySequence(buffer []byte) (int, bool, keyEvent, bool) {
 		return consumed, false, keyEvent{code: keyEnd}, true
 	case (control && codepoint == 108) || codepoint == 12:
 		return consumed, false, keyEvent{code: keyCtrlL}, true
-	case (control && codepoint == 111) || codepoint == 15:
-		return consumed, false, keyEvent{code: keyCtrlO}, true
 	case ((control || super) && codepoint == 118) || codepoint == 22:
 		return consumed, false, keyEvent{code: keyCtrlV}, true
 	case codepoint == 127:

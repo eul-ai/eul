@@ -270,39 +270,6 @@ func TestBashToolShowsOutputTailAndDuration(t *testing.T) {
 	}
 }
 
-func TestExpandedToolShowsAllHeadAndTailLines(t *testing.T) {
-	for _, test := range []struct {
-		name         string
-		presentation agent.ToolPresentation
-		hidden       string
-	}{
-		{
-			name:         "head",
-			presentation: agent.ToolPresentation{Title: "write", Lines: []string{"one", "two", "three"}, HeadLines: 2},
-			hidden:       "three",
-		},
-		{
-			name:         "tail",
-			presentation: agent.ToolPresentation{Title: "bash", Lines: []string{"one", "two", "three"}, TailLines: 2},
-			hidden:       "one",
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			block := conversationBlock{kind: blockTool, tool: test.presentation}
-			collapsed, collapsible := renderConversationBlockLines(block, 80)
-			if !collapsible || slices.ContainsFunc(collapsed, func(line styledLine) bool { return line.text == test.hidden }) {
-				t.Fatalf("collapsed lines = %+v, collapsible = %t", collapsed, collapsible)
-			}
-
-			block.expanded = true
-			expanded, collapsible := renderConversationBlockLines(block, 80)
-			if !collapsible || !slices.ContainsFunc(expanded, func(line styledLine) bool { return line.text == test.hidden }) {
-				t.Fatalf("expanded lines = %+v, collapsible = %t", expanded, collapsible)
-			}
-		})
-	}
-}
-
 func TestPendingBashToolShowsElapsedTime(t *testing.T) {
 	lines := conversationLines([]conversationBlock{{
 		kind: blockToolPending,
@@ -689,75 +656,6 @@ func TestConversationDividerIndicatesTextBelow(t *testing.T) {
 	_ = renderModel(&renderer, model)
 	if renderer.frame.plainRows[ruleRow] != followingDivider {
 		t.Fatalf("divider was not restored: got %q, want %q", renderer.frame.plainRows[ruleRow], followingDivider)
-	}
-}
-
-func TestCtrlOTogglesOnlyVisibleCollapsibleTools(t *testing.T) {
-	model := newTUIModel(40, 9, Options{})
-	lines := []string{"one", "two", "three", "four", "five", "six", "seven", "eight"}
-	model.blocks = append(
-		model.blocks,
-		conversationBlock{kind: blockTool, tool: agent.ToolPresentation{Title: "first", Lines: lines, HeadLines: 2}},
-		conversationBlock{kind: blockInfo, text: strings.Repeat("spacing ", 40)},
-		conversationBlock{kind: blockTool, tool: agent.ToolPresentation{Title: "last", Lines: lines, TailLines: 2}},
-	)
-	model.conversationChanged()
-
-	var renderer tuiRenderer
-	_ = renderModel(&renderer, model)
-	frame := renderer.frame
-	visible := make(map[int]bool)
-	for _, projection := range frame.conversationBlocks {
-		visible[projection.index] = projection.collapsible && projection.start < frame.conversationTop+frame.layout.conversationHeight && projection.end > frame.conversationTop
-	}
-
-	if _, err := handleKeyInput(model, keyEvent{code: keyCtrlO}, frame); err != nil {
-		t.Fatal(err)
-	}
-	for index := range model.blocks {
-		if model.blocks[index].expanded != visible[index] {
-			t.Fatalf("block %d expanded=%t, visible collapsible=%t", index, model.blocks[index].expanded, visible[index])
-		}
-	}
-	if model.blocks[0].expanded {
-		t.Fatal("offscreen tool was expanded")
-	}
-}
-
-func TestCtrlOPreservesScrolledToolOutput(t *testing.T) {
-	model := newTUIModel(40, 9, Options{})
-	model.blocks = append(model.blocks, conversationBlock{
-		kind: blockTool,
-		tool: agent.ToolPresentation{
-			Title:     "bash",
-			Lines:     []string{"one", "two", "three", "four", "five", "six", "seven", "eight"},
-			TailLines: 5,
-		},
-	})
-	model.conversationChanged()
-
-	var renderer tuiRenderer
-	_ = renderModel(&renderer, model)
-	projection := renderer.frame.conversationBlocks[0]
-	model.following = false
-	model.scrollTop = projection.end - 4
-	_ = renderModel(&renderer, model)
-	before := renderer.frame.plainRows[0]
-
-	if _, err := handleKeyInput(model, keyEvent{code: keyCtrlO}, renderer.frame); err != nil {
-		t.Fatal(err)
-	}
-	_ = renderModel(&renderer, model)
-	if !model.blocks[0].expanded || renderer.frame.plainRows[0] != before {
-		t.Fatalf("expanded=%t, top row changed from %q to %q", model.blocks[0].expanded, before, renderer.frame.plainRows[0])
-	}
-
-	if _, err := handleKeyInput(model, keyEvent{code: keyCtrlO}, renderer.frame); err != nil {
-		t.Fatal(err)
-	}
-	_ = renderModel(&renderer, model)
-	if model.blocks[0].expanded || renderer.frame.plainRows[0] != before {
-		t.Fatalf("expanded=%t, top row changed after collapse from %q to %q", model.blocks[0].expanded, before, renderer.frame.plainRows[0])
 	}
 }
 

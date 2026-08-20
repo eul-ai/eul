@@ -85,9 +85,6 @@ func handleKeyInput(model *tuiModel, key keyEvent, frame terminalFrame) (tuiActi
 		return tuiAction{}, ErrInterrupted
 	case keyCtrlL:
 		return tuiAction{kind: tuiActionRedraw}, nil
-	case keyCtrlO:
-		toggleVisibleOutput(model, frame)
-		return tuiAction{}, nil
 	case keyCtrlV:
 		return tuiAction{kind: tuiActionAttachImage}, nil
 	case keyPageUp:
