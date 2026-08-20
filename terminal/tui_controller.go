@@ -374,6 +374,10 @@ func (c *tuiController) handleSpinner() (bool, error) {
 }
 
 func (c *tuiController) handleUsageClock() (bool, error) {
+	if c.model.running {
+		requestProviderUsage(c.usageRequests)
+	}
+
 	for _, window := range c.model.providerUsage.Windows {
 		if !window.ResetsAt.IsZero() {
 			c.dirty = true

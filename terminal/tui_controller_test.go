@@ -1085,6 +1085,31 @@ func TestTUIControllerStoresProviderUsage(t *testing.T) {
 	}
 }
 
+func TestTUIControllerUsageClockRefreshesWhileRunning(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	requests := make(chan struct{}, 1)
+	controller := tuiController{model: model, renderer: &tuiRenderer{}, usageRequests: requests}
+
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventUsageClock}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-requests:
+		t.Fatal("idle usage refresh was requested")
+	default:
+	}
+
+	model.running = true
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventUsageClock}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-requests:
+	default:
+		t.Fatal("active usage refresh was not requested")
+	}
+}
+
 func TestTUIControllerEventDirtiness(t *testing.T) {
 	tests := []struct {
 		name      string
