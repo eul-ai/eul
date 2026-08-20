@@ -17,6 +17,7 @@ type terminalFrame struct {
 	conversationTop        int
 	conversationLines      []string
 	conversationSeparators []string
+	conversationBlocks     []conversationBlockProjection
 	conversationVersion    uint64
 }
 
@@ -26,6 +27,7 @@ type renderPreparation struct {
 	conversationLines      []styledLine
 	conversationPlain      []string
 	conversationSeparators []string
+	conversationBlocks     []conversationBlockProjection
 	scrollTop              int
 }
 
@@ -41,6 +43,7 @@ func (r *tuiRenderer) prepare(model *tuiModel) renderPreparation {
 		conversationLines:      r.conversationLines,
 		conversationPlain:      r.conversationPlain,
 		conversationSeparators: r.conversationSeparators,
+		conversationBlocks:     r.conversationProjections,
 		scrollTop:              model.scrollTop,
 	}
 }
@@ -68,6 +71,7 @@ func (r *tuiRenderer) prepareConversation(model *tuiModel) {
 	lines := make([]styledLine, 0, lineCapacity)
 	plain := make([]string, 0, plainCapacity)
 	separators := make([]string, 0, lineCapacity)
+	projections := make([]conversationBlockProjection, 0, len(model.blocks))
 	blankPlain := renderedLineText(styledLine{}, model.width)
 	appendBlank := func() {
 		lines = append(lines, styledLine{})
@@ -81,20 +85,30 @@ func (r *tuiRenderer) prepareConversation(model *tuiModel) {
 	pendingSteering := model.pendingSteering()
 	totalBlocks := len(model.blocks) + len(pendingSteering)
 	appendedBlocks := 0
-	appendBlock := func(rendered renderedConversationBlock) {
+	appendBlock := func(rendered renderedConversationBlock, modelIndex int) {
+		start := len(lines)
 		lines = append(lines, rendered.lines...)
 		plain = append(plain, rendered.plain...)
 		separators = append(separators, rendered.separators...)
+		if modelIndex >= 0 {
+			projections = append(projections, conversationBlockProjection{
+				index:       modelIndex,
+				start:       start,
+				end:         len(lines),
+				collapsible: rendered.collapsible,
+				expanded:    rendered.block.expanded,
+			})
+		}
 		appendedBlocks++
 		if appendedBlocks < totalBlocks {
 			appendBlank()
 		}
 	}
-	for _, rendered := range r.conversationBlocks {
-		appendBlock(rendered)
+	for index, rendered := range r.conversationBlocks {
+		appendBlock(rendered, index)
 	}
 	for _, content := range pendingSteering {
-		appendBlock(renderConversationBlock(conversationBlock{kind: blockInfo, text: "Queued: " + displayContent(content) + " (alt+↑ to restore)"}, model.width))
+		appendBlock(renderConversationBlock(conversationBlock{kind: blockInfo, text: "Queued: " + displayContent(content) + " (alt+↑ to restore)"}, model.width), -1)
 	}
 	for range conversationVerticalPadding {
 		appendBlank()
@@ -103,12 +117,13 @@ func (r *tuiRenderer) prepareConversation(model *tuiModel) {
 	r.conversationLines = lines
 	r.conversationPlain = plain
 	r.conversationSeparators = separators
+	r.conversationProjections = projections
 	r.conversationWidth = model.width
 	r.conversationVersion = model.conversationVersion
 }
 
 func renderConversationBlock(block conversationBlock, width int) renderedConversationBlock {
-	lines := conversationBlockLines(block, width)
+	lines, collapsible := renderConversationBlockLines(block, width)
 	plain := make([]string, len(lines))
 	separators := make([]string, len(lines))
 	for index, line := range lines {
@@ -117,7 +132,7 @@ func renderConversationBlock(block conversationBlock, width int) renderedConvers
 	}
 	block.tool = block.tool.Clone()
 	block.content = cloneTerminalContent(block.content)
-	return renderedConversationBlock{block: block, lines: lines, plain: plain, separators: separators}
+	return renderedConversationBlock{block: block, lines: lines, plain: plain, separators: separators, collapsible: collapsible}
 }
 
 func conversationBlocksEqual(left, right conversationBlock) bool {
@@ -126,6 +141,7 @@ func conversationBlocksEqual(left, right conversationBlock) bool {
 		contentEqual(left.content, right.content) &&
 		left.toolCallID == right.toolCallID &&
 		left.toolOutcome == right.toolOutcome &&
+		left.expanded == right.expanded &&
 		left.tool.Equal(right.tool)
 }
 
@@ -169,6 +185,7 @@ func projectTerminalFrame(model *tuiModel, prepared renderPreparation) terminalF
 		conversationTop:        prepared.scrollTop,
 		conversationLines:      prepared.conversationPlain,
 		conversationSeparators: prepared.conversationSeparators,
+		conversationBlocks:     prepared.conversationBlocks,
 		conversationVersion:    model.conversationVersion,
 	}
 }

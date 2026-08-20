@@ -122,6 +122,7 @@ type ToolPresentation struct {
 	Diff           []ToolDiffLine
 	Markdown       bool
 	Outcome        string
+	HeadLines      int `json:",omitempty"`
 	TailLines      int
 	Elapsed        time.Duration
 	Timeout        time.Duration
@@ -139,6 +140,7 @@ func (presentation ToolPresentation) Equal(other ToolPresentation) bool {
 		presentation.LinesTruncated == other.LinesTruncated &&
 		presentation.Markdown == other.Markdown &&
 		presentation.Outcome == other.Outcome &&
+		presentation.HeadLines == other.HeadLines &&
 		presentation.TailLines == other.TailLines &&
 		presentation.Elapsed == other.Elapsed &&
 		presentation.Timeout == other.Timeout &&

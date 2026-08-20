@@ -80,6 +80,11 @@ func displayContent(content []agent.ContentPart) string {
 }
 
 func conversationBlockLines(block conversationBlock, width int) []styledLine {
+	lines, _ := renderConversationBlockLines(block, width)
+	return lines
+}
+
+func renderConversationBlockLines(block conversationBlock, width int) ([]styledLine, bool) {
 	style := blockPresentation(block.kind)
 	text := block.text
 	if block.kind == blockReasoning {
@@ -96,11 +101,14 @@ func conversationBlockLines(block conversationBlock, width int) []styledLine {
 	}
 
 	var lines []styledLine
+	collapsible := false
 	switch {
 	case isToolBlock(block.kind):
 		lines = append(lines, styledLine{style: style, padding: padding})
-		lines = append(lines, toolConversationLines(block, contentWidth, style, padding)...)
+		toolLines, toolCollapsible := toolConversationLines(block, contentWidth, style, padding)
+		lines = append(lines, toolLines...)
 		lines = append(lines, styledLine{style: style, padding: padding})
+		collapsible = toolCollapsible
 	case block.kind == blockUser && len(block.content) > 0 && contentHasImage(block.content):
 		for _, line := range wrapInlineSpans(contentDisplaySpans(block.content), contentWidth) {
 			lines = append(lines, styledLine{
@@ -120,7 +128,7 @@ func conversationBlockLines(block conversationBlock, width int) []styledLine {
 			})
 		}
 	}
-	return lines
+	return lines, collapsible
 }
 
 func markdownConversationLines(text string, width int, style lineStyle, padding int) []styledLine {
@@ -146,7 +154,7 @@ func markdownConversationLines(text string, width int, style lineStyle, padding 
 	return lines
 }
 
-func toolConversationLines(block conversationBlock, width int, style lineStyle, padding int) []styledLine {
+func toolConversationLines(block conversationBlock, width int, style lineStyle, padding int) ([]styledLine, bool) {
 	title := block.tool.Title
 	if title == "" {
 		title = block.text
@@ -175,11 +183,12 @@ func toolConversationLines(block conversationBlock, width int, style lineStyle, 
 		})
 	}
 	if len(block.tool.Lines) == 0 && len(block.tool.Diff) == 0 && block.tool.Elapsed == 0 {
-		return lines
+		return lines, false
 	}
 	lines = append(lines, styledLine{style: style, padding: padding})
 
 	contentAdded := false
+	collapsible := false
 	if len(block.tool.Lines) > 0 {
 		var bodyLines []styledLine
 		body := strings.Join(block.tool.Lines, "\n")
@@ -199,12 +208,21 @@ func toolConversationLines(block conversationBlock, width int, style lineStyle, 
 				bodyLines[index].style.foreground = currentTheme.muted
 			}
 		}
-		if limit := block.tool.TailLines; limit > 0 && len(bodyLines) > limit {
-			omitted := len(bodyLines) - limit
-			omittedStyle := style
-			omittedStyle.foreground = currentTheme.muted
-			lines = append(lines, styledLine{text: toolOmissionMarker(omitted, width), style: omittedStyle, padding: padding})
-			bodyLines = bodyLines[omitted:]
+		limit, fromTail := toolCollapseLimit(block.tool)
+		if limit > 0 && len(bodyLines) > limit {
+			collapsible = true
+			if !block.expanded {
+				omitted := len(bodyLines) - limit
+				omittedStyle := style
+				omittedStyle.foreground = currentTheme.muted
+				marker := styledLine{text: toolOmissionMarker(omitted, width, fromTail), style: omittedStyle, padding: padding}
+				if fromTail {
+					lines = append(lines, marker)
+					bodyLines = bodyLines[omitted:]
+				} else {
+					bodyLines = append(bodyLines[:limit], marker)
+				}
+			}
 		}
 		lines = append(lines, bodyLines...)
 		contentAdded = true
@@ -230,11 +248,22 @@ func toolConversationLines(block conversationBlock, width int, style lineStyle, 
 		}
 		lines = append(lines, styledLine{text: elapsed, style: elapsedStyle, padding: padding})
 	}
-	return lines
+	return lines, collapsible
 }
 
-func toolOmissionMarker(omitted, width int) string {
-	marker := fmt.Sprintf("... (%d earlier lines)", omitted)
+func toolCollapseLimit(presentation agent.ToolPresentation) (int, bool) {
+	if presentation.TailLines > 0 {
+		return presentation.TailLines, true
+	}
+	return presentation.HeadLines, false
+}
+
+func toolOmissionMarker(omitted, width int, earlier bool) string {
+	direction := "more"
+	if earlier {
+		direction = "earlier"
+	}
+	marker := fmt.Sprintf("... (%d %s lines)", omitted, direction)
 	if cellWidth(marker) <= width {
 		return marker
 	}
@@ -310,6 +339,67 @@ func blockPresentation(kind blockKind) lineStyle {
 		return lineStyle{foreground: currentTheme.muted}
 	default:
 		return lineStyle{foreground: currentTheme.foreground}
+	}
+}
+
+func toggleVisibleOutput(model *tuiModel, frame terminalFrame) {
+	top := frame.conversationTop
+	bottom := top + frame.layout.conversationHeight
+	visible := make([]conversationBlockProjection, 0, len(frame.conversationBlocks))
+	showAll := false
+	for _, projection := range frame.conversationBlocks {
+		if !projection.collapsible || projection.start >= bottom || projection.end <= top {
+			continue
+		}
+		visible = append(visible, projection)
+		showAll = showAll || !projection.expanded
+	}
+	if len(visible) == 0 {
+		return
+	}
+
+	nextTop := top
+	for _, projection := range visible {
+		if projection.index < 0 || projection.index >= len(model.blocks) {
+			continue
+		}
+		block := &model.blocks[projection.index]
+		if block.expanded == showAll {
+			continue
+		}
+
+		block.expanded = showAll
+		if !model.following && projection.start < top && projection.end > top {
+			rendered := renderConversationBlock(*block, frame.width)
+			oldLines := frame.conversationLines[projection.start:projection.end]
+			nextTop = toggledBlockScrollTop(top, projection.start, oldLines, rendered.plain)
+		}
+	}
+
+	model.scrollTop = max(0, nextTop)
+	model.selection = textSelection{}
+	model.conversationChanged()
+}
+
+func toggledBlockScrollTop(top, blockStart int, oldLines, newLines []string) int {
+	prefix := 0
+	for prefix < len(oldLines) && prefix < len(newLines) && oldLines[prefix] == newLines[prefix] {
+		prefix++
+	}
+
+	suffix := 0
+	for suffix < len(oldLines)-prefix && suffix < len(newLines)-prefix && oldLines[len(oldLines)-1-suffix] == newLines[len(newLines)-1-suffix] {
+		suffix++
+	}
+
+	relativeTop := top - blockStart
+	switch {
+	case relativeTop < prefix:
+		return top
+	case relativeTop >= len(oldLines)-suffix:
+		return top + len(newLines) - len(oldLines)
+	default:
+		return blockStart + prefix
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -38,7 +39,7 @@ func TestWriteCreatesParentsOverwritesAndPreservesMode(t *testing.T) {
 	}
 }
 
-func TestWritePresentationStreamsBoundedPreviewWithoutWriting(t *testing.T) {
+func TestWritePresentationStreamsCollapsiblePreviewWithoutWriting(t *testing.T) {
 	cwd := t.TempDir()
 	writeTool := NewWrite(cwd)
 	content := strings.Join([]string{
@@ -50,18 +51,11 @@ func TestWritePresentationStreamsBoundedPreviewWithoutWriting(t *testing.T) {
 		Arguments: map[string]any{"path": "preview.txt", "content": content},
 	}
 	presentation := writeTool.Presentation(snapshot)
-	if presentation.Title != "write" || presentation.Arguments != "preview.txt" || !presentation.LinesTruncated || len(presentation.Lines) != 11 || presentation.Lines[0] != "one" || presentation.Lines[9] != "ten" {
+	if presentation.Title != "write" || presentation.Arguments != "preview.txt" || presentation.LinesTruncated || presentation.HeadLines != writePresentationLines || !slices.Equal(presentation.Lines, strings.Split(content, "\n")) {
 		t.Fatalf("presentation = %+v", presentation)
 	}
 	if _, err := os.Stat(filepath.Join(cwd, "preview.txt")); !os.IsNotExist(err) {
 		t.Fatalf("presentation changed filesystem: %v", err)
-	}
-
-	huge := strings.Repeat("界", writePresentationMaxBytes)
-	hugeSnapshot := PresentationSnapshot{Arguments: map[string]any{"path": "huge.txt", "content": huge}}
-	hugePresentation := writeTool.Presentation(hugeSnapshot)
-	if len(strings.Join(hugePresentation.Lines, "\n")) > writePresentationMaxBytes || !hugePresentation.LinesTruncated {
-		t.Fatalf("huge presentation bytes=%d lines=%+v", len(strings.Join(hugePresentation.Lines, "\n")), hugePresentation.Lines)
 	}
 
 	result := executeJSON(t, writeTool, map[string]any{"path": "preview.txt", "content": content})

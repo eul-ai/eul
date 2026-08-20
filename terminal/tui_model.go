@@ -43,6 +43,7 @@ type conversationBlock struct {
 	toolName    string
 	tool        agent.ToolPresentation
 	toolOutcome string
+	expanded    bool
 }
 
 const imageAttachmentLabel = "[image attached]"

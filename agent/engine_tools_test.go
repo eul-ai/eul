@@ -164,6 +164,11 @@ func TestToolPresentationCloneAndEqual(t *testing.T) {
 		t.Fatalf("cloned presentation differs: original=%+v clone=%+v", presentation, cloned)
 	}
 	changed := cloned
+	changed.HeadLines++
+	if presentation.Equal(changed) {
+		t.Fatal("presentations with different head limits compare equal")
+	}
+	changed = cloned
 	changed.TailLines++
 	if presentation.Equal(changed) {
 		t.Fatal("presentations with different tail limits compare equal")
