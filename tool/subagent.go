@@ -24,13 +24,13 @@ const (
 var taskSchema = StrictObject(map[string]agent.JSONSchema{
 	"description": {
 		Type:        "string",
-		Description: "A short description of the task for progress display.",
+		Description: "Short progress label.",
 	},
 	"prompt": {
 		Type:        "string",
-		Description: "The complete task prompt. Include all context the subagent needs.",
+		Description: "Complete task with all needed context.",
 	},
-	"model_profile":  nullable("string", "fast, balanced, or main; null inherits the parent model."),
+	"model_profile":  nullable("string", "fast, balanced, or main; null inherits the parent."),
 	"thinking_level": nullable("string", subagentThinkingLevelDescription()),
 }, "description", "prompt", "model_profile", "thinking_level")
 
@@ -40,16 +40,16 @@ func subagentThinkingLevelDescription() string {
 	for index, level := range levels {
 		values[index] = string(level)
 	}
-	return strings.Join(values[:len(values)-1], ", ") + ", or " + values[len(values)-1] + "; null inherits the parent level."
+	return strings.Join(values[:len(values)-1], ", ") + ", or " + values[len(values)-1] + "; null inherits the parent."
 }
 
 var launchDefinition = agent.ToolDefinition{
 	Name:        launchToolName,
-	Description: "Launch one to four independent read-only research tasks, up to four active total. Results are delivered automatically. Use non-default model or thinking settings only when necessary.",
+	Description: "Launch 1-4 independent read-only research tasks, with at most 4 active. Results arrive automatically.",
 	Parameters: StrictObject(map[string]agent.JSONSchema{
 		"tasks": {
 			Type:        "array",
-			Description: "One to four independent tasks.",
+			Description: "1-4 independent tasks.",
 			Items:       &taskSchema,
 		},
 	}, "tasks"),
@@ -57,19 +57,19 @@ var launchDefinition = agent.ToolDefinition{
 
 var waitDefinition = agent.ToolDefinition{
 	Name:        waitToolName,
-	Description: "Wait sparingly when no independent work remains and the next step requires a subagent result. Completion notifications are delivered automatically. Steering interrupts the wait.",
+	Description: "Wait for subagent results only when no other work remains. Steering interrupts the wait.",
 	Parameters: StrictObject(map[string]agent.JSONSchema{
-		"timeout_ms": nullable("integer", fmt.Sprintf("Optional timeout in milliseconds; null defaults to %d, maximum %d.", defaultWaitTimeoutMS, maximumWaitTimeoutMS)),
+		"timeout_ms": nullable("integer", fmt.Sprintf("Timeout in milliseconds; null uses %d, maximum %d.", defaultWaitTimeoutMS, maximumWaitTimeoutMS)),
 	}, "timeout_ms"),
 }
 
 var cancelDefinition = agent.ToolDefinition{
 	Name:        cancelToolName,
-	Description: "Cancel selected active subagents. Their terminal cancellation notifications are delivered automatically.",
+	Description: "Cancel active subagents.",
 	Parameters: StrictObject(map[string]agent.JSONSchema{
 		"ids": {
 			Type:        "array",
-			Description: "One to four active subagent IDs returned by the subagent tool.",
+			Description: "1-4 active subagent IDs.",
 			Items:       &agent.JSONSchema{Type: "string"},
 		},
 	}, "ids"),

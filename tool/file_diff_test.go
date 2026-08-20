@@ -8,9 +8,9 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-func TestEditDiffOperationsProduceMinimalValidScripts(t *testing.T) {
+func TestFileDiffOperationsProduceMinimalValidScripts(t *testing.T) {
 	random := rand.New(rand.NewSource(1))
-	vocabulary := []editDiffSourceLine{
+	vocabulary := []fileDiffSourceLine{
 		{raw: "a\n", text: "a"},
 		{raw: "b\n", text: "b"},
 		{raw: "c\n", text: "c"},
@@ -19,13 +19,13 @@ func TestEditDiffOperationsProduceMinimalValidScripts(t *testing.T) {
 	for oldLength := range 7 {
 		for newLength := range 7 {
 			for range 100 {
-				oldLines := randomEditDiffLines(random, vocabulary, oldLength)
-				newLines := randomEditDiffLines(random, vocabulary, newLength)
-				work := editDiffMaxWork
-				var operations []editDiffOperation
-				appendEditDiffOperations(&operations, oldLines, newLines, &work)
+				oldLines := randomFileDiffLines(random, vocabulary, oldLength)
+				newLines := randomFileDiffLines(random, vocabulary, newLength)
+				work := fileDiffMaxWork
+				var operations []fileDiffOperation
+				appendFileDiffOperations(&operations, oldLines, newLines, &work)
 
-				var reconstructedOld, reconstructedNew []editDiffSourceLine
+				var reconstructedOld, reconstructedNew []fileDiffSourceLine
 				changes := 0
 				for _, operation := range operations {
 					switch operation.kind {
@@ -44,7 +44,7 @@ func TestEditDiffOperationsProduceMinimalValidScripts(t *testing.T) {
 				if !slices.Equal(reconstructedOld, oldLines) || !slices.Equal(reconstructedNew, newLines) {
 					t.Fatalf("invalid script: old=%v new=%v operations=%+v", oldLines, newLines, operations)
 				}
-				wantChanges := len(oldLines) + len(newLines) - 2*editDiffLCSLength(oldLines, newLines)
+				wantChanges := len(oldLines) + len(newLines) - 2*fileDiffLCSLength(oldLines, newLines)
 				if changes != wantChanges {
 					t.Fatalf("non-minimal script: old=%v new=%v changes=%d want=%d operations=%+v", oldLines, newLines, changes, wantChanges, operations)
 				}
@@ -53,15 +53,15 @@ func TestEditDiffOperationsProduceMinimalValidScripts(t *testing.T) {
 	}
 }
 
-func randomEditDiffLines(random *rand.Rand, vocabulary []editDiffSourceLine, length int) []editDiffSourceLine {
-	lines := make([]editDiffSourceLine, length)
+func randomFileDiffLines(random *rand.Rand, vocabulary []fileDiffSourceLine, length int) []fileDiffSourceLine {
+	lines := make([]fileDiffSourceLine, length)
 	for index := range lines {
 		lines[index] = vocabulary[random.Intn(len(vocabulary))]
 	}
 	return lines
 }
 
-func editDiffLCSLength(left, right []editDiffSourceLine) int {
+func fileDiffLCSLength(left, right []fileDiffSourceLine) int {
 	lengths := make([][]int, len(left)+1)
 	for index := range lengths {
 		lengths[index] = make([]int, len(right)+1)

@@ -19,10 +19,10 @@ const (
 
 var writeToolDefinition = agent.ToolDefinition{
 	Name:        writeToolName,
-	Description: "Create or overwrite a regular file and parent directories. Writes are not transactional.",
+	Description: "Create or overwrite a file, creating parent directories.",
 	Parameters: StrictObject(map[string]agent.JSONSchema{
-		"path":    {Type: "string", Description: "File path, relative to the session working directory or absolute."},
-		"content": {Type: "string", Description: "Complete file content; an empty string writes an empty file."},
+		"path":    {Type: "string", Description: "Relative or absolute file path."},
+		"content": {Type: "string", Description: "Complete file content."},
 	}, "path", "content"),
 }
 

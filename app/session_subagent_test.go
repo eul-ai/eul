@@ -73,7 +73,7 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 	for i, definition := range gotRequest.Tools {
 		names[i] = definition.Name
 	}
-	wantNames := []string{"bash", "edit", "read", "subagent", "subagent_cancel", "subagent_wait", "update_goal", "write"}
+	wantNames := []string{"bash", "insert", "read", "replace", "subagent", "subagent_cancel", "subagent_wait", "update_goal", "write"}
 	if !slices.Equal(names, wantNames) {
 		t.Fatalf("tools = %v, want %v", names, wantNames)
 	}

@@ -18,11 +18,11 @@ const readToolName = "read"
 
 var readToolDefinition = agent.ToolDefinition{
 	Name:        readToolName,
-	Description: "Read a regular UTF-8 text file by path and optional line range with bounded output.",
+	Description: "Read all or part of a text file.",
 	Parameters: StrictObject(map[string]agent.JSONSchema{
-		"path":   {Type: "string", Description: "File path, relative to the session working directory or absolute."},
-		"offset": nullable("integer", "Optional one-based starting line; null defaults to 1."),
-		"limit":  nullable("integer", "Optional maximum lines; null defaults to 2000."),
+		"path":   {Type: "string", Description: "Relative or absolute file path."},
+		"offset": nullable("integer", "Starting line; null uses line 1."),
+		"limit":  nullable("integer", "Maximum lines; null uses 2000."),
 	}, "path", "offset", "limit"),
 }
 

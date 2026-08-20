@@ -26,7 +26,8 @@ func TestCoreToolDefinitionsUseStrictSchemas(t *testing.T) {
 	cwd := t.TempDir()
 	readTool := NewRead(cwd)
 	writeTool := NewWrite(cwd)
-	editTool := NewEdit(cwd)
+	replaceTool := NewReplace(cwd)
+	insertTool := NewInsert(cwd)
 	bashTool := NewBash(cwd)
 
 	tests := []struct {
@@ -36,7 +37,8 @@ func TestCoreToolDefinitionsUseStrictSchemas(t *testing.T) {
 	}{
 		{tool: readTool, required: []string{"path", "offset", "limit"}, properties: map[string][]string{"path": {"string"}, "offset": {"integer", "null"}, "limit": {"integer", "null"}}},
 		{tool: writeTool, required: []string{"path", "content"}, properties: map[string][]string{"path": {"string"}, "content": {"string"}}},
-		{tool: editTool, required: []string{"path", "oldText", "newText"}, properties: map[string][]string{"path": {"string"}, "oldText": {"string"}, "newText": {"string"}}},
+		{tool: replaceTool, required: []string{"path", "oldText", "newText", "all"}, properties: map[string][]string{"path": {"string"}, "oldText": {"string"}, "newText": {"string"}, "all": {"boolean"}}},
+		{tool: insertTool, required: []string{"path", "content", "line"}, properties: map[string][]string{"path": {"string"}, "content": {"string"}, "line": {"integer", "null"}}},
 		{tool: bashTool, required: []string{"command", "timeout", "network"}, properties: map[string][]string{"command": {"string"}, "timeout": {"integer", "null"}, "network": {"boolean"}}},
 	}
 	for _, test := range tests {
@@ -104,11 +106,12 @@ func TestFileToolPresentationsSeparateTitleAndArguments(t *testing.T) {
 	presentations := []agent.ToolPresentation{
 		NewRead(t.TempDir()).Presentation(snapshot),
 		NewWrite(t.TempDir()).Presentation(snapshot),
-		NewEdit(t.TempDir()).Presentation(snapshot),
+		NewReplace(t.TempDir()).Presentation(snapshot),
+		NewInsert(t.TempDir()).Presentation(snapshot),
 		bashPresentation("go test ./...", defaultBashTimeout),
 	}
-	wantTitles := []string{"read", "write", "edit", "bash"}
-	wantArguments := []string{"demo.go", "demo.go", "demo.go", `"go test ./..."`}
+	wantTitles := []string{"read", "write", "replace", "insert", "bash"}
+	wantArguments := []string{"demo.go", "demo.go", "demo.go", "demo.go", `"go test ./..."`}
 	for index, presentation := range presentations {
 		if presentation.Title != wantTitles[index] || presentation.Arguments != wantArguments[index] {
 			t.Fatalf("presentation %d = %+v", index, presentation)
@@ -134,7 +137,8 @@ func TestFilesystemToolsHonorPreCanceledContext(t *testing.T) {
 	cwd := t.TempDir()
 	readTool := NewRead(cwd)
 	writeTool := NewWrite(cwd)
-	editTool := NewEdit(cwd)
+	replaceTool := NewReplace(cwd)
+	insertTool := NewInsert(cwd)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -144,7 +148,8 @@ func TestFilesystemToolsHonorPreCanceledContext(t *testing.T) {
 	}{
 		{readTool, `{"path":"missing"}`},
 		{writeTool, `{"path":"file","content":"content"}`},
-		{editTool, `{"path":"file","oldText":"old","newText":"new"}`},
+		{replaceTool, `{"path":"file","oldText":"old","newText":"new","all":false}`},
+		{insertTool, `{"path":"file","content":"new","line":null}`},
 	}
 	for _, call := range calls {
 		_, err := call.tool.Execute(ctx, json.RawMessage(call.args), nil)
@@ -161,10 +166,11 @@ func TestCoreToolsRegisterInDeterministicOrder(t *testing.T) {
 	cwd := t.TempDir()
 	readTool := NewRead(cwd)
 	writeTool := NewWrite(cwd)
-	editTool := NewEdit(cwd)
+	replaceTool := NewReplace(cwd)
+	insertTool := NewInsert(cwd)
 	bashTool := NewBash(cwd)
 
-	registry, err := NewRegistry([]Tool{readTool, writeTool, editTool, bashTool})
+	registry, err := NewRegistry([]Tool{readTool, writeTool, replaceTool, insertTool, bashTool})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +179,7 @@ func TestCoreToolsRegisterInDeterministicOrder(t *testing.T) {
 	for i, definition := range definitions {
 		names[i] = definition.Name
 	}
-	if !slices.Equal(names, []string{"bash", "edit", "read", "write"}) {
+	if !slices.Equal(names, []string{"bash", "insert", "read", "replace", "write"}) {
 		t.Fatalf("definition names = %v", names)
 	}
 }

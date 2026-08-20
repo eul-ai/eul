@@ -8,45 +8,45 @@ import (
 )
 
 const (
-	editDiffContextLines     = 4
-	editDiffMaxWork          = defaultMaxLines * defaultMaxLines
-	editDiffTruncationMarker = "… (diff truncated)"
-	editDiffHunkMarker       = "..."
+	fileDiffContextLines     = 4
+	fileDiffMaxWork          = defaultMaxLines * defaultMaxLines
+	fileDiffTruncationMarker = "… (diff truncated)"
+	fileDiffHunkMarker       = "..."
 )
 
-type editDiffSourceLine struct {
+type fileDiffSourceLine struct {
 	raw  string
 	text string
 }
 
-type editDiffOperation struct {
+type fileDiffOperation struct {
 	kind  agent.ToolDiffLineKind
-	lines []editDiffSourceLine
+	lines []fileDiffSourceLine
 }
 
-type editDiffBuilder struct {
+type fileDiffBuilder struct {
 	lines []agent.ToolDiffLine
 	bytes int
 }
 
-func buildEditDiff(original, replacement []byte) []agent.ToolDiffLine {
+func buildFileDiff(original, replacement []byte) []agent.ToolDiffLine {
 	if bytes.Equal(original, replacement) {
 		return nil
 	}
 
-	oldLines := splitEditDiffLines(original)
-	newLines := splitEditDiffLines(replacement)
-	prefix := commonEditDiffPrefix(oldLines, newLines)
-	suffix := commonEditDiffSuffix(oldLines[prefix:], newLines[prefix:])
+	oldLines := splitFileDiffLines(original)
+	newLines := splitFileDiffLines(replacement)
+	prefix := commonFileDiffPrefix(oldLines, newLines)
+	suffix := commonFileDiffSuffix(oldLines[prefix:], newLines[prefix:])
 	oldEnd := len(oldLines) - suffix
 	newEnd := len(newLines) - suffix
 
-	work := editDiffMaxWork
-	var operations []editDiffOperation
-	appendEditDiffOperations(&operations, oldLines[prefix:oldEnd], newLines[prefix:newEnd], &work)
+	work := fileDiffMaxWork
+	var operations []fileDiffOperation
+	appendFileDiffOperations(&operations, oldLines[prefix:oldEnd], newLines[prefix:newEnd], &work)
 
-	builder := editDiffBuilder{lines: make([]agent.ToolDiffLine, 0, min(defaultMaxLines, len(operations)*2+editDiffContextLines*2))}
-	contextStart := max(0, prefix-editDiffContextLines)
+	builder := fileDiffBuilder{lines: make([]agent.ToolDiffLine, 0, min(defaultMaxLines, len(operations)*2+fileDiffContextLines*2))}
+	contextStart := max(0, prefix-fileDiffContextLines)
 	for index := contextStart; index < prefix; index++ {
 		if !builder.append(agent.ToolDiffLine{
 			Kind:    agent.ToolDiffLineContext,
@@ -62,7 +62,7 @@ func buildEditDiff(original, replacement []byte) []agent.ToolDiffLine {
 	newLine := prefix + 1
 	for index := 0; index < len(operations); {
 		if operations[index].kind == agent.ToolDiffLineContext {
-			if !appendEditDiffContext(&builder, operations[index].lines, &oldLine, &newLine) {
+			if !appendFileDiffContext(&builder, operations[index].lines, &oldLine, &newLine) {
 				return builder.lines
 			}
 			index++
@@ -98,7 +98,7 @@ func buildEditDiff(original, replacement []byte) []agent.ToolDiffLine {
 		index = end
 	}
 
-	for offset := range min(suffix, editDiffContextLines) {
+	for offset := range min(suffix, fileDiffContextLines) {
 		oldIndex := oldEnd + offset
 		newIndex := newEnd + offset
 		if !builder.append(agent.ToolDiffLine{
@@ -113,8 +113,8 @@ func buildEditDiff(original, replacement []byte) []agent.ToolDiffLine {
 	return builder.lines
 }
 
-func appendEditDiffContext(builder *editDiffBuilder, lines []editDiffSourceLine, oldLine, newLine *int) bool {
-	if len(lines) <= editDiffContextLines*2 {
+func appendFileDiffContext(builder *fileDiffBuilder, lines []fileDiffSourceLine, oldLine, newLine *int) bool {
+	if len(lines) <= fileDiffContextLines*2 {
 		for _, line := range lines {
 			if !builder.append(agent.ToolDiffLine{Kind: agent.ToolDiffLineContext, OldLine: *oldLine, NewLine: *newLine, Text: line.text}) {
 				return false
@@ -125,20 +125,20 @@ func appendEditDiffContext(builder *editDiffBuilder, lines []editDiffSourceLine,
 		return true
 	}
 
-	for _, line := range lines[:editDiffContextLines] {
+	for _, line := range lines[:fileDiffContextLines] {
 		if !builder.append(agent.ToolDiffLine{Kind: agent.ToolDiffLineContext, OldLine: *oldLine, NewLine: *newLine, Text: line.text}) {
 			return false
 		}
 		(*oldLine)++
 		(*newLine)++
 	}
-	skipped := len(lines) - editDiffContextLines*2
+	skipped := len(lines) - fileDiffContextLines*2
 	*oldLine += skipped
 	*newLine += skipped
-	if !builder.append(agent.ToolDiffLine{Kind: agent.ToolDiffLineOmitted, Text: editDiffHunkMarker}) {
+	if !builder.append(agent.ToolDiffLine{Kind: agent.ToolDiffLineOmitted, Text: fileDiffHunkMarker}) {
 		return false
 	}
-	for _, line := range lines[len(lines)-editDiffContextLines:] {
+	for _, line := range lines[len(lines)-fileDiffContextLines:] {
 		if !builder.append(agent.ToolDiffLine{Kind: agent.ToolDiffLineContext, OldLine: *oldLine, NewLine: *newLine, Text: line.text}) {
 			return false
 		}
@@ -148,70 +148,70 @@ func appendEditDiffContext(builder *editDiffBuilder, lines []editDiffSourceLine,
 	return true
 }
 
-func appendEditDiffOperations(operations *[]editDiffOperation, oldLines, newLines []editDiffSourceLine, work *int) {
-	prefix := commonEditDiffPrefix(oldLines, newLines)
-	appendEditDiffOperation(operations, agent.ToolDiffLineContext, oldLines[:prefix])
+func appendFileDiffOperations(operations *[]fileDiffOperation, oldLines, newLines []fileDiffSourceLine, work *int) {
+	prefix := commonFileDiffPrefix(oldLines, newLines)
+	appendFileDiffOperation(operations, agent.ToolDiffLineContext, oldLines[:prefix])
 	oldLines = oldLines[prefix:]
 	newLines = newLines[prefix:]
 
-	suffix := commonEditDiffSuffix(oldLines, newLines)
+	suffix := commonFileDiffSuffix(oldLines, newLines)
 	oldMiddle := oldLines[:len(oldLines)-suffix]
 	newMiddle := newLines[:len(newLines)-suffix]
 	oldSuffix := oldLines[len(oldLines)-suffix:]
 
 	switch {
 	case len(oldMiddle) == 0:
-		appendEditDiffOperation(operations, agent.ToolDiffLineAdded, newMiddle)
+		appendFileDiffOperation(operations, agent.ToolDiffLineAdded, newMiddle)
 	case len(newMiddle) == 0:
-		appendEditDiffOperation(operations, agent.ToolDiffLineRemoved, oldMiddle)
+		appendFileDiffOperation(operations, agent.ToolDiffLineRemoved, oldMiddle)
 	case len(oldMiddle) == 1:
-		index := indexEditDiffLine(newMiddle, oldMiddle[0])
+		index := indexFileDiffLine(newMiddle, oldMiddle[0])
 		if index < 0 {
-			appendEditDiffOperation(operations, agent.ToolDiffLineRemoved, oldMiddle)
-			appendEditDiffOperation(operations, agent.ToolDiffLineAdded, newMiddle)
+			appendFileDiffOperation(operations, agent.ToolDiffLineRemoved, oldMiddle)
+			appendFileDiffOperation(operations, agent.ToolDiffLineAdded, newMiddle)
 		} else {
-			appendEditDiffOperation(operations, agent.ToolDiffLineAdded, newMiddle[:index])
-			appendEditDiffOperation(operations, agent.ToolDiffLineContext, oldMiddle)
-			appendEditDiffOperation(operations, agent.ToolDiffLineAdded, newMiddle[index+1:])
+			appendFileDiffOperation(operations, agent.ToolDiffLineAdded, newMiddle[:index])
+			appendFileDiffOperation(operations, agent.ToolDiffLineContext, oldMiddle)
+			appendFileDiffOperation(operations, agent.ToolDiffLineAdded, newMiddle[index+1:])
 		}
 	case len(newMiddle) == 1:
-		index := indexEditDiffLine(oldMiddle, newMiddle[0])
+		index := indexFileDiffLine(oldMiddle, newMiddle[0])
 		if index < 0 {
-			appendEditDiffOperation(operations, agent.ToolDiffLineRemoved, oldMiddle)
-			appendEditDiffOperation(operations, agent.ToolDiffLineAdded, newMiddle)
+			appendFileDiffOperation(operations, agent.ToolDiffLineRemoved, oldMiddle)
+			appendFileDiffOperation(operations, agent.ToolDiffLineAdded, newMiddle)
 		} else {
-			appendEditDiffOperation(operations, agent.ToolDiffLineRemoved, oldMiddle[:index])
-			appendEditDiffOperation(operations, agent.ToolDiffLineContext, newMiddle)
-			appendEditDiffOperation(operations, agent.ToolDiffLineRemoved, oldMiddle[index+1:])
+			appendFileDiffOperation(operations, agent.ToolDiffLineRemoved, oldMiddle[:index])
+			appendFileDiffOperation(operations, agent.ToolDiffLineContext, newMiddle)
+			appendFileDiffOperation(operations, agent.ToolDiffLineRemoved, oldMiddle[index+1:])
 		}
 	default:
-		x, y, ok := bisectEditDiff(oldMiddle, newMiddle, work)
+		x, y, ok := bisectFileDiff(oldMiddle, newMiddle, work)
 		if !ok || x == 0 && y == 0 || x == len(oldMiddle) && y == len(newMiddle) {
-			appendEditDiffOperation(operations, agent.ToolDiffLineRemoved, oldMiddle)
-			appendEditDiffOperation(operations, agent.ToolDiffLineAdded, newMiddle)
+			appendFileDiffOperation(operations, agent.ToolDiffLineRemoved, oldMiddle)
+			appendFileDiffOperation(operations, agent.ToolDiffLineAdded, newMiddle)
 		} else {
-			appendEditDiffOperations(operations, oldMiddle[:x], newMiddle[:y], work)
-			appendEditDiffOperations(operations, oldMiddle[x:], newMiddle[y:], work)
+			appendFileDiffOperations(operations, oldMiddle[:x], newMiddle[:y], work)
+			appendFileDiffOperations(operations, oldMiddle[x:], newMiddle[y:], work)
 		}
 	}
-	appendEditDiffOperation(operations, agent.ToolDiffLineContext, oldSuffix)
+	appendFileDiffOperation(operations, agent.ToolDiffLineContext, oldSuffix)
 }
 
-func appendEditDiffOperation(operations *[]editDiffOperation, kind agent.ToolDiffLineKind, lines []editDiffSourceLine) {
+func appendFileDiffOperation(operations *[]fileDiffOperation, kind agent.ToolDiffLineKind, lines []fileDiffSourceLine) {
 	if len(lines) == 0 {
 		return
 	}
 	if len(*operations) > 0 && (*operations)[len(*operations)-1].kind == kind {
 		last := &(*operations)[len(*operations)-1]
-		merged := make([]editDiffSourceLine, 0, len(last.lines)+len(lines))
+		merged := make([]fileDiffSourceLine, 0, len(last.lines)+len(lines))
 		merged = append(merged, last.lines...)
 		last.lines = append(merged, lines...)
 		return
 	}
-	*operations = append(*operations, editDiffOperation{kind: kind, lines: lines})
+	*operations = append(*operations, fileDiffOperation{kind: kind, lines: lines})
 }
 
-func bisectEditDiff(oldLines, newLines []editDiffSourceLine, work *int) (int, int, bool) {
+func bisectFileDiff(oldLines, newLines []fileDiffSourceLine, work *int) (int, int, bool) {
 	oldLength := len(oldLines)
 	newLength := len(newLines)
 	maxDistance := (oldLength + newLength + 1) / 2
@@ -232,7 +232,7 @@ func bisectEditDiff(oldLines, newLines []editDiffSourceLine, work *int) (int, in
 	reverseStart, reverseEnd := 0, 0
 	for distance := range maxDistance {
 		for diagonal := -distance + forwardStart; diagonal <= distance-forwardEnd; diagonal += 2 {
-			if !takeEditDiffWork(work) {
+			if !takeFileDiffWork(work) {
 				return 0, 0, false
 			}
 			vectorIndex := offset + diagonal
@@ -244,7 +244,7 @@ func bisectEditDiff(oldLines, newLines []editDiffSourceLine, work *int) (int, in
 			}
 			y := x - diagonal
 			for x < oldLength && y < newLength && oldLines[x].raw == newLines[y].raw {
-				if !takeEditDiffWork(work) {
+				if !takeFileDiffWork(work) {
 					return 0, 0, false
 				}
 				x++
@@ -265,7 +265,7 @@ func bisectEditDiff(oldLines, newLines []editDiffSourceLine, work *int) (int, in
 		}
 
 		for diagonal := -distance + reverseStart; diagonal <= distance-reverseEnd; diagonal += 2 {
-			if !takeEditDiffWork(work) {
+			if !takeFileDiffWork(work) {
 				return 0, 0, false
 			}
 			vectorIndex := offset + diagonal
@@ -277,7 +277,7 @@ func bisectEditDiff(oldLines, newLines []editDiffSourceLine, work *int) (int, in
 			}
 			y := x - diagonal
 			for x < oldLength && y < newLength && oldLines[oldLength-x-1].raw == newLines[newLength-y-1].raw {
-				if !takeEditDiffWork(work) {
+				if !takeFileDiffWork(work) {
 					return 0, 0, false
 				}
 				x++
@@ -304,7 +304,7 @@ func bisectEditDiff(oldLines, newLines []editDiffSourceLine, work *int) (int, in
 	return 0, 0, false
 }
 
-func takeEditDiffWork(work *int) bool {
+func takeFileDiffWork(work *int) bool {
 	if *work <= 0 {
 		return false
 	}
@@ -312,7 +312,7 @@ func takeEditDiffWork(work *int) bool {
 	return true
 }
 
-func commonEditDiffPrefix(left, right []editDiffSourceLine) int {
+func commonFileDiffPrefix(left, right []fileDiffSourceLine) int {
 	length := min(len(left), len(right))
 	for index := range length {
 		if left[index].raw != right[index].raw {
@@ -322,7 +322,7 @@ func commonEditDiffPrefix(left, right []editDiffSourceLine) int {
 	return length
 }
 
-func commonEditDiffSuffix(left, right []editDiffSourceLine) int {
+func commonFileDiffSuffix(left, right []fileDiffSourceLine) int {
 	length := min(len(left), len(right))
 	for offset := range length {
 		if left[len(left)-offset-1].raw != right[len(right)-offset-1].raw {
@@ -332,7 +332,7 @@ func commonEditDiffSuffix(left, right []editDiffSourceLine) int {
 	return length
 }
 
-func indexEditDiffLine(lines []editDiffSourceLine, target editDiffSourceLine) int {
+func indexFileDiffLine(lines []fileDiffSourceLine, target fileDiffSourceLine) int {
 	for index, line := range lines {
 		if line.raw == target.raw {
 			return index
@@ -341,8 +341,8 @@ func indexEditDiffLine(lines []editDiffSourceLine, target editDiffSourceLine) in
 	return -1
 }
 
-func (builder *editDiffBuilder) append(line agent.ToolDiffLine) bool {
-	bodyBytes := defaultMaxBytes - len(editDiffTruncationMarker)
+func (builder *fileDiffBuilder) append(line agent.ToolDiffLine) bool {
+	bodyBytes := defaultMaxBytes - len(fileDiffTruncationMarker)
 	if len(builder.lines) < defaultMaxLines-1 && builder.bytes+len(line.Text) <= bodyBytes {
 		builder.lines = append(builder.lines, line)
 		builder.bytes += len(line.Text)
@@ -354,17 +354,17 @@ func (builder *editDiffBuilder) append(line agent.ToolDiffLine) bool {
 		line.Text, _ = truncateLine(line.Text, remainingBytes)
 		builder.lines = append(builder.lines, line)
 	}
-	builder.lines = append(builder.lines, agent.ToolDiffLine{Kind: agent.ToolDiffLineOmitted, Text: editDiffTruncationMarker})
+	builder.lines = append(builder.lines, agent.ToolDiffLine{Kind: agent.ToolDiffLineOmitted, Text: fileDiffTruncationMarker})
 	return false
 }
 
-func splitEditDiffLines(content []byte) []editDiffSourceLine {
+func splitFileDiffLines(content []byte) []fileDiffSourceLine {
 	source := string(content)
-	lines := make([]editDiffSourceLine, 0, strings.Count(source, "\n")+1)
+	lines := make([]fileDiffSourceLine, 0, strings.Count(source, "\n")+1)
 	for start := 0; start < len(source); {
 		newline := strings.IndexByte(source[start:], '\n')
 		if newline < 0 {
-			lines = append(lines, editDiffSourceLine{raw: source[start:], text: source[start:]})
+			lines = append(lines, fileDiffSourceLine{raw: source[start:], text: source[start:]})
 			break
 		}
 
@@ -374,7 +374,7 @@ func splitEditDiffLines(content []byte) []editDiffSourceLine {
 		if textEnd > start && source[textEnd-1] == '\r' {
 			textEnd--
 		}
-		lines = append(lines, editDiffSourceLine{raw: source[start:end], text: source[start:textEnd]})
+		lines = append(lines, fileDiffSourceLine{raw: source[start:end], text: source[start:textEnd]})
 		start = end
 	}
 	return lines

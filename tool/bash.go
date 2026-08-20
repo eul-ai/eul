@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
@@ -19,11 +20,11 @@ const (
 
 var bashToolDefinition = agent.ToolDefinition{
 	Name:        bashToolName,
-	Description: "Run noninteractive Bash commands with the user's filesystem permissions, optional network isolation, a timeout, and bounded output.",
+	Description: "Run a noninteractive Bash command.",
 	Parameters: StrictObject(map[string]agent.JSONSchema{
-		"command": {Type: "string", Description: "Command passed exactly to bash -c."},
-		"timeout": nullable("integer", "Optional timeout in seconds; null uses the configured default."),
-		"network": {Type: "boolean", Description: "Whether the command and its descendants may access the network. false uses OS network isolation on Linux and macOS; true requires user approval."},
+		"command": {Type: "string", Description: "Command passed to bash -c."},
+		"timeout": nullable("integer", fmt.Sprintf("Timeout in seconds; null uses the default (%d seconds).", defaultBashTimeout/time.Second)),
+		"network": {Type: "boolean", Description: "Allow network access; true requires approval."},
 	}, "command", "timeout", "network"),
 }
 

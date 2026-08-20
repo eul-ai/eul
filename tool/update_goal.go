@@ -12,7 +12,7 @@ const updateGoalToolName = "update_goal"
 
 var updateGoalToolDefinition = agent.ToolDefinition{
 	Name:        updateGoalToolName,
-	Description: "Mark an active goal complete only when all requirements are verified.",
+	Description: "Complete the active goal after verifying all requirements.",
 	Parameters: StrictObject(map[string]agent.JSONSchema{
 		"status": {Type: "string", Description: `Must be "complete".`},
 	}, "status"),
