@@ -38,7 +38,7 @@ func TestCoreToolDefinitionsUseStrictSchemas(t *testing.T) {
 		{tool: readTool, required: []string{"path", "offset", "limit"}, properties: map[string][]string{"path": {"string"}, "offset": {"integer", "null"}, "limit": {"integer", "null"}}},
 		{tool: writeTool, required: []string{"path", "content"}, properties: map[string][]string{"path": {"string"}, "content": {"string"}}},
 		{tool: replaceTool, required: []string{"path", "oldText", "newText", "all"}, properties: map[string][]string{"path": {"string"}, "oldText": {"string"}, "newText": {"string"}, "all": {"boolean"}}},
-		{tool: insertTool, required: []string{"path", "content", "line"}, properties: map[string][]string{"path": {"string"}, "content": {"string"}, "line": {"integer", "null"}}},
+		{tool: insertTool, required: []string{"path", "content", "anchor", "position"}, properties: map[string][]string{"path": {"string"}, "content": {"string"}, "anchor": {"string", "null"}, "position": {"string"}}},
 		{tool: bashTool, required: []string{"command", "timeout", "network"}, properties: map[string][]string{"command": {"string"}, "timeout": {"integer", "null"}, "network": {"boolean"}}},
 	}
 	for _, test := range tests {
@@ -149,7 +149,7 @@ func TestFilesystemToolsHonorPreCanceledContext(t *testing.T) {
 		{readTool, `{"path":"missing"}`},
 		{writeTool, `{"path":"file","content":"content"}`},
 		{replaceTool, `{"path":"file","oldText":"old","newText":"new","all":false}`},
-		{insertTool, `{"path":"file","content":"new","line":null}`},
+		{insertTool, `{"path":"file","content":"new","anchor":null,"position":"after"}`},
 	}
 	for _, call := range calls {
 		_, err := call.tool.Execute(ctx, json.RawMessage(call.args), nil)

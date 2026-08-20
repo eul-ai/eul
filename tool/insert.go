@@ -10,16 +10,21 @@ import (
 	"github.com/eul-ai/eul/tool/textfile"
 )
 
-const insertToolName = "insert"
+const (
+	insertToolName       = "insert"
+	insertPositionBefore = "before"
+	insertPositionAfter  = "after"
+)
 
 var insertToolDefinition = agent.ToolDefinition{
 	Name:        insertToolName,
-	Description: "Insert text after a line.",
+	Description: "Insert text before or after a unique anchor.",
 	Parameters: StrictObject(map[string]agent.JSONSchema{
-		"path":    {Type: "string", Description: "Relative or absolute file path."},
-		"content": {Type: "string", Description: "Exact text to insert; no newlines are added."},
-		"line":    nullable("integer", "Line to insert after; null appends, 0 prepends."),
-	}, "path", "content", "line"),
+		"path":     {Type: "string", Description: "Relative or absolute file path."},
+		"content":  {Type: "string", Description: "Exact text to insert; no newlines are added."},
+		"anchor":   nullable("string", "Exact nonempty text that must occur once; null targets the file boundary."),
+		"position": {Type: "string", Description: "before or after; with a null anchor, prepends or appends."},
+	}, "path", "content", "anchor", "position"),
 }
 
 type Insert struct {
@@ -27,9 +32,10 @@ type Insert struct {
 }
 
 type insertArguments struct {
-	Path    string  `json:"path"`
-	Content *string `json:"content"`
-	Line    *int    `json:"line"`
+	Path     string  `json:"path"`
+	Content  *string `json:"content"`
+	Anchor   *string `json:"anchor"`
+	Position string  `json:"position"`
 }
 
 func NewInsert(cwd string) *Insert {
@@ -41,24 +47,13 @@ func (*Insert) Definition() agent.ToolDefinition {
 }
 
 func (*Insert) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
-	var line *int
-	if number, ok := snapshot.Arguments["line"].(json.Number); ok {
-		if value, err := number.Int64(); err == nil && int64(int(value)) == value {
-			parsed := int(value)
-			line = &parsed
-		}
-	}
-
-	return insertPresentation(snapshotString(snapshot, "path"), line)
+	return insertPresentation(snapshotString(snapshot, "path"))
 }
 
-func insertPresentation(path string, line *int) agent.ToolPresentation {
+func insertPresentation(path string) agent.ToolPresentation {
 	arguments := ""
 	if path != "" {
 		arguments = displayToolArgument(path)
-	}
-	if line != nil {
-		arguments += fmt.Sprintf(":%d", *line)
 	}
 
 	return agent.ToolPresentation{Title: insertToolName, Arguments: arguments}
@@ -76,6 +71,11 @@ func (i *Insert) Execute(ctx context.Context, arguments json.RawMessage, updates
 	if args.Content == nil {
 		return errorResult(insertToolName, fmt.Errorf("content is required and must be a string")), nil
 	}
+	switch args.Position {
+	case insertPositionBefore, insertPositionAfter:
+	default:
+		return errorResult(insertToolName, fmt.Errorf("position must be %q or %q", insertPositionBefore, insertPositionAfter)), nil
+	}
 
 	requestedPath, err := i.workspace.resolve(args.Path)
 	if err != nil {
@@ -90,12 +90,9 @@ func (i *Insert) Execute(ctx context.Context, arguments json.RawMessage, updates
 		return agent.ToolResult{}, err
 	}
 
-	offset := len(original)
-	if args.Line != nil {
-		offset, err = insertOffset(original, *args.Line)
-		if err != nil {
-			return errorResult(insertToolName, err), nil
-		}
+	offset, err := insertOffset(original, args.Anchor, args.Position)
+	if err != nil {
+		return errorResult(insertToolName, fmt.Errorf("%s: %w", i.workspace.display(requestedPath), err)), nil
 	}
 	if *args.Content == "" {
 		return successResult(fmt.Sprintf("no changes needed in %s", escapeOutputName(i.workspace.display(requestedPath)))), nil
@@ -112,35 +109,36 @@ func (i *Insert) Execute(ctx context.Context, arguments json.RawMessage, updates
 		return errorResult(insertToolName, err), nil
 	}
 	if updates != nil {
-		presentation := insertPresentation(args.Path, args.Line)
+		presentation := insertPresentation(args.Path)
 		presentation.Diff = buildFileDiff(original, replacement)
 		updates.SetFinal(presentation)
 	}
 	return successResult(fmt.Sprintf("inserted text in %s", escapeOutputName(i.workspace.display(requestedPath)))), nil
 }
 
-func insertOffset(content []byte, line int) (int, error) {
-	if line < 0 {
-		return 0, fmt.Errorf("line must not be negative (requested: %d)", line)
-	}
-
-	lineCount := bytes.Count(content, []byte{'\n'})
-	if len(content) > 0 && content[len(content)-1] != '\n' {
-		lineCount++
-	}
-	if line > lineCount {
-		return 0, fmt.Errorf("line must not exceed %d (requested: %d)", lineCount, line)
-	}
-	if line == 0 {
-		return 0, nil
-	}
-	if line == lineCount {
+func insertOffset(content []byte, anchor *string, position string) (int, error) {
+	if anchor == nil {
+		if position == insertPositionBefore {
+			return 0, nil
+		}
 		return len(content), nil
 	}
+	if *anchor == "" {
+		return 0, fmt.Errorf("anchor must be nonempty")
+	}
 
-	offset := 0
-	for range line {
-		offset += bytes.IndexByte(content[offset:], '\n') + 1
+	anchorBytes := []byte(*anchor)
+	matches := bytes.Count(content, anchorBytes)
+	if matches == 0 {
+		return 0, fmt.Errorf("anchor was not found")
+	}
+	if matches > 1 {
+		return 0, fmt.Errorf("anchor occurs %d times; expected exactly once", matches)
+	}
+
+	offset := bytes.Index(content, anchorBytes)
+	if position == insertPositionAfter {
+		offset += len(anchorBytes)
 	}
 	return offset, nil
 }
