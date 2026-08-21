@@ -60,17 +60,17 @@ func newSessionToolset(
 			return thinkingLevel
 		},
 	})
-	launchSubagent := tool.NewSubagent(manager)
-	waitForSubagent := tool.NewSubagentWait(manager)
-	cancelSubagent := tool.NewSubagentCancel(manager)
+	launchSubagents := tool.NewLaunchSubagents(manager)
+	waitForSubagent := tool.NewWaitForSubagent(manager)
+	cancelSubagents := tool.NewCancelSubagents(manager)
 	registry, err := newToolset(
 		config.cwd,
 		fullToolAccess,
 		config.noSandbox,
 		authorizeNetwork,
-		launchSubagent,
+		launchSubagents,
 		waitForSubagent,
-		cancelSubagent,
+		cancelSubagents,
 		tool.NewUpdateGoal(completeGoal),
 	)
 	if err != nil {

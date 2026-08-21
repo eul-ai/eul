@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	launchToolName       = "subagent"
-	waitToolName         = "subagent_wait"
-	cancelToolName       = "subagent_cancel"
+	launchToolName       = "launch_subagents"
+	waitToolName         = "wait_for_subagent"
+	cancelToolName       = "cancel_subagents"
 	defaultWaitTimeout   = 30 * time.Second
 	maximumWaitTimeout   = time.Hour
 	defaultWaitTimeoutMS = int(defaultWaitTimeout / time.Millisecond)
@@ -106,15 +106,15 @@ type cancelTool struct {
 	manager *subagent.Manager
 }
 
-func NewSubagent(manager *subagent.Manager) Tool {
+func NewLaunchSubagents(manager *subagent.Manager) Tool {
 	return &launchTool{manager: manager}
 }
 
-func NewSubagentWait(manager *subagent.Manager) Tool {
+func NewWaitForSubagent(manager *subagent.Manager) Tool {
 	return &waitTool{manager: manager}
 }
 
-func NewSubagentCancel(manager *subagent.Manager) Tool {
+func NewCancelSubagents(manager *subagent.Manager) Tool {
 	return &cancelTool{manager: manager}
 }
 
@@ -223,7 +223,7 @@ func waitResultMessage(outcome subagent.WaitOutcome) string {
 	case subagent.WaitCompletion:
 		return "A subagent completion is available."
 	case subagent.WaitSteering:
-		return "Wait interrupted by steering. The subagents remain active. Address the steering input, then continue the original task; if it still requires their results and no independent work remains, call subagent_wait again instead of finishing."
+		return "Wait interrupted by steering. The subagents remain active. Address the steering input, then continue the original task; if it still requires their results and no independent work remains, call wait_for_subagent again instead of finishing."
 	case subagent.WaitTimeout:
 		return "No subagent completion is available yet."
 	default:

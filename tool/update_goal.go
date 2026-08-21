@@ -12,7 +12,7 @@ const updateGoalToolName = "update_goal"
 
 var updateGoalToolDefinition = agent.ToolDefinition{
 	Name:        updateGoalToolName,
-	Description: "Complete the active goal after verifying all requirements.",
+	Description: "Complete the active goal after verifying all requirements; succeeds without changes if no incomplete goal is active.",
 	Parameters: StrictObject(map[string]agent.JSONSchema{
 		"status": {Type: "string", Description: `Must be "complete".`},
 	}, "status"),
@@ -55,7 +55,14 @@ func (tool *UpdateGoal) Execute(ctx context.Context, arguments json.RawMessage, 
 		return errorResult(updateGoalToolName, errors.New("goal completion is unavailable")), nil
 	}
 	if err := tool.complete(); err != nil {
-		return errorResult(updateGoalToolName, err), nil
+		switch {
+		case errors.Is(err, agent.ErrNoGoal):
+			return successResult("No active goal."), nil
+		case errors.Is(err, agent.ErrGoalAlreadyComplete):
+			return successResult("Goal already complete."), nil
+		default:
+			return errorResult(updateGoalToolName, err), nil
+		}
 	}
 	return successResult("Goal marked complete."), nil
 }

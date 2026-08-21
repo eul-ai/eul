@@ -23,7 +23,7 @@ func TestSubagentBridgeFormatsBoundsAndAcknowledgesCompletions(t *testing.T) {
 	}
 	waitForSubagentCompletions(t, manager, 2)
 
-	bridge := newSubagentBridge(manager, "wait_for_subagents")
+	bridge := newSubagentBridge(manager, "wait_for_subagent")
 	batch := bridge.SnapshotInbox()
 	if len(batch.MessageIDs) != 1 || len(batch.Text) > maxSubagentInboxBatchBytes {
 		t.Fatalf("batch IDs = %v, bytes = %d", batch.MessageIDs, len(batch.Text))
@@ -59,8 +59,8 @@ func TestSubagentBridgeOwnsActiveInstructions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	instructions := newSubagentBridge(manager, "wait_for_subagents").additionalInstructions()
-	for _, expected := range []string{"subagent-1", "inspect scheduler", "wait_for_subagents"} {
+	instructions := newSubagentBridge(manager, "wait_for_subagent").additionalInstructions()
+	for _, expected := range []string{"subagent-1", "inspect scheduler", "wait_for_subagent"} {
 		if !strings.Contains(instructions, expected) {
 			t.Fatalf("instructions omit %q:\n%s", expected, instructions)
 		}

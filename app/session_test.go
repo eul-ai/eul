@@ -183,7 +183,7 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 	}()
 
 	result, err := session.tools.Execute(context.Background(), agent.ToolCall{
-		ID: "launch", Name: "subagent", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect scheduler","prompt":"child prompt"}]}`),
+		ID: "launch", Name: "launch_subagents", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect scheduler","prompt":"child prompt"}]}`),
 	}, nil)
 	if err != nil || result.IsError {
 		t.Fatalf("launch result = %+v, error = %v", result, err)
@@ -257,13 +257,13 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 	}
 
 	result, err := session.tools.Execute(context.Background(), agent.ToolCall{
-		ID: "fast", Name: "subagent", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"fast","thinking_level":"high"}]}`),
+		ID: "fast", Name: "launch_subagents", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"fast","thinking_level":"high"}]}`),
 	}, nil)
 	if err != nil || !result.IsError {
 		t.Fatalf("fast result = %+v, error = %v", result, err)
 	}
 	result, err = session.tools.Execute(context.Background(), agent.ToolCall{
-		ID: "balanced", Name: "subagent", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"balanced","thinking_level":"high"}]}`),
+		ID: "balanced", Name: "launch_subagents", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"balanced","thinking_level":"high"}]}`),
 	}, nil)
 	if err != nil || result.IsError {
 		t.Fatalf("balanced result = %+v, error = %v", result, err)
@@ -310,7 +310,7 @@ func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 
 	launch := func(id string) agent.Request {
 		result, err := session.tools.Execute(context.Background(), agent.ToolCall{
-			ID: id, Name: "subagent", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`),
+			ID: id, Name: "launch_subagents", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`),
 		}, nil)
 		if err != nil || result.IsError {
 			t.Fatalf("launch result = %+v, error = %v", result, err)
@@ -350,11 +350,21 @@ func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.finish(nil)
+
+	result, err := session.tools.Execute(context.Background(), agent.ToolCall{
+		ID: "inactive", Name: "update_goal", Arguments: json.RawMessage(`{"status":"complete"}`),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("inactive completion result = %+v", result)
+	}
 	if err := session.engine.SetGoal("finish"); err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := session.tools.Execute(context.Background(), agent.ToolCall{
+	result, err = session.tools.Execute(context.Background(), agent.ToolCall{
 		ID: "complete", Name: "update_goal", Arguments: json.RawMessage(`{"status":"complete"}`),
 	}, nil)
 	if err != nil {

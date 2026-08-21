@@ -358,7 +358,7 @@ func TestEngineClearGoalDuringGenerationPreventsContinuation(t *testing.T) {
 
 func TestEngineRejectsInactiveAndRepeatedGoalCompletion(t *testing.T) {
 	engine := newTestEngine(t, &scriptedProvider{t: t}, &fakeToolbox{}, Options{})
-	if err := engine.CompleteGoal(); err == nil {
+	if err := engine.CompleteGoal(); !errors.Is(err, ErrNoGoal) {
 		t.Fatalf("inactive completion error = %v", err)
 	}
 	if err := engine.SetGoal("finish"); err != nil {
@@ -367,7 +367,7 @@ func TestEngineRejectsInactiveAndRepeatedGoalCompletion(t *testing.T) {
 	if err := engine.CompleteGoal(); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.CompleteGoal(); err == nil {
+	if err := engine.CompleteGoal(); !errors.Is(err, ErrGoalAlreadyComplete) {
 		t.Fatalf("repeated completion error = %v", err)
 	}
 }

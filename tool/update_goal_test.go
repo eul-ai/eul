@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/eul-ai/eul/agent"
 )
 
 func TestUpdateGoalMarksActiveGoalComplete(t *testing.T) {
@@ -38,15 +40,29 @@ func TestUpdateGoalRejectsInvalidStatus(t *testing.T) {
 	}
 }
 
-func TestUpdateGoalReportsInactiveGoal(t *testing.T) {
-	inactive := errors.New("inactive sentinel")
-	goalTool := NewUpdateGoal(func() error { return inactive })
+func TestUpdateGoalIgnoresInactiveGoal(t *testing.T) {
+	for _, completionErr := range []error{agent.ErrNoGoal, agent.ErrGoalAlreadyComplete} {
+		goalTool := NewUpdateGoal(func() error { return completionErr })
+
+		result, err := goalTool.Execute(context.Background(), []byte(`{"status":"complete"}`), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.IsError {
+			t.Fatalf("completion error %v returned %+v", completionErr, result)
+		}
+	}
+}
+
+func TestUpdateGoalReportsCompletionFailure(t *testing.T) {
+	failure := errors.New("completion failed")
+	goalTool := NewUpdateGoal(func() error { return failure })
 
 	result, err := goalTool.Execute(context.Background(), []byte(`{"status":"complete"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.IsError || !strings.Contains(result.Output, inactive.Error()) {
+	if !result.IsError || !strings.Contains(result.Output, failure.Error()) {
 		t.Fatalf("result = %+v", result)
 	}
 }

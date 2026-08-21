@@ -171,7 +171,7 @@ func TestAssistantReasoningAndToolDetailsRenderInlineMarkdown(t *testing.T) {
 		{kind: blockReasoning, text: "**Planning**"},
 		{kind: blockAssistant, text: "Use *care* and **`code`**"},
 		{kind: blockTool, tool: agent.ToolPresentation{
-			Title: "subagent", Arguments: "(3)", Markdown: true,
+			Title: "launch_subagents", Arguments: "(3)", Markdown: true,
 			Lines: []string{"1. complete — Read `./terminal/api.go`"},
 		}, toolOutcome: "ok"},
 	}, 80)
@@ -197,7 +197,7 @@ func TestAssistantReasoningAndToolDetailsRenderInlineMarkdown(t *testing.T) {
 	var heading, detail *styledLine
 	for index := range lines {
 		switch lines[index].text {
-		case "subagent (3) — ok":
+		case "launch_subagents (3) — ok":
 			heading = &lines[index]
 		case "1. complete — Read ./terminal/api.go":
 			detail = &lines[index]
@@ -209,7 +209,7 @@ func TestAssistantReasoningAndToolDetailsRenderInlineMarkdown(t *testing.T) {
 	var renderedHeading strings.Builder
 	renderLine(&renderedHeading, 1, 80, *heading)
 	headingText := renderedHeading.String()
-	if !strings.Contains(headingText, ansiForeground(currentTheme.accent)+ansiBold+"subagent") || !strings.Contains(headingText, ansiForeground(currentTheme.foreground)+ansiNormalIntensity+" (3)") {
+	if !strings.Contains(headingText, ansiForeground(currentTheme.accent)+ansiBold+"launch_subagents") || !strings.Contains(headingText, ansiForeground(currentTheme.foreground)+ansiNormalIntensity+" (3)") {
 		t.Fatalf("tool heading = %q", headingText)
 	}
 	var renderedDetail strings.Builder
@@ -566,8 +566,8 @@ func TestTUIModelCorrelatesAndSanitizesStreamingToolBlocks(t *testing.T) {
 		Presentation: agent.ToolPresentation{Title: "write one", Lines: []string{"partial"}},
 	})
 	model.applyAgentEvent(agent.Event{
-		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "two", Name: "subagent"},
-		Presentation: agent.ToolPresentation{Title: "subagent", Lines: []string{"running"}},
+		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "two", Name: "launch_subagents"},
+		Presentation: agent.ToolPresentation{Title: "launch_subagents", Lines: []string{"running"}},
 	})
 	model.applyAgentEvent(agent.Event{
 		Kind: agent.EventToolUpdate, Call: agent.ToolCall{ID: "one", Name: "write"},
@@ -577,9 +577,9 @@ func TestTUIModelCorrelatesAndSanitizesStreamingToolBlocks(t *testing.T) {
 		},
 	})
 	model.applyAgentEvent(agent.Event{
-		Kind: agent.EventToolEnd, Call: agent.ToolCall{ID: "two", Name: "subagent"},
-		Presentation: agent.ToolPresentation{Title: "subagent", Lines: []string{"complete"}},
-		Result:       agent.ToolResult{Tool: "subagent"},
+		Kind: agent.EventToolEnd, Call: agent.ToolCall{ID: "two", Name: "launch_subagents"},
+		Presentation: agent.ToolPresentation{Title: "launch_subagents", Lines: []string{"complete"}},
+		Result:       agent.ToolResult{Tool: "launch_subagents"},
 	})
 
 	first := model.blocks[model.toolBlockIndex("one")]

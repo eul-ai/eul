@@ -9,6 +9,11 @@ import (
 
 const goalContinuationPrompt = `Continue the active goal. Take the next unfinished step, or call update_goal when complete.`
 
+var (
+	ErrNoGoal              = errors.New("agent: no goal is set")
+	ErrGoalAlreadyComplete = errors.New("agent: goal is already complete")
+)
+
 type steeringSignalKey struct{}
 
 func SteeringSignal(ctx context.Context) <-chan struct{} {
@@ -170,9 +175,9 @@ func (arbiter *continuationArbiter) completeGoal() error {
 
 	switch {
 	case arbiter.goal == nil:
-		return errors.New("agent: no goal is set")
+		return ErrNoGoal
 	case arbiter.goal.Complete:
-		return errors.New("agent: goal is already complete")
+		return ErrGoalAlreadyComplete
 	default:
 		arbiter.goal.Complete = true
 		return nil

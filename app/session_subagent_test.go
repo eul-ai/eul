@@ -73,7 +73,7 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 	for i, definition := range gotRequest.Tools {
 		names[i] = definition.Name
 	}
-	wantNames := []string{"bash", "edit", "read", "subagent", "subagent_cancel", "subagent_wait", "update_goal", "write"}
+	wantNames := []string{"bash", "cancel_subagents", "edit", "launch_subagents", "read", "update_goal", "wait_for_subagent", "write"}
 	if !slices.Equal(names, wantNames) {
 		t.Fatalf("tools = %v, want %v", names, wantNames)
 	}
@@ -113,18 +113,18 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 					for _, definition := range request.Tools {
 						definitions[definition.Name] = definition
 					}
-					waitDefinition := definitions["subagent_wait"]
+					waitDefinition := definitions["wait_for_subagent"]
 					timeoutTypes, _ := waitDefinition.Parameters.Properties["timeout_ms"].Type.([]string)
-					if definitions["subagent"].Name != "subagent" || waitDefinition.Name != "subagent_wait" || !slices.Equal(timeoutTypes, []string{"integer", "null"}) || definitions["subagent_cancel"].Name != "subagent_cancel" {
+					if definitions["launch_subagents"].Name != "launch_subagents" || waitDefinition.Name != "wait_for_subagent" || !slices.Equal(timeoutTypes, []string{"integer", "null"}) || definitions["cancel_subagents"].Name != "cancel_subagents" {
 						t.Fatalf("subagent definitions = %+v", definitions)
 					}
 					return agent.Response{ToolCalls: []agent.ToolCall{{
 						ID:        "launch",
-						Name:      "subagent",
+						Name:      "launch_subagents",
 						Arguments: []byte(`{"tasks":[{"description":"review alpha","prompt":"review alpha","model_profile":"fast","thinking_level":"minimal"},{"description":"review beta","prompt":"review beta","model_profile":"balanced","thinking_level":"medium"}]}`),
 					}}}, nil
 				case 2:
-					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "subagent" {
+					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "launch_subagents" {
 						t.Fatalf("launch continuation inputs = %+v", request.Inputs)
 					}
 					if request.Inputs[0].CallID != "launch" || request.Inputs[0].IsError {
@@ -143,11 +143,11 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 					close(releaseChildren)
 					return agent.Response{ToolCalls: []agent.ToolCall{{
 						ID:        "wait",
-						Name:      "subagent_wait",
+						Name:      "wait_for_subagent",
 						Arguments: []byte(`{}`),
 					}}}, nil
 				case 4:
-					if len(request.Inputs) != 2 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].CallID != "wait" || request.Inputs[0].Tool != "subagent_wait" || request.Inputs[0].IsError || request.Inputs[1].Kind != agent.InputInbox || !strings.Contains(request.Inputs[1].PlainText(), "finding for review") {
+					if len(request.Inputs) != 2 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].CallID != "wait" || request.Inputs[0].Tool != "wait_for_subagent" || request.Inputs[0].IsError || request.Inputs[1].Kind != agent.InputInbox || !strings.Contains(request.Inputs[1].PlainText(), "finding for review") {
 						t.Fatalf("wait continuation inputs = %+v", request.Inputs)
 					}
 					if err := sink("combined answer"); err != nil {
@@ -265,7 +265,7 @@ func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) 
 	})})
 	defer manager.Close()
 
-	registry, err := tool.NewRegistry([]tool.Tool{tool.NewSubagent(manager), tool.NewSubagentWait(manager)})
+	registry, err := tool.NewRegistry([]tool.Tool{tool.NewLaunchSubagents(manager), tool.NewWaitForSubagent(manager)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,17 +276,17 @@ func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) 
 		case 1:
 			return agent.Response{ToolCalls: []agent.ToolCall{{
 				ID:        "launch",
-				Name:      "subagent",
+				Name:      "launch_subagents",
 				Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`),
 			}}}, nil
 		case 2:
 			return agent.Response{ToolCalls: []agent.ToolCall{{
 				ID:        "wait",
-				Name:      "subagent_wait",
+				Name:      "wait_for_subagent",
 				Arguments: json.RawMessage(`{"timeout_ms":1000}`),
 			}}}, nil
 		case 3:
-			if len(request.Inputs) != 2 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].CallID != "wait" || request.Inputs[0].Tool != "subagent_wait" || request.Inputs[1].Kind != agent.InputUser || request.Inputs[1].PlainText() != "redirect" {
+			if len(request.Inputs) != 2 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].CallID != "wait" || request.Inputs[0].Tool != "wait_for_subagent" || request.Inputs[1].Kind != agent.InputUser || request.Inputs[1].PlainText() != "redirect" {
 				return agent.Response{}, fmt.Errorf("steering request = %+v", request)
 			}
 			return agent.Response{Text: "redirected"}, nil
@@ -294,14 +294,14 @@ func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) 
 			return agent.Response{}, fmt.Errorf("unexpected provider call %d", calls)
 		}
 	})
-	bridge := newSubagentBridge(manager, "subagent_wait")
+	bridge := newSubagentBridge(manager, "wait_for_subagent")
 	engine := agent.New(provider, registry, agent.Options{Model: "model", Inbox: bridge, AdditionalInstructions: bridge.additionalInstructions})
 
 	waitStarted := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
 		_, err := engine.Run(context.Background(), "start", func(event agent.Event) error {
-			if event.Kind == agent.EventToolStart && event.Call.Name == "subagent_wait" {
+			if event.Kind == agent.EventToolStart && event.Call.Name == "wait_for_subagent" {
 				close(waitStarted)
 			}
 			return nil

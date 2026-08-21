@@ -24,7 +24,7 @@ func TestSubagentLaunchUsesPerTaskPolicyDefaultsAndSurfacesManagerValidation(t *
 		},
 	})
 	defer manager.Close()
-	launch := NewSubagent(manager)
+	launch := NewLaunchSubagents(manager)
 
 	result, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"default","prompt":"default"},{"description":"custom","prompt":"custom","model_profile":"fast","thinking_level":"medium"}]}`), nil)
 	if err != nil || result.IsError {
@@ -54,7 +54,7 @@ func TestSubagentLaunchUsesPerTaskPolicyDefaultsAndSurfacesManagerValidation(t *
 }
 
 func TestSubagentLaunchSchemaPlacesPolicyOnTasks(t *testing.T) {
-	definition := NewSubagent(nil).Definition()
+	definition := NewLaunchSubagents(nil).Definition()
 	if _, ok := definition.Parameters.Properties["model_profile"]; ok {
 		t.Fatal("launch-level model profile remains in schema")
 	}
@@ -101,8 +101,8 @@ func TestSubagentWaitIsSynchronizationOnly(t *testing.T) {
 		return agent.RunResult{Text: "research result"}, nil
 	})})
 	defer manager.Close()
-	launch := NewSubagent(manager)
-	wait := NewSubagentWait(manager)
+	launch := NewLaunchSubagents(manager)
+	wait := NewWaitForSubagent(manager)
 
 	if _, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`), nil); err != nil {
 		t.Fatal(err)
@@ -132,7 +132,7 @@ func TestSubagentWaitTimesOutWithoutCancelingChild(t *testing.T) {
 	if _, err := manager.Start([]subagent.Task{{Description: "inspect", Prompt: "inspect"}}); err != nil {
 		t.Fatal(err)
 	}
-	wait := NewSubagentWait(manager)
+	wait := NewWaitForSubagent(manager)
 
 	var presentation agent.ToolPresentation
 	updates := toolUpdateSinkFunc(func(update agent.ToolPresentation) error {
@@ -159,7 +159,7 @@ func TestSubagentWaitTimesOutWithoutCancelingChild(t *testing.T) {
 func TestSubagentWaitValidatesTimeout(t *testing.T) {
 	manager := subagent.NewManager(subagent.Config{})
 	defer manager.Close()
-	wait := NewSubagentWait(manager)
+	wait := NewWaitForSubagent(manager)
 
 	for _, arguments := range []string{
 		`{"timeout_ms":0}`,
