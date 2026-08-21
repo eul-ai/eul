@@ -221,6 +221,15 @@ func runTUIWithKeys(
 	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventRender}); err != nil {
 		return RunOutcome{}, err
 	}
+	if options.Config.InitialPrompt != "" {
+		done, err := submitInitialPrompt(ctx, controller, model, options.Config.InitialPrompt)
+		if err != nil {
+			return RunOutcome{}, err
+		}
+		if done {
+			return controller.outcome, nil
+		}
+	}
 
 	interrupts := options.Events.Interrupts
 	subagentUpdates := options.Events.SubagentUpdates
@@ -286,6 +295,15 @@ func runTUIWithKeys(
 			renderClock = renderTimer.C
 		}
 	}
+}
+
+// submitInitialPrompt sends the prompt the session was started with as its first
+// message, exactly as if it had been typed and entered.
+func submitInitialPrompt(ctx context.Context, controller *tuiController, model *tuiModel, prompt string) (bool, error) {
+	if err := model.insertInput(prompt); err != nil {
+		return false, err
+	}
+	return controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}})
 }
 
 func requestProviderUsage(requests chan<- struct{}) {

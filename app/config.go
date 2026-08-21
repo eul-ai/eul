@@ -25,6 +25,7 @@ type Options struct {
 	NoSandbox        bool
 	Resume           bool
 	SessionID        string
+	Prompt           string
 }
 
 type Dependencies struct {
@@ -79,6 +80,7 @@ type resolvedConfig struct {
 	skills              []skill.Skill
 	warnings            []string
 	noSandbox           bool
+	prompt              string
 }
 
 func resolveConfig(options Options, env environment, descriptor backend.Descriptor) (resolvedConfig, error) {
@@ -116,6 +118,7 @@ func resolveConfig(options Options, env environment, descriptor backend.Descript
 		skills:              skills,
 		warnings:            warnings,
 		noSandbox:           options.NoSandbox,
+		prompt:              options.Prompt,
 	}, nil
 }
 
