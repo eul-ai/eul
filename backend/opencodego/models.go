@@ -88,6 +88,14 @@ type catalogModelProvider struct {
 	NPM string `json:"npm"`
 }
 
+func modelNotSupportedError(model string, models map[string]modelInfo) error {
+	available := make([]string, 0, len(models))
+	for id := range models {
+		available = append(available, id)
+	}
+	return backend.NewModelNotSupportedError("opencode go", model, available)
+}
+
 func buildModels(catalog catalogProvider, live map[string]struct{}) map[string]modelInfo {
 	models := make(map[string]modelInfo)
 	for id := range live {

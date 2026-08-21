@@ -36,6 +36,7 @@ var (
 	_ backend.UsageProvider         = (*runtime)(nil)
 	_ backend.ModelMetadataProvider = (*runtime)(nil)
 	_ backend.ModelInitializer      = (*runtime)(nil)
+	_ backend.ModelValidator        = (*runtime)(nil)
 )
 
 func New() *Driver {
@@ -130,6 +131,21 @@ func (configured *runtime) modelMetadata(model string) modelMetadata {
 
 func (configured *runtime) ModelMetadata(model string) backend.ModelMetadata {
 	return configured.modelMetadata(model).backendMetadata()
+}
+
+func (configured *runtime) ValidateModel(model string) error {
+	configured.mu.RLock()
+	defer configured.mu.RUnlock()
+
+	if _, ok := configured.models[model]; ok {
+		return nil
+	}
+
+	available := make([]string, 0, len(configured.models))
+	for id := range configured.models {
+		available = append(available, id)
+	}
+	return backend.NewModelNotSupportedError("openrouter", model, available)
 }
 
 func (*runtime) Close() error {

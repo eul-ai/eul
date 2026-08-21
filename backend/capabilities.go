@@ -2,6 +2,9 @@ package backend
 
 import (
 	"context"
+	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
@@ -60,6 +63,26 @@ type ModelMetadataProvider interface {
 
 type ModelInitializer interface {
 	InitializeModels(context.Context) error
+}
+
+type ModelNotSupportedError struct {
+	Provider        string
+	Model           string
+	AvailableModels []string
+}
+
+func NewModelNotSupportedError(provider, model string, availableModels []string) *ModelNotSupportedError {
+	availableModels = slices.Clone(availableModels)
+	slices.Sort(availableModels)
+	return &ModelNotSupportedError{
+		Provider:        provider,
+		Model:           model,
+		AvailableModels: availableModels,
+	}
+}
+
+func (err *ModelNotSupportedError) Error() string {
+	return fmt.Sprintf("%s: model %q is not supported\navailable models:\n%s", err.Provider, err.Model, strings.Join(err.AvailableModels, "\n"))
 }
 
 type ModelValidator interface {

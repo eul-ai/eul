@@ -2,8 +2,10 @@ package codex
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -89,9 +91,21 @@ func TestDriverModelDefaultsAreSupported(t *testing.T) {
 	defaults := New().Descriptor().DefaultModels
 	configured := &runtime{}
 	for _, model := range []string{defaults.Main, defaults.Fast, defaults.Balanced} {
+		if err := configured.ValidateModel(model); err != nil {
+			t.Fatal(err)
+		}
 		if metadata := configured.ModelMetadata(model); !metadata.FastMode || metadata.ContextWindow == 0 {
 			t.Fatalf("model %q metadata = %+v", model, metadata)
 		}
+	}
+
+	err := configured.ValidateModel("unknown")
+	var unsupported *backend.ModelNotSupportedError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("ValidateModel() error = %v", err)
+	}
+	if unsupported.Model != "unknown" || !slices.Equal(unsupported.AvailableModels, []string{ModelFast, ModelMain, ModelBalanced}) {
+		t.Fatalf("ValidateModel() error = %#v", unsupported)
 	}
 }
 

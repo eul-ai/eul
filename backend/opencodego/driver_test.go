@@ -3,6 +3,7 @@ package opencodego
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -81,12 +82,26 @@ func TestDriverRequiresAPIKey(t *testing.T) {
 }
 
 func TestRuntimeValidatesModels(t *testing.T) {
-	configured := &runtime{models: testModelInfos(t)}
-	if err := configured.ValidateModel("qwen3.8-max"); err != nil {
+	configured := &runtime{models: map[string]modelInfo{
+		"zeta":  {},
+		"alpha": {},
+	}}
+	if err := configured.ValidateModel("alpha"); err != nil {
 		t.Fatal(err)
 	}
-	if err := configured.ValidateModel("unknown"); err == nil {
+	err := configured.ValidateModel("unknown")
+	if err == nil {
 		t.Fatal("unknown model was accepted")
+	}
+	var unsupported *backend.ModelNotSupportedError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("ValidateModel() error type = %T", err)
+	}
+	if unsupported.Model != "unknown" || strings.Join(unsupported.AvailableModels, ",") != "alpha,zeta" {
+		t.Fatalf("ValidateModel() error = %#v", unsupported)
+	}
+	if !strings.Contains(err.Error(), "available models:\nalpha\nzeta") {
+		t.Fatalf("ValidateModel() error = %q", err)
 	}
 }
 

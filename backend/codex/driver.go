@@ -38,6 +38,7 @@ var (
 	_ backend.Authenticator         = (*runtime)(nil)
 	_ backend.UsageProvider         = (*runtime)(nil)
 	_ backend.ModelMetadataProvider = (*runtime)(nil)
+	_ backend.ModelValidator        = (*runtime)(nil)
 )
 
 func New() *Driver {
@@ -110,6 +111,19 @@ func (configured *runtime) ModelMetadata(model string) backend.ModelMetadata {
 		ContextWindow:  metadata.ContextWindow,
 		ThinkingLevels: metadata.ThinkingLevels,
 		FastMode:       metadata.FastMode,
+	}
+}
+
+func (*runtime) ValidateModel(model string) error {
+	switch model {
+	case ModelFast, ModelBalanced, ModelMain:
+		return nil
+	default:
+		return backend.NewModelNotSupportedError("openai codex", model, []string{
+			ModelFast,
+			ModelBalanced,
+			ModelMain,
+		})
 	}
 }
 

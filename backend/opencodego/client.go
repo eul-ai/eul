@@ -43,7 +43,7 @@ func newProvider(apiKey, baseURL string, httpClient *http.Client, models map[str
 func (provider *provider) modelClient(model string) (modelInfo, protocolClient, error) {
 	info, ok := provider.models[model]
 	if !ok {
-		return modelInfo{}, nil, fmt.Errorf("opencode go: model %q is not supported", model)
+		return modelInfo{}, nil, modelNotSupportedError(model, provider.models)
 	}
 	selected, ok := provider.clients[info.protocol]
 	if !ok {

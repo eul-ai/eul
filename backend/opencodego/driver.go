@@ -134,7 +134,7 @@ func (configured *runtime) ValidateModel(model string) error {
 	_, ok := configured.models[model]
 	configured.modelsMu.RUnlock()
 	if !ok {
-		return fmt.Errorf("opencode go: model %q is not supported", model)
+		return modelNotSupportedError(model, configured.models)
 	}
 	return nil
 }

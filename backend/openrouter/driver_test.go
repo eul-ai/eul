@@ -2,6 +2,7 @@ package openrouter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -100,6 +101,18 @@ func TestRuntimeChecksCredentialsInitializesModelsAndCreatesProvider(t *testing.
 	}
 	if requests != 2 {
 		t.Fatalf("requests = %d", requests)
+	}
+
+	if err := configured.ValidateModel("vendor/reasoning"); err != nil {
+		t.Fatal(err)
+	}
+	validationErr := configured.ValidateModel("unknown")
+	var unsupported *backend.ModelNotSupportedError
+	if !errors.As(validationErr, &unsupported) {
+		t.Fatalf("ValidateModel() error = %v", validationErr)
+	}
+	if unsupported.Model != "unknown" || !slices.Equal(unsupported.AvailableModels, []string{"vendor/plain", "vendor/reasoning"}) {
+		t.Fatalf("ValidateModel() error = %#v", unsupported)
 	}
 
 	reasoning := configured.ModelMetadata("vendor/reasoning")
