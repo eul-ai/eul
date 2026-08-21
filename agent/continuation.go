@@ -95,7 +95,6 @@ func (arbiter *continuationArbiter) clearSteering() [][]ContentPart {
 
 	steering := cloneContentBatches(arbiter.steering)
 	arbiter.steering = nil
-	arbiter.toolRoundSteering = nil
 	return steering
 }
 
