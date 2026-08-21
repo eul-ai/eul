@@ -39,8 +39,8 @@ func TestCoreToolDefinitionsUseStrictSchemas(t *testing.T) {
 		{tool: readTool, required: []string{"path", "offset", "limit"}, properties: map[string][]string{"path": {"string"}, "offset": {"integer", "null"}, "limit": {"integer", "null"}}},
 		{tool: writeTool, required: []string{"path", "content"}, properties: map[string][]string{"path": {"string"}, "content": {"string"}}},
 		{tool: replaceTool, required: []string{"path", "oldText", "newText", "all"}, properties: map[string][]string{"path": {"string"}, "oldText": {"string"}, "newText": {"string"}, "all": {"boolean"}}},
-		{tool: insertBeforeTool, required: []string{"path", "anchor", "content"}, properties: map[string][]string{"path": {"string"}, "anchor": {"string"}, "content": {"string"}}},
-		{tool: insertAfterTool, required: []string{"path", "anchor", "content"}, properties: map[string][]string{"path": {"string"}, "anchor": {"string"}, "content": {"string"}}},
+		{tool: insertBeforeTool, required: []string{"path", "content", "anchor"}, properties: map[string][]string{"path": {"string"}, "anchor": {"string"}, "content": {"string"}}},
+		{tool: insertAfterTool, required: []string{"path", "content", "anchor"}, properties: map[string][]string{"path": {"string"}, "anchor": {"string"}, "content": {"string"}}},
 		{tool: bashTool, required: []string{"command", "timeout", "network"}, properties: map[string][]string{"command": {"string"}, "timeout": {"integer", "null"}, "network": {"boolean"}}},
 	}
 	for _, test := range tests {

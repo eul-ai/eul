@@ -54,7 +54,7 @@ func insertToolDefinition(name, description, anchorDescription string) agent.Too
 			"path":    {Type: "string", Description: "Relative or absolute file path."},
 			"anchor":  {Type: "string", Description: anchorDescription},
 			"content": {Type: "string", Description: "Lines to insert; line endings and base indentation are added automatically."},
-		}, "path", "anchor", "content"),
+		}, "path", "content", "anchor"),
 	}
 }
 
