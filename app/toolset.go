@@ -33,7 +33,8 @@ func buildToolset(
 			tool.NewRead(cwd),
 			tool.NewWrite(cwd),
 			tool.NewReplace(cwd),
-			tool.NewInsert(cwd),
+			tool.NewInsertBefore(cwd),
+			tool.NewInsertAfter(cwd),
 			bash,
 		}
 	case readOnlyToolAccess:

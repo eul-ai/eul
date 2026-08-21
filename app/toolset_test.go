@@ -11,7 +11,7 @@ func TestBuildToolset(t *testing.T) {
 		access toolAccess
 		want   []string
 	}{
-		{name: "full access", access: fullToolAccess, want: []string{"bash", "insert", "read", "replace", "write"}},
+		{name: "full access", access: fullToolAccess, want: []string{"bash", "insert_after", "insert_before", "read", "replace", "write"}},
 		{name: "read only", access: readOnlyToolAccess, want: []string{"read"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

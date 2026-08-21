@@ -27,7 +27,8 @@ func TestCoreToolDefinitionsUseStrictSchemas(t *testing.T) {
 	readTool := NewRead(cwd)
 	writeTool := NewWrite(cwd)
 	replaceTool := NewReplace(cwd)
-	insertTool := NewInsert(cwd)
+	insertBeforeTool := NewInsertBefore(cwd)
+	insertAfterTool := NewInsertAfter(cwd)
 	bashTool := NewBash(cwd)
 
 	tests := []struct {
@@ -38,7 +39,8 @@ func TestCoreToolDefinitionsUseStrictSchemas(t *testing.T) {
 		{tool: readTool, required: []string{"path", "offset", "limit"}, properties: map[string][]string{"path": {"string"}, "offset": {"integer", "null"}, "limit": {"integer", "null"}}},
 		{tool: writeTool, required: []string{"path", "content"}, properties: map[string][]string{"path": {"string"}, "content": {"string"}}},
 		{tool: replaceTool, required: []string{"path", "oldText", "newText", "all"}, properties: map[string][]string{"path": {"string"}, "oldText": {"string"}, "newText": {"string"}, "all": {"boolean"}}},
-		{tool: insertTool, required: []string{"path", "content", "anchor", "position"}, properties: map[string][]string{"path": {"string"}, "content": {"string"}, "anchor": {"string", "null"}, "position": {"string"}}},
+		{tool: insertBeforeTool, required: []string{"path", "anchor", "content"}, properties: map[string][]string{"path": {"string"}, "anchor": {"string"}, "content": {"string"}}},
+		{tool: insertAfterTool, required: []string{"path", "anchor", "content"}, properties: map[string][]string{"path": {"string"}, "anchor": {"string"}, "content": {"string"}}},
 		{tool: bashTool, required: []string{"command", "timeout", "network"}, properties: map[string][]string{"command": {"string"}, "timeout": {"integer", "null"}, "network": {"boolean"}}},
 	}
 	for _, test := range tests {
@@ -107,11 +109,12 @@ func TestFileToolPresentationsSeparateTitleAndArguments(t *testing.T) {
 		NewRead(t.TempDir()).Presentation(snapshot),
 		NewWrite(t.TempDir()).Presentation(snapshot),
 		NewReplace(t.TempDir()).Presentation(snapshot),
-		NewInsert(t.TempDir()).Presentation(snapshot),
+		NewInsertBefore(t.TempDir()).Presentation(snapshot),
+		NewInsertAfter(t.TempDir()).Presentation(snapshot),
 		bashPresentation("go test ./...", defaultBashTimeout),
 	}
-	wantTitles := []string{"read", "write", "replace", "insert", "bash"}
-	wantArguments := []string{"demo.go", "demo.go", "demo.go", "demo.go", `"go test ./..."`}
+	wantTitles := []string{"read", "write", "replace", "insert_before", "insert_after", "bash"}
+	wantArguments := []string{"demo.go", "demo.go", "demo.go", "demo.go", "demo.go", `"go test ./..."`}
 	for index, presentation := range presentations {
 		if presentation.Title != wantTitles[index] || presentation.Arguments != wantArguments[index] {
 			t.Fatalf("presentation %d = %+v", index, presentation)
@@ -138,7 +141,8 @@ func TestFilesystemToolsHonorPreCanceledContext(t *testing.T) {
 	readTool := NewRead(cwd)
 	writeTool := NewWrite(cwd)
 	replaceTool := NewReplace(cwd)
-	insertTool := NewInsert(cwd)
+	insertBeforeTool := NewInsertBefore(cwd)
+	insertAfterTool := NewInsertAfter(cwd)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -149,7 +153,8 @@ func TestFilesystemToolsHonorPreCanceledContext(t *testing.T) {
 		{readTool, `{"path":"missing"}`},
 		{writeTool, `{"path":"file","content":"content"}`},
 		{replaceTool, `{"path":"file","oldText":"old","newText":"new","all":false}`},
-		{insertTool, `{"path":"file","content":"new","anchor":null,"position":"after"}`},
+		{insertBeforeTool, `{"path":"file","anchor":"","content":"new"}`},
+		{insertAfterTool, `{"path":"file","anchor":"","content":"new"}`},
 	}
 	for _, call := range calls {
 		_, err := call.tool.Execute(ctx, json.RawMessage(call.args), nil)
@@ -167,10 +172,11 @@ func TestCoreToolsRegisterInDeterministicOrder(t *testing.T) {
 	readTool := NewRead(cwd)
 	writeTool := NewWrite(cwd)
 	replaceTool := NewReplace(cwd)
-	insertTool := NewInsert(cwd)
+	insertBeforeTool := NewInsertBefore(cwd)
+	insertAfterTool := NewInsertAfter(cwd)
 	bashTool := NewBash(cwd)
 
-	registry, err := NewRegistry([]Tool{readTool, writeTool, replaceTool, insertTool, bashTool})
+	registry, err := NewRegistry([]Tool{readTool, writeTool, replaceTool, insertBeforeTool, insertAfterTool, bashTool})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +185,7 @@ func TestCoreToolsRegisterInDeterministicOrder(t *testing.T) {
 	for i, definition := range definitions {
 		names[i] = definition.Name
 	}
-	if !slices.Equal(names, []string{"bash", "insert", "read", "replace", "write"}) {
+	if !slices.Equal(names, []string{"bash", "insert_after", "insert_before", "read", "replace", "write"}) {
 		t.Fatalf("definition names = %v", names)
 	}
 }
