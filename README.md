@@ -24,7 +24,12 @@ persisted locally, and tools run directly on your machine with your permissions.
 - Global and project-specific Agent Skills
 - Automatic context compaction
 - Resumable sessions
-- OpenAI Codex and OpenRouter support
+
+## Supported providers
+
+- OpenAI Codex
+- OpenRouter
+- OpenCode Go
 
 ## Getting started
 
