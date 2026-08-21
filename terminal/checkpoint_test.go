@@ -47,7 +47,7 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 		Config:         Config{InitialCheckpoint: &decoded},
 		MessageHistory: MessageHistory{Entries: []string{"global prompt"}},
 	})
-	if restored.running || restored.streamOpen || restored.activity.kind != activityReady || restored.subagentStatus.Running != 0 || len(restored.subagentStatus.Active) != 0 {
+	if restored.running || restored.streamText.Len() != 0 || restored.activity.kind != activityReady || restored.subagentStatus.Running != 0 || len(restored.subagentStatus.Active) != 0 {
 		t.Fatalf("runtime state was restored: %+v", restored)
 	}
 	if len(restored.blocks) != 2 || restored.blocks[0].kind != blockUser || restored.blocks[1].text != "answer" {
@@ -61,6 +61,24 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	}
 	if !slices.Equal(restored.globalHistory, []string{"global prompt"}) {
 		t.Fatalf("global history = %q", restored.globalHistory)
+	}
+}
+
+func TestTerminalCheckpointSnapshotsOpenStream(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.appendStream(blockAssistant, "first")
+	model.appendStream(blockAssistant, " second")
+	checkpoint := checkpointModel(model, nil)
+
+	model.appendStream(blockAssistant, " third")
+	if checkpoint.data.Blocks[0].Text != "first second" || model.blocks[0].text != "first second third" {
+		t.Fatalf("checkpoint=%q model=%q", checkpoint.data.Blocks[0].Text, model.blocks[0].text)
+	}
+
+	restored := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint}})
+	restored.appendStream(blockAssistant, "new")
+	if len(restored.blocks) != 2 || restored.blocks[0].text != "first second" || restored.blocks[1].text != "new" {
+		t.Fatalf("restored blocks = %+v", restored.blocks)
 	}
 }
 

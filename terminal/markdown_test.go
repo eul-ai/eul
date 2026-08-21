@@ -508,3 +508,42 @@ func TestWrapInlineMarkdownUsesCellWidthAtWordBoundaries(t *testing.T) {
 		t.Fatalf("lines = %+v", lines)
 	}
 }
+
+func TestWrapInlineMarkdownPreservesWhitespaceBreaks(t *testing.T) {
+	lines := wrapInlineMarkdown("a\tb\nc", 4)
+	if len(lines) != 3 || lines[0].text != "a" || lines[1].text != "b" || lines[2].text != "c" {
+		t.Fatalf("lines = %+v", lines)
+	}
+	if !lines[1].breakBefore.continuation || lines[1].breakBefore.separator != "    " || lines[2].breakBefore != (lineBreak{}) {
+		t.Fatalf("breaks = %+v", lines)
+	}
+}
+
+func TestWrapInlineSpansKeepsZeroWidthRunesOnFullLines(t *testing.T) {
+	bold := inlineStyle{bold: true}
+	italic := inlineStyle{italic: true}
+	lines := wrapInlineSpans([]inlineSpan{
+		{text: "ab界", style: bold},
+		{text: "\u0301cd", style: italic},
+	}, 4)
+	want := []formattedLine{
+		{text: "ab界\u0301", spans: []inlineSpan{{text: "ab界", style: bold}, {text: "\u0301", style: italic}}},
+		{text: "cd", spans: []inlineSpan{{text: "cd", style: italic}}, breakBefore: lineBreak{continuation: true}},
+	}
+	if !reflect.DeepEqual(lines, want) {
+		t.Fatalf("lines = %+v, want %+v", lines, want)
+	}
+}
+
+func TestInlineSpanWrappingNormalizesInvalidUTF8(t *testing.T) {
+	invalid := string([]byte{'a', 0xff, 'b'})
+	lines := wrapInlineMarkdown(invalid, 2)
+	if len(lines) != 2 || lines[0].text != "a�" || lines[1].text != "b" {
+		t.Fatalf("lines = %+v", lines)
+	}
+
+	spans := truncateInlineSpans([]inlineSpan{{text: invalid}}, 2)
+	if len(spans) != 1 || spans[0].text != "a�" {
+		t.Fatalf("spans = %+v", spans)
+	}
+}

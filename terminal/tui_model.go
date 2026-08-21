@@ -70,7 +70,7 @@ type conversationModel struct {
 	blocks              []conversationBlock
 	conversationVersion uint64
 	streamKind          blockKind
-	streamOpen          bool
+	streamText          strings.Builder
 	scrollTop           int
 	following           bool
 	selection           textSelection
@@ -249,17 +249,18 @@ func (m *tuiModel) appendStream(kind blockKind, text string) {
 		return
 	}
 
-	if m.streamOpen && m.streamKind == kind && len(m.blocks) > 0 {
-		m.blocks[len(m.blocks)-1].text += text
+	if m.streamText.Len() > 0 && m.streamKind == kind && len(m.blocks) > 0 {
+		m.streamText.WriteString(text)
+		m.blocks[len(m.blocks)-1].text = m.streamText.String()
 		m.conversationChanged()
 		return
 	}
 
 	m.closeStream()
-	m.blocks = append(m.blocks, conversationBlock{kind: kind, text: text})
+	m.streamText.WriteString(text)
+	m.blocks = append(m.blocks, conversationBlock{kind: kind, text: m.streamText.String()})
 	m.conversationChanged()
 	m.streamKind = kind
-	m.streamOpen = true
 }
 
 func (m *tuiModel) appendBlock(kind blockKind, text string) {
@@ -273,7 +274,7 @@ func (m *tuiModel) conversationChanged() {
 }
 
 func (m *tuiModel) closeStream() {
-	m.streamOpen = false
+	m.streamText.Reset()
 }
 
 func (m *tuiModel) applyAgentEvent(event agent.Event) {

@@ -264,10 +264,6 @@ func truncateCells(value string, width int, ellipsis bool) string {
 }
 
 func cellWidth(value string) int {
-	return runesWidth([]rune(value))
-}
-
-func runesWidth(value []rune) int {
 	width := 0
 	for _, character := range value {
 		width += runeWidth(character)
@@ -276,6 +272,9 @@ func runesWidth(value []rune) int {
 }
 
 func runeWidth(character rune) int {
+	if character >= ' ' && character <= '~' {
+		return 1
+	}
 	if character == 0 || unicode.Is(unicode.Mn, character) || unicode.Is(unicode.Me, character) || unicode.Is(unicode.Cf, character) {
 		return 0
 	}

@@ -262,7 +262,7 @@ func restoreModelCheckpoint(model *tuiModel, checkpoint Checkpoint) {
 	model.running = false
 	model.interrupted = false
 	model.activity = activity{kind: activityReady}
-	model.streamOpen = false
+	model.closeStream()
 	model.historyIndex = -1
 	model.historyDraft = nil
 	model.historyDraftCursor = 0
