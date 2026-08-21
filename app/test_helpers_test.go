@@ -118,7 +118,7 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer) environment {
 				if noSandbox {
 					bash = tool.NewBashWithoutSandbox(cwd)
 				}
-				tools = append(tools, tool.NewWrite(cwd), tool.NewReplace(cwd), tool.NewInsertBefore(cwd), tool.NewInsertAfter(cwd), bash)
+				tools = append(tools, tool.NewWrite(cwd), tool.NewEdit(cwd), bash)
 			}
 			tools = append(tools, additional...)
 			return tool.NewRegistry(tools)

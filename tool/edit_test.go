@@ -13,13 +13,13 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-func TestReplaceReplacesUniqueTextAndPreservesMode(t *testing.T) {
+func TestEditReplacesUniqueTextAndPreservesMode(t *testing.T) {
 	cwd := t.TempDir()
 	path := filepath.Join(cwd, "sample.txt")
 	mustWriteFile(t, path, "before old after", 0o600)
-	replaceTool := NewReplace(cwd)
+	editTool := NewEdit(cwd)
 
-	result := executeJSON(t, replaceTool, map[string]any{"path": "sample.txt", "oldText": "old", "newText": "new", "all": false})
+	result := executeJSON(t, editTool, map[string]any{"path": "sample.txt", "old_text": "old", "new_text": "new", "all": false})
 	if result.IsError || mustReadFile(t, path) != "before new after" {
 		t.Fatalf("replace = %+v, content = %q", result, mustReadFile(t, path))
 	}
@@ -41,35 +41,35 @@ func TestReplaceReplacesUniqueTextAndPreservesMode(t *testing.T) {
 	}
 }
 
-func TestReplaceDefaultsToSingleAndCanReplaceAll(t *testing.T) {
+func TestEditDefaultsToSingleAndCanReplaceAll(t *testing.T) {
 	cwd := t.TempDir()
 	path := filepath.Join(cwd, "sample.txt")
 	mustWriteFile(t, path, "same same", 0o600)
-	replaceTool := NewReplace(cwd)
+	editTool := NewEdit(cwd)
 
-	result := executeJSON(t, replaceTool, map[string]any{"path": "sample.txt", "oldText": "same", "newText": "new"})
+	result := executeJSON(t, editTool, map[string]any{"path": "sample.txt", "old_text": "same", "new_text": "new"})
 	if !result.IsError || mustReadFile(t, path) != "same same" {
 		t.Fatalf("default replace = %+v, content = %q", result, mustReadFile(t, path))
 	}
 
-	result = executeJSON(t, replaceTool, map[string]any{"path": "sample.txt", "oldText": "same", "newText": "new", "all": true})
+	result = executeJSON(t, editTool, map[string]any{"path": "sample.txt", "old_text": "same", "new_text": "new", "all": true})
 	if result.IsError || mustReadFile(t, path) != "new new" {
 		t.Fatalf("replace all = %+v, content = %q", result, mustReadFile(t, path))
 	}
 }
 
-func TestReplacePublishesDiffAfterSuccessfulCommit(t *testing.T) {
+func TestEditPublishesDiffAfterSuccessfulCommit(t *testing.T) {
 	cwd := t.TempDir()
 	path := filepath.Join(cwd, "sample.txt")
 	original := strings.Join([]string{"zero", "one", "two", "three", "four", "old", "six", "seven", "eight", "nine", "ten"}, "\n")
 	replacement := strings.Replace(original, "old", "new", 1)
 	mustWriteFile(t, path, original, 0o600)
-	replaceTool := NewReplace(cwd)
+	editTool := NewEdit(cwd)
 
 	var presentation agent.ToolPresentation
-	result, err := replaceTool.Execute(
+	result, err := editTool.Execute(
 		context.Background(),
-		json.RawMessage(`{"path":"sample.txt","oldText":"old","newText":"new","all":false}`),
+		json.RawMessage(`{"path":"sample.txt","old_text":"old","new_text":"new","all":false}`),
 		toolUpdateSinkFunc(func(update agent.ToolPresentation) error {
 			if got := mustReadFile(t, path); got != replacement {
 				t.Fatalf("diff published before commit: content = %q", got)
@@ -94,7 +94,7 @@ func TestReplacePublishesDiffAfterSuccessfulCommit(t *testing.T) {
 		{Kind: agent.ToolDiffLineContext, OldLine: 9, NewLine: 9, Text: "eight"},
 		{Kind: agent.ToolDiffLineContext, OldLine: 10, NewLine: 10, Text: "nine"},
 	}
-	if presentation.Title != replaceToolName || presentation.Arguments != "sample.txt" || !slices.Equal(presentation.Diff, wantDiff) {
+	if presentation.Title != editToolName || presentation.Arguments != "sample.txt" || !slices.Equal(presentation.Diff, wantDiff) {
 		t.Fatalf("replace presentation = %+v, want diff %+v", presentation, wantDiff)
 	}
 }
@@ -179,23 +179,23 @@ func TestBuildFileDiffBoundsPresentation(t *testing.T) {
 	}
 }
 
-func TestFailedReplacementsNeverModifyFile(t *testing.T) {
+func TestFailedEditsNeverModifyFile(t *testing.T) {
 	cwd := t.TempDir()
 	path := filepath.Join(cwd, "sample.txt")
 	original := "same same"
 	mustWriteFile(t, path, original, 0o640)
-	replaceTool := NewReplace(cwd)
+	editTool := NewEdit(cwd)
 
 	for _, test := range []struct {
 		name string
 		args map[string]any
 	}{
-		{name: "zero", args: map[string]any{"path": "sample.txt", "oldText": "missing", "newText": "new", "all": false}},
-		{name: "multiple", args: map[string]any{"path": "sample.txt", "oldText": "same", "newText": "new"}},
-		{name: "empty old", args: map[string]any{"path": "sample.txt", "oldText": "", "newText": "new", "all": false}},
-		{name: "binary replacement", args: map[string]any{"path": "sample.txt", "oldText": original, "newText": "new\x00", "all": false}},
-		{name: "missing new", args: map[string]any{"path": "sample.txt", "oldText": "same", "all": false}},
-		{name: "unknown field", args: map[string]any{"path": "sample.txt", "oldText": "same", "newText": "new", "all": false, "extra": true}},
+		{name: "zero", args: map[string]any{"path": "sample.txt", "old_text": "missing", "new_text": "new", "all": false}},
+		{name: "multiple", args: map[string]any{"path": "sample.txt", "old_text": "same", "new_text": "new"}},
+		{name: "empty old", args: map[string]any{"path": "sample.txt", "old_text": "", "new_text": "new", "all": false}},
+		{name: "binary replacement", args: map[string]any{"path": "sample.txt", "old_text": original, "new_text": "new\x00", "all": false}},
+		{name: "missing new", args: map[string]any{"path": "sample.txt", "old_text": "same", "all": false}},
+		{name: "unknown field", args: map[string]any{"path": "sample.txt", "old_text": "same", "new_text": "new", "all": false, "extra": true}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			beforeInfo, statErr := os.Stat(path)
@@ -207,7 +207,7 @@ func TestFailedReplacementsNeverModifyFile(t *testing.T) {
 				t.Fatal(marshalErr)
 			}
 			finalPublished := false
-			result, executeErr := replaceTool.Execute(context.Background(), arguments, toolUpdateSinkFunc(func(agent.ToolPresentation) error {
+			result, executeErr := editTool.Execute(context.Background(), arguments, toolUpdateSinkFunc(func(agent.ToolPresentation) error {
 				finalPublished = true
 				return nil
 			}))
@@ -232,7 +232,7 @@ func TestFailedReplacementsNeverModifyFile(t *testing.T) {
 	}
 }
 
-func TestReplaceNoOpBinaryAndSymlink(t *testing.T) {
+func TestEditNoOpBinaryAndSymlink(t *testing.T) {
 	cwd := t.TempDir()
 	target := filepath.Join(cwd, "target.txt")
 	mustWriteFile(t, target, "old", 0o644)
@@ -241,13 +241,13 @@ func TestReplaceNoOpBinaryAndSymlink(t *testing.T) {
 	if err := os.Symlink("target.txt", link); err != nil {
 		t.Fatal(err)
 	}
-	replaceTool := NewReplace(cwd)
+	editTool := NewEdit(cwd)
 
 	before, err := os.Lstat(link)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result := executeJSON(t, replaceTool, map[string]any{"path": "link.txt", "oldText": "old", "newText": "new", "all": false}); result.IsError {
+	if result := executeJSON(t, editTool, map[string]any{"path": "link.txt", "old_text": "old", "new_text": "new", "all": false}); result.IsError {
 		t.Fatalf("symlink replace = %+v", result)
 	}
 	after, err := os.Lstat(link)
@@ -263,9 +263,9 @@ func TestReplaceNoOpBinaryAndSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	finalPublished := false
-	result, err := replaceTool.Execute(
+	result, err := editTool.Execute(
 		context.Background(),
-		json.RawMessage(`{"path":"target.txt","oldText":"new","newText":"new","all":false}`),
+		json.RawMessage(`{"path":"target.txt","old_text":"new","new_text":"new","all":false}`),
 		toolUpdateSinkFunc(func(agent.ToolPresentation) error {
 			finalPublished = true
 			return nil
@@ -281,7 +281,7 @@ func TestReplaceNoOpBinaryAndSymlink(t *testing.T) {
 	if !os.SameFile(beforeInfo, afterInfo) {
 		t.Fatal("no-op replace rewrote the file")
 	}
-	if result := executeJSON(t, replaceTool, map[string]any{"path": "binary.dat", "oldText": "old", "newText": "new", "all": false}); !result.IsError {
+	if result := executeJSON(t, editTool, map[string]any{"path": "binary.dat", "old_text": "old", "new_text": "new", "all": false}); !result.IsError {
 		t.Fatalf("binary replace = %+v", result)
 	}
 }

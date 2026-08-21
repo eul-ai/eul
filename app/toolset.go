@@ -32,9 +32,7 @@ func buildToolset(
 		tools = []tool.Tool{
 			tool.NewRead(cwd),
 			tool.NewWrite(cwd),
-			tool.NewReplace(cwd),
-			tool.NewInsertBefore(cwd),
-			tool.NewInsertAfter(cwd),
+			tool.NewEdit(cwd),
 			bash,
 		}
 	case readOnlyToolAccess:
