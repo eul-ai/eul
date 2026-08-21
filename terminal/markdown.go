@@ -793,22 +793,32 @@ func parseInlineMarkdown(text string) []inlineSpan {
 
 func parseInlineMarkdownStyle(text string, inherited inlineStyle) []inlineSpan {
 	var spans []inlineSpan
+	plainStart := 0
+	appendPlain := func(end int) {
+		appendInlineSpan(&spans, text[plainStart:end], inherited)
+		plainStart = end
+	}
+
 	for index := 0; index < len(text); {
 		if inherited.link == "" {
 			if label, destination, consumed, ok := parseMarkdownLink(text[index:]); ok {
+				appendPlain(index)
 				style := inherited
 				style.link = destination
 				for _, span := range parseInlineMarkdownStyle(label, style) {
 					appendInlineSpan(&spans, span.text, span.style)
 				}
 				index += consumed
+				plainStart = index
 				continue
 			}
 			if destination, consumed, ok := parseAutolink(text[index:]); ok {
+				appendPlain(index)
 				style := inherited
 				style.link = destination
 				appendInlineSpan(&spans, destination, style)
 				index += consumed
+				plainStart = index
 				continue
 			}
 		}
@@ -822,7 +832,6 @@ func parseInlineMarkdownStyle(text string, inherited inlineStyle) []inlineSpan {
 				end++
 			}
 			if end-index >= 3 {
-				appendInlineSpan(&spans, text[index:end], inherited)
 				index = end
 				continue
 			}
@@ -842,6 +851,7 @@ func parseInlineMarkdownStyle(text string, inherited inlineStyle) []inlineSpan {
 			contentStart := index + len(delimiter)
 			closing := strings.Index(text[contentStart:], delimiter)
 			if closing > 0 {
+				appendPlain(index)
 				contentEnd := contentStart + closing
 				content := text[contentStart:contentEnd]
 				if style.code {
@@ -852,17 +862,17 @@ func parseInlineMarkdownStyle(text string, inherited inlineStyle) []inlineSpan {
 					}
 				}
 				index = contentEnd + len(delimiter)
+				plainStart = index
 				continue
 			}
-			appendInlineSpan(&spans, delimiter, inherited)
 			index += len(delimiter)
 			continue
 		}
 
 		_, size := utf8.DecodeRuneInString(text[index:])
-		appendInlineSpan(&spans, text[index:index+size], inherited)
 		index += size
 	}
+	appendPlain(len(text))
 	return spans
 }
 
