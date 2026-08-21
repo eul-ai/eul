@@ -83,8 +83,8 @@ func TestCheckpointRejectsContentOnToolResult(t *testing.T) {
 	}
 }
 
-func TestVersionTwoCheckpointFixture(t *testing.T) {
-	fixture, err := os.ReadFile("testdata/checkpoint-v2.json")
+func TestVersionThreeCheckpointFixture(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/checkpoint-v3.json")
 	if err != nil {
 		t.Fatal(err)
 	}

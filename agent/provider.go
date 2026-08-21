@@ -18,8 +18,8 @@ const (
 )
 
 type Image struct {
-	MediaType string
-	Data      []byte
+	MediaType string `json:"media_type"`
+	Data      []byte `json:"data"`
 }
 
 type ContentPartKind string
@@ -30,9 +30,9 @@ const (
 )
 
 type ContentPart struct {
-	Kind  ContentPartKind
-	Text  string `json:",omitempty"`
-	Image *Image `json:",omitempty"`
+	Kind  ContentPartKind `json:"kind"`
+	Text  string          `json:"text,omitempty"`
+	Image *Image          `json:"image,omitempty"`
 }
 
 func cloneContentParts(parts []ContentPart) []ContentPart {
@@ -65,12 +65,12 @@ func cloneInputs(inputs []Input) []Input {
 }
 
 type Input struct {
-	Kind    InputKind
-	Text    string
-	Content []ContentPart `json:",omitempty"`
-	CallID  string
-	Tool    string
-	IsError bool
+	Kind    InputKind     `json:"kind"`
+	Text    string        `json:"text"`
+	Content []ContentPart `json:"content,omitempty"`
+	CallID  string        `json:"call_id"`
+	Tool    string        `json:"tool"`
+	IsError bool          `json:"is_error"`
 }
 
 func (input Input) Validate() error {
@@ -173,9 +173,9 @@ type ToolCallSnapshot struct {
 }
 
 type Usage struct {
-	InputTokens  int64
-	OutputTokens int64
-	TotalTokens  int64
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+	TotalTokens  int64 `json:"total_tokens"`
 }
 
 type Request struct {

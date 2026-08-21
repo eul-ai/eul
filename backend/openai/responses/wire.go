@@ -46,6 +46,18 @@ type inputMessage struct {
 	Content any    `json:"content"`
 }
 
+type inputAgentMessage struct {
+	Type      string                     `json:"type"`
+	Author    string                     `json:"author"`
+	Recipient string                     `json:"recipient"`
+	Content   []agentMessageInputContent `json:"content"`
+}
+
+type agentMessageInputContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
 type inputContentPart struct {
 	Type     string `json:"type"`
 	Text     string `json:"text,omitempty"`

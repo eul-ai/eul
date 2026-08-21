@@ -36,8 +36,8 @@ type pendingContinuation struct {
 }
 
 type GoalState struct {
-	Objective string
-	Complete  bool
+	Objective string `json:"objective"`
+	Complete  bool   `json:"complete"`
 }
 
 type continuationArbiter struct {

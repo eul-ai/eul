@@ -26,28 +26,30 @@ type RequestOptionsFunc func(agent.Request) (RequestOptions, error)
 type PrepareRequestFunc func(context.Context, *http.Request) error
 
 type Options struct {
-	HTTPClient          *http.Client
-	Endpoint            string
-	ErrorPrefix         string
-	PrepareRequest      PrepareRequestFunc
-	RequestOptions      RequestOptionsFunc
-	MaxRequestBytes     int64
-	MaxResponseBytes    int64
-	MaxErrorBytes       int64
-	MaxStateBytes       int
-	StateOutputHeadroom int
+	HTTPClient                *http.Client
+	Endpoint                  string
+	ErrorPrefix               string
+	PrepareRequest            PrepareRequestFunc
+	RequestOptions            RequestOptionsFunc
+	MaxRequestBytes           int64
+	MaxResponseBytes          int64
+	MaxErrorBytes             int64
+	MaxStateBytes             int
+	StateOutputHeadroom       int
+	EncodeInboxAsAgentMessage bool
 }
 
 type Client struct {
-	httpClient          *http.Client
-	endpoint            string
-	errorConfig         backendhttp.APIErrorConfig
-	prepareRequest      PrepareRequestFunc
-	requestOptions      RequestOptionsFunc
-	maxRequestBytes     int64
-	maxResponseBytes    int64
-	maxStateBytes       int
-	stateOutputHeadroom int
+	httpClient                *http.Client
+	endpoint                  string
+	errorConfig               backendhttp.APIErrorConfig
+	prepareRequest            PrepareRequestFunc
+	requestOptions            RequestOptionsFunc
+	maxRequestBytes           int64
+	maxResponseBytes          int64
+	maxStateBytes             int
+	stateOutputHeadroom       int
+	encodeInboxAsAgentMessage bool
 }
 
 func New(options Options) (*Client, error) {
@@ -72,12 +74,13 @@ func New(options Options) (*Client, error) {
 			Maximum:      limits.ErrorBytes,
 			FormatDetail: formatHTTPErrorDetail,
 		},
-		prepareRequest:      options.PrepareRequest,
-		requestOptions:      options.RequestOptions,
-		maxRequestBytes:     limits.RequestBytes,
-		maxResponseBytes:    limits.ResponseBytes,
-		maxStateBytes:       maxStateBytes,
-		stateOutputHeadroom: options.StateOutputHeadroom,
+		prepareRequest:            options.PrepareRequest,
+		requestOptions:            options.RequestOptions,
+		maxRequestBytes:           limits.RequestBytes,
+		maxResponseBytes:          limits.ResponseBytes,
+		maxStateBytes:             maxStateBytes,
+		stateOutputHeadroom:       options.StateOutputHeadroom,
+		encodeInboxAsAgentMessage: options.EncodeInboxAsAgentMessage,
 	}, nil
 }
 
@@ -89,13 +92,13 @@ func (client *Client) ShouldCompactState(request agent.Request) bool {
 	if len(request.State) == 0 {
 		return false
 	}
-	if _, err := buildGenerationWireRequest(request, client.maxStateBytes, client.generationStateBytes()); err == nil {
+	if _, err := buildGenerationWireRequestWithOptions(request, client.maxStateBytes, client.generationStateBytes(), client.encodeInboxAsAgentMessage); err == nil {
 		return false
 	}
 
 	withoutState := request
 	withoutState.State = nil
-	_, err := buildGenerationWireRequest(withoutState, client.maxStateBytes, client.generationStateBytes())
+	_, err := buildGenerationWireRequestWithOptions(withoutState, client.maxStateBytes, client.generationStateBytes(), client.encodeInboxAsAgentMessage)
 	return err == nil
 }
 

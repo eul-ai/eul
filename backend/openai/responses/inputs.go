@@ -9,6 +9,10 @@ import (
 )
 
 func encodeInputs(inputs []agent.Input) ([]json.RawMessage, error) {
+	return encodeInputsWithOptions(inputs, false)
+}
+
+func encodeInputsWithOptions(inputs []agent.Input, encodeInboxAsAgentMessage bool) ([]json.RawMessage, error) {
 	items := make([]json.RawMessage, len(inputs))
 	for index, input := range inputs {
 		if err := input.Validate(); err != nil {
@@ -20,7 +24,16 @@ func encodeInputs(inputs []agent.Input) ([]json.RawMessage, error) {
 		case agent.InputUser:
 			value = inputMessage{Role: "user", Content: encodeUserContent(input.Content)}
 		case agent.InputInbox:
-			value = inputMessage{Role: "user", Content: input.Text}
+			if encodeInboxAsAgentMessage {
+				value = inputAgentMessage{
+					Type:      "agent_message",
+					Author:    "/root/subagents",
+					Recipient: "/root",
+					Content:   []agentMessageInputContent{{Type: "input_text", Text: input.Text}},
+				}
+			} else {
+				value = inputMessage{Role: "user", Content: input.Text}
+			}
 		case agent.InputToolResult:
 			output := input.Text
 			if input.IsError {

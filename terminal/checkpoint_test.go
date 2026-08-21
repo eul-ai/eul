@@ -156,8 +156,8 @@ func TestImageOnlyCheckpointDescription(t *testing.T) {
 	}
 }
 
-func TestVersionOneTerminalCheckpointFixture(t *testing.T) {
-	fixture, err := os.ReadFile("testdata/checkpoint-v1.json")
+func TestVersionTwoTerminalCheckpointFixture(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/checkpoint-v2.json")
 	if err != nil {
 		t.Fatal(err)
 	}

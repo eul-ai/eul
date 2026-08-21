@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	sessionRecordVersion       = 2
+	sessionRecordVersion       = 3
 	maxSessionDescriptionBytes = 120
 )
 

@@ -15,7 +15,7 @@ type requestBuild struct {
 }
 
 func (client *Client) buildGenerationRequest(request agent.Request) (requestBuild, error) {
-	build, err := buildGenerationWireRequest(request, client.maxStateBytes, client.generationStateBytes())
+	build, err := buildGenerationWireRequestWithOptions(request, client.maxStateBytes, client.generationStateBytes(), client.encodeInboxAsAgentMessage)
 	if err != nil {
 		return requestBuild{}, fmt.Errorf("build request: %w", err)
 	}
@@ -28,7 +28,7 @@ func (client *Client) buildGenerationRequest(request agent.Request) (requestBuil
 }
 
 func (client *Client) buildSummaryRequest(request agent.Request) (requestBuild, error) {
-	build, err := buildWireRequest(request, client.maxStateBytes)
+	build, err := buildWireRequestWithOptions(request, client.maxStateBytes, client.encodeInboxAsAgentMessage)
 	if err != nil {
 		return requestBuild{}, fmt.Errorf("build summary request: %w", err)
 	}
@@ -41,7 +41,11 @@ func (client *Client) buildSummaryRequest(request agent.Request) (requestBuild, 
 }
 
 func buildGenerationWireRequest(request agent.Request, maxStateBytes, generationStateBytes int) (requestBuild, error) {
-	build, err := buildWireRequest(request, maxStateBytes)
+	return buildGenerationWireRequestWithOptions(request, maxStateBytes, generationStateBytes, false)
+}
+
+func buildGenerationWireRequestWithOptions(request agent.Request, maxStateBytes, generationStateBytes int, encodeInboxAsAgentMessage bool) (requestBuild, error) {
+	build, err := buildWireRequestWithOptions(request, maxStateBytes, encodeInboxAsAgentMessage)
 	if err != nil {
 		return requestBuild{}, err
 	}
@@ -51,13 +55,13 @@ func buildGenerationWireRequest(request agent.Request, maxStateBytes, generation
 	return build, nil
 }
 
-func buildWireRequest(request agent.Request, maxStateBytes int) (requestBuild, error) {
+func buildWireRequestWithOptions(request agent.Request, maxStateBytes int, encodeInboxAsAgentMessage bool) (requestBuild, error) {
 	history, err := continuation.Decode(request.State, maxStateBytes)
 	if err != nil {
 		return requestBuild{}, err
 	}
 
-	newItems, err := encodeInputs(request.Inputs)
+	newItems, err := encodeInputsWithOptions(request.Inputs, encodeInboxAsAgentMessage)
 	if err != nil {
 		return requestBuild{}, err
 	}

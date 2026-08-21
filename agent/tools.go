@@ -108,23 +108,23 @@ const (
 )
 
 type ToolDiffLine struct {
-	Kind    ToolDiffLineKind
-	OldLine int
-	NewLine int
-	Text    string
+	Kind    ToolDiffLineKind `json:"kind"`
+	OldLine int              `json:"old_line"`
+	NewLine int              `json:"new_line"`
+	Text    string           `json:"text"`
 }
 
 type ToolPresentation struct {
-	Title          string
-	Arguments      string
-	Lines          []string
-	LinesTruncated bool
-	Diff           []ToolDiffLine
-	Markdown       bool
-	Outcome        string
-	TailLines      int
-	Elapsed        time.Duration
-	Timeout        time.Duration
+	Title          string         `json:"title"`
+	Arguments      string         `json:"arguments"`
+	Lines          []string       `json:"lines"`
+	LinesTruncated bool           `json:"lines_truncated"`
+	Diff           []ToolDiffLine `json:"diff"`
+	Markdown       bool           `json:"markdown"`
+	Outcome        string         `json:"outcome"`
+	TailLines      int            `json:"tail_lines"`
+	Elapsed        time.Duration  `json:"elapsed"`
+	Timeout        time.Duration  `json:"timeout"`
 }
 
 func (presentation ToolPresentation) Clone() ToolPresentation {

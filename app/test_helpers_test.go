@@ -155,7 +155,7 @@ func stringPointer(value string) *string {
 func sessionStoreTestAgentCheckpoint(t testing.TB) agent.Checkpoint {
 	t.Helper()
 	var checkpoint agent.Checkpoint
-	if err := json.Unmarshal([]byte(`{"version":2,"context_usage":{"InputTokens":0,"OutputTokens":0,"TotalTokens":0}}`), &checkpoint); err != nil {
+	if err := json.Unmarshal([]byte(`{"version":3,"context_usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}`), &checkpoint); err != nil {
 		t.Fatal(err)
 	}
 	return checkpoint
@@ -164,7 +164,7 @@ func sessionStoreTestAgentCheckpoint(t testing.TB) agent.Checkpoint {
 func sessionStoreTestTerminalCheckpoint(t testing.TB, prompt string) terminal.Checkpoint {
 	t.Helper()
 	encoded, err := json.Marshal(map[string]any{
-		"version": 1,
+		"version": 2,
 		"blocks": []map[string]any{{
 			"kind": 0,
 			"text": prompt,

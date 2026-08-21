@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const checkpointVersion = 2
+const checkpointVersion = 3
 
 type Checkpoint struct {
 	data checkpointData

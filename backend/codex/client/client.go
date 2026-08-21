@@ -44,11 +44,12 @@ func New(source TokenSource, options Options) (*Client, error) {
 
 	client := &Client{requests: requests, reasoningSummary: reasoningSummary}
 	client.responses, err = responses.New(responses.Options{
-		HTTPClient:     requests.httpClient,
-		Endpoint:       baseURL + "/codex/responses",
-		ErrorPrefix:    "openai",
-		PrepareRequest: client.prepareResponsesRequest,
-		RequestOptions: client.responsesRequestOptions,
+		HTTPClient:                requests.httpClient,
+		Endpoint:                  baseURL + "/codex/responses",
+		ErrorPrefix:               "openai",
+		PrepareRequest:            client.prepareResponsesRequest,
+		RequestOptions:            client.responsesRequestOptions,
+		EncodeInboxAsAgentMessage: true,
 	})
 	if err != nil {
 		return nil, err

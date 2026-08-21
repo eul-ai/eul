@@ -38,25 +38,39 @@ func TestBuildCreateRequest(t *testing.T) {
 	}
 }
 
-func TestEncodeInboxInputAsUserMessage(t *testing.T) {
-	items, err := encodeInputs([]agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}})
+func TestEncodeInboxInputAsAgentMessage(t *testing.T) {
+	items, err := encodeInputsWithOptions([]agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(items) != 1 {
 		t.Fatalf("items = %d", len(items))
 	}
+	var message inputAgentMessage
+	if err := json.Unmarshal(items[0], &message); err != nil {
+		t.Fatal(err)
+	}
+	if message.Type != "agent_message" || message.Author != "/root/subagents" || message.Recipient != "/root" || len(message.Content) != 1 || message.Content[0].Type != "input_text" || message.Content[0].Text != "<subagent_notifications>result</subagent_notifications>" {
+		t.Fatalf("message = %+v", message)
+	}
+}
+
+func TestEncodeInboxInputAsUserMessageByDefault(t *testing.T) {
+	items, err := encodeInputs([]agent.Input{agent.NewInboxInput("result")})
+	if err != nil {
+		t.Fatal(err)
+	}
 	var message inputMessage
 	if err := json.Unmarshal(items[0], &message); err != nil {
 		t.Fatal(err)
 	}
-	if message.Role != "user" || message.Content != "<subagent_notifications>result</subagent_notifications>" {
+	if message.Role != "user" || message.Content != "result" {
 		t.Fatalf("message = %+v", message)
 	}
 }
 
 func TestInboxInputSurvivesContinuationState(t *testing.T) {
-	build, err := buildGenerationWireRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}}}, continuation.DefaultMaximumBytes, continuation.DefaultMaximumBytes)
+	build, err := buildGenerationWireRequestWithOptions(agent.Request{Inputs: []agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}}}, continuation.DefaultMaximumBytes, continuation.DefaultMaximumBytes, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,18 +203,53 @@ func TestBuildCompactRequest(t *testing.T) {
 	}
 }
 
-func TestCompactedStateItems(t *testing.T) {
+func TestCompactedStateItemsRetainsOnlyGenuineUserMessages(t *testing.T) {
 	input := []json.RawMessage{
 		json.RawMessage(`{"type":"reasoning"}`),
 		json.RawMessage(`{"type":"message","role":"assistant"}`),
-		json.RawMessage(`{"type":"message","role":"user"}`),
-		json.RawMessage(`{"type":"agent_message"}`),
+		json.RawMessage(`{"role":"user","content":[{"type":"input_text","text":"human"}]}`),
+		json.RawMessage(`{"role":"user","content":"legacy inbox"}`),
+		json.RawMessage(`{"type":"agent_message","content":[{"type":"input_text","text":"inbox"}]}`),
+		json.RawMessage(`{"role":"developer","content":[{"type":"input_text","text":"old instructions"}]}`),
+		json.RawMessage(`{"role":"system","content":[{"type":"input_text","text":"old system"}]}`),
+		json.RawMessage(`{"type":"compaction","encrypted_content":"old"}`),
+	}
+	output := []json.RawMessage{json.RawMessage(`{"type":"compaction","encrypted_content":"new"}`)}
+
+	items := compactedStateItems(input, output)
+	if len(items) != 2 || !strings.Contains(string(items[0]), `"text":"human"`) || !strings.Contains(string(items[1]), `"encrypted_content":"new"`) {
+		t.Fatalf("compacted items = %s", items)
+	}
+}
+
+func TestCompactedStateItemsKeepsNewestUsersWithinBudget(t *testing.T) {
+	input := []json.RawMessage{
+		json.RawMessage(`{"role":"user","content":[{"type":"input_text","text":"oldest message"}]}`),
+		json.RawMessage(`{"role":"user","content":[{"type":"input_text","text":"ééé"}]}`),
+		json.RawMessage(`{"role":"user","content":[{"type":"input_text","text":"new"}]}`),
 	}
 	output := []json.RawMessage{json.RawMessage(`{"type":"compaction"}`)}
 
-	items := compactedStateItems(input, output)
-	if len(items) != 3 || !strings.Contains(string(items[0]), `"role":"user"`) || !strings.Contains(string(items[1]), `"type":"agent_message"`) || !strings.Contains(string(items[2]), `"type":"compaction"`) {
+	items := compactedStateItemsWithBudget(input, output, 2)
+	if len(items) != 3 || !strings.Contains(string(items[0]), `"text":"éé"`) || !strings.Contains(string(items[1]), `"text":"new"`) || string(items[2]) != `{"type":"compaction"}` {
 		t.Fatalf("compacted items = %s", items)
+	}
+}
+
+func TestCompactedStateItemsAccountsForImages(t *testing.T) {
+	input := []json.RawMessage{
+		json.RawMessage(`{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,abc"}]}`),
+		json.RawMessage(`{"role":"user","content":[{"type":"input_text","text":"new"}]}`),
+	}
+
+	withoutImage := compactedStateItemsWithBudget(input, nil, retainedImageTokens)
+	if len(withoutImage) != 1 || !strings.Contains(string(withoutImage[0]), `"text":"new"`) {
+		t.Fatalf("without image = %s", withoutImage)
+	}
+
+	withImage := compactedStateItemsWithBudget(input, nil, retainedImageTokens+1)
+	if len(withImage) != 2 || !strings.Contains(string(withImage[0]), `"input_image"`) || !strings.Contains(string(withImage[1]), `"text":"new"`) {
+		t.Fatalf("with image = %s", withImage)
 	}
 }
 

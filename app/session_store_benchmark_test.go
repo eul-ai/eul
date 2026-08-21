@@ -112,7 +112,7 @@ func sessionStoreBenchmarkTerminalCheckpoint(t testing.TB, blockCount int) termi
 			"text": fmt.Sprintf("message-%04d %s", index, body),
 		}
 	}
-	encoded, err := json.Marshal(map[string]any{"version": 1, "blocks": blocks})
+	encoded, err := json.Marshal(map[string]any{"version": 2, "blocks": blocks})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	terminalCheckpointVersion  = 1
+	terminalCheckpointVersion  = 2
 	maxSessionDescriptionBytes = 120
 )
 

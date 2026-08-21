@@ -1,0 +1,192 @@
+{
+  "version": 2,
+  "blocks": [
+    {
+      "kind": 0,
+      "text": "user",
+      "tool": {
+        "title": "",
+        "arguments": "",
+        "lines": null,
+        "lines_truncated": false,
+        "diff": null,
+        "markdown": false,
+        "outcome": "",
+        "tail_lines": 0,
+        "elapsed": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "kind": 1,
+      "text": "assistant",
+      "tool": {
+        "title": "",
+        "arguments": "",
+        "lines": null,
+        "lines_truncated": false,
+        "diff": null,
+        "markdown": false,
+        "outcome": "",
+        "tail_lines": 0,
+        "elapsed": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "kind": 2,
+      "text": "reasoning",
+      "tool": {
+        "title": "",
+        "arguments": "",
+        "lines": null,
+        "lines_truncated": false,
+        "diff": null,
+        "markdown": false,
+        "outcome": "",
+        "tail_lines": 0,
+        "elapsed": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "kind": 3,
+      "text": "edit",
+      "tool_call_id": "call-1",
+      "tool": {
+        "title": "edit",
+        "arguments": "file.go",
+        "lines": [
+          "line"
+        ],
+        "lines_truncated": true,
+        "diff": [
+          {
+            "kind": 0,
+            "old_line": 1,
+            "new_line": 1,
+            "text": "context"
+          },
+          {
+            "kind": 1,
+            "old_line": 0,
+            "new_line": 2,
+            "text": "added"
+          },
+          {
+            "kind": 2,
+            "old_line": 3,
+            "new_line": 0,
+            "text": "removed"
+          },
+          {
+            "kind": 3,
+            "old_line": 0,
+            "new_line": 0,
+            "text": "omitted"
+          }
+        ],
+        "markdown": true,
+        "outcome": "running",
+        "tail_lines": 4,
+        "elapsed": 1500000000,
+        "timeout": 10000000000
+      },
+      "tool_outcome": "pending"
+    },
+    {
+      "kind": 4,
+      "text": "tool",
+      "tool_call_id": "call-2",
+      "tool": {
+        "title": "",
+        "arguments": "",
+        "lines": null,
+        "lines_truncated": false,
+        "diff": null,
+        "markdown": false,
+        "outcome": "",
+        "tail_lines": 0,
+        "elapsed": 0,
+        "timeout": 0
+      },
+      "tool_outcome": "ok"
+    },
+    {
+      "kind": 5,
+      "text": "tool error",
+      "tool_call_id": "call-3",
+      "tool": {
+        "title": "",
+        "arguments": "",
+        "lines": null,
+        "lines_truncated": false,
+        "diff": null,
+        "markdown": false,
+        "outcome": "",
+        "tail_lines": 0,
+        "elapsed": 0,
+        "timeout": 0
+      },
+      "tool_outcome": "error"
+    },
+    {
+      "kind": 6,
+      "text": "context",
+      "tool": {
+        "title": "",
+        "arguments": "",
+        "lines": null,
+        "lines_truncated": false,
+        "diff": null,
+        "markdown": false,
+        "outcome": "",
+        "tail_lines": 0,
+        "elapsed": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "kind": 7,
+      "text": "error",
+      "tool": {
+        "title": "",
+        "arguments": "",
+        "lines": null,
+        "lines_truncated": false,
+        "diff": null,
+        "markdown": false,
+        "outcome": "",
+        "tail_lines": 0,
+        "elapsed": 0,
+        "timeout": 0
+      }
+    },
+    {
+      "kind": 8,
+      "text": "info",
+      "tool": {
+        "title": "",
+        "arguments": "",
+        "lines": null,
+        "lines_truncated": false,
+        "diff": null,
+        "markdown": false,
+        "outcome": "",
+        "tail_lines": 0,
+        "elapsed": 0,
+        "timeout": 0
+      }
+    }
+  ],
+  "input": "draft",
+  "cursor": 3,
+  "history": [
+    "first",
+    "second"
+  ],
+  "context_tokens": 42,
+  "queued_inputs": [
+    "queued"
+  ]
+}

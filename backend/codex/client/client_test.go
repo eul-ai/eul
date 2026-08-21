@@ -48,11 +48,12 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 			t.Errorf("request body leaked auth: %s", body)
 		}
 		var wire struct {
-			Stream            bool     `json:"stream"`
-			Store             bool     `json:"store"`
-			ServiceTier       string   `json:"service_tier"`
-			Include           []string `json:"include"`
-			ParallelToolCalls bool     `json:"parallel_tool_calls"`
+			Input             []json.RawMessage `json:"input"`
+			Stream            bool              `json:"stream"`
+			Store             bool              `json:"store"`
+			ServiceTier       string            `json:"service_tier"`
+			Include           []string          `json:"include"`
+			ParallelToolCalls bool              `json:"parallel_tool_calls"`
 			Text              *struct {
 				Verbosity string `json:"verbosity"`
 			} `json:"text"`
@@ -65,8 +66,14 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 		if err := json.Unmarshal(body, &wire); err != nil {
 			t.Error(err)
 		}
-		if !wire.Stream || wire.Store || wire.ServiceTier != "priority" || len(wire.Include) != 1 || wire.Include[0] != "reasoning.encrypted_content" || wire.Text == nil || wire.Text.Verbosity != "low" || wire.Reasoning == nil || wire.Reasoning.Effort != "xhigh" || wire.Reasoning.Summary != "auto" || wire.ToolChoice != "auto" || !wire.ParallelToolCalls {
+		if !wire.Stream || wire.Store || wire.ServiceTier != "priority" || len(wire.Include) != 1 || wire.Include[0] != "reasoning.encrypted_content" || wire.Text == nil || wire.Text.Verbosity != "low" || wire.Reasoning == nil || wire.Reasoning.Effort != "xhigh" || wire.Reasoning.Summary != "auto" || wire.ToolChoice != "auto" || !wire.ParallelToolCalls || len(wire.Input) != 2 {
 			t.Errorf("Codex request shape = %+v", wire)
+		}
+		var inbox struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(wire.Input[1], &inbox); err != nil || inbox.Type != "agent_message" {
+			t.Errorf("Codex inbox input = %s, error = %v", wire.Input[1], err)
 		}
 
 		writer.Header().Set("Content-Type", "text/event-stream")
@@ -92,7 +99,10 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 		Model:         ModelGPT56Sol,
 		ThinkingLevel: agent.ThinkingXHigh,
 		FastMode:      true,
-		Inputs:        []agent.Input{agent.NewTextInput("hello")},
+		Inputs: []agent.Input{
+			agent.NewTextInput("hello"),
+			agent.NewInboxInput("subagent result"),
+		},
 	}, agent.StreamObserver{
 		Text:      func(text string) error { delivered += text; return nil },
 		Reasoning: func(text string) error { reasoning += text; return nil },
