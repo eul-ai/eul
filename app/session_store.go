@@ -20,7 +20,7 @@ import (
 	"github.com/eul-ai/eul/terminal"
 )
 
-const maxSessionBytes = int64(64 * 1024 * 1024)
+const maxSessionBytes = int64(512 * 1024 * 1024)
 
 var errSessionInUse = errors.New("session is already in use")
 
