@@ -120,6 +120,7 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 			InitialCheckpoint:  source.initialCheckpoint,
 			SessionID:          source.sessionID,
 			PreviousTurnActive: source.previousTurnActive,
+			InitialPrompt:      source.config.prompt,
 		},
 		Events: terminal.Events{
 			Interrupts:         source.runtime.interrupts,

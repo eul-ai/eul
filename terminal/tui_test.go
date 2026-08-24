@@ -552,3 +552,27 @@ func TestHandleKeyCommands(t *testing.T) {
 		t.Fatalf("blocks=%+v", model.blocks)
 	}
 }
+
+func TestRunTUISubmitsInitialPrompt(t *testing.T) {
+	submitted := make(chan string, 1)
+	engine := &fakeEngine{runContentFunction: func(_ context.Context, content []agent.ContentPart, _ agent.EventSink) (agent.RunResult, error) {
+		submitted <- contentText(content)
+		return agent.RunResult{}, nil
+	}}
+
+	var output bytes.Buffer
+	options := optionsForEngine(engine, Options{Input: strings.NewReader(""), Output: &output})
+	options.Config.InitialPrompt = "investigate the store"
+	if _, err := runTUI(context.Background(), options, -1, 80, 24); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case got := <-submitted:
+		if got != "investigate the store" {
+			t.Fatalf("initial prompt = %q", got)
+		}
+	default:
+		t.Fatal("the initial prompt was not submitted")
+	}
+}

@@ -58,6 +58,7 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (app.Options, e
 	fast := flags.Bool("fast", false, "enable the provider's fast inference mode")
 	cwd := flags.String("cwd", "", "fixed working directory")
 	noSandbox := flags.Bool("no-sandbox", false, "disable Bash network sandboxing and permission prompts")
+	prompt := flags.String("prompt", "", "start the session by sending this message")
 	resume := &resumeValue{}
 	flags.Var(resume, "resume", "resume the most recent session or a session selected with --resume=<id>")
 
@@ -94,6 +95,7 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (app.Options, e
 		NoSandbox:        *noSandbox,
 		Resume:           resume.enabled,
 		SessionID:        resume.sessionID,
+		Prompt:           *prompt,
 	}, nil
 }
 

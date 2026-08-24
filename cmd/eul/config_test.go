@@ -28,6 +28,7 @@ func TestParseAgentArguments(t *testing.T) {
 		"--fast",
 		"--cwd", "project",
 		"--no-sandbox",
+		"--prompt", "investigate the store",
 	}, runtime)
 	if err != nil {
 		t.Fatal(err)
@@ -41,6 +42,7 @@ func TestParseAgentArguments(t *testing.T) {
 		FastMode:         true,
 		WorkingDirectory: "project",
 		NoSandbox:        true,
+		Prompt:           "investigate the store",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("arguments = %+v, want %+v", got, want)
