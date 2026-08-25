@@ -162,6 +162,7 @@ func (store *sessionStore) Open(ctx context.Context, cwd, id string) (*sessionHa
 		_ = releaseSessionLock(lock)
 		return nil, err
 	}
+	clearTranscriptSlot(path, inactiveTranscriptSlot(head.Slot))
 
 	return &sessionHandle{
 		store:      store,
@@ -335,26 +336,41 @@ func (handle *sessionHandle) commit(record sessionRecord) error {
 	}
 
 	head := handle.head
+	previousSlot := head.Slot
+	compacted := false
 	delta, changed := terminal.DiffTranscript(handle.transcript, transcript)
 	if changed {
-		encodedDelta, err := json.Marshal(delta)
+		encodedDelta, err := encodeTranscriptDelta(delta)
 		if err != nil {
-			return fmt.Errorf("encode transcript delta: %w", err)
-		}
-		encodedDelta = append(encodedDelta, '\n')
-		if int64(len(encodedDelta)) > maxTranscriptRecordBytes {
-			return fmt.Errorf("session transcript record exceeds %d bytes", maxTranscriptRecordBytes)
-		}
-		if err := appendTranscriptRecord(handle.path, head, encodedDelta); err != nil {
 			return err
 		}
-		head.Bytes += int64(len(encodedDelta))
-		head.BlockCount = transcript.BlockCount()
-		if !handle.persisted || handle.head.Bytes == 0 {
-			head.BaseBytes = int64(len(encodedDelta))
-			head.DeltaBytes = 0
+		if shouldCompactTranscript(head, int64(len(encodedDelta))) {
+			canonical, err := encodeCanonicalTranscript(transcript)
+			if err != nil {
+				return err
+			}
+			head = sessionTranscriptHead{
+				Slot:       inactiveTranscriptSlot(head.Slot),
+				Bytes:      int64(len(canonical)),
+				BlockCount: transcript.BlockCount(),
+				BaseBytes:  int64(len(canonical)),
+			}
+			if err := writeTranscriptSlot(handle.path, head.Slot, canonical); err != nil {
+				return err
+			}
+			compacted = true
 		} else {
-			head.DeltaBytes += int64(len(encodedDelta))
+			if err := appendTranscriptRecord(handle.path, head, encodedDelta); err != nil {
+				return err
+			}
+			head.Bytes += int64(len(encodedDelta))
+			head.BlockCount = transcript.BlockCount()
+			if !handle.persisted || handle.head.Bytes == 0 {
+				head.BaseBytes = int64(len(encodedDelta))
+				head.DeltaBytes = 0
+			} else {
+				head.DeltaBytes += int64(len(encodedDelta))
+			}
 		}
 	}
 
@@ -384,6 +400,9 @@ func (handle *sessionHandle) commit(record sessionRecord) error {
 	handle.transcript = transcript
 	handle.head = head
 	handle.persisted = true
+	if compacted {
+		clearTranscriptSlot(handle.path, previousSlot)
+	}
 	return nil
 }
 
@@ -561,6 +580,92 @@ func readTranscript(path string, head sessionTranscriptHead) (terminal.Transcrip
 		return terminal.Transcript{}, errors.New("session transcript block count is inconsistent")
 	}
 	return transcript, nil
+}
+
+func encodeTranscriptDelta(delta terminal.TranscriptDelta) ([]byte, error) {
+	encoded, err := json.Marshal(delta)
+	if err != nil {
+		return nil, fmt.Errorf("encode transcript delta: %w", err)
+	}
+	encoded = append(encoded, '\n')
+	if int64(len(encoded)) > maxTranscriptRecordBytes {
+		return nil, fmt.Errorf("session transcript record exceeds %d bytes", maxTranscriptRecordBytes)
+	}
+	return encoded, nil
+}
+
+func encodeCanonicalTranscript(transcript terminal.Transcript) ([]byte, error) {
+	delta, changed := terminal.DiffTranscript(terminal.EmptyTranscript(), transcript)
+	if !changed {
+		return nil, nil
+	}
+	return encodeTranscriptDelta(delta)
+}
+
+func shouldCompactTranscript(head sessionTranscriptHead, appendedBytes int64) bool {
+	if head.Bytes == 0 || head.BaseBytes == 0 {
+		return false
+	}
+	return head.DeltaBytes+appendedBytes >= head.BaseBytes || head.Bytes+appendedBytes >= maxSessionBytes
+}
+
+func inactiveTranscriptSlot(slot string) string {
+	if slot == "a" {
+		return "b"
+	}
+	return "a"
+}
+
+func writeTranscriptSlot(path, slot string, encoded []byte) error {
+	if int64(len(encoded)) > maxSessionBytes {
+		return fmt.Errorf("session transcript exceeds %d bytes", maxSessionBytes)
+	}
+	temporary, err := os.CreateTemp(path, ".transcript-*")
+	if err != nil {
+		return fmt.Errorf("create session transcript temporary file: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	cleanup := func() {
+		_ = temporary.Close()
+		_ = os.Remove(temporaryPath)
+	}
+	if err := temporary.Chmod(0o600); err != nil {
+		cleanup()
+		return fmt.Errorf("secure session transcript temporary file: %w", err)
+	}
+	if err := writeAll(temporary, encoded); err != nil {
+		cleanup()
+		return fmt.Errorf("write session transcript temporary file: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		cleanup()
+		return fmt.Errorf("sync session transcript temporary file: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		_ = os.Remove(temporaryPath)
+		return fmt.Errorf("close session transcript temporary file: %w", err)
+	}
+	if err := os.Rename(temporaryPath, sessionTranscriptPath(path, slot)); err != nil {
+		_ = os.Remove(temporaryPath)
+		return fmt.Errorf("replace session transcript file: %w", err)
+	}
+	return syncDirectory(path)
+}
+
+func clearTranscriptSlot(path, slot string) {
+	transcriptPath := sessionTranscriptPath(path, slot)
+	info, err := os.Lstat(transcriptPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return
+	}
+	file, err := os.OpenFile(transcriptPath, os.O_WRONLY, 0)
+	if err != nil {
+		return
+	}
+	if file.Truncate(0) == nil {
+		_ = file.Sync()
+	}
+	_ = file.Close()
 }
 
 func appendTranscriptRecord(path string, head sessionTranscriptHead, encoded []byte) (err error) {

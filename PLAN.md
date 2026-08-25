@@ -49,7 +49,7 @@ The inactive transcript slot is used only to publish a compacted transcript safe
   - Run `gofumpt` and focused `app` and `terminal` tests.
   - Commit the checkpoint.
 
-- [ ] **Checkpoint 3: two-slot transcript compaction**
+- [x] **Checkpoint 3: two-slot transcript compaction**
   - Track base and delta byte counts in `state.json`.
   - Compact when accumulated delta bytes reach the canonical base size.
   - Write the canonical transcript to the inactive slot, sync it, then atomically switch `state.json`.

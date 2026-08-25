@@ -256,7 +256,8 @@ func TestSessionStoreAppendsOnlyTranscriptChanges(t *testing.T) {
 	store := newSessionStore(t.TempDir())
 	cwd := t.TempDir()
 	agentCheckpoint := sessionStoreTestAgentCheckpoint(t)
-	initial := sessionStoreTestTerminalCheckpoint(t, "prompt")
+	prompt := strings.Repeat("prompt ", 200)
+	initial := sessionStoreTestTerminalCheckpoint(t, prompt)
 	handle, err := store.Create("test", cwd, modelSet{main: "model", fast: "model", balanced: "model"}, agent.ThinkingMedium, agentCheckpoint, subagent.EmptyCheckpoint(), initial, false)
 	if err != nil {
 		t.Fatal(err)
@@ -283,7 +284,7 @@ func TestSessionStoreAppendsOnlyTranscriptChanges(t *testing.T) {
 	}
 
 	next := sessionStoreTestTerminalBlocks(t, []map[string]any{
-		{"kind": 0, "text": "prompt"},
+		{"kind": 0, "text": prompt},
 		{"kind": 1, "text": "answer"},
 	})
 	if err := handle.Save(agentCheckpoint, subagent.EmptyCheckpoint(), next, false, agent.ThinkingHigh, true); err != nil {
@@ -321,6 +322,103 @@ func TestSessionStoreAppendsOnlyTranscriptChanges(t *testing.T) {
 	if !strings.Contains(string(encoded), "prompt") || !strings.Contains(string(encoded), "answer") {
 		t.Fatalf("restored terminal checkpoint = %s", encoded)
 	}
+}
+
+func TestSessionStoreCompactsTranscriptUsingInactiveSlot(t *testing.T) {
+	store := newSessionStore(t.TempDir())
+	cwd := t.TempDir()
+	agentCheckpoint := sessionStoreTestAgentCheckpoint(t)
+	initial := sessionStoreTestTerminalCheckpoint(t, "prompt")
+	handle, err := store.Create("test", cwd, modelSet{main: "model", fast: "model", balanced: "model"}, agent.ThinkingMedium, agentCheckpoint, subagent.EmptyCheckpoint(), initial, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second := sessionStoreTestTerminalBlocks(t, []map[string]any{
+		{"kind": 0, "text": "prompt"},
+		{"kind": 1, "text": strings.Repeat("second ", 200)},
+	})
+	if err := handle.Save(agentCheckpoint, subagent.EmptyCheckpoint(), second, false, agent.ThinkingMedium, false); err != nil {
+		t.Fatal(err)
+	}
+	state, err := readSessionState(sessionStatePath(handle.path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Transcript.Slot != "b" || state.Transcript.DeltaBytes != 0 || state.Transcript.BaseBytes != state.Transcript.Bytes || state.Transcript.BlockCount != 2 {
+		t.Fatalf("compacted transcript head = %+v", state.Transcript)
+	}
+	assertFileSize(t, sessionTranscriptPath(handle.path, "a"), 0)
+	assertFileSize(t, sessionTranscriptPath(handle.path, "b"), state.Transcript.Bytes)
+
+	third := sessionStoreTestTerminalBlocks(t, []map[string]any{
+		{"kind": 0, "text": "prompt"},
+		{"kind": 1, "text": strings.Repeat("second ", 200)},
+		{"kind": 1, "text": strings.Repeat("third ", 500)},
+	})
+	if err := handle.Save(agentCheckpoint, subagent.EmptyCheckpoint(), third, false, agent.ThinkingMedium, false); err != nil {
+		t.Fatal(err)
+	}
+	state, err = readSessionState(sessionStatePath(handle.path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Transcript.Slot != "a" || state.Transcript.DeltaBytes != 0 || state.Transcript.BlockCount != 3 {
+		t.Fatalf("second compacted transcript head = %+v", state.Transcript)
+	}
+	assertFileSize(t, sessionTranscriptPath(handle.path, "a"), state.Transcript.Bytes)
+	assertFileSize(t, sessionTranscriptPath(handle.path, "b"), 0)
+
+	id := handle.record.ID
+	if err := handle.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := store.Open(context.Background(), cwd, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	encoded, err := json.Marshal(reopened.record.Terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), "second") || !strings.Contains(string(encoded), "third") {
+		t.Fatalf("restored compacted transcript = %s", encoded)
+	}
+}
+
+func TestSessionStoreIgnoresInterruptedTranscriptCompaction(t *testing.T) {
+	store := newSessionStore(t.TempDir())
+	cwd := t.TempDir()
+	handle, err := store.Create("test", cwd, modelSet{main: "model", fast: "model", balanced: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := handle.path
+	id := handle.record.ID
+	state, err := readSessionState(sessionStatePath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handle.Close(); err != nil {
+		t.Fatal(err)
+	}
+	inactivePath := sessionTranscriptPath(path, inactiveTranscriptSlot(state.Transcript.Slot))
+	if err := os.WriteFile(inactivePath, []byte("partial compacted transcript"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := store.Open(context.Background(), cwd, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.record.Terminal.Description() != "prompt" {
+		t.Fatalf("restored description = %q", reopened.record.Terminal.Description())
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	assertFileSize(t, inactivePath, 0)
 }
 
 func TestSessionStoreIgnoresUncommittedTranscriptTail(t *testing.T) {
@@ -423,6 +521,17 @@ func TestSessionStoreListsMetadataWithoutDecodingCheckpoints(t *testing.T) {
 	}
 	if _, err := store.Open(context.Background(), cwd, id); err == nil {
 		t.Fatal("full session load accepted invalid checkpoint data")
+	}
+}
+
+func assertFileSize(t *testing.T, path string, want int64) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != want {
+		t.Fatalf("%s size = %d, want %d", path, info.Size(), want)
 	}
 }
 
