@@ -28,7 +28,7 @@ The inactive transcript slot is used only to publish a compacted transcript safe
 
 ## Checkpoints
 
-- [ ] **Checkpoint 1: terminal persistence primitives**
+- [x] **Checkpoint 1: terminal persistence primitives**
   - Split a terminal checkpoint into transcript blocks and non-transcript state.
   - Reassemble a complete terminal checkpoint from those parts.
   - Compute and apply suffix-replacement transcript deltas without persistent block IDs.
