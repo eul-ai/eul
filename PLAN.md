@@ -59,7 +59,7 @@ The inactive transcript slot is used only to publish a compacted transcript safe
   - Run `gofumpt` and focused `app` tests.
   - Commit the checkpoint.
 
-- [ ] **Checkpoint 4: integration, cleanup, and performance verification**
+- [x] **Checkpoint 4: integration, cleanup, and performance verification**
   - Port persistence and lifecycle tests that inspect the old file directly.
   - Preserve active-before-launch, failed-checkpoint, interrupted-tool, and subagent recovery behavior.
   - Replace obsolete full-record benchmarks with state-only save, one-block append, replay, and listing benchmarks.

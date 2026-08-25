@@ -107,6 +107,44 @@ func TestTranscriptDeltaReplacesChangedSuffix(t *testing.T) {
 	assertTranscriptsEqual(t, applied, next)
 }
 
+func TestTranscriptDeltaApplicationsDoNotAlias(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.beginTurn("prompt")
+	base, _, err := SplitCheckpoint(checkpointModel(model, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	model.appendBlock(blockAssistant, "first")
+	first, _, err := SplitCheckpoint(checkpointModel(model, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstDelta, changed := DiffTranscript(base, first)
+	if !changed {
+		t.Fatal("first transcript did not change")
+	}
+
+	model.blocks[len(model.blocks)-1].text = "second"
+	second, _, err := SplitCheckpoint(checkpointModel(model, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondDelta, changed := DiffTranscript(base, second)
+	if !changed {
+		t.Fatal("second transcript did not change")
+	}
+
+	firstApplied, err := ApplyTranscriptDelta(base, firstDelta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyTranscriptDelta(base, secondDelta); err != nil {
+		t.Fatal(err)
+	}
+	assertTranscriptsEqual(t, firstApplied, first)
+}
+
 func TestTranscriptDeltaTruncatesAndClears(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.beginTurn("prompt")
@@ -157,7 +195,9 @@ func TestTranscriptDeltaDetectsNoChange(t *testing.T) {
 
 func TestTranscriptDeltaRejectsMalformedData(t *testing.T) {
 	for _, encoded := range []string{
+		`null`,
 		`{"replace_from":-1}`,
+		`{"replace_from":0,"blocks":[null]}`,
 		`{"replace_from":0,"unknown":true}`,
 		`{"replace_from":0}{"replace_from":0}`,
 	} {

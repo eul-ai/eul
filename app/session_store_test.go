@@ -197,6 +197,67 @@ func TestSessionStoreIgnoresLegacySessionFiles(t *testing.T) {
 	}
 }
 
+func TestSessionStoreRejectsMismatchedDirectoryID(t *testing.T) {
+	store := newSessionStore(t.TempDir())
+	cwd := t.TempDir()
+	handle, err := store.Create("test", cwd, modelSet{main: "model", fast: "model", balanced: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := handle.path
+	id := handle.record.ID
+	if err := handle.Close(); err != nil {
+		t.Fatal(err)
+	}
+	state, err := readSessionState(sessionStatePath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ID = "fedcba9876543210fedcba9876543210"
+	encoded, err := encodeSessionState(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sessionStatePath(path), encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, warnings, err := store.List(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 0 || len(warnings) != 1 {
+		t.Fatalf("summaries = %+v, warnings = %v", summaries, warnings)
+	}
+	if _, err := store.Open(context.Background(), cwd, id); err == nil {
+		t.Fatal("session with a mismatched directory ID was opened")
+	}
+}
+
+func TestSessionStoreIgnoresAbandonedEmptyDirectory(t *testing.T) {
+	store := newSessionStore(t.TempDir())
+	cwd := t.TempDir()
+	workspace := store.workspaceDirectory(cwd)
+	if err := secureSessionDirectory(workspace); err != nil {
+		t.Fatal(err)
+	}
+	id := "0123456789abcdef0123456789abcdef"
+	if err := os.Mkdir(filepath.Join(workspace, id), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, warnings, err := store.List(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 0 || len(warnings) != 0 {
+		t.Fatalf("summaries = %+v, warnings = %v", summaries, warnings)
+	}
+	if _, err := store.Open(context.Background(), cwd, id); err == nil {
+		t.Fatal("abandoned empty session directory was opened")
+	}
+}
+
 func TestSessionStoreRequiresCompleteModelSet(t *testing.T) {
 	store := newSessionStore(t.TempDir())
 	cwd := t.TempDir()
@@ -249,6 +310,9 @@ func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 	}
 	if _, err := os.Stat(lockPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("empty session lock error = %v", err)
+	}
+	if _, err := os.Stat(handle.path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty session directory error = %v", err)
 	}
 }
 
@@ -490,6 +554,49 @@ func TestSessionStoreRejectsShortCommittedTranscript(t *testing.T) {
 	}
 }
 
+func TestSessionStoreRejectsInvalidCommittedTranscriptRecord(t *testing.T) {
+	store := newSessionStore(t.TempDir())
+	cwd := t.TempDir()
+	handle, err := store.Create("test", cwd, modelSet{main: "model", fast: "model", balanced: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := handle.path
+	id := handle.record.ID
+	if err := handle.Close(); err != nil {
+		t.Fatal(err)
+	}
+	state, err := readSessionState(sessionStatePath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid := []byte("{\"replace_from\":999}\n")
+	transcriptPath := sessionTranscriptPath(path, state.Transcript.Slot)
+	file, err := os.OpenFile(transcriptPath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(invalid); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	state.Transcript.Bytes += int64(len(invalid))
+	state.Transcript.DeltaBytes += int64(len(invalid))
+	encodedState, err := encodeSessionState(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sessionStatePath(path), encodedState, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.Open(context.Background(), cwd, id); err == nil {
+		t.Fatal("invalid committed transcript record was accepted")
+	}
+}
+
 func TestSessionStoreListsMetadataWithoutDecodingCheckpoints(t *testing.T) {
 	store := newSessionStore(t.TempDir())
 	cwd := t.TempDir()
@@ -556,6 +663,20 @@ func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
 		t.Fatalf("permission error = %v", err)
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state, err := readSessionState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcriptPath := sessionTranscriptPath(filepath.Dir(path), state.Transcript.Slot)
+	if err := os.Chmod(transcriptPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Open(context.Background(), cwd, id); err == nil {
+		t.Fatal("world-readable transcript was accepted")
+	}
+	if err := os.Chmod(transcriptPath, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte(`{"version":99}`), 0o600); err != nil {

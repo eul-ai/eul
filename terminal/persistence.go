@@ -46,7 +46,7 @@ func SplitCheckpoint(checkpoint Checkpoint) (Transcript, CheckpointState, error)
 		return Transcript{}, CheckpointState{}, err
 	}
 
-	return Transcript{blocks: cloneCheckpointBlocks(checkpoint.data.Blocks)}, CheckpointState{data: checkpointStateData{
+	return Transcript{blocks: checkpoint.data.Blocks}, CheckpointState{data: checkpointStateData{
 		Version:       checkpointStateVersion,
 		Input:         checkpoint.data.Input,
 		Cursor:        checkpoint.data.Cursor,
@@ -96,17 +96,27 @@ func DiffTranscript(previous, next Transcript) (TranscriptDelta, bool) {
 }
 
 func ApplyTranscriptDelta(previous Transcript, delta TranscriptDelta) (Transcript, error) {
-	if delta.replaceFrom < 0 || delta.replaceFrom > len(previous.blocks) {
-		return Transcript{}, errors.New("terminal: transcript delta replacement is out of range")
-	}
-	if err := validateTranscriptBlocks(delta.blocks); err != nil {
+	if err := validateTranscriptDelta(previous, delta); err != nil {
 		return Transcript{}, err
 	}
 
-	blocks := make([]checkpointBlock, 0, delta.replaceFrom+len(delta.blocks))
-	blocks = append(blocks, cloneCheckpointBlocks(previous.blocks[:delta.replaceFrom])...)
+	blocks := make([]checkpointBlock, delta.replaceFrom, delta.replaceFrom+len(delta.blocks))
+	copy(blocks, previous.blocks[:delta.replaceFrom])
 	blocks = append(blocks, cloneCheckpointBlocks(delta.blocks)...)
 	return Transcript{blocks: blocks}, nil
+}
+
+func ApplyTranscriptDeltaInPlace(transcript *Transcript, delta TranscriptDelta) error {
+	if transcript == nil {
+		return errors.New("terminal: transcript is missing")
+	}
+	if err := validateTranscriptDelta(*transcript, delta); err != nil {
+		return err
+	}
+
+	clear(transcript.blocks[delta.replaceFrom:])
+	transcript.blocks = append(transcript.blocks[:delta.replaceFrom], delta.blocks...)
+	return nil
 }
 
 func (transcript Transcript) BlockCount() int {
@@ -141,24 +151,45 @@ func (delta TranscriptDelta) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(transcriptDeltaData{
 		ReplaceFrom: delta.replaceFrom,
-		Blocks:      cloneCheckpointBlocks(delta.blocks),
+		Blocks:      delta.blocks,
 	})
 }
 
 func (delta *TranscriptDelta) UnmarshalJSON(encoded []byte) error {
-	var data transcriptDeltaData
+	if bytes.Equal(bytes.TrimSpace(encoded), []byte("null")) {
+		return errors.New("terminal: transcript delta is null")
+	}
+	var data struct {
+		ReplaceFrom int                `json:"replace_from"`
+		Blocks      []*checkpointBlock `json:"blocks,omitempty"`
+	}
 	if err := decodePersistenceValue(encoded, &data); err != nil {
 		return fmt.Errorf("terminal: decode transcript delta: %w", err)
 	}
 	if data.ReplaceFrom < 0 {
 		return errors.New("terminal: transcript delta replacement is out of range")
 	}
-	if err := validateTranscriptBlocks(data.Blocks); err != nil {
+
+	blocks := make([]checkpointBlock, len(data.Blocks))
+	for index, block := range data.Blocks {
+		if block == nil {
+			return fmt.Errorf("terminal: transcript delta block %d is null", index)
+		}
+		blocks[index] = *block
+	}
+	if err := validateTranscriptBlocks(blocks); err != nil {
 		return err
 	}
 	delta.replaceFrom = data.ReplaceFrom
-	delta.blocks = cloneCheckpointBlocks(data.Blocks)
+	delta.blocks = blocks
 	return nil
+}
+
+func validateTranscriptDelta(transcript Transcript, delta TranscriptDelta) error {
+	if delta.replaceFrom < 0 || delta.replaceFrom > len(transcript.blocks) {
+		return errors.New("terminal: transcript delta replacement is out of range")
+	}
+	return validateTranscriptBlocks(delta.blocks)
 }
 
 func validateCheckpointStateData(state checkpointStateData) error {

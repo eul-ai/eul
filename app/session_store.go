@@ -86,6 +86,10 @@ func (store *sessionStore) Create(
 	if err := os.Mkdir(path, 0o700); err != nil {
 		return nil, fmt.Errorf("create session directory: %w", err)
 	}
+	if err := syncDirectory(workspaceDirectory); err != nil {
+		_ = os.Remove(path)
+		return nil, err
+	}
 	lock, err := acquireSessionLock(sessionLockPath(path))
 	if err != nil {
 		_ = os.Remove(path)
@@ -154,6 +158,10 @@ func (store *sessionStore) Open(ctx context.Context, cwd, id string) (*sessionHa
 		_ = releaseSessionLock(lock)
 		return nil, err
 	}
+	if filepath.Base(path) != record.ID {
+		_ = releaseSessionLock(lock)
+		return nil, errors.New("session is stored under the wrong ID")
+	}
 	if filepath.Dir(path) != store.workspaceDirectory(record.WorkingDirectory) {
 		_ = releaseSessionLock(lock)
 		return nil, errors.New("session is stored under the wrong workspace")
@@ -212,6 +220,10 @@ func (store *sessionStore) List(cwd string) ([]sessionSummary, []string, error) 
 			warnings = append(warnings, fmt.Sprintf("Skipped session %s: %v", filepath.ToSlash(path), err))
 			continue
 		}
+		if summary.ID != entry.Name() {
+			warnings = append(warnings, fmt.Sprintf("Skipped session %s: stored session ID does not match", filepath.ToSlash(path)))
+			continue
+		}
 		if workingDirectory != cwd {
 			warnings = append(warnings, fmt.Sprintf("Skipped session %s: stored working directory does not match", filepath.ToSlash(path)))
 			continue
@@ -253,10 +265,12 @@ func (store *sessionStore) findSessionPath(cwd, id string) (string, error) {
 	}
 
 	local := filepath.Join(store.workspaceDirectory(cwd), id)
-	if info, err := os.Lstat(local); err == nil && info.IsDir() {
+	found, err := storedSessionDirectory(local)
+	if err != nil {
+		return "", err
+	}
+	if found {
 		return local, nil
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("inspect session: %w", err)
 	}
 
 	workspaces, err := os.ReadDir(store.root)
@@ -271,19 +285,34 @@ func (store *sessionStore) findSessionPath(cwd, id string) (string, error) {
 			continue
 		}
 		candidate := filepath.Join(store.root, workspace.Name(), id)
-		info, err := os.Lstat(candidate)
-		switch {
-		case err == nil && info.IsDir():
+		found, err := storedSessionDirectory(candidate)
+		if err != nil {
+			return "", err
+		}
+		if found {
 			return candidate, nil
-		case err == nil:
-			continue
-		case errors.Is(err, os.ErrNotExist):
-			continue
-		default:
-			return "", fmt.Errorf("inspect session: %w", err)
 		}
 	}
 	return "", fmt.Errorf("session %s not found", id)
+}
+
+func storedSessionDirectory(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect session: %w", err)
+	}
+	if !info.IsDir() {
+		return false, nil
+	}
+	if _, err := os.Lstat(sessionStatePath(path)); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("inspect session state: %w", err)
+	}
+	return true, nil
 }
 
 func (handle *sessionHandle) Record() sessionRecord {
@@ -420,7 +449,7 @@ func (handle *sessionHandle) Close() error {
 	if err := os.RemoveAll(handle.path); err != nil {
 		return fmt.Errorf("remove empty session: %w", err)
 	}
-	return nil
+	return syncDirectory(filepath.Dir(handle.path))
 }
 
 func sessionStatePath(path string) string {
@@ -568,8 +597,7 @@ func readTranscript(path string, head sessionTranscriptHead) (terminal.Transcrip
 		if err := json.Unmarshal(line[:len(line)-1], &delta); err != nil {
 			return terminal.Transcript{}, fmt.Errorf("decode session transcript: %w", err)
 		}
-		transcript, err = terminal.ApplyTranscriptDelta(transcript, delta)
-		if err != nil {
+		if err := terminal.ApplyTranscriptDeltaInPlace(&transcript, delta); err != nil {
 			return terminal.Transcript{}, err
 		}
 	}
@@ -817,6 +845,11 @@ func syncDirectory(path string) error {
 }
 
 func secureSessionDirectory(path string) error {
+	_, inspectErr := os.Lstat(path)
+	created := errors.Is(inspectErr, os.ErrNotExist)
+	if inspectErr != nil && !created {
+		return fmt.Errorf("inspect session directory: %w", inspectErr)
+	}
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return fmt.Errorf("create session directory: %w", err)
 	}
@@ -829,6 +862,9 @@ func secureSessionDirectory(path string) error {
 	}
 	if err := os.Chmod(path, 0o700); err != nil {
 		return fmt.Errorf("secure session directory: %w", err)
+	}
+	if created {
+		return syncDirectory(filepath.Dir(path))
 	}
 	return nil
 }
