@@ -294,7 +294,7 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	corruptPath := corrupt.path
+	corruptPath := sessionStatePath(corrupt.path)
 	if err := corrupt.Close(); err != nil {
 		t.Fatal(err)
 	}

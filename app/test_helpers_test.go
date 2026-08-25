@@ -163,12 +163,17 @@ func sessionStoreTestAgentCheckpoint(t testing.TB) agent.Checkpoint {
 
 func sessionStoreTestTerminalCheckpoint(t testing.TB, prompt string) terminal.Checkpoint {
 	t.Helper()
+	return sessionStoreTestTerminalBlocks(t, []map[string]any{{
+		"kind": 0,
+		"text": prompt,
+	}})
+}
+
+func sessionStoreTestTerminalBlocks(t testing.TB, blocks []map[string]any) terminal.Checkpoint {
+	t.Helper()
 	encoded, err := json.Marshal(map[string]any{
 		"version": 2,
-		"blocks": []map[string]any{{
-			"kind": 0,
-			"text": prompt,
-		}},
+		"blocks":  blocks,
 	})
 	if err != nil {
 		t.Fatal(err)

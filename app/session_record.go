@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	sessionRecordVersion       = 3
+	sessionStateVersion        = 1
 	maxSessionDescriptionBytes = 120
 )
 
@@ -33,7 +33,6 @@ const (
 type sessionMetadata struct {
 	Version          int                 `json:"version"`
 	ID               string              `json:"id"`
-	Revision         uint64              `json:"revision"`
 	CreatedAt        time.Time           `json:"created_at"`
 	UpdatedAt        time.Time           `json:"updated_at"`
 	Status           sessionStatus       `json:"status"`
@@ -49,9 +48,25 @@ type sessionMetadata struct {
 
 type sessionRecord struct {
 	sessionMetadata
-	Agent    agent.Checkpoint    `json:"agent"`
-	Subagent subagent.Checkpoint `json:"subagent"`
-	Terminal terminal.Checkpoint `json:"terminal"`
+	Agent    agent.Checkpoint
+	Subagent subagent.Checkpoint
+	Terminal terminal.Checkpoint
+}
+
+type sessionState struct {
+	sessionMetadata
+	Agent      agent.Checkpoint         `json:"agent"`
+	Subagent   subagent.Checkpoint      `json:"subagent"`
+	Terminal   terminal.CheckpointState `json:"terminal"`
+	Transcript sessionTranscriptHead    `json:"transcript"`
+}
+
+type sessionTranscriptHead struct {
+	Slot       string `json:"slot"`
+	Bytes      int64  `json:"bytes"`
+	BlockCount int    `json:"block_count"`
+	BaseBytes  int64  `json:"base_bytes"`
+	DeltaBytes int64  `json:"delta_bytes"`
 }
 
 func (record sessionRecord) models() modelSet {
@@ -69,62 +84,62 @@ type sessionSummary struct {
 	Active      bool
 }
 
-func encodeSessionRecord(record sessionRecord) ([]byte, error) {
-	if err := validateSessionRecord(record); err != nil {
+func encodeSessionState(state sessionState) ([]byte, error) {
+	if err := validateSessionState(state); err != nil {
 		return nil, err
 	}
-	encoded, err := json.MarshalIndent(record, "", "  ")
+	encoded, err := json.Marshal(state)
 	if err != nil {
-		return nil, fmt.Errorf("encode session: %w", err)
+		return nil, fmt.Errorf("encode session state: %w", err)
 	}
 	return append(encoded, '\n'), nil
 }
 
-func decodeSessionRecord(encoded []byte) (sessionRecord, error) {
+func decodeSessionState(encoded []byte) (sessionState, error) {
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
 
-	var record sessionRecord
-	if err := decoder.Decode(&record); err != nil {
-		return sessionRecord{}, fmt.Errorf("decode session: %w", err)
+	var state sessionState
+	if err := decoder.Decode(&state); err != nil {
+		return sessionState{}, fmt.Errorf("decode session state: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return sessionRecord{}, errors.New("decode session: multiple JSON values")
+			return sessionState{}, errors.New("decode session state: multiple JSON values")
 		}
-		return sessionRecord{}, fmt.Errorf("decode session: %w", err)
+		return sessionState{}, fmt.Errorf("decode session state: %w", err)
 	}
-	if err := validateSessionRecord(record); err != nil {
-		return sessionRecord{}, err
+	if err := validateSessionState(state); err != nil {
+		return sessionState{}, err
 	}
-	return record, nil
+	return state, nil
 }
 
 func decodeSessionSummary(source io.Reader) (sessionSummary, string, error) {
 	decoder := json.NewDecoder(source)
 	opening, err := decoder.Token()
 	if err != nil {
-		return sessionSummary{}, "", fmt.Errorf("decode session: %w", err)
+		return sessionSummary{}, "", fmt.Errorf("decode session state: %w", err)
 	}
 	if opening != json.Delim('{') {
-		return sessionSummary{}, "", errors.New("decode session: expected object")
+		return sessionSummary{}, "", errors.New("decode session state: expected object")
 	}
 
 	var metadata sessionMetadata
 	for decoder.More() {
 		key, err := decoder.Token()
 		if err != nil {
-			return sessionSummary{}, "", fmt.Errorf("decode session: %w", err)
+			return sessionSummary{}, "", fmt.Errorf("decode session state: %w", err)
 		}
 		name, ok := key.(string)
 		if !ok {
-			return sessionSummary{}, "", errors.New("decode session: expected field name")
+			return sessionSummary{}, "", errors.New("decode session state: expected field name")
 		}
 
 		recognized, err := decodeSessionMetadataField(decoder, &metadata, name)
 		if err != nil {
-			return sessionSummary{}, "", fmt.Errorf("decode session: %w", err)
+			return sessionSummary{}, "", fmt.Errorf("decode session state: %w", err)
 		}
 		if recognized {
 			if name != "description" {
@@ -142,13 +157,13 @@ func decodeSessionSummary(source io.Reader) (sessionSummary, string, error) {
 		}
 
 		switch name {
-		case "agent", "subagent", "terminal":
+		case "agent", "subagent", "terminal", "transcript":
 			if err := metadata.validate(); err != nil {
 				return sessionSummary{}, "", err
 			}
 			return sessionSummary{}, "", errors.New("session description is missing")
 		default:
-			return sessionSummary{}, "", fmt.Errorf("decode session: unknown field %q before description", name)
+			return sessionSummary{}, "", fmt.Errorf("decode session state: unknown field %q before description", name)
 		}
 	}
 
@@ -164,8 +179,6 @@ func decodeSessionMetadataField(decoder *json.Decoder, metadata *sessionMetadata
 		return true, decoder.Decode(&metadata.Version)
 	case "id":
 		return true, decoder.Decode(&metadata.ID)
-	case "revision":
-		return true, decoder.Decode(&metadata.Revision)
 	case "created_at":
 		return true, decoder.Decode(&metadata.CreatedAt)
 	case "updated_at":
@@ -202,12 +215,10 @@ func validateSessionSummary(metadata sessionMetadata) error {
 
 func (metadata sessionMetadata) validate() error {
 	switch {
-	case metadata.Version != sessionRecordVersion:
-		return fmt.Errorf("unsupported session version %d", metadata.Version)
+	case metadata.Version != sessionStateVersion:
+		return fmt.Errorf("unsupported session state version %d", metadata.Version)
 	case !validSessionID(metadata.ID):
 		return errors.New("session has an invalid ID")
-	case metadata.Revision == 0:
-		return errors.New("session has no revision")
 	case metadata.CreatedAt.IsZero() || metadata.UpdatedAt.IsZero():
 		return errors.New("session timestamps are missing")
 	case metadata.UpdatedAt.Before(metadata.CreatedAt):
@@ -226,6 +237,33 @@ func (metadata sessionMetadata) validate() error {
 		return errors.New("session balanced model is empty")
 	case !metadata.ThinkingLevel.Valid():
 		return errors.New("session thinking level is invalid")
+	}
+	return nil
+}
+
+func validateSessionState(state sessionState) error {
+	if err := state.sessionMetadata.validate(); err != nil {
+		return err
+	}
+	if !state.Agent.Initialized() || !state.Subagent.Initialized() {
+		return errors.New("session checkpoints are missing")
+	}
+	if err := validateSessionDescription(state.Description, true); err != nil {
+		return err
+	}
+	return state.Transcript.validate()
+}
+
+func (head sessionTranscriptHead) validate() error {
+	switch {
+	case head.Slot != "a" && head.Slot != "b":
+		return errors.New("session transcript slot is invalid")
+	case head.Bytes < 0 || head.BlockCount < 0 || head.BaseBytes < 0 || head.DeltaBytes < 0:
+		return errors.New("session transcript head is invalid")
+	case head.BaseBytes+head.DeltaBytes != head.Bytes:
+		return errors.New("session transcript byte counts are inconsistent")
+	case head.Bytes == 0 && head.BlockCount != 0:
+		return errors.New("session transcript block count is inconsistent")
 	}
 	return nil
 }

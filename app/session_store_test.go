@@ -67,12 +67,22 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 			t.Fatalf("directory %s permissions = %o", path, info.Mode().Perm())
 		}
 	}
-	fileInfo, err := os.Stat(filepath.Join(workspace, firstID+".json"))
+	sessionDirectory := filepath.Join(workspace, firstID)
+	directoryInfo, err := os.Stat(sessionDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fileInfo.Mode().Perm() != 0o600 {
-		t.Fatalf("session permissions = %o", fileInfo.Mode().Perm())
+	if directoryInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("session directory permissions = %o", directoryInfo.Mode().Perm())
+	}
+	for _, name := range []string{sessionStateFileName, sessionTranscriptAName, sessionLockFileName} {
+		fileInfo, err := os.Stat(filepath.Join(sessionDirectory, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fileInfo.Mode().Perm() != 0o600 {
+			t.Fatalf("%s permissions = %o", name, fileInfo.Mode().Perm())
+		}
 	}
 
 	locked, err := store.Open(context.Background(), cwd, secondID)
@@ -120,18 +130,22 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 	}
 }
 
-func TestSessionRecordModelSetKeepsModelJSONFields(t *testing.T) {
+func TestSessionStateKeepsModelJSONFields(t *testing.T) {
 	models := modelSet{main: "main-model", fast: "fast-model", balanced: "balanced-model"}
-	encoded, err := json.Marshal(sessionRecord{
+	_, terminalState, err := terminal.SplitCheckpoint(terminal.EmptyCheckpoint())
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(sessionState{
 		sessionMetadata: sessionMetadata{
-			Version:       sessionRecordVersion,
 			Model:         models.main,
 			FastModel:     models.fast,
 			BalancedModel: models.balanced,
 		},
-		Agent:    sessionStoreTestAgentCheckpoint(t),
-		Subagent: subagent.EmptyCheckpoint(),
-		Terminal: terminal.EmptyCheckpoint(),
+		Agent:      sessionStoreTestAgentCheckpoint(t),
+		Subagent:   subagent.EmptyCheckpoint(),
+		Terminal:   terminalState,
+		Transcript: sessionTranscriptHead{Slot: initialTranscriptSlot},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -155,15 +169,31 @@ func TestSessionRecordModelSetKeepsModelJSONFields(t *testing.T) {
 		}
 	}
 	if _, exists := fields["models"]; exists {
-		t.Fatal("session record added a models JSON field")
+		t.Fatal("session state added a models JSON field")
 	}
+}
 
-	var record sessionRecord
-	if err := json.Unmarshal(encoded, &record); err != nil {
+func TestSessionStoreIgnoresLegacySessionFiles(t *testing.T) {
+	store := newSessionStore(t.TempDir())
+	cwd := t.TempDir()
+	workspace := store.workspaceDirectory(cwd)
+	if err := secureSessionDirectory(workspace); err != nil {
 		t.Fatal(err)
 	}
-	if record.models() != models {
-		t.Fatalf("round-trip models = %+v, want %+v", record.models(), models)
+	id := "0123456789abcdef0123456789abcdef"
+	if err := os.WriteFile(filepath.Join(workspace, id+".json"), []byte(`{"version":3}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, warnings, err := store.List(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 0 || len(warnings) != 0 {
+		t.Fatalf("summaries = %+v, warnings = %v", summaries, warnings)
+	}
+	if _, err := store.Open(context.Background(), cwd, id); err == nil {
+		t.Fatal("legacy session file was opened")
 	}
 }
 
@@ -195,14 +225,14 @@ func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 	if _, err := os.Stat(lockPath); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(handle.path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("empty session file error = %v", err)
+	if _, err := os.Stat(sessionStatePath(handle.path)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty session state error = %v", err)
 	}
 	if err := handle.Save(sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), terminal.EmptyCheckpoint(), false, agent.ThinkingMedium, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(handle.path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("saved empty session file error = %v", err)
+	if _, err := os.Stat(sessionStatePath(handle.path)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("saved empty session state error = %v", err)
 	}
 	summaries, warnings, err := store.List(cwd)
 	if err != nil {
@@ -222,7 +252,78 @@ func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 	}
 }
 
-func TestSessionStoreListsMetadataWithoutDecodingCheckpoints(t *testing.T) {
+func TestSessionStoreAppendsOnlyTranscriptChanges(t *testing.T) {
+	store := newSessionStore(t.TempDir())
+	cwd := t.TempDir()
+	agentCheckpoint := sessionStoreTestAgentCheckpoint(t)
+	initial := sessionStoreTestTerminalCheckpoint(t, "prompt")
+	handle, err := store.Create("test", cwd, modelSet{main: "model", fast: "model", balanced: "model"}, agent.ThinkingMedium, agentCheckpoint, subagent.EmptyCheckpoint(), initial, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := readSessionState(sessionStatePath(handle.path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcriptPath := sessionTranscriptPath(handle.path, state.Transcript.Slot)
+	initialTranscript, err := os.ReadFile(transcriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handle.Save(agentCheckpoint, subagent.EmptyCheckpoint(), initial, true, agent.ThinkingHigh, true); err != nil {
+		t.Fatal(err)
+	}
+	unchangedTranscript, err := os.ReadFile(transcriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(unchangedTranscript) != string(initialTranscript) {
+		t.Fatal("state-only save changed the transcript")
+	}
+
+	next := sessionStoreTestTerminalBlocks(t, []map[string]any{
+		{"kind": 0, "text": "prompt"},
+		{"kind": 1, "text": "answer"},
+	})
+	if err := handle.Save(agentCheckpoint, subagent.EmptyCheckpoint(), next, false, agent.ThinkingHigh, true); err != nil {
+		t.Fatal(err)
+	}
+	state, err = readSessionState(sessionStatePath(handle.path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Transcript.BlockCount != 2 || state.Transcript.BaseBytes != int64(len(initialTranscript)) || state.Transcript.DeltaBytes <= 0 {
+		t.Fatalf("transcript head = %+v", state.Transcript)
+	}
+	transcript, err := os.ReadFile(transcriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := strings.Split(strings.TrimSpace(string(transcript)), "\n")
+	if len(records) != 2 || strings.Contains(records[1], "prompt") || !strings.Contains(records[1], "answer") {
+		t.Fatalf("transcript records = %q", records)
+	}
+
+	id := handle.record.ID
+	if err := handle.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := store.Open(context.Background(), cwd, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	encoded, err := json.Marshal(reopened.record.Terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), "prompt") || !strings.Contains(string(encoded), "answer") {
+		t.Fatalf("restored terminal checkpoint = %s", encoded)
+	}
+}
+
+func TestSessionStoreIgnoresUncommittedTranscriptTail(t *testing.T) {
 	store := newSessionStore(t.TempDir())
 	cwd := t.TempDir()
 	handle, err := store.Create("test", cwd, modelSet{main: "model", fast: "model", balanced: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
@@ -234,12 +335,81 @@ func TestSessionStoreListsMetadataWithoutDecodingCheckpoints(t *testing.T) {
 	if err := handle.Close(); err != nil {
 		t.Fatal(err)
 	}
+	state, err := readSessionState(sessionStatePath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcriptPath := sessionTranscriptPath(path, state.Transcript.Slot)
+	file, err := os.OpenFile(transcriptPath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(`{"replace_from":999}` + "\npartial"); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := store.Open(context.Background(), cwd, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(transcriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != state.Transcript.Bytes {
+		t.Fatalf("transcript size = %d, want %d", info.Size(), state.Transcript.Bytes)
+	}
+}
+
+func TestSessionStoreRejectsShortCommittedTranscript(t *testing.T) {
+	store := newSessionStore(t.TempDir())
+	cwd := t.TempDir()
+	handle, err := store.Create("test", cwd, modelSet{main: "model", fast: "model", balanced: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := handle.path
+	id := handle.record.ID
+	if err := handle.Close(); err != nil {
+		t.Fatal(err)
+	}
+	state, err := readSessionState(sessionStatePath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcriptPath := sessionTranscriptPath(path, state.Transcript.Slot)
+	if err := os.Truncate(transcriptPath, state.Transcript.Bytes-1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Open(context.Background(), cwd, id); err == nil {
+		t.Fatal("short committed transcript was accepted")
+	}
+}
+
+func TestSessionStoreListsMetadataWithoutDecodingCheckpoints(t *testing.T) {
+	store := newSessionStore(t.TempDir())
+	cwd := t.TempDir()
+	handle, err := store.Create("test", cwd, modelSet{main: "model", fast: "model", balanced: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := sessionStatePath(handle.path)
+	id := handle.record.ID
+	if err := handle.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body = []byte(strings.Replace(string(body), `"agent": {`, `"agent": "invalid", "unused": {`, 1))
+	body = []byte(strings.Replace(string(body), `"agent":{`, `"agent":"invalid","unused":{`, 1))
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +434,7 @@ func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := handle.path
+	path := sessionStatePath(handle.path)
 	id := handle.record.ID
 	if err := handle.Close(); err != nil {
 		t.Fatal(err)
@@ -304,7 +474,7 @@ func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
 	if len(summaries) != 1 || summaries[0].ID != validID {
 		t.Fatalf("summaries with corrupt record = %+v", summaries)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], filepath.ToSlash(path)) {
+	if len(warnings) != 1 || !strings.Contains(warnings[0], filepath.ToSlash(filepath.Dir(path))) {
 		t.Fatalf("warnings = %v", warnings)
 	}
 

@@ -37,7 +37,7 @@ The inactive transcript slot is used only to publish a compacted transcript safe
   - Run `gofumpt` and focused `terminal` tests.
   - Commit the checkpoint.
 
-- [ ] **Checkpoint 2: incremental session store**
+- [x] **Checkpoint 2: incremental session store**
   - Replace monolithic session files with per-session directories.
   - Add compact `state.json` encoding containing metadata, agent/subagent checkpoints, terminal state, and transcript head information.
   - Append and sync transcript deltas before atomically replacing and syncing `state.json`.
