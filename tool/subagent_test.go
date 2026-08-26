@@ -73,6 +73,62 @@ func TestSubagentLaunchSchemaPlacesPolicyOnTasks(t *testing.T) {
 	}
 }
 
+func TestSubagentLaunchSchemaUsesProfileThinkingLevels(t *testing.T) {
+	manager := subagent.NewManager(subagent.Config{
+		SupportedThinkingLevels: func(profile subagent.Profile) []agent.ThinkingLevel {
+			switch profile {
+			case subagent.ProfileFast:
+				return []agent.ThinkingLevel{agent.ThinkingLow}
+			case subagent.ProfileBalanced:
+				return []agent.ThinkingLevel{agent.ThinkingMedium}
+			default:
+				return []agent.ThinkingLevel{agent.ThinkingHigh}
+			}
+		},
+	})
+	defer manager.Close()
+
+	definition := NewLaunchSubagents(manager).Definition()
+	description := definition.Parameters.Properties["tasks"].Items.Properties["thinking_level"].Description
+	for _, supported := range []string{"fast: low", "balanced: medium", "main: high"} {
+		if !strings.Contains(description, supported) {
+			t.Fatalf("thinking level description does not include %q: %q", supported, description)
+		}
+	}
+	if strings.Contains(description, string(agent.ThinkingMinimal)) {
+		t.Fatalf("thinking level description includes unsupported minimal level: %q", description)
+	}
+}
+
+func TestSubagentLaunchFinalizesFailedPresentation(t *testing.T) {
+	manager := subagent.NewManager(subagent.Config{
+		SupportedThinkingLevels: func(subagent.Profile) []agent.ThinkingLevel {
+			return []agent.ThinkingLevel{agent.ThinkingMedium}
+		},
+	})
+	defer manager.Close()
+	launch := NewLaunchSubagents(manager).(*launchTool)
+
+	var final agent.ToolPresentation
+	finalCalls := 0
+	updates := toolUpdateSinkFunc(func(presentation agent.ToolPresentation) error {
+		final = presentation
+		finalCalls++
+		return nil
+	})
+	result, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect","thinking_level":"minimal"}]}`), updates)
+	if err != nil || !result.IsError {
+		t.Fatalf("launch result = %+v, error = %v", result, err)
+	}
+	if finalCalls != 1 {
+		t.Fatalf("final presentation calls = %d", finalCalls)
+	}
+	initial := launch.Presentation(PresentationSnapshot{Arguments: map[string]any{"tasks": []any{map[string]any{}}}})
+	if final.Equal(initial) {
+		t.Fatal("failed launch retained its pending presentation")
+	}
+}
+
 func TestSubagentWaitDefaultTimeout(t *testing.T) {
 	if defaultWaitTimeout != 30*time.Second || defaultWaitTimeoutMS != 30_000 {
 		t.Fatalf("default wait timeout = %s (%dms)", defaultWaitTimeout, defaultWaitTimeoutMS)

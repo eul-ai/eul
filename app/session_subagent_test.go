@@ -233,7 +233,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 		for index, definition := range request.Tools {
 			names[index] = definition.Name
 		}
-		wantNames := []string{"read"}
+		wantNames := []string{"bash", "read"}
 		if !slices.Equal(names, wantNames) {
 			t.Fatalf("child tools = %v, want %v", names, wantNames)
 		}

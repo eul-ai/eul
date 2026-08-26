@@ -50,7 +50,7 @@ func newSessionToolset(
 		Runner: subagent.RunFunc(func(ctx context.Context, request subagent.RunRequest, update func(subagent.Progress)) (agent.RunResult, error) {
 			_, fastMode := settings.Snapshot()
 			enabled := fastMode && metadata.subagent[request.Profile].FastMode
-			return runChildAgent(ctx, backendRuntime, newToolset, config, request.Profile, request.ThinkingLevel, enabled, request.Task, update)
+			return runChildAgent(ctx, backendRuntime, newToolset, authorizeNetwork, config, request.Profile, request.ThinkingLevel, enabled, request.Task, update)
 		}),
 		SupportedThinkingLevels: func(profile subagent.Profile) []agent.ThinkingLevel {
 			return metadata.subagent[profile].ThinkingLevels

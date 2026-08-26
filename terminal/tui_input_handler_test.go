@@ -41,6 +41,16 @@ func TestPermissionKeysTakePriority(t *testing.T) {
 	}
 }
 
+func TestIdlePermissionCtrlCDeniesRequest(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.showPermission(PermissionRequest{Title: "Network access"}, 1, 1)
+
+	action, err := reduceKey(model, keyEvent{code: keyCtrlC})
+	if err != nil || action.kind != tuiActionResolvePermission || action.permissionDecision != PermissionDenyOnce {
+		t.Fatalf("action=%+v error=%v", action, err)
+	}
+}
+
 func TestPermissionSelectionAndScrolling(t *testing.T) {
 	model := newTUIModel(40, 12, Options{})
 	model.running = true

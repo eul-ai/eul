@@ -19,5 +19,9 @@ func engineOptions(config resolvedConfig, model string, settings *agent.Settings
 }
 
 func childEngineOptions(config resolvedConfig, profile subagent.Profile, thinkingLevel agent.ThinkingLevel, fastMode bool) agent.Options {
-	return engineOptions(config, config.models.forProfile(profile), agent.NewSettings(thinkingLevel, fastMode), false, nil, nil)
+	return engineOptions(config, config.models.forProfile(profile), agent.NewSettings(thinkingLevel, fastMode), false, nil, childAgentInstructions)
+}
+
+func childAgentInstructions() string {
+	return "This is a read-only research task. Inspect and report findings, but do not modify files. The main agent will make any edits."
 }

@@ -21,38 +21,60 @@ const (
 	maximumWaitTimeoutMS = int(maximumWaitTimeout / time.Millisecond)
 )
 
-var taskSchema = StrictObject(map[string]agent.JSONSchema{
-	"description": {
-		Type:        "string",
-		Description: "Short progress label.",
-	},
-	"prompt": {
-		Type:        "string",
-		Description: "Complete task with all needed context.",
-	},
-	"model_profile":  nullable("string", "fast, balanced, or main; null inherits the parent."),
-	"thinking_level": nullable("string", subagentThinkingLevelDescription()),
-}, "description", "prompt", "model_profile", "thinking_level")
+func launchDefinitionFor(manager *subagent.Manager) agent.ToolDefinition {
+	taskSchema := StrictObject(map[string]agent.JSONSchema{
+		"description": {
+			Type:        "string",
+			Description: "Short progress label.",
+		},
+		"prompt": {
+			Type:        "string",
+			Description: "Complete task with all needed context.",
+		},
+		"model_profile":  nullable("string", "fast, balanced, or main; null inherits the parent."),
+		"thinking_level": nullable("string", subagentThinkingLevelDescription(manager)),
+	}, "description", "prompt", "model_profile", "thinking_level")
 
-func subagentThinkingLevelDescription() string {
-	levels := agent.ThinkingLevels()
+	return agent.ToolDefinition{
+		Name:        launchToolName,
+		Description: "Launch 1-4 independent read-only research tasks, with at most 4 active. Results arrive automatically.",
+		Parameters: StrictObject(map[string]agent.JSONSchema{
+			"tasks": {
+				Type:        "array",
+				Description: "1-4 independent tasks.",
+				Items:       &taskSchema,
+			},
+		}, "tasks"),
+	}
+}
+
+func subagentThinkingLevelDescription(manager *subagent.Manager) string {
+	if manager == nil {
+		return formatThinkingLevelChoices(agent.ThinkingLevels()) + "; null inherits the parent."
+	}
+
+	profiles := []subagent.Profile{subagent.ProfileFast, subagent.ProfileBalanced, subagent.ProfileMain}
+	choices := make([]string, len(profiles))
+	for index, profile := range profiles {
+		choices[index] = fmt.Sprintf("%s: %s", profile, formatThinkingLevelChoices(manager.SupportedThinkingLevels(profile)))
+	}
+	return "Supported by model profile: " + strings.Join(choices, "; ") + "; null inherits the parent."
+}
+
+func formatThinkingLevelChoices(levels []agent.ThinkingLevel) string {
 	values := make([]string, len(levels))
 	for index, level := range levels {
 		values[index] = string(level)
 	}
-	return strings.Join(values[:len(values)-1], ", ") + ", or " + values[len(values)-1] + "; null inherits the parent."
-}
 
-var launchDefinition = agent.ToolDefinition{
-	Name:        launchToolName,
-	Description: "Launch 1-4 independent read-only research tasks, with at most 4 active. Results arrive automatically.",
-	Parameters: StrictObject(map[string]agent.JSONSchema{
-		"tasks": {
-			Type:        "array",
-			Description: "1-4 independent tasks.",
-			Items:       &taskSchema,
-		},
-	}, "tasks"),
+	switch len(values) {
+	case 0:
+		return "none"
+	case 1:
+		return values[0]
+	default:
+		return strings.Join(values[:len(values)-1], ", ") + ", or " + values[len(values)-1]
+	}
 }
 
 var waitDefinition = agent.ToolDefinition{
@@ -95,7 +117,8 @@ type cancelArguments struct {
 }
 
 type launchTool struct {
-	manager *subagent.Manager
+	manager    *subagent.Manager
+	definition agent.ToolDefinition
 }
 
 type waitTool struct {
@@ -107,7 +130,7 @@ type cancelTool struct {
 }
 
 func NewLaunchSubagents(manager *subagent.Manager) Tool {
-	return &launchTool{manager: manager}
+	return &launchTool{manager: manager, definition: launchDefinitionFor(manager)}
 }
 
 func NewWaitForSubagent(manager *subagent.Manager) Tool {
@@ -118,17 +141,29 @@ func NewCancelSubagents(manager *subagent.Manager) Tool {
 	return &cancelTool{manager: manager}
 }
 
-func (*launchTool) Definition() agent.ToolDefinition {
-	return launchDefinition
+func (launch *launchTool) Definition() agent.ToolDefinition {
+	return launch.definition
 }
 
 func (launch *launchTool) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
 	values, _ := snapshot.Arguments["tasks"].([]any)
+	return launchPresentation(len(values), fmt.Sprintf("Starting %d subagent(s).", len(values)))
+}
+
+func launchPresentation(count int, message string) agent.ToolPresentation {
 	return agent.ToolPresentation{
 		Title:     launchToolName,
-		Arguments: fmt.Sprintf("(%d)", len(values)),
+		Arguments: fmt.Sprintf("(%d)", count),
 		Markdown:  true,
-		Lines:     []string{fmt.Sprintf("Starting %d subagent(s).", len(values))},
+		Lines:     []string{message},
+	}
+}
+
+func launchFailurePresentation() agent.ToolPresentation {
+	return agent.ToolPresentation{
+		Title:    launchToolName,
+		Markdown: true,
+		Lines:    []string{"No subagents were started."},
 	}
 }
 
@@ -139,11 +174,17 @@ func (launch *launchTool) Execute(ctx context.Context, arguments json.RawMessage
 
 	args, err := DecodeArguments[launchArguments](arguments)
 	if err != nil {
+		if updates != nil {
+			updates.SetFinal(launchFailurePresentation())
+		}
 		return errorResult(launchToolName, err), nil
 	}
 
 	jobs, err := launch.manager.Start(toSubagentTasks(args.Tasks))
 	if err != nil {
+		if updates != nil {
+			updates.SetFinal(launchFailurePresentation())
+		}
 		return errorResult(launchToolName, err), nil
 	}
 
@@ -153,12 +194,7 @@ func (launch *launchTool) Execute(ctx context.Context, arguments json.RawMessage
 		fmt.Fprintf(&output, "\n- %s (%s, %s thinking): %s", job.ID, job.ModelProfile, job.ThinkingLevel, strings.TrimSpace(job.Description))
 	}
 	if updates != nil {
-		updates.SetFinal(agent.ToolPresentation{
-			Title:     launchToolName,
-			Arguments: fmt.Sprintf("(%d)", len(jobs)),
-			Markdown:  true,
-			Lines:     []string{fmt.Sprintf("Started %d subagent(s).", len(jobs))},
-		})
+		updates.SetFinal(launchPresentation(len(jobs), fmt.Sprintf("Started %d subagent(s).", len(jobs))))
 	}
 	return successResult(output.String()), nil
 }

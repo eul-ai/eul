@@ -88,6 +88,10 @@ func NewManager(config Config) *Manager {
 	}
 }
 
+func (m *Manager) SupportedThinkingLevels(profile Profile) []agent.ThinkingLevel {
+	return slices.Clone(m.supportedThinkingLevels(profile))
+}
+
 // StatusChanges coalesces status changes when the receiver falls behind.
 func (m *Manager) StatusChanges() <-chan Status {
 	return m.status

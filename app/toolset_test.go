@@ -12,7 +12,7 @@ func TestBuildToolset(t *testing.T) {
 		want   []string
 	}{
 		{name: "full access", access: fullToolAccess, want: []string{"bash", "edit", "read", "write"}},
-		{name: "read only", access: readOnlyToolAccess, want: []string{"read"}},
+		{name: "subagent access", access: subagentToolAccess, want: []string{"bash", "read"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			registry, err := buildToolset(t.TempDir(), test.access, true, nil)

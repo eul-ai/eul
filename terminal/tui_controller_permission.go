@@ -8,7 +8,7 @@ func (c *tuiController) handlePermission(request PermissionRequest) (bool, error
 		respondPermission(request, PermissionAllowSession)
 		return false, nil
 	}
-	if !c.model.running || c.model.interrupted || c.model.activity.kind == activityCanceling {
+	if c.model.running && (c.model.interrupted || c.model.activity.kind == activityCanceling) {
 		respondPermission(request, PermissionDenyOnce)
 		return false, nil
 	}
@@ -19,6 +19,7 @@ func (c *tuiController) handlePermission(request PermissionRequest) (bool, error
 		return false, nil
 	}
 
+	c.permissionActivity = c.model.activity
 	c.permission = &request
 	c.model.showPermission(request, 1, 1)
 	c.dirty = true
@@ -65,12 +66,22 @@ func (c *tuiController) denyPermissions() {
 	c.model.clearPermission()
 }
 
+func (c *tuiController) overlayPermissionActivity() {
+	if !c.model.permission.active() {
+		return
+	}
+	if c.model.activity.kind != activityPermission {
+		c.permissionActivity = c.model.activity
+	}
+	c.model.activity = activity{kind: activityPermission}
+}
+
 func (c *tuiController) restoreActivityAfterPermission() {
 	if detail, ok := c.model.pendingToolActivity(); ok {
 		c.model.activity = activity{kind: activityTool, detail: detail}
 		return
 	}
-	c.model.activity = activity{kind: activityThinking}
+	c.model.activity = c.permissionActivity
 }
 
 func respondPermission(request PermissionRequest, decision PermissionDecision) {

@@ -112,13 +112,13 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer) environment {
 		userHomeDir: func() (string, error) { return filepath.Join(cwd, ".test-home"), nil },
 		backends:    backends,
 		newToolset: func(cwd string, access toolAccess, noSandbox bool, authorizeNetwork tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
-			tools := []tool.Tool{tool.NewRead(cwd)}
+			bash := tool.NewBashWithNetworkAuthorizer(cwd, authorizeNetwork)
+			if noSandbox {
+				bash = tool.NewBashWithoutSandbox(cwd)
+			}
+			tools := []tool.Tool{tool.NewRead(cwd), bash}
 			if access == fullToolAccess {
-				bash := tool.NewBashWithNetworkAuthorizer(cwd, authorizeNetwork)
-				if noSandbox {
-					bash = tool.NewBashWithoutSandbox(cwd)
-				}
-				tools = append(tools, tool.NewWrite(cwd), tool.NewEdit(cwd), bash)
+				tools = append(tools, tool.NewWrite(cwd), tool.NewEdit(cwd))
 			}
 			tools = append(tools, additional...)
 			return tool.NewRegistry(tools)

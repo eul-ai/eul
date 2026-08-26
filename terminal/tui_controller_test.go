@@ -211,6 +211,64 @@ func TestTUIControllerAllowsPermissionsForSession(t *testing.T) {
 	}
 }
 
+func TestTUIControllerHandlesPermissionWhileIdle(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.activity = activity{kind: activityError, detail: "previous error"}
+	controller := tuiController{model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard}
+	response := make(chan PermissionDecision, 1)
+
+	if _, err := controller.handlePermission(PermissionRequest{Title: "Network access", Response: response}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case decision := <-response:
+		t.Fatalf("permission resolved before input: %d", decision)
+	default:
+	}
+	if !model.permission.active() || model.activity.kind != activityPermission {
+		t.Fatalf("permission=%+v activity=%+v", model.permission, model.activity)
+	}
+
+	controller.resolvePermission(PermissionDenyOnce)
+	if decision := <-response; decision != PermissionDenyOnce {
+		t.Fatalf("decision = %d", decision)
+	}
+	if model.permission.active() || model.activity.kind != activityError || model.activity.detail != "previous error" {
+		t.Fatalf("permission=%+v activity=%+v", model.permission, model.activity)
+	}
+}
+
+func TestTUIControllerKeepsPermissionAfterMainTurnFinishes(t *testing.T) {
+	model := newTUIModel(80, 24, Options{})
+	model.running = true
+	model.activity = activity{kind: activityThinking}
+	controller := tuiController{model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard}
+	response := make(chan PermissionDecision, 1)
+
+	if _, err := controller.handlePermission(PermissionRequest{Title: "Network access", Response: response}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.handleEngineMessage(context.Background(), engineMessage{done: true}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case decision := <-response:
+		t.Fatalf("permission resolved when main turn finished: %d", decision)
+	default:
+	}
+	if model.running || !model.permission.active() || model.activity.kind != activityPermission {
+		t.Fatalf("running=%t permission=%+v activity=%+v", model.running, model.permission, model.activity)
+	}
+
+	controller.resolvePermission(PermissionAllowOnce)
+	if decision := <-response; decision != PermissionAllowOnce {
+		t.Fatalf("decision = %d", decision)
+	}
+	if model.permission.active() || model.activity.kind != activityReady {
+		t.Fatalf("permission=%+v activity=%+v", model.permission, model.activity)
+	}
+}
+
 func TestTUIControllerPreservesClipboardInsertionPoint(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})

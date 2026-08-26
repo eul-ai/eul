@@ -7,6 +7,7 @@ import (
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/subagent"
+	"github.com/eul-ai/eul/tool"
 )
 
 func (models modelSet) forProfile(profile subagent.Profile) string {
@@ -26,6 +27,7 @@ func runChildAgent(
 	ctx context.Context,
 	backendRuntime backend.Runtime,
 	newToolset toolsetFactory,
+	authorizeNetwork tool.NetworkAuthorizer,
 	config resolvedConfig,
 	modelProfile subagent.Profile,
 	thinkingLevel agent.ThinkingLevel,
@@ -38,7 +40,7 @@ func runChildAgent(
 		return agent.RunResult{}, fmt.Errorf("configure subagent provider: %w", err)
 	}
 
-	registry, err := newToolset(config.cwd, readOnlyToolAccess, config.noSandbox, nil)
+	registry, err := newToolset(config.cwd, subagentToolAccess, config.noSandbox, authorizeNetwork)
 	if err != nil {
 		return agent.RunResult{}, fmt.Errorf("configure subagent tools: %w", err)
 	}

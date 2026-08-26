@@ -109,6 +109,7 @@ type tuiController struct {
 	outcome                      RunOutcome
 	permission                   *PermissionRequest
 	queuedPermissions            []PermissionRequest
+	permissionActivity           activity
 	permissionsAllowedForSession bool
 	dirty                        bool
 	forceRedraw                  bool
@@ -263,7 +264,6 @@ func (c *tuiController) handleEngineMessage(ctx context.Context, message engineM
 		return c.handleAgentEvent(message)
 	}
 
-	c.denyPermissions()
 	if c.turnCancel != nil {
 		c.turnCancel()
 		c.turnCancel = nil
@@ -289,6 +289,7 @@ func (c *tuiController) handleEngineMessage(ctx context.Context, message engineM
 			return false, err
 		}
 	}
+	c.overlayPermissionActivity()
 
 	c.dirty = true
 	return false, nil
@@ -303,9 +304,7 @@ func (c *tuiController) handleAgentEvent(message engineMessage) (bool, error) {
 	} else {
 		c.model.applyAgentEvent(*message.event)
 	}
-	if c.model.permission.active() {
-		c.model.activity = activity{kind: activityPermission}
-	}
+	c.overlayPermissionActivity()
 	c.dirty = true
 	return false, nil
 }

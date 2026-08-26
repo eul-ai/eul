@@ -33,13 +33,12 @@ var standardThinkingLevelMap = agent.ThinkingLevelMap{
 }
 
 var extendedThinkingLevelMap = agent.ThinkingLevelMap{
-	agent.ThinkingOff:     "none",
-	agent.ThinkingMinimal: "minimal",
-	agent.ThinkingLow:     "low",
-	agent.ThinkingMedium:  "medium",
-	agent.ThinkingHigh:    "high",
-	agent.ThinkingXHigh:   "xhigh",
-	agent.ThinkingMax:     "max",
+	agent.ThinkingOff:    "none",
+	agent.ThinkingLow:    "low",
+	agent.ThinkingMedium: "medium",
+	agent.ThinkingHigh:   "high",
+	agent.ThinkingXHigh:  "xhigh",
+	agent.ThinkingMax:    "max",
 }
 
 var models = map[string]modelMetadata{

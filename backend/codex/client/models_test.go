@@ -52,10 +52,20 @@ func TestModelMetadata(t *testing.T) {
 }
 
 func TestThinkingLevelMappings(t *testing.T) {
-	allLevels := agent.ThinkingLevels()
+	gpt56Levels := []agent.ThinkingLevel{
+		agent.ThinkingOff,
+		agent.ThinkingLow,
+		agent.ThinkingMedium,
+		agent.ThinkingHigh,
+		agent.ThinkingXHigh,
+		agent.ThinkingMax,
+	}
 	for _, model := range []string{ModelGPT56Luna, ModelGPT56Terra, ModelGPT56Sol} {
-		if got := MetadataFor(model).ThinkingLevels; !slices.Equal(got, allLevels) {
-			t.Fatalf("%s levels = %v, want %v", model, got, allLevels)
+		if got := MetadataFor(model).ThinkingLevels; !slices.Equal(got, gpt56Levels) {
+			t.Fatalf("%s levels = %v, want %v", model, got, gpt56Levels)
+		}
+		if _, err := responseReasoningFor(model, agent.ThinkingMinimal, ReasoningSummaryAuto); err == nil {
+			t.Fatalf("%s accepts minimal thinking", model)
 		}
 	}
 	standardLevels := []agent.ThinkingLevel{
@@ -75,7 +85,6 @@ func TestThinkingLevelMappings(t *testing.T) {
 		wantSummary string
 	}{
 		{level: agent.ThinkingOff, wantEffort: "none"},
-		{level: agent.ThinkingMinimal, wantEffort: "minimal", wantSummary: "auto"},
 		{level: agent.ThinkingLow, wantEffort: "low", wantSummary: "auto"},
 		{level: agent.ThinkingMedium, wantEffort: "medium", wantSummary: "auto"},
 		{level: agent.ThinkingHigh, wantEffort: "high", wantSummary: "auto"},

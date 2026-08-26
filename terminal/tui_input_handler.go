@@ -185,7 +185,10 @@ func reducePermissionKey(model *tuiModel, key keyEvent) tuiAction {
 	case keyEscape:
 		return permissionAction(PermissionDenyOnce)
 	case keyCtrlC:
-		return tuiAction{kind: tuiActionCancel}
+		if model.running {
+			return tuiAction{kind: tuiActionCancel}
+		}
+		return permissionAction(PermissionDenyOnce)
 	case keyEOF, keyCtrlD:
 		return tuiAction{kind: tuiActionExit}
 	}

@@ -504,7 +504,6 @@ func (m *tuiModel) beginCompaction() {
 
 func (m *tuiModel) finishTurn(runErr error) {
 	m.running = false
-	m.clearPermission()
 	m.refreshCommandPickerAvailability()
 	m.closeStream()
 	executedTool := m.turnExecutedTool
