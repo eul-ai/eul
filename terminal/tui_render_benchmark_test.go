@@ -5,6 +5,35 @@ import (
 	"testing"
 )
 
+func BenchmarkTUIResizeTranscript(b *testing.B) {
+	for _, blockCount := range []int{1000, 10_000} {
+		b.Run(fmt.Sprintf("blocks-%d", blockCount), func(b *testing.B) {
+			model := newTUIModel(120, 40, Options{Config: Config{Model: "benchmark"}})
+			for index := range blockCount {
+				model.appendBlock(blockAssistant, fmt.Sprintf("Response **%d** with `code` and enough text to exercise markdown wrapping across the conversation.", index))
+			}
+			renderer := &tuiRenderer{}
+			normalizeViewport(model, renderer)
+			_, frame := renderer.renderPending(model, false)
+			renderer.commit(frame)
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				switch model.width {
+				case 119:
+					model.width = 120
+				default:
+					model.width = 119
+				}
+				normalizeViewport(model, renderer)
+				_, frame = renderer.renderPending(model, false)
+				renderer.commit(frame)
+			}
+		})
+	}
+}
+
 func BenchmarkTUIRenderStreamingTranscript(b *testing.B) {
 	for _, blockCount := range []int{100, 1000} {
 		b.Run(fmt.Sprintf("blocks-%d", blockCount), func(b *testing.B) {

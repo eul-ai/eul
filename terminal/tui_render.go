@@ -26,11 +26,13 @@ type renderedConversationBlock struct {
 type tuiRenderer struct {
 	frame                  terminalFrame
 	conversationBlocks     []renderedConversationBlock
+	conversationBlockStart int
 	conversationLines      []styledLine
 	conversationPlain      []string
 	conversationSeparators []string
 	conversationWidth      int
 	conversationVersion    uint64
+	conversationPrepared   bool
 }
 
 func (r *tuiRenderer) render(model *tuiModel) string {

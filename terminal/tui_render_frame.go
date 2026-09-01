@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -18,6 +19,7 @@ type terminalFrame struct {
 	conversationLines      []string
 	conversationSeparators []string
 	conversationVersion    uint64
+	conversationTruncated  bool
 }
 
 type renderPreparation struct {
@@ -26,13 +28,19 @@ type renderPreparation struct {
 	conversationLines      []styledLine
 	conversationPlain      []string
 	conversationSeparators []string
+	conversationTruncated  bool
 	scrollTop              int
 }
 
+const resizeHistoryRows = 200
+
 func (r *tuiRenderer) prepare(model *tuiModel) renderPreparation {
 	input, layout := modelInputLayout(model)
-	if r.conversationWidth != model.width || r.conversationVersion != model.conversationVersion {
-		r.prepareConversation(model)
+	minimumRows := layout.conversationHeight + resizeHistoryRows
+	conversationChanged := r.conversationWidth != model.width || r.conversationVersion != model.conversationVersion
+	conversationTooShort := r.conversationBlockStart > 0 && cachedConversationRows(r.conversationBlocks) < minimumRows
+	if conversationChanged || conversationTooShort || model.historyExpansionRequested {
+		r.prepareConversation(model, layout.conversationHeight, minimumRows)
 	}
 
 	return renderPreparation{
@@ -41,28 +49,140 @@ func (r *tuiRenderer) prepare(model *tuiModel) renderPreparation {
 		conversationLines:      r.conversationLines,
 		conversationPlain:      r.conversationPlain,
 		conversationSeparators: r.conversationSeparators,
+		conversationTruncated:  r.conversationBlockStart > 0,
 		scrollTop:              model.scrollTop,
 	}
 }
 
-func (r *tuiRenderer) prepareConversation(model *tuiModel) {
-	if r.conversationWidth != model.width {
-		r.conversationBlocks = nil
+func (r *tuiRenderer) prepareConversation(model *tuiModel, conversationHeight, minimumRows int) {
+	widthChanged := r.conversationWidth != model.width
+	initialLayout := !r.conversationPrepared
+	preserveTailPosition := widthChanged && r.conversationBlockStart > 0 && !model.following
+	distanceFromBottom := 0
+	if preserveTailPosition {
+		oldBottom := max(0, len(r.conversationLines)-r.frame.layout.conversationHeight)
+		distanceFromBottom = oldBottom - model.scrollTop
 	}
-	if len(r.conversationBlocks) > len(model.blocks) {
-		clear(r.conversationBlocks[len(model.blocks):])
-		r.conversationBlocks = r.conversationBlocks[:len(model.blocks)]
+	if widthChanged {
+		switch {
+		case initialLayout || !model.following || model.historyExpansionRequested:
+			r.renderAllConversationBlocks(model)
+		default:
+			r.renderConversationTail(model, minimumRows)
+		}
+	} else {
+		r.updateConversationBlocks(model)
+
+		complete := model.historyExpansionRequested
+		if complete || r.conversationBlockStart > 0 && cachedConversationRows(r.conversationBlocks) < minimumRows {
+			addedRows := r.prependConversationBlocks(model, minimumRows, complete)
+			shiftConversationRows(model, addedRows)
+		}
 	}
+	model.historyExpansionRequested = false
+
+	r.flattenConversation(model)
+	if preserveTailPosition {
+		newBottom := max(0, len(r.conversationLines)-conversationHeight)
+		model.scrollTop = newBottom - distanceFromBottom
+	}
+	r.conversationWidth = model.width
+	r.conversationVersion = model.conversationVersion
+	r.conversationPrepared = true
+}
+
+func (r *tuiRenderer) renderAllConversationBlocks(model *tuiModel) {
+	r.conversationBlocks = make([]renderedConversationBlock, len(model.blocks))
 	for index, block := range model.blocks {
-		if index == len(r.conversationBlocks) {
+		r.conversationBlocks[index] = renderConversationBlock(block, model.width)
+	}
+	r.conversationBlockStart = 0
+}
+
+func (r *tuiRenderer) renderConversationTail(model *tuiModel, minimumRows int) {
+	r.conversationBlocks = nil
+	r.conversationBlockStart = len(model.blocks)
+	r.prependConversationBlocks(model, minimumRows, false)
+}
+
+func (r *tuiRenderer) updateConversationBlocks(model *tuiModel) {
+	if r.conversationBlockStart > len(model.blocks) {
+		clear(r.conversationBlocks)
+		r.conversationBlocks = nil
+		r.conversationBlockStart = len(model.blocks)
+	}
+
+	cachedCount := len(model.blocks) - r.conversationBlockStart
+	if len(r.conversationBlocks) > cachedCount {
+		clear(r.conversationBlocks[cachedCount:])
+		r.conversationBlocks = r.conversationBlocks[:cachedCount]
+	}
+	for blockIndex := r.conversationBlockStart; blockIndex < len(model.blocks); blockIndex++ {
+		cacheIndex := blockIndex - r.conversationBlockStart
+		block := model.blocks[blockIndex]
+		if cacheIndex == len(r.conversationBlocks) {
 			r.conversationBlocks = append(r.conversationBlocks, renderConversationBlock(block, model.width))
 			continue
 		}
-		if !conversationBlocksEqual(r.conversationBlocks[index].block, block) {
-			r.conversationBlocks[index] = renderConversationBlock(block, model.width)
+		if !conversationBlocksEqual(r.conversationBlocks[cacheIndex].block, block) {
+			r.conversationBlocks[cacheIndex] = renderConversationBlock(block, model.width)
 		}
 	}
+}
 
+func (r *tuiRenderer) prependConversationBlocks(model *tuiModel, minimumRows int, complete bool) int {
+	oldBlockCount := len(r.conversationBlocks)
+	rows := cachedConversationRows(r.conversationBlocks)
+	var reversed []renderedConversationBlock
+	for r.conversationBlockStart > 0 && (complete || rows < minimumRows) {
+		r.conversationBlockStart--
+		rendered := renderConversationBlock(model.blocks[r.conversationBlockStart], model.width)
+		reversed = append(reversed, rendered)
+		rows += len(rendered.lines)
+		if oldBlockCount > 0 || len(reversed) > 1 {
+			rows++
+		}
+	}
+	if len(reversed) == 0 {
+		return 0
+	}
+
+	slices.Reverse(reversed)
+	addedRows := 0
+	if oldBlockCount > 0 {
+		for _, rendered := range reversed {
+			addedRows += len(rendered.lines) + 1
+		}
+	}
+	r.conversationBlocks = append(reversed, r.conversationBlocks...)
+	return addedRows
+}
+
+func cachedConversationRows(blocks []renderedConversationBlock) int {
+	rows := conversationVerticalPadding * 2
+	for index, block := range blocks {
+		rows += len(block.lines)
+		if index < len(blocks)-1 {
+			rows++
+		}
+	}
+	return rows
+}
+
+func shiftConversationRows(model *tuiModel, rows int) {
+	if rows == 0 {
+		return
+	}
+	if !model.following {
+		model.scrollTop += rows
+	}
+	if model.selection.set && model.selection.anchor.conversation {
+		model.selection.anchor.row += rows
+		model.selection.focus.row += rows
+	}
+}
+
+func (r *tuiRenderer) flattenConversation(model *tuiModel) {
 	lineCapacity := len(r.conversationLines)
 	plainCapacity := len(r.conversationPlain)
 	lines := make([]styledLine, 0, lineCapacity)
@@ -79,7 +199,7 @@ func (r *tuiRenderer) prepareConversation(model *tuiModel) {
 	}
 
 	pendingSteering := model.pendingSteering()
-	totalBlocks := len(model.blocks) + len(pendingSteering)
+	totalBlocks := len(r.conversationBlocks) + len(pendingSteering)
 	appendedBlocks := 0
 	appendBlock := func(rendered renderedConversationBlock) {
 		lines = append(lines, rendered.lines...)
@@ -103,8 +223,6 @@ func (r *tuiRenderer) prepareConversation(model *tuiModel) {
 	r.conversationLines = lines
 	r.conversationPlain = plain
 	r.conversationSeparators = separators
-	r.conversationWidth = model.width
-	r.conversationVersion = model.conversationVersion
 }
 
 func renderConversationBlock(block conversationBlock, width int) renderedConversationBlock {
@@ -170,6 +288,7 @@ func projectTerminalFrame(model *tuiModel, prepared renderPreparation) terminalF
 		conversationLines:      prepared.conversationPlain,
 		conversationSeparators: prepared.conversationSeparators,
 		conversationVersion:    model.conversationVersion,
+		conversationTruncated:  prepared.conversationTruncated,
 	}
 }
 

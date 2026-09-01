@@ -1,6 +1,8 @@
 package terminal
 
 import (
+	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -108,6 +110,119 @@ func TestRendererForcesFullRedrawAfterResizeOrCtrlL(t *testing.T) {
 	renderer.commit(next)
 	if !strings.Contains(forced, ansiClearScreen) {
 		t.Fatalf("forced redraw = %q", forced)
+	}
+}
+
+func TestRendererLimitsHistoryAfterWidthResize(t *testing.T) {
+	model := newTUIModel(40, 8, Options{})
+	for index := range 300 {
+		model.appendBlock(blockInfo, fmt.Sprintf("history %03d", index))
+	}
+	var renderer tuiRenderer
+	_ = renderModel(&renderer, model)
+	if renderer.conversationBlockStart != 0 {
+		t.Fatalf("initial conversation starts at block %d", renderer.conversationBlockStart)
+	}
+
+	model.width = 30
+	_ = renderModel(&renderer, model)
+	if renderer.conversationBlockStart == 0 || !renderer.frame.conversationTruncated {
+		t.Fatalf("resized conversation starts at block %d, truncated=%t", renderer.conversationBlockStart, renderer.frame.conversationTruncated)
+	}
+	conversationHeight := renderer.frame.layout.conversationHeight
+	if len(renderer.conversationLines) < conversationHeight+resizeHistoryRows {
+		t.Fatalf("resized conversation has %d cached rows", len(renderer.conversationLines))
+	}
+	full := modelConversationLines(model, model.width)
+	fullTop := max(0, len(full)-conversationHeight)
+	wantViewport := conversationViewport(full, fullTop, conversationHeight)
+	wantPlain := make([]string, len(wantViewport))
+	for index, line := range wantViewport {
+		wantPlain[index] = renderedLineText(line, model.width)
+	}
+	if !slices.Equal(renderer.frame.plainRows[:conversationHeight], wantPlain) {
+		t.Fatalf("resized viewport differs from full render:\ngot:  %q\nwant: %q", renderer.frame.plainRows[:conversationHeight], wantPlain)
+	}
+	conversation := strings.Join(renderer.frame.conversationLines, "\n")
+	if strings.Contains(conversation, "history 000") || !strings.Contains(conversation, "history 299") {
+		t.Fatalf("resized conversation cached the wrong history: %q", conversation)
+	}
+}
+
+func TestRendererLoadsTruncatedResizeHistoryWhenScrollingPastTop(t *testing.T) {
+	model := newTUIModel(40, 8, Options{})
+	for index := range 300 {
+		model.appendBlock(blockInfo, fmt.Sprintf("history %03d", index))
+	}
+	var renderer tuiRenderer
+	_ = renderModel(&renderer, model)
+	model.width = 30
+	_ = renderModel(&renderer, model)
+
+	partialTop := slices.Clone(renderer.conversationPlain[:renderer.frame.layout.conversationHeight])
+	scrollConversationBy(model, -model.scrollTop, renderer.frame)
+	if !model.historyExpansionRequested {
+		t.Fatal("scrolling past cached history did not request expansion")
+	}
+	_ = renderModel(&renderer, model)
+
+	if renderer.conversationBlockStart != 0 || renderer.frame.conversationTruncated || model.historyExpansionRequested {
+		t.Fatalf("expanded conversation starts at block %d, truncated=%t requested=%t", renderer.conversationBlockStart, renderer.frame.conversationTruncated, model.historyExpansionRequested)
+	}
+	if !slices.Equal(renderer.frame.plainRows[:renderer.frame.layout.conversationHeight], partialTop) {
+		t.Fatalf("viewport moved while expanding history:\ngot:  %q\nwant: %q", renderer.frame.plainRows[:renderer.frame.layout.conversationHeight], partialTop)
+	}
+	if !strings.Contains(strings.Join(renderer.frame.conversationLines, "\n"), "history 000") {
+		t.Fatal("expanded conversation does not contain oldest history")
+	}
+}
+
+func TestRendererPreservesViewportWhenHeightExtendsResizeHistory(t *testing.T) {
+	model := newTUIModel(40, 8, Options{})
+	for index := range 400 {
+		model.appendBlock(blockInfo, fmt.Sprintf("history %03d", index))
+	}
+	var renderer tuiRenderer
+	_ = renderModel(&renderer, model)
+	model.width = 30
+	_ = renderModel(&renderer, model)
+
+	scrollConversationBy(model, -100, renderer.frame)
+	_ = renderModel(&renderer, model)
+	oldTop := renderer.frame.plainRows[0]
+	oldBlockStart := renderer.conversationBlockStart
+	model.height = 100
+	_ = renderModel(&renderer, model)
+	if renderer.conversationBlockStart >= oldBlockStart {
+		t.Fatalf("height resize did not extend cached history: start=%d, old=%d", renderer.conversationBlockStart, oldBlockStart)
+	}
+	if renderer.frame.plainRows[0] != oldTop {
+		t.Fatalf("height resize moved viewport from %q to %q", oldTop, renderer.frame.plainRows[0])
+	}
+}
+
+func TestRendererReflowsFullHistoryWhenResizeHistoryIsScrolled(t *testing.T) {
+	model := newTUIModel(40, 8, Options{})
+	for index := range 300 {
+		model.appendBlock(blockInfo, fmt.Sprintf("history %03d", index))
+	}
+	var renderer tuiRenderer
+	_ = renderModel(&renderer, model)
+	model.width = 35
+	_ = renderModel(&renderer, model)
+
+	scrollConversationBy(model, -20, renderer.frame)
+	_ = renderModel(&renderer, model)
+	oldBottom := len(renderer.frame.conversationLines) - renderer.frame.layout.conversationHeight
+	oldDistanceFromBottom := oldBottom - renderer.frame.conversationTop
+	model.width = 30
+	_ = renderModel(&renderer, model)
+	if renderer.conversationBlockStart != 0 || renderer.frame.conversationTruncated {
+		t.Fatalf("scrolled conversation starts at block %d, truncated=%t", renderer.conversationBlockStart, renderer.frame.conversationTruncated)
+	}
+	newBottom := len(renderer.frame.conversationLines) - renderer.frame.layout.conversationHeight
+	if distance := newBottom - renderer.frame.conversationTop; distance != oldDistanceFromBottom {
+		t.Fatalf("distance from bottom = %d, want %d", distance, oldDistanceFromBottom)
 	}
 }
 

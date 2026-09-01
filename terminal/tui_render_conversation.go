@@ -340,7 +340,11 @@ func scrollConversationBy(model *tuiModel, lines int, frame terminalFrame) {
 	model.following = false
 	model.scrollTop += lines
 	if model.scrollTop <= 0 {
-		model.scrollTop = 0
+		if frame.conversationTruncated {
+			model.historyExpansionRequested = true
+		} else {
+			model.scrollTop = 0
+		}
 	}
 	if model.scrollTop >= bottom {
 		model.scrollTop = bottom

@@ -67,13 +67,14 @@ type activity struct {
 }
 
 type conversationModel struct {
-	blocks              []conversationBlock
-	conversationVersion uint64
-	streamKind          blockKind
-	streamText          strings.Builder
-	scrollTop           int
-	following           bool
-	selection           textSelection
+	blocks                    []conversationBlock
+	conversationVersion       uint64
+	streamKind                blockKind
+	streamText                strings.Builder
+	scrollTop                 int
+	following                 bool
+	historyExpansionRequested bool
+	selection                 textSelection
 }
 
 type editorItemKind uint8
@@ -449,6 +450,7 @@ func (m *tuiModel) clearConversation() {
 	m.turnExecutedTool = false
 	m.scrollTop = 0
 	m.following = true
+	m.historyExpansionRequested = false
 	m.selection = textSelection{}
 	m.activity = activity{kind: activityReady}
 }
