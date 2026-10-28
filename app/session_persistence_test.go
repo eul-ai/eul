@@ -3,14 +3,12 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/subagent"
 )
 
 func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
@@ -44,12 +42,9 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	if second.terminalOptions.Config.InitialCheckpoint == nil || second.terminalOptions.Config.InitialCheckpoint.Description() != "first prompt" {
 		t.Fatalf("terminal checkpoint = %+v", second.terminalOptions.Config.InitialCheckpoint)
 	}
-	summaries, warnings, err := second.terminalOptions.Sessions.List(context.Background())
+	summaries, err := second.terminalOptions.Sessions.List(context.Background())
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(warnings) != 0 {
-		t.Fatalf("warnings = %v", warnings)
 	}
 	if len(summaries) != 0 {
 		t.Fatalf("current session was listed: %+v", summaries)
@@ -184,42 +179,5 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	defer restored.finish(nil)
 	if restored.config.provider != "alternate" || restored.config.models != models {
 		t.Fatalf("restored = %+v", restored.config)
-	}
-}
-
-func TestResumeSurfacesSkippedSessionWarnings(t *testing.T) {
-	cwd := t.TempDir()
-	backendRuntime := testBackendRuntime(emptyProvider())
-	backendRuntime.Catalog = testCatalog("model", "persisted-fast", "persisted-balanced")
-	launcher := testLauncher(t, cwd, backendRuntime)
-	corrupt, err := launcher.store.Create("test", cwd, backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "corrupt"), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	corruptPath := sessionStatePath(corrupt.path)
-	if err := corrupt.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(corruptPath, []byte(`{"version":99}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	valid, err := launcher.store.Create("test", cwd, backend.Models{Main: "model", Fast: "persisted-fast", Balanced: "persisted-balanced"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "valid"), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := valid.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	session, err := launcher.resume(context.Background(), cwd, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer session.finish(nil)
-	if len(session.terminalOptions.Config.Warnings) != 1 {
-		t.Fatalf("warnings = %v", session.terminalOptions.Config.Warnings)
-	}
-	if session.config.models != (backend.Models{Main: "model", Fast: "persisted-fast", Balanced: "persisted-balanced"}) {
-		t.Fatalf("restored models = %+v", session.config)
 	}
 }

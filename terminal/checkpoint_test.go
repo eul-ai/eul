@@ -335,8 +335,8 @@ func TestResumeCommandListsSessionsWithoutStoreDependency(t *testing.T) {
 		output:         io.Discard,
 		engineMessages: make(chan engineMessage, 1),
 		stopped:        make(chan struct{}),
-		sessions: Sessions{List: func(context.Context) ([]SessionSummary, []string, error) {
-			return []SessionSummary{{ID: "session", Description: "prompt"}}, []string{"resume-warning-sentinel"}, nil
+		sessions: Sessions{List: func(context.Context) ([]SessionSummary, error) {
+			return []SessionSummary{{ID: "session", Description: "prompt"}}, nil
 		}},
 	}
 
@@ -345,9 +345,6 @@ func TestResumeCommandListsSessionsWithoutStoreDependency(t *testing.T) {
 	}
 	if !model.resumePicker.active {
 		t.Fatal("resume picker did not open")
-	}
-	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo || !strings.Contains(model.blocks[0].text, "resume-warning-sentinel") {
-		t.Fatalf("warning blocks = %+v", model.blocks)
 	}
 	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Enter}})
 	if err != nil || !exit || controller.outcome != (RunOutcome{Action: RunResumeSession, SessionID: "session"}) {

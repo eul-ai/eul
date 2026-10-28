@@ -119,9 +119,6 @@ func (launcher *launcher) open(ctx context.Context, settings sessionSettings, ha
 	if err != nil {
 		return nil, err
 	}
-	if handle != nil {
-		config.warnings = append(config.warnings, handle.warnings...)
-	}
 
 	runtime, err := launcher.runtime(ctx, selected)
 	if err != nil {

@@ -1,7 +1,7 @@
 package app
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -24,13 +24,10 @@ import (
 )
 
 const (
-	maxSessionBytes          = int64(512 * 1024 * 1024)
-	sessionStateFileName     = "state.json"
-	sessionTranscriptAName   = "transcript-a.jsonl"
-	sessionTranscriptBName   = "transcript-b.jsonl"
-	sessionLockFileName      = "lock"
-	initialTranscriptSlot    = "a"
-	maxTranscriptRecordBytes = maxSessionBytes
+	maxSessionBytes         = int64(512 * 1024 * 1024)
+	sessionMetadataFileName = "meta.json"
+	sessionStateFileName    = "state.json"
+	sessionLockFileName     = "lock"
 )
 
 var errSessionInUse = errors.New("session is already in use")
@@ -40,16 +37,13 @@ type sessionStore struct {
 }
 
 type sessionHandle struct {
-	store      *sessionStore
-	path       string
-	lock       *os.File
-	record     sessionRecord
-	transcript terminal.Transcript
-	head       sessionTranscriptHead
-	warnings   []string
-	persisted  bool
-	unusable   bool
-	closed     bool
+	store     *sessionStore
+	path      string
+	lock      *os.File
+	record    sessionRecord
+	persisted bool
+	unusable  bool
+	closed    bool
 }
 
 func newSessionStore(home string) *sessionStore {
@@ -95,7 +89,6 @@ func (store *sessionStore) Create(
 	now := time.Now().UTC()
 	record := sessionRecord{
 		sessionMetadata: sessionMetadata{
-			Version:          sessionStateVersion,
 			ID:               id,
 			CreatedAt:        now,
 			UpdatedAt:        now,
@@ -107,16 +100,17 @@ func (store *sessionStore) Create(
 			FastMode:         fastMode,
 			Description:      terminalCheckpoint.Description(),
 		},
-		Agent:    agentCheckpoint,
-		Subagent: subagentCheckpoint,
-		Terminal: terminalCheckpoint,
+		sessionState: sessionState{
+			Agent:    agentCheckpoint,
+			Subagent: subagentCheckpoint,
+			Terminal: terminalCheckpoint,
+		},
 	}
 	handle := &sessionHandle{
 		store:  store,
 		path:   path,
 		lock:   lock,
 		record: record,
-		head:   sessionTranscriptHead{Slot: initialTranscriptSlot},
 	}
 	if record.Description != "" {
 		if err := handle.commit(record); err != nil {
@@ -132,10 +126,9 @@ func (store *sessionStore) Open(ctx context.Context, cwd, id string) (*sessionHa
 	}
 
 	var path string
-	var warnings []string
 	var err error
 	if id == "" {
-		path, warnings, err = store.mostRecentPath(cwd)
+		path, err = store.mostRecentPath(cwd)
 	} else {
 		path, err = store.findSessionPath(cwd, id)
 	}
@@ -147,7 +140,7 @@ func (store *sessionStore) Open(ctx context.Context, cwd, id string) (*sessionHa
 	if err != nil {
 		return nil, err
 	}
-	record, transcript, head, err := readStoredSession(path)
+	record, err := readSessionRecord(path)
 	if err != nil {
 		_ = releaseSessionLock(lock)
 		return nil, err
@@ -160,77 +153,51 @@ func (store *sessionStore) Open(ctx context.Context, cwd, id string) (*sessionHa
 		_ = releaseSessionLock(lock)
 		return nil, errors.New("session is stored under the wrong workspace")
 	}
-	if err := truncateTranscriptTail(path, head); err != nil {
-		_ = releaseSessionLock(lock)
-		return nil, err
-	}
-	clearTranscriptSlot(path, inactiveTranscriptSlot(head.Slot))
 
 	return &sessionHandle{
-		store:      store,
-		path:       path,
-		lock:       lock,
-		record:     record,
-		transcript: transcript,
-		head:       head,
-		warnings:   warnings,
-		persisted:  true,
+		store:     store,
+		path:      path,
+		lock:      lock,
+		record:    record,
+		persisted: true,
 	}, nil
 }
 
-func (store *sessionStore) List(cwd string) ([]sessionSummary, []string, error) {
+func (store *sessionStore) List(cwd string) ([]terminal.SessionSummary, error) {
 	directory := store.workspaceDirectory(cwd)
 	entries, err := os.ReadDir(directory)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil, nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("list sessions: %w", err)
+		return nil, fmt.Errorf("list sessions: %w", err)
 	}
 
-	var summaries []sessionSummary
-	var warnings []string
+	var summaries []terminal.SessionSummary
 	for _, entry := range entries {
 		if !entry.IsDir() || !validSessionID(entry.Name()) {
 			continue
 		}
 		path := filepath.Join(directory, entry.Name())
 		lock, err := acquireSessionLock(sessionLockPath(path))
-		if errors.Is(err, errSessionInUse) {
-			continue
-		}
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("Skipped session %s: %v", filepath.ToSlash(path), err))
 			continue
 		}
 
-		statePath := sessionStatePath(path)
-		summary, workingDirectory, err := readSessionSummary(statePath)
-		err = errors.Join(err, releaseSessionLock(lock))
-		if errors.Is(err, os.ErrNotExist) {
+		var metadata sessionMetadata
+		err = errors.Join(readSessionFile(filepath.Join(path, sessionMetadataFileName), &metadata), releaseSessionLock(lock))
+		if err != nil || metadata.ID != entry.Name() || metadata.WorkingDirectory != cwd {
 			continue
 		}
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("Skipped session %s: %v", filepath.ToSlash(path), err))
-			continue
-		}
-		if summary.ID != entry.Name() {
-			warnings = append(warnings, fmt.Sprintf("Skipped session %s: stored session ID does not match", filepath.ToSlash(path)))
-			continue
-		}
-		if workingDirectory != cwd {
-			warnings = append(warnings, fmt.Sprintf("Skipped session %s: stored working directory does not match", filepath.ToSlash(path)))
-			continue
-		}
-		summaries = append(summaries, summary)
+		summaries = append(summaries, metadata.summary())
 	}
-	slices.SortFunc(summaries, func(left, right sessionSummary) int {
+	slices.SortFunc(summaries, func(left, right terminal.SessionSummary) int {
 		if order := right.UpdatedAt.Compare(left.UpdatedAt); order != 0 {
 			return order
 		}
 		return strings.Compare(left.ID, right.ID)
 	})
-	return summaries, warnings, nil
+	return summaries, nil
 }
 
 func (store *sessionStore) workspaceDirectory(cwd string) string {
@@ -238,19 +205,15 @@ func (store *sessionStore) workspaceDirectory(cwd string) string {
 	return filepath.Join(store.root, hex.EncodeToString(digest[:]))
 }
 
-func (store *sessionStore) mostRecentPath(cwd string) (string, []string, error) {
-	summaries, warnings, err := store.List(cwd)
+func (store *sessionStore) mostRecentPath(cwd string) (string, error) {
+	summaries, err := store.List(cwd)
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	if len(summaries) == 0 {
-		message := fmt.Sprintf("no saved sessions for %s", cwd)
-		if len(warnings) > 0 {
-			message += ": " + strings.Join(warnings, "; ")
-		}
-		return "", nil, errors.New(message)
+		return "", fmt.Errorf("no saved sessions for %s", cwd)
 	}
-	return filepath.Join(store.workspaceDirectory(cwd), summaries[0].ID), warnings, nil
+	return filepath.Join(store.workspaceDirectory(cwd), summaries[0].ID), nil
 }
 
 func (store *sessionStore) findSessionPath(cwd, id string) (string, error) {
@@ -301,7 +264,7 @@ func storedSessionDirectory(path string) (bool, error) {
 	if !info.IsDir() {
 		return false, nil
 	}
-	if _, err := os.Lstat(sessionStatePath(path)); errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Lstat(filepath.Join(path, sessionMetadataFileName)); errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	} else if err != nil {
 		return false, fmt.Errorf("inspect session state: %w", err)
@@ -353,79 +316,33 @@ func (handle *sessionHandle) commit(record sessionRecord) error {
 	if err := validateSessionRecord(record); err != nil {
 		return err
 	}
-	transcript, terminalState, err := terminal.SplitCheckpoint(record.Terminal)
+	state, err := json.Marshal(record.sessionState)
 	if err != nil {
-		return err
+		return fmt.Errorf("encode session state: %w", err)
 	}
-
-	head := handle.head
-	previousSlot := head.Slot
-	compacted := false
-	delta, changed := terminal.DiffTranscript(handle.transcript, transcript)
-	if changed {
-		encodedDelta, err := encodeTranscriptDelta(delta)
-		if err != nil {
-			return err
-		}
-		if shouldCompactTranscript(head, int64(len(encodedDelta))) {
-			canonical, err := encodeCanonicalTranscript(transcript)
-			if err != nil {
-				return err
-			}
-			head = sessionTranscriptHead{
-				Slot:       inactiveTranscriptSlot(head.Slot),
-				Bytes:      int64(len(canonical)),
-				BlockCount: transcript.BlockCount(),
-				BaseBytes:  int64(len(canonical)),
-			}
-			if err := writeTranscriptSlot(handle.path, head.Slot, canonical); err != nil {
-				return err
-			}
-			compacted = true
-		} else {
-			if err := appendTranscriptRecord(handle.path, head, encodedDelta); err != nil {
-				return err
-			}
-			head.Bytes += int64(len(encodedDelta))
-			head.BlockCount = transcript.BlockCount()
-			if !handle.persisted || handle.head.Bytes == 0 {
-				head.BaseBytes = int64(len(encodedDelta))
-				head.DeltaBytes = 0
-			} else {
-				head.DeltaBytes += int64(len(encodedDelta))
-			}
-		}
-	}
-
-	state := sessionState{
-		sessionMetadata: record.sessionMetadata,
-		Agent:           record.Agent,
-		Subagent:        record.Subagent,
-		Terminal:        terminalState,
-		Transcript:      head,
-	}
-	encodedState, err := encodeSessionState(state)
-	if err != nil {
-		return err
-	}
-	if int64(len(encodedState))+head.Bytes > maxSessionBytes {
+	if int64(len(state)) > maxSessionBytes {
 		return fmt.Errorf("session exceeds %d bytes", maxSessionBytes)
 	}
-	ambiguous, err := writeSessionState(sessionStatePath(handle.path), encodedState)
+	metadata, err := json.Marshal(record.sessionMetadata)
 	if err != nil {
-		if ambiguous {
-			handle.unusable = true
+		return fmt.Errorf("encode session metadata: %w", err)
+	}
+
+	for _, file := range []struct {
+		name    string
+		encoded []byte
+	}{{sessionStateFileName, state}, {sessionMetadataFileName, metadata}} {
+		ambiguous, err := writeSessionFile(filepath.Join(handle.path, file.name), file.encoded)
+		if err != nil {
+			if ambiguous {
+				handle.unusable = true
+			}
+			return err
 		}
-		return err
 	}
 
 	handle.record = record
-	handle.transcript = transcript
-	handle.head = head
 	handle.persisted = true
-	if compacted {
-		clearTranscriptSlot(handle.path, previousSlot)
-	}
 	return nil
 }
 
@@ -446,336 +363,66 @@ func (handle *sessionHandle) Close() error {
 	return syncDirectory(filepath.Dir(handle.path))
 }
 
-func sessionStatePath(path string) string {
-	return filepath.Join(path, sessionStateFileName)
-}
-
-func sessionTranscriptPath(path, slot string) string {
-	name := sessionTranscriptAName
-	if slot == "b" {
-		name = sessionTranscriptBName
-	}
-	return filepath.Join(path, name)
-}
-
 func sessionLockPath(path string) string {
 	return filepath.Join(path, sessionLockFileName)
 }
 
-func readSessionSummary(path string) (sessionSummary, string, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return sessionSummary{}, "", fmt.Errorf("inspect session state: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return sessionSummary{}, "", errors.New("session state path is not a regular file")
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return sessionSummary{}, "", errors.New("session state file permissions must be 0600")
-	}
-	if info.Size() > maxSessionBytes {
-		return sessionSummary{}, "", fmt.Errorf("session exceeds %d bytes", maxSessionBytes)
-	}
-
-	file, err := os.Open(path)
-	if err != nil {
-		return sessionSummary{}, "", fmt.Errorf("open session state: %w", err)
-	}
-	defer file.Close()
-
-	return decodeSessionSummary(io.LimitReader(file, maxSessionBytes+1))
-}
-
 func readSessionRecord(path string) (sessionRecord, error) {
-	record, _, _, err := readStoredSession(path)
-	return record, err
-}
-
-func readStoredSession(path string) (sessionRecord, terminal.Transcript, sessionTranscriptHead, error) {
-	state, err := readSessionState(sessionStatePath(path))
-	if err != nil {
-		return sessionRecord{}, terminal.Transcript{}, sessionTranscriptHead{}, err
+	var record sessionRecord
+	if err := readSessionFile(filepath.Join(path, sessionMetadataFileName), &record.sessionMetadata); err != nil {
+		return sessionRecord{}, err
 	}
-	transcript, err := readTranscript(path, state.Transcript)
-	if err != nil {
-		return sessionRecord{}, terminal.Transcript{}, sessionTranscriptHead{}, err
-	}
-	terminalCheckpoint, err := terminal.JoinCheckpoint(transcript, state.Terminal)
-	if err != nil {
-		return sessionRecord{}, terminal.Transcript{}, sessionTranscriptHead{}, err
-	}
-	record := sessionRecord{
-		sessionMetadata: state.sessionMetadata,
-		Agent:           state.Agent,
-		Subagent:        state.Subagent,
-		Terminal:        terminalCheckpoint,
+	if err := readSessionFile(filepath.Join(path, sessionStateFileName), &record.sessionState); err != nil {
+		return sessionRecord{}, err
 	}
 	if err := validateSessionRecord(record); err != nil {
-		return sessionRecord{}, terminal.Transcript{}, sessionTranscriptHead{}, err
+		return sessionRecord{}, err
 	}
-	return record, transcript, state.Transcript, nil
+	return record, nil
 }
 
-func readSessionState(path string) (sessionState, error) {
+func readSessionFile(path string, value any) error {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return sessionState{}, fmt.Errorf("inspect session state: %w", err)
+		return fmt.Errorf("inspect session file: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return sessionState{}, errors.New("session state path is not a regular file")
+		return errors.New("session file path is not a regular file")
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		return sessionState{}, errors.New("session state file permissions must be 0600")
+		return errors.New("session file permissions must be 0600")
 	}
 	if info.Size() > maxSessionBytes {
-		return sessionState{}, fmt.Errorf("session exceeds %d bytes", maxSessionBytes)
+		return fmt.Errorf("session exceeds %d bytes", maxSessionBytes)
 	}
 
 	encoded, err := os.ReadFile(path)
 	if err != nil {
-		return sessionState{}, fmt.Errorf("read session state: %w", err)
+		return fmt.Errorf("read session file: %w", err)
 	}
-	state, err := decodeSessionState(encoded)
-	if err != nil {
-		return sessionState{}, err
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return fmt.Errorf("decode %s: %w", filepath.Base(path), err)
 	}
-	if int64(len(encoded))+state.Transcript.Bytes > maxSessionBytes {
-		return sessionState{}, fmt.Errorf("session exceeds %d bytes", maxSessionBytes)
-	}
-	return state, nil
-}
-
-func readTranscript(path string, head sessionTranscriptHead) (terminal.Transcript, error) {
-	if head.Bytes == 0 {
-		return terminal.EmptyTranscript(), nil
-	}
-
-	transcriptPath := sessionTranscriptPath(path, head.Slot)
-	info, err := os.Lstat(transcriptPath)
-	if err != nil {
-		return terminal.Transcript{}, fmt.Errorf("inspect session transcript: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return terminal.Transcript{}, errors.New("session transcript path is not a regular file")
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return terminal.Transcript{}, errors.New("session transcript file permissions must be 0600")
-	}
-	if info.Size() < head.Bytes {
-		return terminal.Transcript{}, errors.New("session transcript is shorter than its committed state")
-	}
-
-	file, err := os.Open(transcriptPath)
-	if err != nil {
-		return terminal.Transcript{}, fmt.Errorf("open session transcript: %w", err)
-	}
-	defer file.Close()
-
-	reader := bufio.NewReader(io.LimitReader(file, head.Bytes))
-	transcript := terminal.EmptyTranscript()
-	var consumed int64
-	for consumed < head.Bytes {
-		line, err := reader.ReadBytes('\n')
-		consumed += int64(len(line))
-		if err != nil {
-			return terminal.Transcript{}, fmt.Errorf("read session transcript: %w", err)
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("decode %s: multiple JSON values", filepath.Base(path))
 		}
-		if int64(len(line)) > maxTranscriptRecordBytes {
-			return terminal.Transcript{}, fmt.Errorf("session transcript record exceeds %d bytes", maxTranscriptRecordBytes)
-		}
-		if len(line) == 1 {
-			return terminal.Transcript{}, errors.New("session transcript contains an empty record")
-		}
-
-		var delta terminal.TranscriptDelta
-		if err := json.Unmarshal(line[:len(line)-1], &delta); err != nil {
-			return terminal.Transcript{}, fmt.Errorf("decode session transcript: %w", err)
-		}
-		if err := terminal.ApplyTranscriptDeltaInPlace(&transcript, delta); err != nil {
-			return terminal.Transcript{}, err
-		}
-	}
-	if consumed != head.Bytes {
-		return terminal.Transcript{}, errors.New("session transcript offset is inconsistent")
-	}
-	if transcript.BlockCount() != head.BlockCount {
-		return terminal.Transcript{}, errors.New("session transcript block count is inconsistent")
-	}
-	return transcript, nil
-}
-
-func encodeTranscriptDelta(delta terminal.TranscriptDelta) ([]byte, error) {
-	encoded, err := json.Marshal(delta)
-	if err != nil {
-		return nil, fmt.Errorf("encode transcript delta: %w", err)
-	}
-	encoded = append(encoded, '\n')
-	if int64(len(encoded)) > maxTranscriptRecordBytes {
-		return nil, fmt.Errorf("session transcript record exceeds %d bytes", maxTranscriptRecordBytes)
-	}
-	return encoded, nil
-}
-
-func encodeCanonicalTranscript(transcript terminal.Transcript) ([]byte, error) {
-	delta, changed := terminal.DiffTranscript(terminal.EmptyTranscript(), transcript)
-	if !changed {
-		return nil, nil
-	}
-	return encodeTranscriptDelta(delta)
-}
-
-func shouldCompactTranscript(head sessionTranscriptHead, appendedBytes int64) bool {
-	if head.Bytes == 0 || head.BaseBytes == 0 {
-		return false
-	}
-	return head.DeltaBytes+appendedBytes >= head.BaseBytes || head.Bytes+appendedBytes >= maxSessionBytes
-}
-
-func inactiveTranscriptSlot(slot string) string {
-	if slot == "a" {
-		return "b"
-	}
-	return "a"
-}
-
-func writeTranscriptSlot(path, slot string, encoded []byte) error {
-	if int64(len(encoded)) > maxSessionBytes {
-		return fmt.Errorf("session transcript exceeds %d bytes", maxSessionBytes)
-	}
-	temporary, err := os.CreateTemp(path, ".transcript-*")
-	if err != nil {
-		return fmt.Errorf("create session transcript temporary file: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	cleanup := func() {
-		_ = temporary.Close()
-		_ = os.Remove(temporaryPath)
-	}
-	if err := temporary.Chmod(0o600); err != nil {
-		cleanup()
-		return fmt.Errorf("secure session transcript temporary file: %w", err)
-	}
-	if err := writeAll(temporary, encoded); err != nil {
-		cleanup()
-		return fmt.Errorf("write session transcript temporary file: %w", err)
-	}
-	if err := temporary.Sync(); err != nil {
-		cleanup()
-		return fmt.Errorf("sync session transcript temporary file: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		_ = os.Remove(temporaryPath)
-		return fmt.Errorf("close session transcript temporary file: %w", err)
-	}
-	if err := os.Rename(temporaryPath, sessionTranscriptPath(path, slot)); err != nil {
-		_ = os.Remove(temporaryPath)
-		return fmt.Errorf("replace session transcript file: %w", err)
-	}
-	return syncDirectory(path)
-}
-
-func clearTranscriptSlot(path, slot string) {
-	transcriptPath := sessionTranscriptPath(path, slot)
-	info, err := os.Lstat(transcriptPath)
-	if err != nil || !info.Mode().IsRegular() {
-		return
-	}
-	file, err := os.OpenFile(transcriptPath, os.O_WRONLY, 0)
-	if err != nil {
-		return
-	}
-	if file.Truncate(0) == nil {
-		_ = file.Sync()
-	}
-	_ = file.Close()
-}
-
-func appendTranscriptRecord(path string, head sessionTranscriptHead, encoded []byte) (err error) {
-	transcriptPath := sessionTranscriptPath(path, head.Slot)
-	created := false
-	if info, inspectErr := os.Lstat(transcriptPath); errors.Is(inspectErr, os.ErrNotExist) {
-		created = true
-	} else if inspectErr != nil {
-		return fmt.Errorf("inspect session transcript: %w", inspectErr)
-	} else if !info.Mode().IsRegular() {
-		return errors.New("session transcript path is not a regular file")
-	}
-
-	file, err := os.OpenFile(transcriptPath, os.O_RDWR|os.O_CREATE, 0o600)
-	if err != nil {
-		return fmt.Errorf("open session transcript: %w", err)
-	}
-	defer func() {
-		err = errors.Join(err, file.Close())
-	}()
-	if err := file.Chmod(0o600); err != nil {
-		return fmt.Errorf("secure session transcript: %w", err)
-	}
-	info, err := file.Stat()
-	if err != nil {
-		return fmt.Errorf("inspect session transcript: %w", err)
-	}
-	if info.Size() < head.Bytes {
-		return errors.New("session transcript is shorter than its committed state")
-	}
-	if info.Size() > head.Bytes {
-		if err := file.Truncate(head.Bytes); err != nil {
-			return fmt.Errorf("truncate session transcript: %w", err)
-		}
-	}
-	if _, err := file.Seek(head.Bytes, io.SeekStart); err != nil {
-		return fmt.Errorf("seek session transcript: %w", err)
-	}
-	if err := writeAll(file, encoded); err != nil {
-		return fmt.Errorf("append session transcript: %w", err)
-	}
-	if err := file.Sync(); err != nil {
-		return fmt.Errorf("sync session transcript: %w", err)
-	}
-	if created {
-		if err := syncDirectory(path); err != nil {
-			return err
-		}
+		return fmt.Errorf("decode %s: %w", filepath.Base(path), err)
 	}
 	return nil
 }
 
-func truncateTranscriptTail(path string, head sessionTranscriptHead) error {
-	transcriptPath := sessionTranscriptPath(path, head.Slot)
-	info, err := os.Lstat(transcriptPath)
-	if errors.Is(err, os.ErrNotExist) && head.Bytes == 0 {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("inspect session transcript: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return errors.New("session transcript path is not a regular file")
-	}
-	if info.Size() <= head.Bytes {
-		return nil
-	}
-	file, err := os.OpenFile(transcriptPath, os.O_WRONLY, 0)
-	if err != nil {
-		return fmt.Errorf("open session transcript: %w", err)
-	}
-	if err := file.Truncate(head.Bytes); err != nil {
-		_ = file.Close()
-		return fmt.Errorf("truncate session transcript: %w", err)
-	}
-	syncErr := file.Sync()
-	closeErr := file.Close()
-	return errors.Join(syncErr, closeErr)
-}
-
-func writeSessionState(path string, encoded []byte) (bool, error) {
+func writeSessionFile(path string, encoded []byte) (bool, error) {
 	directory := filepath.Dir(path)
 	if err := secureSessionDirectory(directory); err != nil {
 		return false, err
 	}
-	temporary, err := os.CreateTemp(directory, ".state-*")
+	temporary, err := os.CreateTemp(directory, ".session-*")
 	if err != nil {
-		return false, fmt.Errorf("create session state temporary file: %w", err)
+		return false, fmt.Errorf("create session temporary file: %w", err)
 	}
 	temporaryPath := temporary.Name()
 	cleanup := func() {
@@ -784,23 +431,23 @@ func writeSessionState(path string, encoded []byte) (bool, error) {
 	}
 	if err := temporary.Chmod(0o600); err != nil {
 		cleanup()
-		return false, fmt.Errorf("secure session state temporary file: %w", err)
+		return false, fmt.Errorf("secure session temporary file: %w", err)
 	}
 	if err := writeAll(temporary, encoded); err != nil {
 		cleanup()
-		return false, fmt.Errorf("write session state temporary file: %w", err)
+		return false, fmt.Errorf("write session temporary file: %w", err)
 	}
 	if err := temporary.Sync(); err != nil {
 		cleanup()
-		return false, fmt.Errorf("sync session state temporary file: %w", err)
+		return false, fmt.Errorf("sync session temporary file: %w", err)
 	}
 	if err := temporary.Close(); err != nil {
 		_ = os.Remove(temporaryPath)
-		return false, fmt.Errorf("close session state temporary file: %w", err)
+		return false, fmt.Errorf("close session temporary file: %w", err)
 	}
 	if err := os.Rename(temporaryPath, path); err != nil {
 		_ = os.Remove(temporaryPath)
-		return false, fmt.Errorf("replace session state file: %w", err)
+		return false, fmt.Errorf("replace session file: %w", err)
 	}
 	if err := syncDirectory(directory); err != nil {
 		return true, err

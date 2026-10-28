@@ -130,13 +130,10 @@ func (c *tuiController) openResume(ctx context.Context, _ string) (bool, error) 
 		setInputError(c.model, errors.New("session resumption is unavailable"))
 		return false, nil
 	}
-	summaries, warnings, err := c.sessions.List(ctx)
+	summaries, err := c.sessions.List(ctx)
 	if err != nil {
 		setInputError(c.model, err)
 		return false, nil
-	}
-	for _, warning := range warnings {
-		c.model.appendBlock(blockInfo, warning)
 	}
 	c.model.openResumePicker(summaries)
 	return false, nil

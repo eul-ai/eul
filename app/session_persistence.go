@@ -241,22 +241,9 @@ func (coordinator *checkpointCoordinator) Close() error {
 	return coordinator.handle.Close()
 }
 
-func sessionList(handle *sessionHandle) func(context.Context) ([]terminal.SessionSummary, []string, error) {
-	return func(context.Context) ([]terminal.SessionSummary, []string, error) {
-		summaries, warnings, err := handle.store.List(handle.record.WorkingDirectory)
-		if err != nil {
-			return nil, nil, err
-		}
-		visible := make([]terminal.SessionSummary, 0, len(summaries))
-		for _, summary := range summaries {
-			visible = append(visible, terminal.SessionSummary{
-				ID:          summary.ID,
-				Description: summary.Description,
-				UpdatedAt:   summary.UpdatedAt,
-				Active:      summary.Active,
-			})
-		}
-		return visible, warnings, nil
+func sessionList(handle *sessionHandle) func(context.Context) ([]terminal.SessionSummary, error) {
+	return func(context.Context) ([]terminal.SessionSummary, error) {
+		return handle.store.List(handle.record.WorkingDirectory)
 	}
 }
 

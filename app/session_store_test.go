@@ -7,7 +7,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
@@ -73,7 +72,7 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 	if directoryInfo.Mode().Perm() != 0o700 {
 		t.Fatalf("session directory permissions = %o", directoryInfo.Mode().Perm())
 	}
-	for _, name := range []string{sessionStateFileName, sessionTranscriptAName, sessionLockFileName} {
+	for _, name := range []string{sessionMetadataFileName, sessionStateFileName, sessionLockFileName} {
 		fileInfo, err := os.Stat(filepath.Join(sessionDirectory, name))
 		if err != nil {
 			t.Fatal(err)
@@ -87,12 +86,9 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	summaries, warnings, err := store.List(cwd)
+	summaries, err := store.List(cwd)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(warnings) != 0 {
-		t.Fatalf("warnings = %v", warnings)
 	}
 	if len(summaries) != 1 || summaries[0].ID != firstID || summaries[0].Description != "first prompt" || !summaries[0].Active {
 		t.Fatalf("summaries = %+v", summaries)
@@ -128,19 +124,9 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 	}
 }
 
-func TestSessionStateStoresModelsAsJSONObject(t *testing.T) {
+func TestSessionMetadataStoresModelsAsJSONObject(t *testing.T) {
 	models := backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"}
-	_, terminalState, err := terminal.SplitCheckpoint(terminal.EmptyCheckpoint())
-	if err != nil {
-		t.Fatal(err)
-	}
-	encoded, err := json.Marshal(sessionState{
-		sessionMetadata: sessionMetadata{Models: models},
-		Agent:           sessionStoreTestAgentCheckpoint(t),
-		Subagent:        subagent.EmptyCheckpoint(),
-		Terminal:        terminalState,
-		Transcript:      sessionTranscriptHead{Slot: initialTranscriptSlot},
-	})
+	encoded, err := json.Marshal(sessionMetadata{Models: models})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,12 +155,12 @@ func TestSessionStoreIgnoresLegacySessionFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	summaries, warnings, err := store.List(cwd)
+	summaries, err := store.List(cwd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(summaries) != 0 || len(warnings) != 0 {
-		t.Fatalf("summaries = %+v, warnings = %v", summaries, warnings)
+	if len(summaries) != 0 {
+		t.Fatalf("summaries = %+v", summaries)
 	}
 	if _, err := store.Open(context.Background(), cwd, id); err == nil {
 		t.Fatal("legacy session file was opened")
@@ -193,25 +179,26 @@ func TestSessionStoreRejectsMismatchedDirectoryID(t *testing.T) {
 	if err := handle.Close(); err != nil {
 		t.Fatal(err)
 	}
-	state, err := readSessionState(sessionStatePath(path))
+	metadataPath := filepath.Join(path, sessionMetadataFileName)
+	var metadata sessionMetadata
+	if err := readSessionFile(metadataPath, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	metadata.ID = "fedcba9876543210fedcba9876543210"
+	encoded, err := json.Marshal(metadata)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.ID = "fedcba9876543210fedcba9876543210"
-	encoded, err := encodeSessionState(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(sessionStatePath(path), encoded, 0o600); err != nil {
+	if err := os.WriteFile(metadataPath, encoded, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	summaries, warnings, err := store.List(cwd)
+	summaries, err := store.List(cwd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(summaries) != 0 || len(warnings) != 1 {
-		t.Fatalf("summaries = %+v, warnings = %v", summaries, warnings)
+	if len(summaries) != 0 {
+		t.Fatalf("summaries = %+v", summaries)
 	}
 	if _, err := store.Open(context.Background(), cwd, id); err == nil {
 		t.Fatal("session with a mismatched directory ID was opened")
@@ -230,12 +217,12 @@ func TestSessionStoreIgnoresAbandonedEmptyDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	summaries, warnings, err := store.List(cwd)
+	summaries, err := store.List(cwd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(summaries) != 0 || len(warnings) != 0 {
-		t.Fatalf("summaries = %+v, warnings = %v", summaries, warnings)
+	if len(summaries) != 0 {
+		t.Fatalf("summaries = %+v", summaries)
 	}
 	if _, err := store.Open(context.Background(), cwd, id); err == nil {
 		t.Fatal("abandoned empty session directory was opened")
@@ -253,21 +240,17 @@ func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 	if _, err := os.Stat(lockPath); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(sessionStatePath(handle.path)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("empty session state error = %v", err)
-	}
 	if err := handle.Save(sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), terminal.EmptyCheckpoint(), false, agent.ThinkingMedium, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(sessionStatePath(handle.path)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("saved empty session state error = %v", err)
+	for _, name := range []string{sessionMetadataFileName, sessionStateFileName} {
+		if _, err := os.Stat(filepath.Join(handle.path, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("empty session %s error = %v", name, err)
+		}
 	}
-	summaries, warnings, err := store.List(cwd)
+	summaries, err := store.List(cwd)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(warnings) != 0 {
-		t.Fatalf("warnings = %v", warnings)
 	}
 	if len(summaries) != 0 {
 		t.Fatalf("empty session summaries = %+v", summaries)
@@ -283,287 +266,6 @@ func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 	}
 }
 
-func TestSessionStoreAppendsOnlyTranscriptChanges(t *testing.T) {
-	store := newSessionStore(t.TempDir())
-	cwd := t.TempDir()
-	agentCheckpoint := sessionStoreTestAgentCheckpoint(t)
-	prompt := strings.Repeat("prompt ", 200)
-	initial := sessionStoreTestTerminalCheckpoint(t, prompt)
-	handle, err := store.Create("test", cwd, backend.Models{Main: "model", Fast: "model", Balanced: "model"}, agent.ThinkingMedium, agentCheckpoint, subagent.EmptyCheckpoint(), initial, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	state, err := readSessionState(sessionStatePath(handle.path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	transcriptPath := sessionTranscriptPath(handle.path, state.Transcript.Slot)
-	initialTranscript, err := os.ReadFile(transcriptPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := handle.Save(agentCheckpoint, subagent.EmptyCheckpoint(), initial, true, agent.ThinkingHigh, true); err != nil {
-		t.Fatal(err)
-	}
-	unchangedTranscript, err := os.ReadFile(transcriptPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(unchangedTranscript) != string(initialTranscript) {
-		t.Fatal("state-only save changed the transcript")
-	}
-
-	next := sessionStoreTestTerminalBlocks(t, []map[string]any{
-		{"kind": 0, "text": prompt},
-		{"kind": 1, "text": "answer"},
-	})
-	if err := handle.Save(agentCheckpoint, subagent.EmptyCheckpoint(), next, false, agent.ThinkingHigh, true); err != nil {
-		t.Fatal(err)
-	}
-	state, err = readSessionState(sessionStatePath(handle.path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.Transcript.BlockCount != 2 || state.Transcript.BaseBytes != int64(len(initialTranscript)) || state.Transcript.DeltaBytes <= 0 {
-		t.Fatalf("transcript head = %+v", state.Transcript)
-	}
-	transcript, err := os.ReadFile(transcriptPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	records := strings.Split(strings.TrimSpace(string(transcript)), "\n")
-	if len(records) != 2 || strings.Contains(records[1], "prompt") || !strings.Contains(records[1], "answer") {
-		t.Fatalf("transcript records = %q", records)
-	}
-
-	id := handle.record.ID
-	if err := handle.Close(); err != nil {
-		t.Fatal(err)
-	}
-	reopened, err := store.Open(context.Background(), cwd, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reopened.Close()
-	encoded, err := json.Marshal(reopened.record.Terminal)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(encoded), "prompt") || !strings.Contains(string(encoded), "answer") {
-		t.Fatalf("restored terminal checkpoint = %s", encoded)
-	}
-}
-
-func TestSessionStoreCompactsTranscriptUsingInactiveSlot(t *testing.T) {
-	store := newSessionStore(t.TempDir())
-	cwd := t.TempDir()
-	agentCheckpoint := sessionStoreTestAgentCheckpoint(t)
-	initial := sessionStoreTestTerminalCheckpoint(t, "prompt")
-	handle, err := store.Create("test", cwd, backend.Models{Main: "model", Fast: "model", Balanced: "model"}, agent.ThinkingMedium, agentCheckpoint, subagent.EmptyCheckpoint(), initial, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	second := sessionStoreTestTerminalBlocks(t, []map[string]any{
-		{"kind": 0, "text": "prompt"},
-		{"kind": 1, "text": strings.Repeat("second ", 200)},
-	})
-	if err := handle.Save(agentCheckpoint, subagent.EmptyCheckpoint(), second, false, agent.ThinkingMedium, false); err != nil {
-		t.Fatal(err)
-	}
-	state, err := readSessionState(sessionStatePath(handle.path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.Transcript.Slot != "b" || state.Transcript.DeltaBytes != 0 || state.Transcript.BaseBytes != state.Transcript.Bytes || state.Transcript.BlockCount != 2 {
-		t.Fatalf("compacted transcript head = %+v", state.Transcript)
-	}
-	assertFileSize(t, sessionTranscriptPath(handle.path, "a"), 0)
-	assertFileSize(t, sessionTranscriptPath(handle.path, "b"), state.Transcript.Bytes)
-
-	third := sessionStoreTestTerminalBlocks(t, []map[string]any{
-		{"kind": 0, "text": "prompt"},
-		{"kind": 1, "text": strings.Repeat("second ", 200)},
-		{"kind": 1, "text": strings.Repeat("third ", 500)},
-	})
-	if err := handle.Save(agentCheckpoint, subagent.EmptyCheckpoint(), third, false, agent.ThinkingMedium, false); err != nil {
-		t.Fatal(err)
-	}
-	state, err = readSessionState(sessionStatePath(handle.path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.Transcript.Slot != "a" || state.Transcript.DeltaBytes != 0 || state.Transcript.BlockCount != 3 {
-		t.Fatalf("second compacted transcript head = %+v", state.Transcript)
-	}
-	assertFileSize(t, sessionTranscriptPath(handle.path, "a"), state.Transcript.Bytes)
-	assertFileSize(t, sessionTranscriptPath(handle.path, "b"), 0)
-
-	id := handle.record.ID
-	if err := handle.Close(); err != nil {
-		t.Fatal(err)
-	}
-	reopened, err := store.Open(context.Background(), cwd, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reopened.Close()
-	encoded, err := json.Marshal(reopened.record.Terminal)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(encoded), "second") || !strings.Contains(string(encoded), "third") {
-		t.Fatalf("restored compacted transcript = %s", encoded)
-	}
-}
-
-func TestSessionStoreIgnoresInterruptedTranscriptCompaction(t *testing.T) {
-	store := newSessionStore(t.TempDir())
-	cwd := t.TempDir()
-	handle, err := store.Create("test", cwd, backend.Models{Main: "model", Fast: "model", Balanced: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := handle.path
-	id := handle.record.ID
-	state, err := readSessionState(sessionStatePath(path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := handle.Close(); err != nil {
-		t.Fatal(err)
-	}
-	inactivePath := sessionTranscriptPath(path, inactiveTranscriptSlot(state.Transcript.Slot))
-	if err := os.WriteFile(inactivePath, []byte("partial compacted transcript"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	reopened, err := store.Open(context.Background(), cwd, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reopened.record.Terminal.Description() != "prompt" {
-		t.Fatalf("restored description = %q", reopened.record.Terminal.Description())
-	}
-	if err := reopened.Close(); err != nil {
-		t.Fatal(err)
-	}
-	assertFileSize(t, inactivePath, 0)
-}
-
-func TestSessionStoreIgnoresUncommittedTranscriptTail(t *testing.T) {
-	store := newSessionStore(t.TempDir())
-	cwd := t.TempDir()
-	handle, err := store.Create("test", cwd, backend.Models{Main: "model", Fast: "model", Balanced: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := handle.path
-	id := handle.record.ID
-	if err := handle.Close(); err != nil {
-		t.Fatal(err)
-	}
-	state, err := readSessionState(sessionStatePath(path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	transcriptPath := sessionTranscriptPath(path, state.Transcript.Slot)
-	file, err := os.OpenFile(transcriptPath, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := file.WriteString(`{"replace_from":999}` + "\npartial"); err != nil {
-		t.Fatal(err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	reopened, err := store.Open(context.Background(), cwd, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := reopened.Close(); err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(transcriptPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Size() != state.Transcript.Bytes {
-		t.Fatalf("transcript size = %d, want %d", info.Size(), state.Transcript.Bytes)
-	}
-}
-
-func TestSessionStoreRejectsShortCommittedTranscript(t *testing.T) {
-	store := newSessionStore(t.TempDir())
-	cwd := t.TempDir()
-	handle, err := store.Create("test", cwd, backend.Models{Main: "model", Fast: "model", Balanced: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := handle.path
-	id := handle.record.ID
-	if err := handle.Close(); err != nil {
-		t.Fatal(err)
-	}
-	state, err := readSessionState(sessionStatePath(path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	transcriptPath := sessionTranscriptPath(path, state.Transcript.Slot)
-	if err := os.Truncate(transcriptPath, state.Transcript.Bytes-1); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Open(context.Background(), cwd, id); err == nil {
-		t.Fatal("short committed transcript was accepted")
-	}
-}
-
-func TestSessionStoreRejectsInvalidCommittedTranscriptRecord(t *testing.T) {
-	store := newSessionStore(t.TempDir())
-	cwd := t.TempDir()
-	handle, err := store.Create("test", cwd, backend.Models{Main: "model", Fast: "model", Balanced: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := handle.path
-	id := handle.record.ID
-	if err := handle.Close(); err != nil {
-		t.Fatal(err)
-	}
-	state, err := readSessionState(sessionStatePath(path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	invalid := []byte("{\"replace_from\":999}\n")
-	transcriptPath := sessionTranscriptPath(path, state.Transcript.Slot)
-	file, err := os.OpenFile(transcriptPath, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := file.Write(invalid); err != nil {
-		t.Fatal(err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
-	state.Transcript.Bytes += int64(len(invalid))
-	state.Transcript.DeltaBytes += int64(len(invalid))
-	encodedState, err := encodeSessionState(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(sessionStatePath(path), encodedState, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := store.Open(context.Background(), cwd, id); err == nil {
-		t.Fatal("invalid committed transcript record was accepted")
-	}
-}
-
 func TestSessionStoreListsMetadataWithoutDecodingCheckpoints(t *testing.T) {
 	store := newSessionStore(t.TempDir())
 	cwd := t.TempDir()
@@ -571,41 +273,24 @@ func TestSessionStoreListsMetadataWithoutDecodingCheckpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := sessionStatePath(handle.path)
+	path := filepath.Join(handle.path, sessionStateFileName)
 	id := handle.record.ID
 	if err := handle.Close(); err != nil {
 		t.Fatal(err)
 	}
-
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body = []byte(strings.Replace(string(body), `"agent":{`, `"agent":"invalid","unused":{`, 1))
-	if err := os.WriteFile(path, body, 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"agent":"invalid"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	summaries, warnings, err := store.List(cwd)
+	summaries, err := store.List(cwd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(warnings) != 0 || len(summaries) != 1 || summaries[0].ID != id || summaries[0].Description != "prompt" {
-		t.Fatalf("summaries = %+v, warnings = %v", summaries, warnings)
+	if len(summaries) != 1 || summaries[0].ID != id || summaries[0].Description != "prompt" {
+		t.Fatalf("summaries = %+v", summaries)
 	}
 	if _, err := store.Open(context.Background(), cwd, id); err == nil {
 		t.Fatal("full session load accepted invalid checkpoint data")
-	}
-}
-
-func assertFileSize(t *testing.T, path string, want int64) {
-	t.Helper()
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Size() != want {
-		t.Fatalf("%s size = %d, want %d", path, info.Size(), want)
 	}
 }
 
@@ -617,7 +302,7 @@ func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := sessionStatePath(handle.path)
+	path := filepath.Join(handle.path, sessionMetadataFileName)
 	id := handle.record.ID
 	if err := handle.Close(); err != nil {
 		t.Fatal(err)
@@ -632,21 +317,7 @@ func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
 	if err := os.Chmod(path, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	state, err := readSessionState(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	transcriptPath := sessionTranscriptPath(filepath.Dir(path), state.Transcript.Slot)
-	if err := os.Chmod(transcriptPath, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Open(context.Background(), cwd, id); err == nil {
-		t.Fatal("world-readable transcript was accepted")
-	}
-	if err := os.Chmod(transcriptPath, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(`{"version":99}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"id":`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Open(context.Background(), cwd, id); err == nil {
@@ -664,23 +335,20 @@ func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
 	if err := valid.Close(); err != nil {
 		t.Fatal(err)
 	}
-	summaries, warnings, err := store.List(cwd)
+	summaries, err := store.List(cwd)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(summaries) != 1 || summaries[0].ID != validID {
 		t.Fatalf("summaries with corrupt record = %+v", summaries)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], filepath.ToSlash(filepath.Dir(path))) {
-		t.Fatalf("warnings = %v", warnings)
-	}
 
 	mostRecent, err := store.Open(context.Background(), cwd, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(mostRecent.warnings) != 1 || mostRecent.warnings[0] != warnings[0] {
-		t.Fatalf("most recent warnings = %v", mostRecent.warnings)
+	if mostRecent.record.ID != validID {
+		t.Fatalf("most recent ID = %q", mostRecent.record.ID)
 	}
 	if err := mostRecent.Close(); err != nil {
 		t.Fatal(err)

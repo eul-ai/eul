@@ -97,7 +97,7 @@ type Config struct {
 }
 
 type Sessions struct {
-	List func(context.Context) ([]SessionSummary, []string, error)
+	List func(context.Context) ([]SessionSummary, error)
 }
 
 type StateChanges struct {
