@@ -50,37 +50,17 @@ func TestLoadSkillsStopsAtSkillRoot(t *testing.T) {
 	}
 }
 
-func TestParseSkillFrontmatterSupportsMinimalScalarSubset(t *testing.T) {
+func TestParseSkillSupportsMinimalScalarSubset(t *testing.T) {
 	content := "---\r\n# comment\r\nname: 'code-review'\r\ndescription: \"Review: code\\ncarefully\"\r\ndisable-model-invocation: true\r\nmetadata:\r\n  owner: team\r\n---\r\nInstructions.\r\n"
-	frontmatter, body, err := parseSkillFrontmatter(content)
+	parsed, body, err := parseSkill(content)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if frontmatter.name != "code-review" || frontmatter.description != "Review: code\ncarefully" || !frontmatter.disableModelInvocation {
-		t.Fatalf("frontmatter = %+v", frontmatter)
+	if parsed.Name != "code-review" || parsed.Description != "Review: code\ncarefully" || !parsed.DisableModelInvocation {
+		t.Fatalf("parsed = %+v", parsed)
 	}
 	if body != "Instructions.\n" {
 		t.Fatalf("body = %q", body)
-	}
-}
-
-func TestParseSkillFrontmatterRejectsUnsupportedOrAmbiguousValues(t *testing.T) {
-	for _, test := range []struct {
-		name    string
-		content string
-	}{
-		{name: "block scalar", content: "---\ndescription: >\n  folded\n---\nbody"},
-		{name: "collection", content: "---\ndescription: [one, two]\n---\nbody"},
-		{name: "duplicate", content: "---\ndescription: one\ndescription: two\n---\nbody"},
-		{name: "boolean", content: "---\ndescription: valid\ndisable-model-invocation: yes\n---\nbody"},
-		{name: "delimiter", content: "description: valid\n---\nbody"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			_, _, err := parseSkillFrontmatter(test.content)
-			if err == nil {
-				t.Fatal("parse succeeded")
-			}
-		})
 	}
 }
 

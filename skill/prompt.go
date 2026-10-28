@@ -47,7 +47,7 @@ func Expand(text string, skills []Skill) (string, error) {
 	}
 
 	selected := skills[index]
-	body, err := ReadBody(selected)
+	body, err := selected.Body()
 	if err != nil {
 		return "", err
 	}

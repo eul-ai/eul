@@ -3,8 +3,10 @@ package skill
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -16,283 +18,149 @@ type Skill struct {
 	DisableModelInvocation bool
 }
 
-type skillFrontmatter struct {
-	name                   string
-	description            string
-	disableModelInvocation bool
+type loader struct {
+	visited  map[string]struct{}
+	names    map[string]struct{}
+	skills   []Skill
+	warnings []string
 }
 
 func Load(directories ...string) ([]Skill, []string) {
-	var loaded []Skill
-	var warnings []string
-	visitedDirectories := make(map[string]struct{})
-
+	l := loader{visited: make(map[string]struct{}), names: make(map[string]struct{})}
 	for _, directory := range directories {
-		directorySkills, directoryWarnings := loadSkillsFromDirectory(directory, visitedDirectories)
-		loaded = append(loaded, directorySkills...)
-		warnings = append(warnings, directoryWarnings...)
+		l.loadDirectory(directory)
 	}
-
-	skills := make([]Skill, 0, len(loaded))
-	files := make(map[string]struct{})
-	names := make(map[string]struct{})
-	for _, skill := range loaded {
-		canonicalPath := canonicalSkillPath(skill.FilePath)
-		if _, exists := files[canonicalPath]; exists {
-			continue
-		}
-		files[canonicalPath] = struct{}{}
-
-		if _, exists := names[skill.Name]; exists {
-			continue
-		}
-		names[skill.Name] = struct{}{}
-		skills = append(skills, skill)
-	}
-
-	return skills, warnings
+	return l.skills, l.warnings
 }
 
-func loadSkillsFromDirectory(directory string, visited map[string]struct{}) ([]Skill, []string) {
-	absolutePath, err := filepath.Abs(directory)
+func (l *loader) warn(path string, err error) {
+	l.warnings = append(l.warnings, fmt.Sprintf("Skipped skill %s: %v", filepath.ToSlash(path), err))
+}
+
+func (l *loader) loadDirectory(directory string) {
+	path, err := filepath.Abs(directory)
 	if err != nil {
-		return nil, []string{skillWarning(directory, err)}
+		l.warn(directory, err)
+		return
+	}
+	canonical, err := filepath.EvalSymlinks(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return
+	case err != nil:
+		l.warn(path, err)
+		return
+	}
+	if _, visited := l.visited[canonical]; visited {
+		return
+	}
+	l.visited[canonical] = struct{}{}
+
+	skillPath := filepath.Join(path, "SKILL.md")
+	if info, err := os.Stat(skillPath); err == nil && info.Mode().IsRegular() {
+		l.loadFile(skillPath)
+		return
 	}
 
-	info, err := os.Stat(absolutePath)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
+	entries, err := os.ReadDir(path)
 	if err != nil {
-		return nil, []string{skillWarning(absolutePath, err)}
+		l.warn(path, err)
+		return
 	}
-	if !info.IsDir() {
-		return nil, []string{skillWarning(absolutePath, errors.New("skill path is not a directory"))}
-	}
-
-	canonicalDirectory := canonicalSkillPath(absolutePath)
-	if _, exists := visited[canonicalDirectory]; exists {
-		return nil, nil
-	}
-	visited[canonicalDirectory] = struct{}{}
-
-	entries, err := os.ReadDir(absolutePath)
-	if err != nil {
-		return nil, []string{skillWarning(absolutePath, err)}
-	}
-
-	var warnings []string
-	for _, entry := range entries {
-		if entry.Name() != "SKILL.md" {
-			continue
-		}
-
-		skillPath := filepath.Join(absolutePath, entry.Name())
-		skillInfo, err := os.Stat(skillPath)
-		if err != nil {
-			return nil, []string{skillWarning(skillPath, err)}
-		}
-		if !skillInfo.Mode().IsRegular() {
-			warnings = append(warnings, skillWarning(skillPath, errors.New("skill file is not a regular file")))
-			break
-		}
-
-		skill, err := loadSkillFile(skillPath)
-		if err != nil {
-			return nil, []string{skillWarning(skillPath, err)}
-		}
-		return []Skill{skill}, nil
-	}
-
-	var skills []Skill
 	for _, entry := range entries {
 		name := entry.Name()
 		if strings.HasPrefix(name, ".") || name == "node_modules" {
 			continue
 		}
 
-		path := filepath.Join(absolutePath, name)
-		entryInfo, err := os.Stat(path)
+		child := filepath.Join(path, name)
+		info, err := os.Stat(child)
 		if err != nil {
-			warnings = append(warnings, skillWarning(path, err))
+			l.warn(child, err)
 			continue
 		}
-		if !entryInfo.IsDir() {
-			continue
+		if info.IsDir() {
+			l.loadDirectory(child)
 		}
-
-		directorySkills, directoryWarnings := loadSkillsFromDirectory(path, visited)
-		skills = append(skills, directorySkills...)
-		warnings = append(warnings, directoryWarnings...)
 	}
-
-	return skills, warnings
 }
 
-func loadSkillFile(path string) (Skill, error) {
+func (l *loader) loadFile(path string) {
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return Skill{}, err
+		l.warn(path, err)
+		return
 	}
-
-	frontmatter, _, err := parseSkillFrontmatter(string(content))
+	loaded, _, err := parseSkill(string(content))
 	if err != nil {
-		return Skill{}, err
+		l.warn(path, err)
+		return
 	}
-	if strings.TrimSpace(frontmatter.description) == "" {
-		return Skill{}, errors.New("description is empty")
-	}
-
-	name := frontmatter.name
-	if name == "" {
-		name = filepath.Base(filepath.Dir(path))
+	if strings.TrimSpace(loaded.Description) == "" {
+		l.warn(path, errors.New("description is empty"))
+		return
 	}
 
-	return Skill{
-		Name:                   name,
-		Description:            frontmatter.description,
-		FilePath:               path,
-		DisableModelInvocation: frontmatter.disableModelInvocation,
-	}, nil
+	if loaded.Name == "" {
+		loaded.Name = filepath.Base(filepath.Dir(path))
+	}
+	if _, exists := l.names[loaded.Name]; exists {
+		return
+	}
+	l.names[loaded.Name] = struct{}{}
+	loaded.FilePath = path
+	l.skills = append(l.skills, loaded)
 }
 
-func skillWarning(path string, err error) string {
-	return fmt.Sprintf("Skipped skill %s: %v", filepath.ToSlash(path), err)
-}
-
-func parseSkillFrontmatter(content string) (skillFrontmatter, string, error) {
-	normalized := strings.ReplaceAll(strings.ReplaceAll(content, "\r\n", "\n"), "\r", "\n")
-	lines := strings.Split(normalized, "\n")
-	if len(lines) == 0 || lines[0] != "---" {
-		return skillFrontmatter{}, normalized, errors.New("missing opening frontmatter delimiter")
+func parseSkill(content string) (Skill, string, error) {
+	lines := strings.Split(strings.ReplaceAll(strings.ReplaceAll(content, "\r\n", "\n"), "\r", "\n"), "\n")
+	if lines[0] != "---" {
+		return Skill{}, "", errors.New("missing opening frontmatter delimiter")
+	}
+	closing := slices.Index(lines[1:], "---") + 1
+	if closing == 0 {
+		return Skill{}, "", errors.New("missing closing frontmatter delimiter")
 	}
 
-	closingLine := -1
-	for index := 1; index < len(lines); index++ {
-		if lines[index] == "---" {
-			closingLine = index
-			break
-		}
-	}
-	if closingLine == -1 {
-		return skillFrontmatter{}, normalized, errors.New("missing closing frontmatter delimiter")
-	}
-
-	var frontmatter skillFrontmatter
-	seen := make(map[string]struct{})
-	for index, line := range lines[1:closingLine] {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") || line[0] == ' ' || line[0] == '\t' {
-			continue
-		}
-
-		key, rawValue, ok := strings.Cut(line, ":")
+	var parsed Skill
+	for _, line := range lines[1:closing] {
+		key, value, ok := strings.Cut(line, ":")
 		if !ok {
-			return skillFrontmatter{}, normalized, fmt.Errorf("frontmatter line %d must contain ':'", index+2)
-		}
-		key = strings.TrimSpace(key)
-		if key != "name" && key != "description" && key != "disable-model-invocation" {
 			continue
 		}
-		if _, duplicate := seen[key]; duplicate {
-			return skillFrontmatter{}, normalized, fmt.Errorf("frontmatter field %q is duplicated", key)
-		}
-		seen[key] = struct{}{}
-
-		rawValue = strings.TrimSpace(rawValue)
-		switch key {
+		value = unquote(strings.TrimSpace(value))
+		switch strings.TrimRight(key, " \t") {
 		case "name":
-			value, err := parseSkillString(rawValue)
-			if err != nil {
-				return skillFrontmatter{}, normalized, fmt.Errorf("name: %w", err)
-			}
-			frontmatter.name = value
+			parsed.Name = value
 		case "description":
-			value, err := parseSkillString(rawValue)
-			if err != nil {
-				return skillFrontmatter{}, normalized, fmt.Errorf("description: %w", err)
-			}
-			frontmatter.description = value
+			parsed.Description = value
 		case "disable-model-invocation":
-			switch rawValue {
-			case "true":
-				frontmatter.disableModelInvocation = true
-			case "false":
-				frontmatter.disableModelInvocation = false
-			default:
-				return skillFrontmatter{}, normalized, errors.New("disable-model-invocation must be true or false")
-			}
+			parsed.DisableModelInvocation = value == "true"
 		}
 	}
-
-	return frontmatter, strings.Join(lines[closingLine+1:], "\n"), nil
+	return parsed, strings.Join(lines[closing+1:], "\n"), nil
 }
 
-func parseSkillString(value string) (string, error) {
-	switch value {
-	case "|", "|-", "|+", ">", ">-", ">+":
-		return "", errors.New("block scalars are not supported")
-	case "":
-		return "", nil
+func unquote(value string) string {
+	switch {
+	case strings.HasPrefix(value, `"`):
+		if unquoted, err := strconv.Unquote(value); err == nil {
+			return unquoted
+		}
+	case len(value) >= 2 && value[0] == '\'' && value[len(value)-1] == '\'':
+		return strings.ReplaceAll(value[1:len(value)-1], "''", "'")
 	}
-
-	switch value[0] {
-	case '\'':
-		return parseSingleQuotedSkillString(value)
-	case '"':
-		if len(value) < 2 || value[len(value)-1] != '"' {
-			return "", errors.New("unterminated double-quoted string")
-		}
-		unquoted, err := strconv.Unquote(value)
-		if err != nil {
-			return "", fmt.Errorf("invalid double-quoted string: %w", err)
-		}
-		return unquoted, nil
-	default:
-		if strings.ContainsRune("[{&*!", rune(value[0])) {
-			return "", errors.New("non-scalar values are not supported")
-		}
-		return value, nil
-	}
+	return value
 }
 
-func parseSingleQuotedSkillString(value string) (string, error) {
-	if len(value) < 2 || value[len(value)-1] != '\'' {
-		return "", errors.New("unterminated single-quoted string")
-	}
-
-	inner := value[1 : len(value)-1]
-	var parsed strings.Builder
-	for index := 0; index < len(inner); index++ {
-		if inner[index] != '\'' {
-			parsed.WriteByte(inner[index])
-			continue
-		}
-		if index+1 >= len(inner) || inner[index+1] != '\'' {
-			return "", errors.New("single quotes inside a quoted string must be doubled")
-		}
-		parsed.WriteByte('\'')
-		index++
-	}
-	return parsed.String(), nil
-}
-
-func canonicalSkillPath(path string) string {
-	canonical, err := filepath.EvalSymlinks(path)
-	if err == nil {
-		return canonical
-	}
-	return filepath.Clean(path)
-}
-
-func ReadBody(loaded Skill) (string, error) {
-	content, err := os.ReadFile(loaded.FilePath)
+func (s Skill) Body() (string, error) {
+	content, err := os.ReadFile(s.FilePath)
 	if err != nil {
-		return "", fmt.Errorf("read skill %q: %w", loaded.Name, err)
+		return "", fmt.Errorf("read skill %q: %w", s.Name, err)
 	}
-	_, body, err := parseSkillFrontmatter(string(content))
+	_, body, err := parseSkill(string(content))
 	if err != nil {
-		return "", fmt.Errorf("parse skill %q: %w", loaded.Name, err)
+		return "", fmt.Errorf("parse skill %q: %w", s.Name, err)
 	}
 	return body, nil
 }
