@@ -49,9 +49,6 @@ func (loader *catalogLoader) Load(ctx context.Context) (catalogProvider, error) 
 }
 
 func readCatalogCache(path string) (catalogCache, bool) {
-	if path == "" {
-		return catalogCache{}, false
-	}
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return catalogCache{}, false
@@ -65,9 +62,6 @@ func readCatalogCache(path string) (catalogCache, bool) {
 }
 
 func writeCatalogCache(path string, cached catalogCache) error {
-	if path == "" {
-		return nil
-	}
 	body, err := json.Marshal(cached)
 	if err != nil {
 		return err

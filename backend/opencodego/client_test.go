@@ -81,7 +81,7 @@ func TestProviderRoutesProtocols(t *testing.T) {
 		}, nil
 	})}
 
-	client := newProvider("secret", "https://example.test/zen/go/v1", httpClient, catalogOf(models))
+	client := newProvider("secret", "https://example.test/zen/go/v1", httpClient, models)
 	for _, modelID := range expected {
 		response, err := client.Generate(context.Background(), agent.Request{
 			SessionID:     "session-id",
@@ -102,7 +102,7 @@ func TestProviderRoutesProtocols(t *testing.T) {
 }
 
 func TestProviderCompactionRequiresState(t *testing.T) {
-	client := newProvider("secret", "https://example.test/zen/go/v1", &http.Client{}, catalogOf(testModelInfos(t)))
+	client := newProvider("secret", "https://example.test/zen/go/v1", &http.Client{}, testModelInfos(t))
 	request := agent.Request{Model: "grok-4.5", ThinkingLevel: agent.ThinkingMedium}
 	usage := agent.Usage{TotalTokens: 900_000}
 	if client.ShouldCompact(request, usage) {
@@ -119,7 +119,7 @@ func TestProviderRejectsUnknownModelBeforeRequest(t *testing.T) {
 	client := newProvider("secret", "https://example.test/zen/go/v1", &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 		requests++
 		return nil, nil
-	})}, catalogOf(testModelInfos(t)))
+	})}, testModelInfos(t))
 	if _, err := client.Generate(context.Background(), agent.Request{Model: "unknown"}, agent.StreamObserver{}); err == nil {
 		t.Fatal("unknown model was accepted")
 	}
@@ -130,57 +130,56 @@ func TestProviderRejectsUnknownModelBeforeRequest(t *testing.T) {
 
 func TestOpenCodeRequestOptions(t *testing.T) {
 	models := testModelInfos(t)
-	catalog := catalogOf(models)
-	grok, err := responseRequestOptions(catalog, agent.Request{SessionID: "session-id", Model: "grok-4.5", ThinkingLevel: agent.ThinkingMedium})
+	grok, err := responseRequestOptions(models, agent.Request{SessionID: "session-id", Model: "grok-4.5", ThinkingLevel: agent.ThinkingMedium})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if grok.SessionID != "session-id" || grok.Reasoning == nil || grok.Reasoning.Effort != "medium" || grok.Reasoning.Summary != "auto" || !slices.Equal(grok.Include, []string{"reasoning.encrypted_content"}) || grok.TextVerbosity != "" {
 		t.Fatalf("Grok options = %+v", grok)
 	}
-	gpt, err := responseRequestOptions(catalog, agent.Request{Model: "gpt-5.6-luna", ThinkingLevel: agent.ThinkingOff})
+	gpt, err := responseRequestOptions(models, agent.Request{Model: "gpt-5.6-luna", ThinkingLevel: agent.ThinkingOff})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if gpt.Reasoning == nil || gpt.Reasoning.Effort != "none" || gpt.Reasoning.Summary != "" || gpt.TextVerbosity != "low" {
 		t.Fatalf("GPT options = %+v", gpt)
 	}
-	chat, err := chatRequestOptions(catalog, agent.Request{Model: "glm-5.2", ThinkingLevel: agent.ThinkingMax})
+	chat, err := chatRequestOptions(models, agent.Request{Model: "glm-5.2", ThinkingLevel: agent.ThinkingMax})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if chat.ReasoningEffort != "max" || chat.MaxTokens != models["glm-5.2"].maxOutputTokens || chat.SerializeReasoningContent {
 		t.Fatalf("Chat options = %+v", chat)
 	}
-	hy, err := chatRequestOptions(catalog, agent.Request{Model: "hy3", ThinkingLevel: agent.ThinkingOff})
+	hy, err := chatRequestOptions(models, agent.Request{Model: "hy3", ThinkingLevel: agent.ThinkingOff})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if hy.ReasoningEffort != "none" {
 		t.Fatalf("Hy options = %+v", hy)
 	}
-	deepseek, err := chatRequestOptions(catalog, agent.Request{Model: "deepseek-v4-pro", ThinkingLevel: agent.ThinkingHigh})
+	deepseek, err := chatRequestOptions(models, agent.Request{Model: "deepseek-v4-pro", ThinkingLevel: agent.ThinkingHigh})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !deepseek.SerializeReasoningContent {
 		t.Fatalf("DeepSeek options = %+v", deepseek)
 	}
-	minimax, err := anthropicRequestOptions(catalog, agent.Request{Model: "minimax-m3", ThinkingLevel: agent.ThinkingOff})
+	minimax, err := anthropicRequestOptions(models, agent.Request{Model: "minimax-m3", ThinkingLevel: agent.ThinkingOff})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if minimax.Thinking == nil || minimax.Thinking.Type != "disabled" {
 		t.Fatalf("MiniMax options = %+v", minimax)
 	}
-	qwenHigh, err := anthropicRequestOptions(catalog, agent.Request{Model: "qwen3.8-max", ThinkingLevel: agent.ThinkingHigh})
+	qwenHigh, err := anthropicRequestOptions(models, agent.Request{Model: "qwen3.8-max", ThinkingLevel: agent.ThinkingHigh})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if qwenHigh.Thinking == nil || qwenHigh.Thinking.BudgetTokens != highThinkingBudgetTokens {
 		t.Fatalf("Qwen high options = %+v", qwenHigh)
 	}
-	qwenMax, err := anthropicRequestOptions(catalog, agent.Request{Model: "qwen3.8-max", ThinkingLevel: agent.ThinkingMax})
+	qwenMax, err := anthropicRequestOptions(models, agent.Request{Model: "qwen3.8-max", ThinkingLevel: agent.ThinkingMax})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +221,7 @@ func TestProviderSemanticCompactionUsesMaxThinkingBudget(t *testing.T) {
 	})}
 
 	models := testModelInfos(t)
-	client := newProvider("secret", "https://example.test/zen/go/v1", httpClient, catalogOf(models))
+	client := newProvider("secret", "https://example.test/zen/go/v1", httpClient, models)
 	compacted, err := client.Compact(context.Background(), agent.Request{
 		Model:         "qwen3.8-max",
 		ThinkingLevel: agent.ThinkingMax,
@@ -239,14 +238,14 @@ func TestProviderSemanticCompactionUsesMaxThinkingBudget(t *testing.T) {
 
 func TestModelMetadataMatchesRuntimeModels(t *testing.T) {
 	models := testModelInfos(t)
+	catalog := metadata(models)
 	for model, info := range models {
-		metadata := metadataFor(catalogOf(models), model)
+		metadata := catalog[model]
 		if metadata.ContextWindow != info.contextWindow || !slices.Equal(metadata.ThinkingLevels, info.thinking.levels) {
 			t.Fatalf("metadata for %q = %+v, model info = %+v", model, metadata, info)
 		}
 	}
-	unknown := metadataFor(catalogOf(models), "unknown")
-	if unknown.ContextWindow != 0 || !slices.Equal(unknown.ThinkingLevels, []agent.ThinkingLevel{agent.ThinkingOff}) {
-		t.Fatalf("unknown metadata = %+v", unknown)
+	if len(catalog) != len(models) {
+		t.Fatalf("catalog = %+v", catalog)
 	}
 }

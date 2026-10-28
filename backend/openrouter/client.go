@@ -10,9 +10,9 @@ import (
 	"github.com/eul-ai/eul/backend/protocol/responses"
 )
 
-func newClient(apiKey, endpoint string, httpClient *http.Client, metadata func(string) modelMetadata) *protocol.Client {
+func newClient(apiKey, endpoint string, httpClient *http.Client, models map[string]modelMetadata) *protocol.Client {
 	return protocol.New(protocol.Options{
-		Codec:       responses.Codec{Options: requestOptions(metadata)},
+		Codec:       responses.Codec{Options: requestOptions(models)},
 		HTTPClient:  httpClient,
 		Endpoint:    endpoint,
 		ErrorPrefix: "openrouter",
@@ -21,7 +21,7 @@ func newClient(apiKey, endpoint string, httpClient *http.Client, metadata func(s
 			setCommonHeaders(request)
 			return nil
 		},
-		ContextWindow: func(model string) int64 { return metadata(model).contextWindow },
+		ContextWindow: func(model string) int64 { return models[model].contextWindow },
 	})
 }
 
@@ -31,10 +31,10 @@ func setCommonHeaders(request *http.Request) {
 	request.Header.Set("User-Agent", "eul")
 }
 
-func requestOptions(metadataFor func(string) modelMetadata) func(agent.Request) (responses.RequestOptions, error) {
+func requestOptions(models map[string]modelMetadata) func(agent.Request) (responses.RequestOptions, error) {
 	return func(request agent.Request) (responses.RequestOptions, error) {
 		options := responses.RequestOptions{SessionID: request.SessionID, ToolChoice: "auto", ParallelToolCalls: true}
-		efforts := metadataFor(request.Model).efforts
+		efforts := models[request.Model].efforts
 		effort, supported := efforts[request.ThinkingLevel]
 		switch {
 		case len(efforts) == 0 && request.ThinkingLevel == agent.ThinkingOff:

@@ -35,13 +35,16 @@ var models = map[string]model{
 	modelMain:     {contextWindow: 272_000, efforts: efforts, fastMode: true},
 }
 
-func modelMetadata(name string) backend.ModelMetadata {
-	model := models[name]
-	return backend.ModelMetadata{
-		ContextWindow:  model.contextWindow,
-		ThinkingLevels: model.efforts.SupportedLevels(),
-		FastMode:       model.fastMode,
+func catalog() map[string]backend.ModelMetadata {
+	catalog := make(map[string]backend.ModelMetadata, len(models))
+	for name, model := range models {
+		catalog[name] = backend.ModelMetadata{
+			ContextWindow:  model.contextWindow,
+			ThinkingLevels: model.efforts.SupportedLevels(),
+			FastMode:       model.fastMode,
+		}
 	}
+	return catalog
 }
 
 func reasoningFor(model string, level agent.ThinkingLevel) (*responses.Reasoning, error) {

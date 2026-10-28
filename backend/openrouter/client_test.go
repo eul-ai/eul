@@ -26,14 +26,12 @@ func handlerClient(handler http.Handler) *http.Client {
 	})}
 }
 
-func testMetadata(reasoning bool, contextWindow int64) func(string) modelMetadata {
-	return func(string) modelMetadata {
-		metadata := modelMetadata{contextWindow: contextWindow}
-		if reasoning {
-			metadata.efforts = backend.ThinkingEfforts([]string{"none", "minimal", "low", "medium", "high", "xhigh"})
-		}
-		return metadata
+func testMetadata(reasoning bool, contextWindow int64) modelMetadata {
+	metadata := modelMetadata{contextWindow: contextWindow}
+	if reasoning {
+		metadata.efforts = backend.ThinkingEfforts([]string{"none", "minimal", "low", "medium", "high", "xhigh"})
 	}
+	return metadata
 }
 
 func TestClientConfiguresOpenRouterResponsesAdapter(t *testing.T) {
@@ -78,7 +76,7 @@ func TestClientConfiguresOpenRouterResponsesAdapter(t *testing.T) {
 		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n")
 	}))
 
-	client := newClient("secret", "https://openrouter.test/responses", server, testMetadata(true, 128_000))
+	client := newClient("secret", "https://openrouter.test/responses", server, map[string]modelMetadata{"vendor/model": testMetadata(true, 128_000)})
 	_, err := client.Generate(context.Background(), agent.Request{
 		SessionID:     "session-123",
 		Model:         "vendor/model",
@@ -91,11 +89,9 @@ func TestClientConfiguresOpenRouterResponsesAdapter(t *testing.T) {
 }
 
 func TestRequestOptionsRespectModelReasoningMetadata(t *testing.T) {
-	options := requestOptions(func(model string) modelMetadata {
-		if model == "vendor/reasoning" {
-			return testMetadata(true, 0)(model)
-		}
-		return testMetadata(false, 0)(model)
+	options := requestOptions(map[string]modelMetadata{
+		"vendor/reasoning": testMetadata(true, 0),
+		"vendor/plain":     testMetadata(false, 0),
 	})
 
 	medium, err := options(agent.Request{Model: "vendor/reasoning", ThinkingLevel: agent.ThinkingMedium})
@@ -121,12 +117,7 @@ func TestClientShouldCompactAtModelContextThreshold(t *testing.T) {
 		"secret",
 		"http://127.0.0.1:1/responses",
 		&http.Client{},
-		func(model string) modelMetadata {
-			if model == "vendor/model" {
-				return modelMetadata{contextWindow: 1_000}
-			}
-			return modelMetadata{}
-		},
+		map[string]modelMetadata{"vendor/model": {contextWindow: 1_000}},
 	)
 
 	state := []byte(`{"version":1,"items":[{"type":"message","role":"assistant","content":"history"}]}`)

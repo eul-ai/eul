@@ -26,8 +26,7 @@ func TestRuntimeGetsSubscriptionWindows(t *testing.T) {
 		fmt.Fprint(writer, `{"plan_type":"unknown-future-plan","rate_limit":{"allowed":true,"primary_window":{"used_percent":42,"limit_window_seconds":18000,"reset_at":1760000000},"secondary_window":{"used_percent":84,"limit_window_seconds":604800,"reset_at":1760000120}}}`)
 	})
 
-	configured := &runtime{manager: testManager(t, token), httpClient: httpClient}
-	usage, err := configured.Usage(context.Background())
+	usage, err := loadUsage(context.Background(), testManager(t, token), httpClient)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,8 +52,7 @@ func TestRuntimeHandlesOptionalUsageWindows(t *testing.T) {
 			httpClient := handlerClient(func(writer http.ResponseWriter, _ *http.Request) {
 				fmt.Fprint(writer, test.body)
 			})
-			configured := &runtime{manager: testManager(t, "token"), httpClient: httpClient}
-			usage, err := configured.Usage(context.Background())
+			usage, err := loadUsage(context.Background(), testManager(t, "token"), httpClient)
 			if err != nil || !reflect.DeepEqual(usage, test.want) {
 				t.Fatalf("Usage() = %+v, %v; want %+v", usage, err, test.want)
 			}

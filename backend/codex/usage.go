@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/backend/codex/oauth"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
@@ -25,14 +26,14 @@ type usageWindow struct {
 	ResetAt            int64 `json:"reset_at"`
 }
 
-func (configured *runtime) Usage(ctx context.Context) (backend.AccountUsage, error) {
-	credential, err := resolveCredential(ctx, configured.manager)
+func loadUsage(ctx context.Context, manager *oauth.Manager, httpClient *http.Client) (backend.AccountUsage, error) {
+	credential, err := resolveCredential(ctx, manager)
 	if err != nil {
 		return backend.AccountUsage{}, err
 	}
 
 	var response usageResponse
-	httpClient := backendhttp.CloneNoRedirects(configured.httpClient, usageHTTPTimeout)
+	httpClient = backendhttp.CloneNoRedirects(httpClient, usageHTTPTimeout)
 	if err := backendhttp.GetJSON(ctx, httpClient, baseURL+"/wham/usage", func(request *http.Request) {
 		setCredentialHeaders(request, credential)
 	}, &response); err != nil {

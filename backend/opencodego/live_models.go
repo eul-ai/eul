@@ -13,9 +13,9 @@ type liveModelsResponse struct {
 	} `json:"data"`
 }
 
-func (configured *runtime) loadLiveModels(ctx context.Context) (map[string]struct{}, error) {
+func (account account) loadLiveModels(ctx context.Context) (map[string]struct{}, error) {
 	var result liveModelsResponse
-	if err := backendhttp.GetJSON(ctx, configured.credentialClient, configured.baseURL+"/models", configured.authorize, &result); err != nil {
+	if err := backendhttp.GetJSON(ctx, account.client, account.baseURL+"/models", account.authorize, &result); err != nil {
 		return nil, err
 	}
 

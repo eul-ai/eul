@@ -9,91 +9,37 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
 )
 
-type providerFunction func(context.Context, agent.Request, agent.TextSink) (agent.Response, error)
-
-type fakeBackendRuntime struct {
-	checkCredentialsErr   error
-	checkCredentialsCalls int
-	closeErr              error
-	closeCalls            int
-	newProvider           func() (agent.Provider, error)
-	loginErr              error
-	logoutErr             error
-	loginDevice           bool
-	logoutCalls           int
-	interactionCall       bool
+type fakeAuthenticator struct {
+	loginErr        error
+	logoutErr       error
+	loginDevice     bool
+	logoutCalls     int
+	interactionCall bool
 }
 
-func (runtime *fakeBackendRuntime) CheckCredentials(context.Context) error {
-	runtime.checkCredentialsCalls++
-	return runtime.checkCredentialsErr
+func (authenticator *fakeAuthenticator) LoginBrowser(_ context.Context, presentURL func(string) error) error {
+	authenticator.loginDevice = false
+	authenticator.interactionCall = true
+	_ = presentURL("https://example.test/authorize")
+	return authenticator.loginErr
 }
 
-func (runtime *fakeBackendRuntime) NewProvider() (agent.Provider, error) {
-	return runtime.newProvider()
+func (authenticator *fakeAuthenticator) LoginDevice(_ context.Context, presentCode func(backend.DeviceCode) error) error {
+	authenticator.loginDevice = true
+	authenticator.interactionCall = true
+	_ = presentCode(backend.DeviceCode{VerificationURL: "https://example.test/device", UserCode: "ABCD-EFGH"})
+	return authenticator.loginErr
 }
 
-func (runtime *fakeBackendRuntime) Close() error {
-	runtime.closeCalls++
-	return runtime.closeErr
+func (authenticator *fakeAuthenticator) Logout(context.Context) error {
+	authenticator.logoutCalls++
+	return authenticator.logoutErr
 }
-
-func (runtime *fakeBackendRuntime) LoginBrowser(_ context.Context, presentURL func(string) error) error {
-	runtime.loginDevice = false
-	if presentURL != nil {
-		runtime.interactionCall = true
-		_ = presentURL("https://example.test/authorize")
-	}
-	return runtime.loginErr
-}
-
-func (runtime *fakeBackendRuntime) LoginDevice(_ context.Context, presentCode func(backend.DeviceCode) error) error {
-	runtime.loginDevice = true
-	if presentCode != nil {
-		runtime.interactionCall = true
-		_ = presentCode(backend.DeviceCode{VerificationURL: "https://example.test/device", UserCode: "ABCD-EFGH"})
-	}
-	return runtime.loginErr
-}
-
-func (runtime *fakeBackendRuntime) Logout(context.Context) error {
-	runtime.logoutCalls++
-	return runtime.logoutErr
-}
-
-type fakeBackendDriver struct {
-	descriptor backend.Descriptor
-	runtime    *fakeBackendRuntime
-	openErr    error
-}
-
-func (driver *fakeBackendDriver) Descriptor() backend.Descriptor {
-	return driver.descriptor
-}
-
-func (driver *fakeBackendDriver) Open(backend.Options) (backend.Runtime, error) {
-	return driver.runtime, driver.openErr
-}
-
-func (function providerFunction) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {
-	return function(ctx, request, observer.Text)
-}
-
-func (providerFunction) RetryGeneration(error, int) (time.Duration, bool) { return 0, false }
-
-func (providerFunction) ShouldCompact(agent.Request, agent.Usage) bool { return false }
-
-func (providerFunction) Compact(context.Context, agent.Request) (agent.CompactResponse, error) {
-	return agent.CompactResponse{}, errors.New("compaction is unavailable")
-}
-
-func (providerFunction) ShouldCompactAfterError(agent.Request, error) bool { return false }
 
 func TestFinishRunClassifiesInterruptionAndCleanupFailure(t *testing.T) {
 	var output bytes.Buffer
@@ -130,17 +76,15 @@ func TestRunConfigurationAndUsageErrors(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			runtime := testRuntime(cwd, &stdout, &stderr, nil)
-			driver := testBackendDriver(t, runtime)
 			if test.missingAuth {
-				driver.runtime.checkCredentialsErr = errors.New("not logged in; run 'eul login'")
+				runtime.backends[0].Open = func(context.Context, string) (*backend.Runtime, error) {
+					return nil, errors.New("not logged in; run 'eul login'")
+				}
 			}
 
 			code := run(test.arguments, runtime)
 			if code != test.wantCode {
 				t.Fatalf("run() code=%d stdout=%q stderr=%q, want code=%d", code, stdout.String(), stderr.String(), test.wantCode)
-			}
-			if test.missingAuth && driver.runtime.closeCalls != 1 {
-				t.Fatalf("backend close calls = %d, want 1", driver.runtime.closeCalls)
 			}
 		})
 	}
@@ -165,18 +109,20 @@ func TestRunRejectsInvalidWorkingDirectories(t *testing.T) {
 
 func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[string]string) appRuntime {
 	values := maps.Clone(environment)
-	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-			return agent.Response{}, nil
-		}), nil
+	backendRuntime := &backend.Runtime{Catalog: map[string]backend.ModelMetadata{
+		"gpt-5.6-sol":   {ThinkingLevels: agent.ThinkingLevels()},
+		"gpt-5.6-luna":  {ThinkingLevels: agent.ThinkingLevels()},
+		"gpt-5.6-terra": {ThinkingLevels: agent.ThinkingLevels()},
 	}}
-	driver := &fakeBackendDriver{
-		descriptor: backend.Descriptor{ID: "test", Name: "Test Provider", DefaultModels: backend.ModelDefaults{Main: "gpt-5.6-sol", Fast: "gpt-5.6-luna", Balanced: "gpt-5.6-terra"}},
-		runtime:    backendRuntime,
-	}
-	backends, err := backend.NewRegistry("test", driver)
-	if err != nil {
-		panic(err)
+	authenticator := &fakeAuthenticator{}
+	selected := backend.Backend{
+		ID:     "test",
+		Name:   "Test Provider",
+		Models: backend.ModelDefaults{Main: "gpt-5.6-sol", Fast: "gpt-5.6-luna", Balanced: "gpt-5.6-terra"},
+		Open: func(context.Context, string) (*backend.Runtime, error) {
+			return backendRuntime, nil
+		},
+		Auth: func(string) backend.Authenticator { return authenticator },
 	}
 
 	return appRuntime{
@@ -187,20 +133,16 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[strin
 		getwd:         func() (string, error) { return cwd, nil },
 		userHomeDir:   func() (string, error) { return filepath.Join(cwd, ".test-home"), nil },
 		userConfigDir: func() (string, error) { return filepath.Join(cwd, ".test-config"), nil },
-		backends:      backends,
+		backends:      backend.Registry{selected},
 		openURL:       func(string) error { return nil },
 	}
 }
 
-func testBackendDriver(t *testing.T, runtime appRuntime) *fakeBackendDriver {
+func testAuthenticator(t *testing.T, runtime appRuntime) *fakeAuthenticator {
 	t.Helper()
-	driver, err := runtime.backends.Lookup("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	fake, ok := driver.(*fakeBackendDriver)
+	authenticator, ok := runtime.backends[0].Auth("").(*fakeAuthenticator)
 	if !ok {
-		t.Fatalf("backend driver = %T", driver)
+		t.Fatal("test backend has no fake authenticator")
 	}
-	return fake
+	return authenticator
 }

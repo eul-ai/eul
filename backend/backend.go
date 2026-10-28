@@ -1,88 +1,79 @@
 package backend
 
 import (
-	"errors"
+	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/eul-ai/eul/agent"
 )
 
-type Descriptor struct {
-	ID            string
-	Name          string
-	DefaultModels ModelDefaults
+type Backend struct {
+	ID     string
+	Name   string
+	Models ModelDefaults
+	// Open checks credentials and loads the model catalog. home is the resolved
+	// absolute Eul application directory.
+	Open func(ctx context.Context, home string) (*Runtime, error)
+	// Auth is nil when the backend has no login.
+	Auth func(home string) Authenticator
 }
 
-type ModelDefaults struct {
-	Main     string
-	Fast     string
-	Balanced string
+// Runtime is an opened backend. Provider is safe for concurrent use and is
+// shared by every agent that uses the backend.
+type Runtime struct {
+	Provider agent.Provider
+	Usage    func(context.Context) (AccountUsage, error)
+	Catalog  map[string]ModelMetadata
 }
 
-type Options struct {
-	// Home is the resolved absolute Eul application directory.
-	Home string
-}
-
-// Runtime is a configured backend. NewProvider may be called concurrently and
-// each returned provider remains valid until Close is called. Close is called
-// after all providers created by the runtime are no longer in use.
-type Runtime interface {
-	NewProvider() (agent.Provider, error)
-	Close() error
-}
-
-type Driver interface {
-	Descriptor() Descriptor
-	Open(Options) (Runtime, error)
-}
-
-type Registry struct {
-	defaultID string
-	drivers   map[string]Driver
-}
-
-func NewRegistry(defaultID string, drivers ...Driver) (*Registry, error) {
-	if !ValidID(defaultID) {
-		return nil, errors.New("backend: default backend ID is invalid")
+func (runtime *Runtime) Model(name string) (ModelMetadata, error) {
+	metadata, ok := runtime.Catalog[name]
+	if !ok {
+		return ModelMetadata{}, &ModelNotSupportedError{Model: name, AvailableModels: slices.Sorted(maps.Keys(runtime.Catalog))}
 	}
-
-	registry := &Registry{defaultID: defaultID, drivers: make(map[string]Driver, len(drivers))}
-	for _, driver := range drivers {
-		if driver == nil {
-			return nil, errors.New("backend: registered backend is nil")
-		}
-		descriptor := driver.Descriptor()
-		if !ValidID(descriptor.ID) {
-			return nil, errors.New("backend: registered backend ID is invalid")
-		}
-		if strings.TrimSpace(descriptor.Name) == "" {
-			return nil, fmt.Errorf("backend: backend %q has no display name", descriptor.ID)
-		}
-		if _, exists := registry.drivers[descriptor.ID]; exists {
-			return nil, fmt.Errorf("backend: duplicate backend %q", descriptor.ID)
-		}
-		registry.drivers[descriptor.ID] = driver
-	}
-	if _, exists := registry.drivers[defaultID]; !exists {
-		return nil, fmt.Errorf("backend: default backend %q is not registered", defaultID)
-	}
-	return registry, nil
+	return metadata, nil
 }
 
-func (registry *Registry) Lookup(id string) (Driver, error) {
-	if registry == nil {
-		return nil, errors.New("backend: backend registry is unavailable")
-	}
+type Authenticator interface {
+	LoginBrowser(context.Context, func(string) error) error
+	LoginDevice(context.Context, func(DeviceCode) error) error
+	Logout(context.Context) error
+}
+
+type DeviceCode struct {
+	VerificationURL string
+	UserCode        string
+}
+
+type AccountUsage struct {
+	Windows           []UsageWindow
+	MonthlyUsageUSD   *float64
+	LimitRemainingUSD *float64
+}
+
+type UsageWindow struct {
+	Duration    time.Duration
+	UsedPercent int
+	ResetsAt    time.Time
+}
+
+// Registry lists the available backends. Its first backend is the default.
+type Registry []Backend
+
+func (registry Registry) Lookup(id string) (Backend, error) {
 	if id == "" {
-		id = registry.defaultID
+		return registry[0], nil
 	}
-	driver, exists := registry.drivers[id]
-	if !exists {
-		return nil, fmt.Errorf("backend: backend %q is not available", id)
+	for _, candidate := range registry {
+		if candidate.ID == id {
+			return candidate, nil
+		}
 	}
-	return driver, nil
+	return Backend{}, fmt.Errorf("backend: backend %q is not available", id)
 }
 
 func ValidID(id string) bool {

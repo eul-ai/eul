@@ -203,13 +203,13 @@ func modelThinking(model catalogModel) (thinkingConfig, bool) {
 	return thinkingConfig{}, false
 }
 
-func metadataFor(models *backend.Models[modelInfo], model string) backend.ModelMetadata {
-	info, err := models.Lookup(model)
-	if err != nil {
-		return backend.ModelMetadata{ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff}}
+func metadata(models map[string]modelInfo) map[string]backend.ModelMetadata {
+	metadata := make(map[string]backend.ModelMetadata, len(models))
+	for id, info := range models {
+		metadata[id] = backend.ModelMetadata{
+			ContextWindow:  info.contextWindow,
+			ThinkingLevels: slices.Clone(info.thinking.levels),
+		}
 	}
-	return backend.ModelMetadata{
-		ContextWindow:  info.contextWindow,
-		ThinkingLevels: slices.Clone(info.thinking.levels),
-	}
+	return metadata
 }

@@ -52,12 +52,12 @@ func newCheckpointCoordinator(
 func newStoredAgentSession(
 	config resolvedConfig,
 	env environment,
-	backendRuntime backend.Runtime,
+	runtime *backend.Runtime,
 	store *sessionStore,
 	messageHistory *messageHistoryStore,
 	handle *sessionHandle,
 ) (*agentSession, error) {
-	session, options, err := newAgentSessionComponents(config, env, backendRuntime, true)
+	session, options, err := newAgentSessionComponents(config, env, runtime, true)
 	if err != nil {
 		if handle != nil {
 			_ = handle.Close()

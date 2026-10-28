@@ -115,9 +115,3 @@ func sleepContext(ctx context.Context, duration time.Duration) error {
 		return nil
 	}
 }
-
-var (
-	_ backend.BrowserAuthenticator = (*Manager)(nil)
-	_ backend.DeviceAuthenticator  = (*Manager)(nil)
-	_ backend.Authenticator        = (*Manager)(nil)
-)

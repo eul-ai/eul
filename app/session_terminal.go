@@ -12,16 +12,10 @@ import (
 	"github.com/eul-ai/eul/terminal"
 )
 
-type sessionModelMetadata struct {
-	main          backend.ModelMetadata
-	subagent      map[subagent.Profile]backend.ModelMetadata
-	thinkingLevel agent.ThinkingLevel
-}
-
 type terminalOptionsBuilder struct {
 	config             resolvedConfig
 	runtime            environment
-	metadata           sessionModelMetadata
+	metadata           backend.ModelMetadata
 	warnings           []string
 	loadUsage          func(context.Context) (backend.AccountUsage, error)
 	subagents          *subagent.Manager
@@ -37,61 +31,24 @@ type terminalOptionsBuilder struct {
 	previousTurnActive bool
 }
 
-func runtimeModelMetadata(backendRuntime backend.Runtime, model string) backend.ModelMetadata {
-	metadataProvider, ok := backendRuntime.(backend.ModelMetadataProvider)
-	if !ok {
-		return backend.ModelMetadata{ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff}}
-	}
-	metadata := metadataProvider.ModelMetadata(model)
-	if len(metadata.ThinkingLevels) == 0 {
-		metadata.ThinkingLevels = []agent.ThinkingLevel{agent.ThinkingOff}
-	}
-	return metadata
-}
-
-func resolveSessionModelMetadata(backendRuntime backend.Runtime, config resolvedConfig) sessionModelMetadata {
-	metadataByModel := make(map[string]backend.ModelMetadata)
-	resolve := func(model string) backend.ModelMetadata {
-		metadata, ok := metadataByModel[model]
-		if !ok {
-			metadata = runtimeModelMetadata(backendRuntime, model)
-			metadataByModel[model] = metadata
-		}
-		return metadata
-	}
-
-	main := resolve(config.models.main)
-	return sessionModelMetadata{
-		main: main,
-		subagent: map[subagent.Profile]backend.ModelMetadata{
-			subagent.ProfileFast:     resolve(config.models.forProfile(subagent.ProfileFast)),
-			subagent.ProfileBalanced: resolve(config.models.forProfile(subagent.ProfileBalanced)),
-			subagent.ProfileMain:     resolve(config.models.forProfile(subagent.ProfileMain)),
-		},
-		thinkingLevel: main.ClampThinkingLevel(config.thinkingLevel),
-	}
-}
-
 func (source terminalOptionsBuilder) options() terminal.Options {
-	var loadUsage func(context.Context) (terminal.ProviderUsage, error)
-	if source.loadUsage != nil {
-		loadUsage = func(ctx context.Context) (terminal.ProviderUsage, error) {
-			usage, err := source.loadUsage(ctx)
-			windows := make([]terminal.UsageWindow, len(usage.Windows))
-			for index, window := range usage.Windows {
-				windows[index] = terminal.UsageWindow{
-					Duration:    window.Duration,
-					UsedPercent: window.UsedPercent,
-					ResetsAt:    window.ResetsAt,
-				}
+	loadUsage := func(ctx context.Context) (terminal.ProviderUsage, error) {
+		usage, err := source.loadUsage(ctx)
+		windows := make([]terminal.UsageWindow, len(usage.Windows))
+		for index, window := range usage.Windows {
+			windows[index] = terminal.UsageWindow{
+				Duration:    window.Duration,
+				UsedPercent: window.UsedPercent,
+				ResetsAt:    window.ResetsAt,
 			}
-			return terminal.ProviderUsage{
-				Windows:           windows,
-				MonthlyUsageUSD:   usage.MonthlyUsageUSD,
-				LimitRemainingUSD: usage.LimitRemainingUSD,
-			}, err
 		}
+		return terminal.ProviderUsage{
+			Windows:           windows,
+			MonthlyUsageUSD:   usage.MonthlyUsageUSD,
+			LimitRemainingUSD: usage.LimitRemainingUSD,
+		}, err
 	}
+	thinkingLevel, _ := source.settings.Snapshot()
 	callbacks := &terminalCallbacks{engine: source.engine, checkpoints: source.checkpoints, skills: source.config.skills}
 	return terminal.Options{
 		Input:      source.runtime.stdin,
@@ -115,11 +72,11 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 		Config: terminal.Config{
 			Model:              source.config.models.main,
 			WorkingDirectory:   source.config.cwd,
-			ThinkingLevel:      source.metadata.thinkingLevel,
-			ThinkingLevels:     source.metadata.main.ThinkingLevels,
+			ThinkingLevel:      thinkingLevel,
+			ThinkingLevels:     source.metadata.ThinkingLevels,
 			FastMode:           source.config.fastMode,
-			FastModeAvailable:  source.metadata.main.FastMode,
-			ContextWindow:      source.metadata.main.ContextWindow,
+			FastModeAvailable:  source.metadata.FastMode,
+			ContextWindow:      source.metadata.ContextWindow,
 			Skills:             source.config.skills,
 			Warnings:           source.warnings,
 			InitialCheckpoint:  source.initialCheckpoint,
@@ -197,12 +154,4 @@ func terminalStateChanges(checkpoints *checkpointCoordinator) terminal.StateChan
 		return terminal.StateChanges{}
 	}
 	return terminal.StateChanges{Notify: checkpoints.SaveTerminalCheckpoint}
-}
-
-func runtimeUsageLoader(backendRuntime backend.Runtime) func(context.Context) (backend.AccountUsage, error) {
-	usageProvider, ok := backendRuntime.(backend.UsageProvider)
-	if !ok {
-		return nil
-	}
-	return usageProvider.Usage
 }

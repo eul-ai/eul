@@ -24,15 +24,8 @@ type usageWindow struct {
 	ResetsAt string  `json:"resetsAt"`
 }
 
-func (configured *runtime) CheckCredentials(ctx context.Context) error {
-	if _, err := configured.loadUsage(ctx); err != nil {
-		return fmt.Errorf("opencode go: validate API key and subscription: %w", err)
-	}
-	return nil
-}
-
-func (configured *runtime) Usage(ctx context.Context) (backend.AccountUsage, error) {
-	usage, err := configured.loadUsage(ctx)
+func (account account) usage(ctx context.Context) (backend.AccountUsage, error) {
+	usage, err := account.loadUsage(ctx)
 	if err != nil {
 		return backend.AccountUsage{}, fmt.Errorf("opencode go: load usage: %w", err)
 	}
@@ -61,8 +54,8 @@ func (configured *runtime) Usage(ctx context.Context) (backend.AccountUsage, err
 	return backend.AccountUsage{Windows: windows}, nil
 }
 
-func (configured *runtime) loadUsage(ctx context.Context) (usageResponse, error) {
+func (account account) loadUsage(ctx context.Context) (usageResponse, error) {
 	var result usageResponse
-	err := backendhttp.GetJSON(ctx, configured.credentialClient, configured.baseURL+"/usage", configured.authorize, &result)
+	err := backendhttp.GetJSON(ctx, account.client, account.baseURL+"/usage", account.authorize, &result)
 	return result, err
 }

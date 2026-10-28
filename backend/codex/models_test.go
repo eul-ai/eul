@@ -17,8 +17,9 @@ func TestThinkingLevelMappings(t *testing.T) {
 		agent.ThinkingXHigh,
 		agent.ThinkingMax,
 	}
+	catalog := catalog()
 	for _, model := range []string{modelFast, modelBalanced, modelMain} {
-		if got := modelMetadata(model).ThinkingLevels; !slices.Equal(got, levels) {
+		if got := catalog[model].ThinkingLevels; !slices.Equal(got, levels) {
 			t.Fatalf("%s levels = %v, want %v", model, got, levels)
 		}
 		if _, err := reasoningFor(model, agent.ThinkingMinimal); err == nil {

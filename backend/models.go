@@ -1,43 +1,35 @@
 package backend
 
 import (
-	"maps"
-	"slices"
-	"sync"
+	"fmt"
+	"strings"
 
 	"github.com/eul-ai/eul/agent"
 )
 
-type Models[T any] struct {
-	provider string
-	mu       sync.RWMutex
-	byID     map[string]T
+type ModelDefaults struct {
+	Main     string
+	Fast     string
+	Balanced string
 }
 
-func NewModels[T any](provider string) *Models[T] {
-	return &Models[T]{provider: provider}
+type ModelMetadata struct {
+	ContextWindow  int64
+	ThinkingLevels []agent.ThinkingLevel
+	FastMode       bool
 }
 
-func (models *Models[T]) Replace(byID map[string]T) {
-	models.mu.Lock()
-	models.byID = byID
-	models.mu.Unlock()
+func (metadata ModelMetadata) ClampThinkingLevel(level agent.ThinkingLevel) agent.ThinkingLevel {
+	return agent.ClampThinkingLevel(level, metadata.ThinkingLevels)
 }
 
-func (models *Models[T]) Snapshot() *Models[T] {
-	models.mu.RLock()
-	defer models.mu.RUnlock()
-	return &Models[T]{provider: models.provider, byID: models.byID}
+type ModelNotSupportedError struct {
+	Model           string
+	AvailableModels []string
 }
 
-func (models *Models[T]) Lookup(id string) (T, error) {
-	models.mu.RLock()
-	defer models.mu.RUnlock()
-	model, ok := models.byID[id]
-	if !ok {
-		return model, NewModelNotSupportedError(models.provider, id, slices.Collect(maps.Keys(models.byID)))
-	}
-	return model, nil
+func (err *ModelNotSupportedError) Error() string {
+	return fmt.Sprintf("model %q is not supported\navailable models:\n%s", err.Model, strings.Join(err.AvailableModels, "\n"))
 }
 
 func ThinkingEfforts(efforts []string) agent.ThinkingLevelMap {

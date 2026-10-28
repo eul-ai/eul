@@ -11,7 +11,9 @@ import (
 
 	"github.com/eul-ai/eul/app"
 	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/backend/builtins"
+	"github.com/eul-ai/eul/backend/codex"
+	"github.com/eul-ai/eul/backend/opencodego"
+	"github.com/eul-ai/eul/backend/openrouter"
 	"github.com/eul-ai/eul/terminal"
 )
 
@@ -31,18 +33,13 @@ type appRuntime struct {
 	userHomeDir   func() (string, error)
 	userConfigDir func() (string, error)
 	interrupts    <-chan os.Signal
-	backends      *backend.Registry
+	backends      backend.Registry
 	openURL       func(string) error
 }
 
 func main() {
 	interrupts := make(chan os.Signal, 2)
 	signal.Notify(interrupts, os.Interrupt)
-
-	backends, err := builtins.NewRegistry()
-	if err != nil {
-		panic(err)
-	}
 
 	code := run(os.Args[1:], appRuntime{
 		stdin:         os.Stdin,
@@ -53,7 +50,7 @@ func main() {
 		userHomeDir:   os.UserHomeDir,
 		userConfigDir: os.UserConfigDir,
 		interrupts:    interrupts,
-		backends:      backends,
+		backends:      backend.Registry{codex.New(), opencodego.New(), openrouter.New()},
 		openURL:       openBrowser,
 	})
 

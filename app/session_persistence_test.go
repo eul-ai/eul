@@ -27,16 +27,14 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 			return nil
 		},
 	}
-	newBackendRuntime := func() *fakeBackendRuntime {
-		return &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-			return providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
-				requests = append(requests, request)
-				if len(requests) == 1 {
-					return agent.Response{Text: "first answer", State: []byte("saved-state")}, nil
-				}
-				return agent.Response{Text: "second answer", State: []byte("next-state")}, nil
-			}), nil
-		}}
+	newBackendRuntime := func() *backend.Runtime {
+		return testBackendRuntime(providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
+			requests = append(requests, request)
+			if len(requests) == 1 {
+				return agent.Response{Text: "first answer", State: []byte("saved-state")}, nil
+			}
+			return agent.Response{Text: "second answer", State: []byte("next-state")}, nil
+		}))
 	}
 	config := resolvedConfig{provider: "test", models: modelSet{main: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
 	home := t.TempDir()
@@ -100,11 +98,9 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 		stdout:     io.Discard,
 		newToolset: captureTools(&tools, additionalTools),
 	}
-	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-		return providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
-			return agent.Response{Text: "result for " + request.Inputs[0].PlainText()}, nil
-		}), nil
-	}}
+	backendRuntime := testBackendRuntime(providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
+		return agent.Response{Text: "result for " + request.Inputs[0].PlainText()}, nil
+	}))
 	config := resolvedConfig{provider: "test", models: modelSet{main: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
 	home := t.TempDir()
 	store := newSessionStore(home)
@@ -149,13 +145,11 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 		stdout:     io.Discard,
 		newToolset: captureTools(&tools, additionalTools),
 	}
-	newBackendRuntime := func() *fakeBackendRuntime {
-		return &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-			return providerFunction(func(ctx context.Context, _ agent.Request, _ agent.TextSink) (agent.Response, error) {
-				<-ctx.Done()
-				return agent.Response{}, ctx.Err()
-			}), nil
-		}}
+	newBackendRuntime := func() *backend.Runtime {
+		return testBackendRuntime(providerFunction(func(ctx context.Context, _ agent.Request, _ agent.TextSink) (agent.Response, error) {
+			<-ctx.Done()
+			return agent.Response{}, ctx.Err()
+		}))
 	}
 	config := resolvedConfig{provider: "test", models: modelSet{main: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
 	home := t.TempDir()
@@ -177,9 +171,6 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 	first.persistence.stop()
 	first.subagents.Close()
 	if err := first.persistence.checkpoints.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := closeBackendRuntime(first.backendRuntime); err != nil {
 		t.Fatal(err)
 	}
 
@@ -219,21 +210,9 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	cwd := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(cwd, &stdout, &stderr)
-	defaultDriver := testBackendDriver(t, runtime)
-	alternateRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-			return agent.Response{}, nil
-		}), nil
-	}}
-	alternateDriver := &fakeBackendDriver{
-		descriptor: backend.Descriptor{ID: "alternate", Name: "Alternate", DefaultModels: backend.ModelDefaults{Main: "alternate-model"}},
-		runtime:    alternateRuntime,
-	}
-	registry, err := backend.NewRegistry("test", defaultDriver, alternateDriver)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtime.backends = registry
+	alternateRuntime := testBackendRuntime(emptyProvider())
+	alternateRuntime.Catalog = testCatalog("selected-model", "selected-fast-model", "selected-balanced-model")
+	runtime.backends = append(runtime.backends, testBackend("alternate", alternateRuntime))
 	home := t.TempDir()
 	store := newSessionStore(home)
 	messageHistory := newMessageHistoryStore(home)
@@ -248,10 +227,10 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if handle != nil || config.provider != "alternate" || selected.Descriptor().ID != "alternate" {
-		t.Fatalf("config=%+v handle=%v provider=%q", config, handle, selected.Descriptor().ID)
+	if handle != nil || config.provider != "alternate" || selected.ID != "alternate" {
+		t.Fatalf("config=%+v handle=%v provider=%q", config, handle, selected.ID)
 	}
-	backendRuntime, err := selected.Open(backend.Options{})
+	backendRuntime, err := selected.Open(context.Background(), home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,8 +254,8 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer handle.Close()
-	if restored.provider != "alternate" || restored.models != (modelSet{main: "selected-model", fast: "selected-fast-model", balanced: "selected-balanced-model"}) || selected.Descriptor().ID != "alternate" {
-		t.Fatalf("restored=%+v provider=%q", restored, selected.Descriptor().ID)
+	if restored.provider != "alternate" || restored.models != (modelSet{main: "selected-model", fast: "selected-fast-model", balanced: "selected-balanced-model"}) || selected.ID != "alternate" {
+		t.Fatalf("restored=%+v provider=%q", restored, selected.ID)
 	}
 }
 

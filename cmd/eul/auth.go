@@ -29,7 +29,7 @@ func runLogin(arguments []string, runtime appRuntime) int {
 		return exitUsage
 	}
 
-	driver, err := runtime.backends.Lookup(*providerID)
+	selected, err := runtime.backends.Lookup(*providerID)
 	if err != nil {
 		writeCLIError(runtime.stderr, "login failed: %v", err)
 		return exitFailure
@@ -39,43 +39,31 @@ func runLogin(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "login failed: %v", err)
 		return exitFailure
 	}
-	backendRuntime, err := driver.Open(backend.Options{Home: home})
-	if err != nil {
-		writeCLIError(runtime.stderr, "login failed: %v", err)
+	if selected.Auth == nil {
+		writeCLIError(runtime.stderr, "login failed: backend %q does not support login", selected.ID)
 		return exitFailure
 	}
+	authenticator := selected.Auth(home)
 
 	ctx, cancel := contextWithInterrupt(runtime.interrupts)
 	defer cancel()
-	descriptor := driver.Descriptor()
 	if *device {
-		deviceAuthenticator, ok := backendRuntime.(backend.DeviceAuthenticator)
-		if !ok {
-			err = fmt.Errorf("backend %q does not support device login", descriptor.ID)
-		} else {
-			err = deviceAuthenticator.LoginDevice(ctx, func(code backend.DeviceCode) error {
-				fmt.Fprintf(runtime.stderr, "Open %s and enter code: %s\n", code.VerificationURL, code.UserCode)
-				return nil
-			})
-		}
+		err = authenticator.LoginDevice(ctx, func(code backend.DeviceCode) error {
+			fmt.Fprintf(runtime.stderr, "Open %s and enter code: %s\n", code.VerificationURL, code.UserCode)
+			return nil
+		})
 	} else {
-		browserAuthenticator, ok := backendRuntime.(backend.BrowserAuthenticator)
-		if !ok {
-			err = fmt.Errorf("backend %q does not support browser login", descriptor.ID)
-		} else {
-			err = browserAuthenticator.LoginBrowser(ctx, func(url string) error {
-				fmt.Fprintf(runtime.stderr, "Open this URL to sign in with %s:\n%s\n", descriptor.Name, url)
-				if runtime.openURL != nil {
-					if err := runtime.openURL(url); err == nil {
-						return nil
-					}
+		err = authenticator.LoginBrowser(ctx, func(url string) error {
+			fmt.Fprintf(runtime.stderr, "Open this URL to sign in with %s:\n%s\n", selected.Name, url)
+			if runtime.openURL != nil {
+				if err := runtime.openURL(url); err == nil {
+					return nil
 				}
-				fmt.Fprintln(runtime.stderr, "Browser could not be opened automatically; open the URL manually.")
-				return nil
-			})
-		}
+			}
+			fmt.Fprintln(runtime.stderr, "Browser could not be opened automatically; open the URL manually.")
+			return nil
+		})
 	}
-	err = errors.Join(err, backendRuntime.Close())
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return exitInterrupted
@@ -84,7 +72,7 @@ func runLogin(arguments []string, runtime appRuntime) int {
 		return exitFailure
 	}
 
-	fmt.Fprintf(runtime.stdout, "Logged in with %s.\n", descriptor.Name)
+	fmt.Fprintf(runtime.stdout, "Logged in with %s.\n", selected.Name)
 	return exitSuccess
 }
 
@@ -104,7 +92,7 @@ func runLogout(arguments []string, runtime appRuntime) int {
 		return exitUsage
 	}
 
-	driver, err := runtime.backends.Lookup(*providerID)
+	selected, err := runtime.backends.Lookup(*providerID)
 	if err != nil {
 		writeCLIError(runtime.stderr, "logout failed: %v", err)
 		return exitFailure
@@ -114,17 +102,14 @@ func runLogout(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "logout failed: %v", err)
 		return exitFailure
 	}
-	authenticator, backendRuntime, err := openAuthenticator(driver, home)
-	if err != nil {
-		writeCLIError(runtime.stderr, "logout failed: %v", err)
+	if selected.Auth == nil {
+		writeCLIError(runtime.stderr, "logout failed: backend %q does not support logout", selected.ID)
 		return exitFailure
 	}
 
 	ctx, cancel := contextWithInterrupt(runtime.interrupts)
 	defer cancel()
-	err = authenticator.Logout(ctx)
-	err = errors.Join(err, backendRuntime.Close())
-	if err != nil {
+	if err := selected.Auth(home).Logout(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return exitInterrupted
 		}
@@ -134,18 +119,6 @@ func runLogout(arguments []string, runtime appRuntime) int {
 
 	fmt.Fprintln(runtime.stdout, "Logged out.")
 	return exitSuccess
-}
-
-func openAuthenticator(driver backend.Driver, home string) (backend.Authenticator, backend.Runtime, error) {
-	backendRuntime, err := driver.Open(backend.Options{Home: home})
-	if err != nil {
-		return nil, nil, err
-	}
-	authenticator, ok := backendRuntime.(backend.Authenticator)
-	if !ok {
-		return nil, nil, errors.Join(fmt.Errorf("backend %q does not support logout", driver.Descriptor().ID), backendRuntime.Close())
-	}
-	return authenticator, backendRuntime, nil
 }
 
 func contextWithInterrupt(interrupts <-chan os.Signal) (context.Context, context.CancelFunc) {

@@ -16,17 +16,17 @@ type keyUsage struct {
 	LimitRemaining *float64 `json:"limit_remaining"`
 }
 
-func (configured *runtime) loadKey(ctx context.Context) (keyResponse, error) {
+func (account account) loadKey(ctx context.Context) (keyResponse, error) {
 	var result keyResponse
-	err := backendhttp.GetJSON(ctx, configured.credentialClient, configured.baseURL+"/key", func(request *http.Request) {
-		request.Header.Set("Authorization", "Bearer "+configured.apiKey)
+	err := backendhttp.GetJSON(ctx, account.client, account.baseURL+"/key", func(request *http.Request) {
+		request.Header.Set("Authorization", "Bearer "+account.apiKey)
 		setCommonHeaders(request)
 	}, &result)
 	return result, err
 }
 
-func (configured *runtime) loadModelCatalog(ctx context.Context) (modelCatalog, error) {
+func (account account) loadModelCatalog(ctx context.Context) (modelCatalog, error) {
 	var result modelCatalog
-	err := backendhttp.GetJSON(ctx, configured.credentialClient, configured.baseURL+"/models", setCommonHeaders, &result)
+	err := backendhttp.GetJSON(ctx, account.client, account.baseURL+"/models", setCommonHeaders, &result)
 	return result, err
 }

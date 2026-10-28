@@ -1,10 +1,6 @@
 package opencodego
 
-import (
-	"testing"
-
-	"github.com/eul-ai/eul/backend"
-)
+import "testing"
 
 func testLiveModelIDs() map[string]struct{} {
 	return map[string]struct{}{
@@ -18,12 +14,6 @@ func testLiveModelIDs() map[string]struct{} {
 		"minimax-m3":      {},
 		"qwen3.8-max":     {},
 	}
-}
-
-func catalogOf(models map[string]modelInfo) *backend.Models[modelInfo] {
-	catalog := backend.NewModels[modelInfo]("opencode go")
-	catalog.Replace(models)
-	return catalog
 }
 
 func testModelInfos(t *testing.T) map[string]modelInfo {

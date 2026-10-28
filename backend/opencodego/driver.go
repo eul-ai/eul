@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
@@ -23,113 +22,58 @@ const (
 	credentialHTTPTimeout = 30 * time.Second
 )
 
-type Driver struct {
-	getenv     func(string) string
+type driver struct {
 	baseURL    string
 	catalogURL string
 	httpClient *http.Client
 }
 
-func New() *Driver {
-	return &Driver{
-		getenv:     os.Getenv,
-		baseURL:    defaultBaseURL,
-		catalogURL: defaultCatalogURL,
+func New() backend.Backend {
+	return backend.Backend{
+		ID:   ID,
+		Name: Name,
+		Open: driver{baseURL: defaultBaseURL, catalogURL: defaultCatalogURL}.open,
 	}
 }
 
-func (*Driver) Descriptor() backend.Descriptor {
-	return backend.Descriptor{ID: ID, Name: Name}
-}
-
-func (driver *Driver) Open(options backend.Options) (backend.Runtime, error) {
-	getenv := driver.getenv
-	if getenv == nil {
-		getenv = os.Getenv
-	}
-	apiKey := strings.TrimSpace(getenv("OPENCODE_API_KEY"))
+func (driver driver) open(ctx context.Context, home string) (*backend.Runtime, error) {
+	apiKey := strings.TrimSpace(os.Getenv("OPENCODE_API_KEY"))
 	if apiKey == "" {
 		return nil, errors.New("opencode go: OPENCODE_API_KEY is required")
 	}
 
-	baseURL := strings.TrimRight(driver.baseURL, "/")
-	if baseURL == "" {
-		baseURL = defaultBaseURL
-	}
-	catalogURL := strings.TrimSpace(driver.catalogURL)
-	if catalogURL == "" {
-		catalogURL = defaultCatalogURL
-	}
-	var catalogCachePath string
-	if options.Home != "" {
-		catalogCachePath = filepath.Join(options.Home, "cache", "opencode-go-models.json")
-	}
 	credentialClient := backendhttp.CloneNoRedirects(driver.httpClient, credentialHTTPTimeout)
-	return &runtime{
-		apiKey:           apiKey,
-		baseURL:          baseURL,
-		generationClient: driver.httpClient,
-		credentialClient: credentialClient,
-		catalog: &catalogLoader{
-			url:       catalogURL,
-			cachePath: catalogCachePath,
-			client:    credentialClient,
-		},
-		models: backend.NewModels[modelInfo]("opencode go"),
-	}, nil
-}
-
-type runtime struct {
-	apiKey           string
-	baseURL          string
-	generationClient *http.Client
-	credentialClient *http.Client
-	catalog          *catalogLoader
-	models           *backend.Models[modelInfo]
-}
-
-func (configured *runtime) InitializeModels(ctx context.Context) error {
-	live, err := configured.loadLiveModels(ctx)
-	if err != nil {
-		return fmt.Errorf("opencode go: load available models: %w", err)
+	account := account{apiKey: apiKey, baseURL: driver.baseURL, client: credentialClient}
+	if _, err := account.loadUsage(ctx); err != nil {
+		return nil, fmt.Errorf("opencode go: validate API key and subscription: %w", err)
 	}
-
-	catalog, err := configured.catalog.Load(ctx)
+	live, err := account.loadLiveModels(ctx)
 	if err != nil {
-		return fmt.Errorf("opencode go: load model catalog: %w", err)
+		return nil, fmt.Errorf("opencode go: load available models: %w", err)
+	}
+	loader := catalogLoader{
+		url:       driver.catalogURL,
+		cachePath: filepath.Join(home, "cache", "opencode-go-models.json"),
+		client:    credentialClient,
+	}
+	catalog, err := loader.Load(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("opencode go: load model catalog: %w", err)
 	}
 	models := buildModels(catalog, live)
 	if len(models) == 0 {
-		return errors.New("opencode go: no supported models are available")
+		return nil, errors.New("opencode go: no supported models are available")
 	}
 
-	configured.models.Replace(models)
-	return nil
+	return &backend.Runtime{
+		Provider: newProvider(apiKey, driver.baseURL, driver.httpClient, models),
+		Usage:    account.usage,
+		Catalog:  metadata(models),
+	}, nil
 }
 
-func (configured *runtime) NewProvider() (agent.Provider, error) {
-	return newProvider(configured.apiKey, configured.baseURL, configured.generationClient, configured.models.Snapshot()), nil
+type account struct {
+	apiKey  string
+	baseURL string
+	client  *http.Client
 }
-
-func (configured *runtime) ModelMetadata(model string) backend.ModelMetadata {
-	return metadataFor(configured.models, model)
-}
-
-func (configured *runtime) ValidateModel(model string) error {
-	_, err := configured.models.Lookup(model)
-	return err
-}
-
-func (*runtime) Close() error {
-	return nil
-}
-
-var (
-	_ backend.Driver                = (*Driver)(nil)
-	_ backend.Runtime               = (*runtime)(nil)
-	_ backend.CredentialChecker     = (*runtime)(nil)
-	_ backend.UsageProvider         = (*runtime)(nil)
-	_ backend.ModelMetadataProvider = (*runtime)(nil)
-	_ backend.ModelInitializer      = (*runtime)(nil)
-	_ backend.ModelValidator        = (*runtime)(nil)
-)

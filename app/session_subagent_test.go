@@ -26,19 +26,15 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	var gotRequest agent.Request
-	factoryCalls := 0
 	runtime := testRuntime(cwd, &stdout, &stderr)
-	driver := testBackendDriver(t, runtime)
-	driver.runtime.newProvider = func() (agent.Provider, error) {
-		factoryCalls++
-		return providerFunction(func(_ context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
-			gotRequest = request
-			if err := sink("answer"); err != nil {
-				return agent.Response{}, err
-			}
-			return agent.Response{Text: "answer"}, nil
-		}), nil
-	}
+	backendRuntime := testBackendRuntimeOf(t, runtime)
+	backendRuntime.Provider = providerFunction(func(_ context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
+		gotRequest = request
+		if err := sink("answer"); err != nil {
+			return agent.Response{}, err
+		}
+		return agent.Response{Text: "answer"}, nil
+	})
 
 	config, err := resolveTestConfig(Options{
 		Model:         stringPointer("gpt-5.6-sol"),
@@ -48,7 +44,7 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := newAgentSession(config, runtime, driver.runtime)
+	session, err := newAgentSession(config, runtime, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,11 +53,8 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if driver.runtime.closeCalls != 1 {
-		t.Fatalf("backend close calls = %d, want 1", driver.runtime.closeCalls)
-	}
-	if factoryCalls != 1 || gotRequest.Model != "gpt-5.6-sol" || gotRequest.ThinkingLevel != agent.ThinkingXHigh || !gotRequest.FastMode || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].PlainText() != "test prompt" {
-		t.Fatalf("factory calls=%d request=%+v", factoryCalls, gotRequest)
+	if gotRequest.Model != "gpt-5.6-sol" || gotRequest.ThinkingLevel != agent.ThinkingXHigh || !gotRequest.FastMode || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].PlainText() != "test prompt" {
+		t.Fatalf("request = %+v", gotRequest)
 	}
 	if result.Text != "answer" {
 		t.Fatalf("result = %+v", result)
@@ -89,97 +82,92 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(cwd, &stdout, &stderr)
 	var mu sync.Mutex
-	factoryCalls := 0
 	childRequests := make([]agent.Request, 0, 2)
 	childrenStarted := make(chan struct{})
 	releaseChildren := make(chan struct{})
 	mainCalls := 0
-	driver := testBackendDriver(t, runtime)
-	driver.runtime.newProvider = func() (agent.Provider, error) {
-		mu.Lock()
-		factoryCalls++
-		call := factoryCalls
-		mu.Unlock()
-
-		if call == 1 {
-			return providerFunction(func(_ context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
-				mainCalls++
-				switch mainCalls {
-				case 1:
-					if request.ThinkingLevel != agent.ThinkingHigh {
-						t.Fatalf("main thinking level = %q", request.ThinkingLevel)
-					}
-					definitions := make(map[string]agent.ToolDefinition, len(request.Tools))
-					for _, definition := range request.Tools {
-						definitions[definition.Name] = definition
-					}
-					waitDefinition := definitions["wait_for_subagent"]
-					timeoutTypes, _ := waitDefinition.Parameters.Properties["timeout_ms"].Type.([]string)
-					if definitions["launch_subagents"].Name != "launch_subagents" || waitDefinition.Name != "wait_for_subagent" || !slices.Equal(timeoutTypes, []string{"integer", "null"}) || definitions["cancel_subagents"].Name != "cancel_subagents" {
-						t.Fatalf("subagent definitions = %+v", definitions)
-					}
-					return agent.Response{ToolCalls: []agent.ToolCall{{
-						ID:        "launch",
-						Name:      "launch_subagents",
-						Arguments: []byte(`{"tasks":[{"description":"review alpha","prompt":"review alpha","model_profile":"fast","thinking_level":"minimal"},{"description":"review beta","prompt":"review beta","model_profile":"balanced","thinking_level":"medium"}]}`),
-					}}}, nil
-				case 2:
-					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "launch_subagents" {
-						t.Fatalf("launch continuation inputs = %+v", request.Inputs)
-					}
-					if request.Inputs[0].CallID != "launch" || request.Inputs[0].IsError {
-						t.Fatalf("launch result = %+v", request.Inputs[0])
-					}
-					return agent.Response{ToolCalls: []agent.ToolCall{{
-						ID:        "read",
-						Name:      "read",
-						Arguments: []byte(`{"path":"AGENTS.md"}`),
-					}}}, nil
-				case 3:
-					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "read" || !strings.Contains(request.Inputs[0].PlainText(), projectInstructions) {
-						t.Fatalf("independent continuation inputs = %+v", request.Inputs)
-					}
-					<-childrenStarted
-					close(releaseChildren)
-					return agent.Response{ToolCalls: []agent.ToolCall{{
-						ID:        "wait",
-						Name:      "wait_for_subagent",
-						Arguments: []byte(`{}`),
-					}}}, nil
-				case 4:
-					if len(request.Inputs) != 2 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].CallID != "wait" || request.Inputs[0].Tool != "wait_for_subagent" || request.Inputs[0].IsError || request.Inputs[1].Kind != agent.InputInbox || !strings.Contains(request.Inputs[1].PlainText(), "finding for review") {
-						t.Fatalf("wait continuation inputs = %+v", request.Inputs)
-					}
-					if err := sink("combined answer"); err != nil {
-						return agent.Response{}, err
-					}
-					return agent.Response{Text: "combined answer"}, nil
-				case 5:
-					if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputInbox || !strings.Contains(request.Inputs[0].PlainText(), "finding for review") {
-						t.Fatalf("late completion inputs = %+v", request.Inputs)
-					}
-					return agent.Response{Text: "combined answer"}, nil
-				default:
-					t.Fatalf("unexpected main provider call %d", mainCalls)
-					return agent.Response{}, nil
-				}
-			}), nil
+	mainProvider := providerFunction(func(_ context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
+		mainCalls++
+		switch mainCalls {
+		case 1:
+			if request.ThinkingLevel != agent.ThinkingHigh {
+				t.Fatalf("main thinking level = %q", request.ThinkingLevel)
+			}
+			definitions := make(map[string]agent.ToolDefinition, len(request.Tools))
+			for _, definition := range request.Tools {
+				definitions[definition.Name] = definition
+			}
+			waitDefinition := definitions["wait_for_subagent"]
+			timeoutTypes, _ := waitDefinition.Parameters.Properties["timeout_ms"].Type.([]string)
+			if definitions["launch_subagents"].Name != "launch_subagents" || waitDefinition.Name != "wait_for_subagent" || !slices.Equal(timeoutTypes, []string{"integer", "null"}) || definitions["cancel_subagents"].Name != "cancel_subagents" {
+				t.Fatalf("subagent definitions = %+v", definitions)
+			}
+			return agent.Response{ToolCalls: []agent.ToolCall{{
+				ID:        "launch",
+				Name:      "launch_subagents",
+				Arguments: []byte(`{"tasks":[{"description":"review alpha","prompt":"review alpha","model_profile":"fast","thinking_level":"minimal"},{"description":"review beta","prompt":"review beta","model_profile":"balanced","thinking_level":"medium"}]}`),
+			}}}, nil
+		case 2:
+			if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "launch_subagents" {
+				t.Fatalf("launch continuation inputs = %+v", request.Inputs)
+			}
+			if request.Inputs[0].CallID != "launch" || request.Inputs[0].IsError {
+				t.Fatalf("launch result = %+v", request.Inputs[0])
+			}
+			return agent.Response{ToolCalls: []agent.ToolCall{{
+				ID:        "read",
+				Name:      "read",
+				Arguments: []byte(`{"path":"AGENTS.md"}`),
+			}}}, nil
+		case 3:
+			if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].Tool != "read" || !strings.Contains(request.Inputs[0].PlainText(), projectInstructions) {
+				t.Fatalf("independent continuation inputs = %+v", request.Inputs)
+			}
+			<-childrenStarted
+			close(releaseChildren)
+			return agent.Response{ToolCalls: []agent.ToolCall{{
+				ID:        "wait",
+				Name:      "wait_for_subagent",
+				Arguments: []byte(`{}`),
+			}}}, nil
+		case 4:
+			if len(request.Inputs) != 2 || request.Inputs[0].Kind != agent.InputToolResult || request.Inputs[0].CallID != "wait" || request.Inputs[0].Tool != "wait_for_subagent" || request.Inputs[0].IsError || request.Inputs[1].Kind != agent.InputInbox || !strings.Contains(request.Inputs[1].PlainText(), "finding for review") {
+				t.Fatalf("wait continuation inputs = %+v", request.Inputs)
+			}
+			if err := sink("combined answer"); err != nil {
+				return agent.Response{}, err
+			}
+			return agent.Response{Text: "combined answer"}, nil
+		case 5:
+			if len(request.Inputs) != 1 || request.Inputs[0].Kind != agent.InputInbox || !strings.Contains(request.Inputs[0].PlainText(), "finding for review") {
+				t.Fatalf("late completion inputs = %+v", request.Inputs)
+			}
+			return agent.Response{Text: "combined answer"}, nil
+		default:
+			t.Fatalf("unexpected main provider call %d", mainCalls)
+			return agent.Response{}, nil
 		}
-
-		return providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
-			mu.Lock()
-			childRequests = append(childRequests, request)
-			if len(childRequests) == cap(childRequests) {
-				close(childrenStarted)
-			}
-			mu.Unlock()
-			if len(request.Inputs) != 1 {
-				t.Fatalf("child inputs = %+v", request.Inputs)
-			}
-			<-releaseChildren
-			return agent.Response{Text: "finding for " + request.Inputs[0].PlainText()}, nil
-		}), nil
-	}
+	})
+	childProvider := providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
+		mu.Lock()
+		childRequests = append(childRequests, request)
+		if len(childRequests) == cap(childRequests) {
+			close(childrenStarted)
+		}
+		mu.Unlock()
+		if len(request.Inputs) != 1 {
+			t.Fatalf("child inputs = %+v", request.Inputs)
+		}
+		<-releaseChildren
+		return agent.Response{Text: "finding for " + request.Inputs[0].PlainText()}, nil
+	})
+	backendRuntime := testBackendRuntimeOf(t, runtime)
+	backendRuntime.Provider = providerFunction(func(ctx context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
+		if request.Model == "model" {
+			return mainProvider(ctx, request, sink)
+		}
+		return childProvider(ctx, request, sink)
+	})
 
 	config, err := resolveTestConfig(Options{
 		Model:         stringPointer("model"),
@@ -191,7 +179,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := newAgentSession(config, runtime, driver.runtime)
+	session, err := newAgentSession(config, runtime, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,17 +187,14 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	if err := session.finish(runErr); err != nil {
 		t.Fatal(err)
 	}
-	if driver.runtime.closeCalls != 1 {
-		t.Fatalf("backend close calls = %d, want 1", driver.runtime.closeCalls)
-	}
 	if result.Text != "combined answer" || mainCalls < 4 || mainCalls > 5 {
 		t.Fatalf("result = %+v, main calls = %d", result, mainCalls)
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
-	if factoryCalls != 3 || len(childRequests) != 2 {
-		t.Fatalf("factory calls = %d, child requests = %d", factoryCalls, len(childRequests))
+	if len(childRequests) != 2 {
+		t.Fatalf("child requests = %d", len(childRequests))
 	}
 	var tasks []string
 	for _, request := range childRequests {

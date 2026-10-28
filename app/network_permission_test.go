@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,11 +15,9 @@ import (
 )
 
 func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
-	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-			return agent.Response{}, nil
-		}), nil
-	}}
+	backendRuntime := testBackendRuntime(providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+		return agent.Response{}, nil
+	}))
 	var tools []agent.Tool
 	session, err := newAgentSession(resolvedConfig{models: modelSet{main: "model", fast: "model", balanced: "model"}, cwd: t.TempDir()}, environment{newToolset: captureTools(&tools, buildToolset)}, backendRuntime)
 	if err != nil {
@@ -58,15 +55,7 @@ func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
 }
 
 func TestAgentSessionRoutesSubagentNetworkApprovalToTerminal(t *testing.T) {
-	var providerCount atomic.Int32
-	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-		if providerCount.Add(1) == 1 {
-			return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-				return agent.Response{}, nil
-			}), nil
-		}
-		return networkBashChildProvider("child approved", nil), nil
-	}}
+	backendRuntime := testBackendRuntime(networkBashChildProvider("child approved", nil))
 	var tools []agent.Tool
 	session, err := newAgentSession(resolvedConfig{models: modelSet{main: "model", fast: "model", balanced: "model"}, cwd: t.TempDir()}, environment{newToolset: captureTools(&tools, buildToolset)}, backendRuntime)
 	if err != nil {
@@ -106,15 +95,7 @@ func TestAgentSessionRoutesSubagentNetworkApprovalToTerminal(t *testing.T) {
 
 func TestAgentSessionSharesNetworkSessionApprovalWithSubagents(t *testing.T) {
 	childCompleted := make(chan struct{})
-	var providerCount atomic.Int32
-	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-		if providerCount.Add(1) == 1 {
-			return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-				return agent.Response{}, nil
-			}), nil
-		}
-		return networkBashChildProvider("child approved", childCompleted), nil
-	}}
+	backendRuntime := testBackendRuntime(networkBashChildProvider("child approved", childCompleted))
 	var tools []agent.Tool
 	session, err := newAgentSession(resolvedConfig{models: modelSet{main: "model", fast: "model", balanced: "model"}, cwd: t.TempDir()}, environment{newToolset: captureTools(&tools, buildToolset)}, backendRuntime)
 	if err != nil {
@@ -163,7 +144,7 @@ func TestAgentSessionSharesNetworkSessionApprovalWithSubagents(t *testing.T) {
 	waitForSubagentCompletions(t, session.subagents, 1)
 }
 
-func networkBashChildProvider(result string, completed chan<- struct{}) agent.Provider {
+func networkBashChildProvider(result string, completed chan<- struct{}) providerFunction {
 	calls := 0
 	return providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
 		calls++

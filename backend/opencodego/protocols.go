@@ -7,14 +7,13 @@ import (
 	"slices"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/backend/protocol"
 	"github.com/eul-ai/eul/backend/protocol/anthropic"
 	"github.com/eul-ai/eul/backend/protocol/chatcompletions"
 	"github.com/eul-ai/eul/backend/protocol/responses"
 )
 
-func newProtocolClients(apiKey, baseURL string, httpClient *http.Client, models *backend.Models[modelInfo]) map[wireProtocol]*protocol.Client {
+func newProtocolClients(apiKey, baseURL string, httpClient *http.Client, models map[string]modelInfo) map[wireProtocol]*protocol.Client {
 	newClient := func(path string, codec protocol.Codec, prepare func(*http.Request)) *protocol.Client {
 		return protocol.New(protocol.Options{
 			Codec:       codec,
@@ -25,10 +24,7 @@ func newProtocolClients(apiKey, baseURL string, httpClient *http.Client, models 
 				prepare(request)
 				return nil
 			},
-			ContextWindow: func(model string) int64 {
-				info, _ := models.Lookup(model)
-				return info.contextWindow
-			},
+			ContextWindow: func(model string) int64 { return models[model].contextWindow },
 		})
 	}
 	bearer := func(request *http.Request) { setBearerHeaders(request, apiKey) }
@@ -51,8 +47,8 @@ func setBearerHeaders(request *http.Request, apiKey string) {
 	request.Header.Set("x-opencode-client", "eul")
 }
 
-func (configured *runtime) authorize(request *http.Request) {
-	setBearerHeaders(request, configured.apiKey)
+func (account account) authorize(request *http.Request) {
+	setBearerHeaders(request, account.apiKey)
 }
 
 func setAnthropicHeaders(request *http.Request, apiKey string) {
@@ -62,7 +58,7 @@ func setAnthropicHeaders(request *http.Request, apiKey string) {
 	request.Header.Set("x-opencode-client", "eul")
 }
 
-func responseRequestOptions(models *backend.Models[modelInfo], request agent.Request) (responses.RequestOptions, error) {
+func responseRequestOptions(models map[string]modelInfo, request agent.Request) (responses.RequestOptions, error) {
 	info, err := validateRequestModel(models, request)
 	if err != nil {
 		return responses.RequestOptions{}, err
@@ -87,7 +83,7 @@ func responseRequestOptions(models *backend.Models[modelInfo], request agent.Req
 	return options, nil
 }
 
-func chatRequestOptions(models *backend.Models[modelInfo], request agent.Request) (chatcompletions.RequestOptions, error) {
+func chatRequestOptions(models map[string]modelInfo, request agent.Request) (chatcompletions.RequestOptions, error) {
 	info, err := validateRequestModel(models, request)
 	if err != nil {
 		return chatcompletions.RequestOptions{}, err
@@ -105,7 +101,7 @@ func chatRequestOptions(models *backend.Models[modelInfo], request agent.Request
 	return options, nil
 }
 
-func anthropicRequestOptions(models *backend.Models[modelInfo], request agent.Request) (anthropic.RequestOptions, error) {
+func anthropicRequestOptions(models map[string]modelInfo, request agent.Request) (anthropic.RequestOptions, error) {
 	info, err := validateRequestModel(models, request)
 	if err != nil {
 		return anthropic.RequestOptions{}, err
@@ -132,10 +128,10 @@ func anthropicRequestOptions(models *backend.Models[modelInfo], request agent.Re
 	return options, nil
 }
 
-func validateRequestModel(models *backend.Models[modelInfo], request agent.Request) (modelInfo, error) {
-	info, err := models.Lookup(request.Model)
-	if err != nil {
-		return modelInfo{}, err
+func validateRequestModel(models map[string]modelInfo, request agent.Request) (modelInfo, error) {
+	info, ok := models[request.Model]
+	if !ok {
+		return modelInfo{}, fmt.Errorf("model %q is not supported", request.Model)
 	}
 	if !slices.Contains(info.thinking.levels, request.ThinkingLevel) {
 		return modelInfo{}, fmt.Errorf("thinking level %q is not supported by model %q", request.ThinkingLevel, request.Model)

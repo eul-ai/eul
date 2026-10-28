@@ -2,7 +2,6 @@ package openrouter
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/backend/protocol"
 )
 
@@ -21,11 +19,10 @@ func (function driverRoundTripperFunc) RoundTrip(request *http.Request) (*http.R
 	return function(request)
 }
 
-func TestDriverRequiresAPIKey(t *testing.T) {
-	driver := New()
-	driver.getenv = func(string) string { return " " }
-	if _, err := driver.Open(backend.Options{}); err == nil {
-		t.Fatalf("Open() error = %v", err)
+func TestOpenRequiresAPIKey(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", " ")
+	if _, err := (driver{baseURL: "https://openrouter.test"}).open(context.Background(), ""); err == nil {
+		t.Fatalf("open() error = %v", err)
 	}
 }
 
@@ -48,7 +45,7 @@ func TestThinkingMetadataUsesCatalogEfforts(t *testing.T) {
 	}
 }
 
-func TestRuntimeChecksCredentialsInitializesModelsAndCreatesProvider(t *testing.T) {
+func TestOpenChecksCredentialsLoadsModelsAndCreatesProvider(t *testing.T) {
 	requests := 0
 	server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requests++
@@ -78,124 +75,47 @@ func TestRuntimeChecksCredentialsInitializesModelsAndCreatesProvider(t *testing.
 		}
 	}))
 
-	driver := New()
-	key := "secret"
-	driver.getenv = func(string) string { return key }
-	driver.baseURL = "https://openrouter.test"
-	driver.httpClient = server
-	backendRuntime, err := driver.Open(backend.Options{})
+	t.Setenv("OPENROUTER_API_KEY", "secret")
+	opened, err := (driver{baseURL: "https://openrouter.test", httpClient: server}).open(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	key = "changed"
-	configured := backendRuntime.(*runtime)
-	if configured.generationClient.Timeout != 0 || configured.credentialClient.Timeout != credentialHTTPTimeout {
-		t.Fatalf("HTTP timeouts: generation=%s credential=%s", configured.generationClient.Timeout, configured.credentialClient.Timeout)
-	}
-	if err := configured.CheckCredentials(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := configured.InitializeModels(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("OPENROUTER_API_KEY", "changed")
 	if requests != 2 {
 		t.Fatalf("requests = %d", requests)
 	}
 
-	if err := configured.ValidateModel("vendor/reasoning"); err != nil {
-		t.Fatal(err)
-	}
-	validationErr := configured.ValidateModel("unknown")
-	var unsupported *backend.ModelNotSupportedError
-	if !errors.As(validationErr, &unsupported) {
-		t.Fatalf("ValidateModel() error = %v", validationErr)
-	}
-	if unsupported.Model != "unknown" || !slices.Equal(unsupported.AvailableModels, []string{"vendor/plain", "vendor/reasoning"}) {
-		t.Fatalf("ValidateModel() error = %#v", unsupported)
-	}
-
-	reasoning := configured.ModelMetadata("vendor/reasoning")
-	if reasoning.ContextWindow != 128000 || !slices.Equal(reasoning.ThinkingLevels, []agent.ThinkingLevel{agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh}) || reasoning.FastMode {
-		t.Fatalf("reasoning metadata = %+v", reasoning)
-	}
-	plain := configured.ModelMetadata("vendor/plain")
-	if plain.ContextWindow != 32000 || !slices.Equal(plain.ThinkingLevels, []agent.ThinkingLevel{agent.ThinkingOff}) {
-		t.Fatalf("plain metadata = %+v", plain)
-	}
-	unknown := configured.ModelMetadata("unknown")
-	if unknown.ContextWindow != 0 || !slices.Equal(unknown.ThinkingLevels, []agent.ThinkingLevel{agent.ThinkingOff}) {
-		t.Fatalf("unknown metadata = %+v", unknown)
-	}
-
-	provider, err := configured.NewProvider()
+	reasoning, err := opened.Model("vendor/reasoning")
 	if err != nil {
 		t.Fatal(err)
 	}
-	configuredProvider, ok := provider.(*protocol.Client)
+	if reasoning.ContextWindow != 128000 || !slices.Equal(reasoning.ThinkingLevels, []agent.ThinkingLevel{agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh}) || reasoning.FastMode {
+		t.Fatalf("reasoning metadata = %+v", reasoning)
+	}
+	plain, err := opened.Model("vendor/plain")
+	if err != nil || plain.ContextWindow != 32000 || !slices.Equal(plain.ThinkingLevels, []agent.ThinkingLevel{agent.ThinkingOff}) {
+		t.Fatalf("plain metadata = %+v, %v", plain, err)
+	}
+	if _, err := opened.Model("unknown"); err == nil {
+		t.Fatal("unknown model was accepted")
+	}
+
+	configuredProvider, ok := opened.Provider.(*protocol.Client)
 	if !ok {
-		t.Fatalf("provider = %T", provider)
+		t.Fatalf("provider = %T", opened.Provider)
 	}
 	state := []byte(`{"version":1,"items":[{"type":"message","role":"assistant","content":"history"}]}`)
 	if !configuredProvider.ShouldCompact(agent.Request{Model: "vendor/reasoning", State: state}, agent.Usage{TotalTokens: 115_200}) {
-		t.Fatal("provider did not use cached model context window for compaction")
+		t.Fatal("provider did not use the model context window for compaction")
 	}
-	if _, err := provider.Generate(context.Background(), agent.Request{
+	if _, err := opened.Provider.Generate(context.Background(), agent.Request{
 		Model: "vendor/plain", ThinkingLevel: agent.ThinkingOff,
 	}, agent.StreamObserver{}); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 2)
-	for range 2 {
-		go func() {
-			_, err := configured.NewProvider()
-			done <- err
-		}()
-	}
-	for range 2 {
-		if err := <-done; err != nil {
-			t.Fatalf("concurrent NewProvider(): %v", err)
-		}
-	}
 }
 
-func TestModelCatalogIsCached(t *testing.T) {
-	models := 0
-	server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/key":
-			fmt.Fprint(writer, `{"data":{}}`)
-		case "/models":
-			models++
-			fmt.Fprint(writer, `{"data":[{"id":"vendor/model","context_length":64000,"supported_parameters":[]}]}`)
-		}
-	}))
-
-	driver := New()
-	driver.getenv = func(string) string { return "secret" }
-	driver.baseURL = "https://openrouter.test"
-	driver.httpClient = server
-	opened, err := driver.Open(backend.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	configured := opened.(*runtime)
-	if err := configured.CheckCredentials(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := configured.InitializeModels(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		if metadata := configured.ModelMetadata("vendor/model"); metadata.ContextWindow != 64000 {
-			t.Fatalf("metadata = %+v", metadata)
-		}
-	}
-	if models != 1 {
-		t.Fatalf("model catalog requests = %d", models)
-	}
-}
-
-func TestRuntimeLoadsAccountUsage(t *testing.T) {
+func TestAccountLoadsUsage(t *testing.T) {
 	limitedRemaining := 87.66
 	tests := []struct {
 		name          string
@@ -215,15 +135,7 @@ func TestRuntimeLoadsAccountUsage(t *testing.T) {
 				fmt.Fprint(writer, test.body)
 			}))
 
-			driver := New()
-			driver.getenv = func(string) string { return "secret" }
-			driver.baseURL = "https://openrouter.test"
-			driver.httpClient = server
-			opened, err := driver.Open(backend.Options{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			usage, err := opened.(backend.UsageProvider).Usage(context.Background())
+			usage, err := (account{apiKey: "secret", baseURL: "https://openrouter.test", client: server}).usage(context.Background())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -240,11 +152,8 @@ func TestRuntimeLoadsAccountUsage(t *testing.T) {
 	}
 }
 
-func TestRuntimeUsageRejectsTrailingData(t *testing.T) {
-	driver := New()
-	driver.getenv = func(string) string { return "secret" }
-	driver.baseURL = "https://example.test"
-	driver.httpClient = &http.Client{Transport: driverRoundTripperFunc(func(*http.Request) (*http.Response, error) {
+func TestAccountUsageRejectsTrailingData(t *testing.T) {
+	client := &http.Client{Transport: driverRoundTripperFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Status:     "200 OK",
@@ -252,34 +161,23 @@ func TestRuntimeUsageRejectsTrailingData(t *testing.T) {
 			Body:       io.NopCloser(strings.NewReader(`{"data":{"usage_monthly":12.34}} trailing`)),
 		}, nil
 	})}
-	opened, err := driver.Open(backend.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := opened.(backend.UsageProvider).Usage(context.Background()); err == nil {
+	if _, err := (account{apiKey: "secret", baseURL: "https://example.test", client: client}).usage(context.Background()); err == nil {
 		t.Fatal("usage response with trailing data was accepted")
 	}
 }
 
-func TestCredentialCheckRejectsMalformedResponse(t *testing.T) {
+func TestOpenRejectsMalformedCredentialResponse(t *testing.T) {
 	server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(writer, `{`)
 	}))
 
-	driver := New()
-	driver.getenv = func(string) string { return "secret" }
-	driver.baseURL = "https://openrouter.test"
-	driver.httpClient = server
-	backendRuntime, err := driver.Open(backend.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := backendRuntime.(backend.CredentialChecker).CheckCredentials(context.Background()); err == nil {
+	t.Setenv("OPENROUTER_API_KEY", "secret")
+	if _, err := (driver{baseURL: "https://openrouter.test", httpClient: server}).open(context.Background(), ""); err == nil {
 		t.Fatal("malformed credential response was accepted")
 	}
 }
 
-func TestCredentialCheckReportsInvalidKey(t *testing.T) {
+func TestOpenReportsInvalidKey(t *testing.T) {
 	server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/models" {
 			fmt.Fprint(writer, `{"data":[]}`)
@@ -289,16 +187,9 @@ func TestCredentialCheckReportsInvalidKey(t *testing.T) {
 		fmt.Fprint(writer, `{"error":{"message":"invalid secret key"}}`)
 	}))
 
-	driver := New()
-	driver.getenv = func(string) string { return "secret" }
-	driver.baseURL = "https://openrouter.test"
-	driver.httpClient = server
-	backendRuntime, err := driver.Open(backend.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = backendRuntime.(backend.CredentialChecker).CheckCredentials(context.Background())
+	t.Setenv("OPENROUTER_API_KEY", "secret")
+	_, err := (driver{baseURL: "https://openrouter.test", httpClient: server}).open(context.Background(), "")
 	if err == nil || !strings.Contains(err.Error(), "401") {
-		t.Fatalf("CheckCredentials() error = %v", err)
+		t.Fatalf("open() error = %v", err)
 	}
 }

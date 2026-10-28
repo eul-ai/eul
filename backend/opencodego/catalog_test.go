@@ -113,29 +113,6 @@ func TestCatalogDoesNotUseCorruptCacheAsFallback(t *testing.T) {
 	}
 }
 
-func TestProviderKeepsRuntimeModelSnapshot(t *testing.T) {
-	configured := &runtime{
-		apiKey:           "secret",
-		baseURL:          "https://example.test/zen/go/v1",
-		generationClient: &http.Client{},
-		models:           catalogOf(map[string]modelInfo{"grok-4.5": testModelInfos(t)["grok-4.5"]}),
-	}
-	created, err := configured.NewProvider()
-	if err != nil {
-		t.Fatal(err)
-	}
-	provider := created.(*provider)
-
-	configured.models.Replace(map[string]modelInfo{"qwen3.8-max": testModelInfos(t)["qwen3.8-max"]})
-
-	if _, err := provider.models.Lookup("grok-4.5"); err != nil {
-		t.Fatal("provider lost its original model")
-	}
-	if _, err := provider.models.Lookup("qwen3.8-max"); err == nil {
-		t.Fatal("provider observed a later runtime model refresh")
-	}
-}
-
 func TestCatalogRefreshesStaleCache(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache", "opencode-go-models.json")
 	if err := writeCatalogCache(cachePath, catalogCache{FetchedAt: time.Now().Add(-catalogCacheFreshness), Provider: testCatalogProvider(t)}); err != nil {

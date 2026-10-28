@@ -19,7 +19,6 @@ type sessionRunner interface {
 type agentSession struct {
 	engine          *agent.Engine
 	subagents       *subagent.Manager
-	backendRuntime  backend.Runtime
 	terminalOptions terminal.Options
 	settings        *agent.Settings
 	persistence     *sessionPersistence
@@ -28,8 +27,8 @@ type agentSession struct {
 func newSessionTools(
 	config resolvedConfig,
 	env environment,
-	backendRuntime backend.Runtime,
-	metadata sessionModelMetadata,
+	provider agent.Provider,
+	metadata map[subagent.Profile]backend.ModelMetadata,
 	settings *agent.Settings,
 	authorizeNetwork tool.NetworkAuthorizer,
 	goal *agent.Goal,
@@ -39,16 +38,16 @@ func newSessionTools(
 		newToolset = buildToolset
 	}
 	runner := childRunner{
-		backendRuntime:   backendRuntime,
+		provider:         provider,
 		newToolset:       newToolset,
 		authorizeNetwork: authorizeNetwork,
 		config:           config,
-		models:           metadata.subagent,
+		models:           metadata,
 		settings:         settings,
 	}
 	manager := subagent.NewManager(runner.run)
-	thinkingLevels := make(map[subagent.Profile][]agent.ThinkingLevel, len(metadata.subagent))
-	for profile, model := range metadata.subagent {
+	thinkingLevels := make(map[subagent.Profile][]agent.ThinkingLevel, len(metadata))
+	for profile, model := range metadata {
 		thinkingLevels[profile] = model.ThinkingLevels
 	}
 	tools := newToolset(
@@ -63,8 +62,8 @@ func newSessionTools(
 	return tools, manager
 }
 
-func newAgentSession(config resolvedConfig, env environment, backendRuntime backend.Runtime) (*agentSession, error) {
-	session, options, err := newAgentSessionComponents(config, env, backendRuntime, false)
+func newAgentSession(config resolvedConfig, env environment, runtime *backend.Runtime) (*agentSession, error) {
+	session, options, err := newAgentSessionComponents(config, env, runtime, false)
 	if err != nil {
 		return nil, err
 	}
@@ -72,74 +71,54 @@ func newAgentSession(config resolvedConfig, env environment, backendRuntime back
 	return session, nil
 }
 
-func validateRuntimeModels(backendRuntime backend.Runtime, models modelSet) error {
-	validator, ok := backendRuntime.(backend.ModelValidator)
-	if !ok {
-		return nil
-	}
-
-	validated := make(map[string]struct{}, 3)
-	for _, model := range []struct {
-		name  string
-		value string
-	}{
-		{name: "main", value: models.main},
-		{name: "fast", value: models.fast},
-		{name: "balanced", value: models.balanced},
-	} {
-		if _, ok := validated[model.value]; ok {
-			continue
+func resolveModelMetadata(runtime *backend.Runtime, models modelSet) (map[subagent.Profile]backend.ModelMetadata, error) {
+	metadata := make(map[subagent.Profile]backend.ModelMetadata, 3)
+	for _, profile := range []subagent.Profile{subagent.ProfileMain, subagent.ProfileFast, subagent.ProfileBalanced} {
+		model, err := runtime.Model(models.forProfile(profile))
+		if err != nil {
+			return nil, fmt.Errorf("%s model: %w", profile, err)
 		}
-		validated[model.value] = struct{}{}
-		if err := validator.ValidateModel(model.value); err != nil {
-			return fmt.Errorf("%s model: %w", model.name, err)
-		}
+		metadata[profile] = model
 	}
-	return nil
+	return metadata, nil
 }
 
 func newAgentSessionComponents(
 	config resolvedConfig,
 	env environment,
-	backendRuntime backend.Runtime,
+	runtime *backend.Runtime,
 	checkpointing bool,
 ) (*agentSession, terminalOptionsBuilder, error) {
-	if err := validateRuntimeModels(backendRuntime, config.models); err != nil {
-		return nil, terminalOptionsBuilder{}, errors.Join(err, closeBackendRuntime(backendRuntime))
-	}
-
-	provider, err := backendRuntime.NewProvider()
+	metadata, err := resolveModelMetadata(runtime, config.models)
 	if err != nil {
-		return nil, terminalOptionsBuilder{}, errors.Join(fmt.Errorf("configure provider: %w", err), closeBackendRuntime(backendRuntime))
+		return nil, terminalOptionsBuilder{}, err
 	}
-	metadata := resolveSessionModelMetadata(backendRuntime, config)
-	if config.fastMode && !metadata.main.FastMode {
-		return nil, terminalOptionsBuilder{}, errors.Join(fmt.Errorf("fast mode is unavailable for model %q", config.models.main), closeBackendRuntime(backendRuntime))
+	main := metadata[subagent.ProfileMain]
+	if config.fastMode && !main.FastMode {
+		return nil, terminalOptionsBuilder{}, fmt.Errorf("fast mode is unavailable for model %q", config.models.main)
 	}
-	loadUsage := runtimeUsageLoader(backendRuntime)
 	warnings := append([]string(nil), config.warnings...)
 	authorizeNetwork, permissionRequests := newNetworkPermissionBroker(config.noSandbox)
-	settings := agent.NewSettings(metadata.thinkingLevel, config.fastMode)
+	settings := agent.NewSettings(main.ClampThinkingLevel(config.thinkingLevel), config.fastMode)
 
 	goal := &agent.Goal{}
-	tools, subagents := newSessionTools(config, env, backendRuntime, metadata, settings, authorizeNetwork, goal)
+	tools, subagents := newSessionTools(config, env, runtime.Provider, metadata, settings, authorizeNetwork, goal)
 	options := engineOptions(config, config.models.main, settings)
 	options.Checkpointing = checkpointing
 	options.Inbox = tool.NewSubagentInbox(subagents)
 	options.Goal = goal
-	engine := agent.New(provider, tools, options)
+	engine := agent.New(runtime.Provider, tools, options)
 	session := &agentSession{
-		engine:         engine,
-		subagents:      subagents,
-		backendRuntime: backendRuntime,
-		settings:       settings,
+		engine:    engine,
+		subagents: subagents,
+		settings:  settings,
 	}
 	terminalOptions := terminalOptionsBuilder{
 		config:             config,
 		runtime:            env,
-		metadata:           metadata,
+		metadata:           main,
 		warnings:           warnings,
-		loadUsage:          loadUsage,
+		loadUsage:          runtime.Usage,
 		subagents:          subagents,
 		permissionRequests: permissionRequests,
 		engine:             engine,
@@ -170,17 +149,5 @@ func (session *agentSession) finish(runErr error) error {
 	if persistenceErr != nil {
 		persistenceErr = fmt.Errorf("close session: %w", persistenceErr)
 	}
-	backendErr := closeBackendRuntime(session.backendRuntime)
-	session.backendRuntime = nil
-	return errors.Join(runErr, finalCheckpointErr, persistenceErr, backendErr)
-}
-
-func closeBackendRuntime(backendRuntime backend.Runtime) error {
-	if backendRuntime == nil {
-		return nil
-	}
-	if err := backendRuntime.Close(); err != nil {
-		return fmt.Errorf("close backend: %w", err)
-	}
-	return nil
+	return errors.Join(runErr, finalCheckpointErr, persistenceErr)
 }

@@ -2,28 +2,28 @@ package opencodego
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 	"github.com/eul-ai/eul/backend/protocol"
 )
 
 type provider struct {
-	models  *backend.Models[modelInfo]
+	models  map[string]modelInfo
 	clients map[wireProtocol]*protocol.Client
 }
 
-func newProvider(apiKey, baseURL string, httpClient *http.Client, models *backend.Models[modelInfo]) *provider {
+func newProvider(apiKey, baseURL string, httpClient *http.Client, models map[string]modelInfo) *provider {
 	return &provider{models: models, clients: newProtocolClients(apiKey, baseURL, httpClient, models)}
 }
 
 func (provider *provider) client(model string) (*protocol.Client, error) {
-	info, err := provider.models.Lookup(model)
-	if err != nil {
-		return nil, err
+	info, ok := provider.models[model]
+	if !ok {
+		return nil, fmt.Errorf("opencode go: model %q is not supported", model)
 	}
 	return provider.clients[info.protocol], nil
 }

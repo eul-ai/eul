@@ -28,29 +28,6 @@ func (runner *scriptedSessionRunner) Run(ctx context.Context, options terminal.O
 	return runner.steps[index](ctx, options)
 }
 
-type lifecycleBackendDriver struct {
-	descriptor backend.Descriptor
-	runtimes   []*fakeBackendRuntime
-	openCalls  int
-	beforeOpen func(int)
-}
-
-func (driver *lifecycleBackendDriver) Descriptor() backend.Descriptor {
-	return driver.descriptor
-}
-
-func (driver *lifecycleBackendDriver) Open(backend.Options) (backend.Runtime, error) {
-	index := driver.openCalls
-	if driver.beforeOpen != nil {
-		driver.beforeOpen(index)
-	}
-	if index >= len(driver.runtimes) {
-		return nil, errors.New("unexpected backend open")
-	}
-	driver.openCalls++
-	return driver.runtimes[index], nil
-}
-
 type runFailureRunner struct {
 	runErr   error
 	closeErr error
@@ -64,69 +41,22 @@ func (runner *runFailureRunner) Close() error {
 	return runner.closeErr
 }
 
-func TestOpenBackendRuntimeInitializesAfterCheckingCredentials(t *testing.T) {
-	var order []string
-	configured := &fakeBackendRuntime{initializationOrder: &order}
-	driver := &fakeBackendDriver{runtime: configured}
-
-	opened, err := openBackendRuntime(context.Background(), driver, t.TempDir(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if opened != configured || !slices.Equal(order, []string{"credentials", "models"}) {
-		t.Fatalf("opened=%v order=%v", opened, order)
-	}
-}
-
-func TestOpenBackendRuntimeStopsAndClosesAfterInitializationFailure(t *testing.T) {
-	credentialFailure := errors.New("credentials failed")
-	configured := &fakeBackendRuntime{checkCredentialsErr: credentialFailure}
-	driver := &fakeBackendDriver{runtime: configured}
-
-	_, err := openBackendRuntime(context.Background(), driver, t.TempDir(), nil)
-	if !errors.Is(err, credentialFailure) || configured.initializeModelsCalls != 0 || configured.closeCalls != 1 {
-		t.Fatalf("credential error=%v runtime=%+v", err, configured)
-	}
-
-	modelFailure := errors.New("models failed")
-	closeFailure := errors.New("close failed")
-	configured = &fakeBackendRuntime{initializeModelsErr: modelFailure, closeErr: closeFailure}
-	driver.runtime = configured
-	_, err = openBackendRuntime(context.Background(), driver, t.TempDir(), nil)
-	if !errors.Is(err, modelFailure) || !errors.Is(err, closeFailure) || configured.checkCredentialsCalls != 1 || configured.initializeModelsCalls != 1 || configured.closeCalls != 1 {
-		t.Fatalf("model error=%v runtime=%+v", err, configured)
-	}
-}
-
 func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 	ctx := context.Background()
 	cwd := t.TempDir()
 	home := t.TempDir()
-	backendRuntimes := newLifecycleBackendRuntimes(2)
-	driver := newLifecycleBackendDriver(backendRuntimes)
-	runtime := newLifecycleRuntime(t, cwd, driver)
+	backendRuntime := testBackendRuntime(emptyProvider())
+	selected := testBackend("test", backendRuntime)
+	runtime := newLifecycleRuntime(t, cwd, selected)
 	store := newSessionStore(home)
 	messageHistory := newMessageHistoryStore(home)
 	config := resolveLifecycleConfig(t, runtime, "main-model", "fast-model", "balanced-model", agent.ThinkingHigh, cwd)
 
-	backendRuntime, err := openBackendRuntime(ctx, driver, home, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	initialSession, err := newStoredAgentSession(config, runtime, backendRuntime, store, messageHistory, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	initialID := initialSession.terminalOptions.Config.SessionID
-
-	oldClosedBeforeOpen := false
-	driver.beforeOpen = func(index int) {
-		if index != 1 {
-			return
-		}
-		oldClosedBeforeOpen = initialSession.persistence.handle.closed &&
-			backendRuntimes[0].closeCalls == 1
-	}
 
 	runner := &scriptedSessionRunner{steps: []func(context.Context, terminal.Options) (terminal.RunOutcome, error){
 		func(_ context.Context, options terminal.Options) (terminal.RunOutcome, error) {
@@ -145,6 +75,9 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 			return terminal.RunOutcome{Action: terminal.RunNewSession}, nil
 		},
 		func(_ context.Context, options terminal.Options) (terminal.RunOutcome, error) {
+			if !initialSession.persistence.handle.closed {
+				t.Fatal("old session was not closed before the new session started")
+			}
 			if options.Config.SessionID == "" || options.Config.SessionID == initialID {
 				t.Fatalf("new session ID = %q, initial = %q", options.Config.SessionID, initialID)
 			}
@@ -161,13 +94,9 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 		},
 	}}
 
-	if err := runSessions(ctx, runner, initialSession, config, driver, sessionFactory{env: runtime, store: store, messageHistory: messageHistory, home: home}); err != nil {
+	if err := runSessions(ctx, runner, initialSession, config, selected, sessionFactory{env: runtime, store: store, messageHistory: messageHistory, home: home}); err != nil {
 		t.Fatal(err)
 	}
-	if !oldClosedBeforeOpen {
-		t.Fatal("old persistence and backend were not closed before opening the replacement backend")
-	}
-	assertLifecycleCleanup(t, driver, backendRuntimes, 2)
 	if len(runner.options) != 2 {
 		t.Fatalf("runner calls = %d, want 2", len(runner.options))
 	}
@@ -191,9 +120,10 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 	initialCWD := t.TempDir()
 	targetCWD := t.TempDir()
 	home := t.TempDir()
-	backendRuntimes := newLifecycleBackendRuntimes(2)
-	driver := newLifecycleBackendDriver(backendRuntimes)
-	runtime := newLifecycleRuntime(t, initialCWD, driver)
+	backendRuntime := testBackendRuntime(emptyProvider())
+	backendRuntime.Catalog = testCatalog("initial-main", "initial-fast", "initial-balanced", "resume-main", "resume-fast", "resume-balanced")
+	selected := testBackend("test", backendRuntime)
+	runtime := newLifecycleRuntime(t, initialCWD, selected)
 	store := newSessionStore(home)
 	messageHistory := newMessageHistoryStore(home)
 
@@ -217,24 +147,11 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 	}
 
 	config := resolveLifecycleConfig(t, runtime, "initial-main", "initial-fast", "initial-balanced", agent.ThinkingHigh, initialCWD)
-	backendRuntime, err := openBackendRuntime(ctx, driver, home, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	initialSession, err := newStoredAgentSession(config, runtime, backendRuntime, store, messageHistory, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	initialID := initialSession.terminalOptions.Config.SessionID
-
-	oldClosedBeforeOpen := false
-	driver.beforeOpen = func(index int) {
-		if index != 1 {
-			return
-		}
-		oldClosedBeforeOpen = initialSession.persistence.handle.closed &&
-			backendRuntimes[0].closeCalls == 1
-	}
 
 	runner := &scriptedSessionRunner{steps: []func(context.Context, terminal.Options) (terminal.RunOutcome, error){
 		func(_ context.Context, options terminal.Options) (terminal.RunOutcome, error) {
@@ -244,6 +161,9 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 			return terminal.RunOutcome{Action: terminal.RunResumeSession, SessionID: targetID}, nil
 		},
 		func(_ context.Context, options terminal.Options) (terminal.RunOutcome, error) {
+			if !initialSession.persistence.handle.closed {
+				t.Fatal("old session was not closed before the resumed session started")
+			}
 			if options.Config.SessionID != targetID {
 				t.Fatalf("resumed session ID = %q, want %q", options.Config.SessionID, targetID)
 			}
@@ -257,13 +177,9 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 		},
 	}}
 
-	if err := runSessions(ctx, runner, initialSession, config, driver, sessionFactory{env: runtime, store: store, messageHistory: messageHistory, home: home}); err != nil {
+	if err := runSessions(ctx, runner, initialSession, config, selected, sessionFactory{env: runtime, store: store, messageHistory: messageHistory, home: home}); err != nil {
 		t.Fatal(err)
 	}
-	if !oldClosedBeforeOpen {
-		t.Fatal("old persistence and backend were not closed before opening the resumed backend")
-	}
-	assertLifecycleCleanup(t, driver, backendRuntimes, 2)
 	if len(runner.options) != 2 {
 		t.Fatalf("runner calls = %d, want 2", len(runner.options))
 	}
@@ -287,17 +203,13 @@ func TestRunSessionsExitClosesSession(t *testing.T) {
 	ctx := context.Background()
 	cwd := t.TempDir()
 	home := t.TempDir()
-	backendRuntimes := newLifecycleBackendRuntimes(1)
-	driver := newLifecycleBackendDriver(backendRuntimes)
-	runtime := newLifecycleRuntime(t, cwd, driver)
+	backendRuntime := testBackendRuntime(emptyProvider())
+	selected := testBackend("test", backendRuntime)
+	runtime := newLifecycleRuntime(t, cwd, selected)
 	store := newSessionStore(home)
 	messageHistory := newMessageHistoryStore(home)
 	config := resolveLifecycleConfig(t, runtime, "main-model", "fast-model", "balanced-model", agent.ThinkingHigh, cwd)
 
-	backendRuntime, err := openBackendRuntime(ctx, driver, home, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	initialSession, err := newStoredAgentSession(config, runtime, backendRuntime, store, messageHistory, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -308,13 +220,12 @@ func TestRunSessionsExitClosesSession(t *testing.T) {
 		},
 	}}
 
-	if err := runSessions(ctx, runner, initialSession, config, driver, sessionFactory{env: runtime, store: store, messageHistory: messageHistory, home: home}); err != nil {
+	if err := runSessions(ctx, runner, initialSession, config, selected, sessionFactory{env: runtime, store: store, messageHistory: messageHistory, home: home}); err != nil {
 		t.Fatal(err)
 	}
-	if driver.openCalls != 1 {
-		t.Fatalf("backend open calls = %d, want 1", driver.openCalls)
+	if !initialSession.persistence.handle.closed {
+		t.Fatal("session was not closed")
 	}
-	assertLifecycleCleanup(t, driver, backendRuntimes, 1)
 }
 
 func TestRunPreservesSessionAndRunnerCleanupFailures(t *testing.T) {
@@ -324,14 +235,8 @@ func TestRunPreservesSessionAndRunnerCleanupFailures(t *testing.T) {
 
 	cwd := t.TempDir()
 	home := t.TempDir()
-	backendRuntimes := newLifecycleBackendRuntimes(1)
-	driver := newLifecycleBackendDriver(backendRuntimes)
-	backends, err := backend.NewRegistry("test", driver)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = run(context.Background(), Options{Provider: "test", WorkingDirectory: cwd}, Dependencies{
+	backends := backend.Registry{testBackend("test", testBackendRuntime(emptyProvider()))}
+	err := run(context.Background(), Options{Provider: "test", WorkingDirectory: cwd}, Dependencies{
 		Input:       strings.NewReader(""),
 		Output:      io.Discard,
 		Home:        home,
@@ -344,43 +249,17 @@ func TestRunPreservesSessionAndRunnerCleanupFailures(t *testing.T) {
 	if !errors.Is(err, runFailure) || !errors.Is(err, runnerCleanupFailure) {
 		t.Fatalf("run error = %v, want run and runner cleanup failures", err)
 	}
-	if backendRuntimes[0].closeCalls != 1 {
-		t.Fatalf("backend close calls = %d, want 1", backendRuntimes[0].closeCalls)
-	}
 }
 
-func newLifecycleBackendRuntimes(count int) []*fakeBackendRuntime {
-	runtimes := make([]*fakeBackendRuntime, count)
-	for index := range runtimes {
-		runtimes[index] = &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-			return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-				return agent.Response{}, nil
-			}), nil
-		}}
-	}
-	return runtimes
-}
-
-func newLifecycleBackendDriver(runtimes []*fakeBackendRuntime) *lifecycleBackendDriver {
-	return &lifecycleBackendDriver{
-		descriptor: backend.Descriptor{ID: "test", Name: "Test Provider", DefaultModels: backend.ModelDefaults{Main: "gpt-5.6-sol", Fast: "gpt-5.6-luna", Balanced: "gpt-5.6-terra"}},
-		runtimes:   runtimes,
-	}
-}
-
-func newLifecycleRuntime(t *testing.T, cwd string, driver backend.Driver) environment {
+func newLifecycleRuntime(t *testing.T, cwd string, selected backend.Backend) environment {
 	t.Helper()
-	backends, err := backend.NewRegistry("test", driver)
-	if err != nil {
-		t.Fatal(err)
-	}
 	userHome := t.TempDir()
 	return environment{
 		stdin:       strings.NewReader(""),
 		stdout:      io.Discard,
 		getwd:       func() (string, error) { return cwd, nil },
 		userHomeDir: func() (string, error) { return userHome, nil },
-		backends:    backends,
+		backends:    backend.Registry{selected},
 	}
 }
 
@@ -397,18 +276,6 @@ func resolveLifecycleConfig(t *testing.T, env environment, main, fast, balanced 
 		t.Fatal(err)
 	}
 	return config
-}
-
-func assertLifecycleCleanup(t *testing.T, driver *lifecycleBackendDriver, runtimes []*fakeBackendRuntime, want int) {
-	t.Helper()
-	if driver.openCalls != want {
-		t.Fatalf("backend open calls = %d, want %d", driver.openCalls, want)
-	}
-	for index, runtime := range runtimes {
-		if runtime.closeCalls != 1 {
-			t.Errorf("backend runtime %d close calls = %d, want 1", index, runtime.closeCalls)
-		}
-	}
 }
 
 var (

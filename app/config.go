@@ -35,7 +35,7 @@ type Dependencies struct {
 	Getwd       func() (string, error)
 	UserHomeDir func() (string, error)
 	Interrupts  <-chan os.Signal
-	Backends    *backend.Registry
+	Backends    backend.Registry
 }
 
 type environment struct {
@@ -44,7 +44,7 @@ type environment struct {
 	getwd       func() (string, error)
 	userHomeDir func() (string, error)
 	interrupts  <-chan os.Signal
-	backends    *backend.Registry
+	backends    backend.Registry
 	newToolset  toolsetFactory
 }
 
@@ -83,13 +83,13 @@ type resolvedConfig struct {
 	prompt              string
 }
 
-func resolveConfig(options Options, env environment, descriptor backend.Descriptor) (resolvedConfig, error) {
+func resolveConfig(options Options, env environment, selected backend.Backend) (resolvedConfig, error) {
 	thinkingLevel := options.ThinkingLevel
 	if thinkingLevel == "" {
 		thinkingLevel = agent.DefaultThinkingLevel
 	}
 
-	models, err := resolveModelSet(options, descriptor.DefaultModels)
+	models, err := resolveModelSet(options, selected.Models)
 	if err != nil {
 		return resolvedConfig{}, err
 	}
@@ -109,7 +109,7 @@ func resolveConfig(options Options, env environment, descriptor backend.Descript
 	skills, warnings := skill.Load(skillDirectories...)
 
 	return resolvedConfig{
-		provider:            descriptor.ID,
+		provider:            selected.ID,
 		models:              models,
 		thinkingLevel:       thinkingLevel,
 		fastMode:            options.FastMode,

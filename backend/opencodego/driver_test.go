@@ -3,7 +3,6 @@ package opencodego
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/eul-ai/eul/backend"
 )
 
 const testUsageJSON = `{"usage":{
@@ -73,39 +70,14 @@ func testHTTPResponse(status int, body string) *http.Response {
 	}
 }
 
-func TestDriverRequiresAPIKey(t *testing.T) {
-	driver := New()
-	driver.getenv = func(string) string { return " " }
-	if _, err := driver.Open(backend.Options{}); err == nil {
-		t.Fatal("Open() accepted an empty API key")
+func TestOpenRequiresAPIKey(t *testing.T) {
+	t.Setenv("OPENCODE_API_KEY", " ")
+	if _, err := (driver{baseURL: "https://example.test/zen/go/v1"}).open(context.Background(), t.TempDir()); err == nil {
+		t.Fatal("open() accepted an empty API key")
 	}
 }
 
-func TestRuntimeValidatesModels(t *testing.T) {
-	configured := &runtime{models: catalogOf(map[string]modelInfo{
-		"zeta":  {},
-		"alpha": {},
-	})}
-	if err := configured.ValidateModel("alpha"); err != nil {
-		t.Fatal(err)
-	}
-	err := configured.ValidateModel("unknown")
-	if err == nil {
-		t.Fatal("unknown model was accepted")
-	}
-	var unsupported *backend.ModelNotSupportedError
-	if !errors.As(err, &unsupported) {
-		t.Fatalf("ValidateModel() error type = %T", err)
-	}
-	if unsupported.Model != "unknown" || strings.Join(unsupported.AvailableModels, ",") != "alpha,zeta" {
-		t.Fatalf("ValidateModel() error = %#v", unsupported)
-	}
-	if !strings.Contains(err.Error(), "available models:\nalpha\nzeta") {
-		t.Fatalf("ValidateModel() error = %q", err)
-	}
-}
-
-func TestRuntimeChecksCredentialsInitializesModelsAndLoadsUsage(t *testing.T) {
+func TestOpenChecksCredentialsLoadsModelsAndUsage(t *testing.T) {
 	var usageRequests, liveRequests, catalogRequests int
 	client := &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
 		switch {
@@ -114,9 +86,7 @@ func TestRuntimeChecksCredentialsInitializesModelsAndLoadsUsage(t *testing.T) {
 			if request.Method != http.MethodGet || request.URL.Path != "/api.json" || request.Header.Get("Authorization") != "" {
 				t.Errorf("catalog request = %s %s, headers=%v", request.Method, request.URL, request.Header)
 			}
-			response := testHTTPResponse(http.StatusOK, testCatalogJSON(t))
-			response.Header.Set("ETag", `"catalog-v1"`)
-			return response, nil
+			return testHTTPResponse(http.StatusOK, testCatalogJSON(t)), nil
 		case request.URL.Path == "/zen/go/v1/usage":
 			usageRequests++
 			if request.Method != http.MethodGet || request.Header.Get("Authorization") != "Bearer secret" {
@@ -135,53 +105,32 @@ func TestRuntimeChecksCredentialsInitializesModelsAndLoadsUsage(t *testing.T) {
 		}
 	})}
 
-	driver := New()
-	key := "secret"
-	driver.getenv = func(string) string { return key }
-	driver.baseURL = "https://example.test/zen/go/v1/"
-	driver.catalogURL = "https://catalog.test/api.json"
-	driver.httpClient = client
+	t.Setenv("OPENCODE_API_KEY", "secret")
 	home := t.TempDir()
-	opened, err := driver.Open(backend.Options{Home: home})
+	opened, err := (driver{baseURL: "https://example.test/zen/go/v1", catalogURL: "https://catalog.test/api.json", httpClient: client}).open(context.Background(), home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	key = "changed"
-	configured := opened.(*runtime)
-	if configured.apiKey != "secret" || configured.baseURL != "https://example.test/zen/go/v1" || configured.catalog.cachePath != filepath.Join(home, "cache", "opencode-go-models.json") {
-		t.Fatalf("runtime key/base URL/cache path = %q %q %q", configured.apiKey, configured.baseURL, configured.catalog.cachePath)
-	}
-	if configured.credentialClient.Timeout != credentialHTTPTimeout || configured.generationClient != client {
-		t.Fatalf("runtime clients = credential timeout %s, generation %p", configured.credentialClient.Timeout, configured.generationClient)
-	}
-	if err := configured.CheckCredentials(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := configured.CheckCredentials(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := configured.InitializeModels(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := configured.InitializeModels(context.Background()); err != nil {
-		t.Fatal(err)
+	t.Setenv("OPENCODE_API_KEY", "changed")
+	if _, ok := readCatalogCache(filepath.Join(home, "cache", "opencode-go-models.json")); !ok {
+		t.Fatal("model catalog was not cached in the application directory")
 	}
 	for _, model := range []string{"grok-4.5", "glm-5.2", "minimax-m3"} {
-		if err := configured.ValidateModel(model); err != nil {
+		if _, err := opened.Model(model); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for _, model := range []string{"public-only", "live-only"} {
-		if err := configured.ValidateModel(model); err == nil {
+		if _, err := opened.Model(model); err == nil {
 			t.Fatalf("model %q was accepted", model)
 		}
 	}
 
-	usage, err := configured.Usage(context.Background())
+	usage, err := opened.Usage(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if usageRequests != 3 || liveRequests != 2 || catalogRequests != 1 || len(usage.Windows) != 3 {
+	if usageRequests != 2 || liveRequests != 1 || catalogRequests != 1 || len(usage.Windows) != 3 {
 		t.Fatalf("requests usage=%d live=%d catalog=%d usage=%+v", usageRequests, liveRequests, catalogRequests, usage)
 	}
 	wantDurations := []time.Duration{5 * time.Hour, 7 * 24 * time.Hour, 30 * 24 * time.Hour}
@@ -191,24 +140,13 @@ func TestRuntimeChecksCredentialsInitializesModelsAndLoadsUsage(t *testing.T) {
 			t.Fatalf("usage window %d = %+v", index, window)
 		}
 	}
-	if _, err := configured.NewProvider(); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func TestLoadUsageRejectsTrailingData(t *testing.T) {
 	client := &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 		return testHTTPResponse(http.StatusOK, `{"usage":{}} trailing`), nil
 	})}
-	driver := New()
-	driver.getenv = func(string) string { return "secret" }
-	driver.baseURL = "https://example.test/zen/go/v1"
-	driver.httpClient = client
-	opened, err := driver.Open(backend.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := opened.(*runtime).loadUsage(context.Background()); err == nil {
+	if _, err := (account{apiKey: "secret", baseURL: "https://example.test/zen/go/v1", client: client}).loadUsage(context.Background()); err == nil {
 		t.Fatal("usage response with trailing data was accepted")
 	}
 }
@@ -217,16 +155,9 @@ func TestCredentialErrorIncludesStatus(t *testing.T) {
 	client := &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 		return testHTTPResponse(http.StatusUnauthorized, `{"error":{"message":"bad secret"}}`), nil
 	})}
-	driver := New()
-	driver.getenv = func(string) string { return "secret" }
-	driver.baseURL = "https://example.test/zen/go/v1"
-	driver.httpClient = client
-	opened, err := driver.Open(backend.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = opened.(backend.CredentialChecker).CheckCredentials(context.Background())
+	t.Setenv("OPENCODE_API_KEY", "secret")
+	_, err := (driver{baseURL: "https://example.test/zen/go/v1", httpClient: client}).open(context.Background(), t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "401") {
-		t.Fatalf("CheckCredentials() error = %v", err)
+		t.Fatalf("open() error = %v", err)
 	}
 }

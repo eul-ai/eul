@@ -14,31 +14,6 @@ import (
 	"github.com/eul-ai/eul/subagent"
 )
 
-type profileMetadataProvider struct {
-	providerFunction
-	metadata  map[string]backend.ModelMetadata
-	requested []string
-}
-
-func (provider *profileMetadataProvider) metadataFor(model string) backend.ModelMetadata {
-	provider.requested = append(provider.requested, model)
-	return provider.metadata[model]
-}
-
-type validatingBackendRuntime struct {
-	*fakeBackendRuntime
-	validated []string
-	invalid   string
-}
-
-func (runtime *validatingBackendRuntime) ValidateModel(model string) error {
-	runtime.validated = append(runtime.validated, model)
-	if model == runtime.invalid {
-		return errors.New("unsupported model")
-	}
-	return nil
-}
-
 func TestModelSetSelectsSubagentProfiles(t *testing.T) {
 	models := modelSet{
 		main:     "main-model",
@@ -59,30 +34,14 @@ func TestModelSetSelectsSubagentProfiles(t *testing.T) {
 	}
 }
 
-func TestRuntimeModelMetadataDefaultsToThinkingOff(t *testing.T) {
-	metadata := runtimeModelMetadata(metadataFreeBackendRuntime{}, "model")
-	if !slices.Equal(metadata.ThinkingLevels, []agent.ThinkingLevel{agent.ThinkingOff}) {
-		t.Fatalf("thinking levels = %v", metadata.ThinkingLevels)
-	}
-}
-
-func TestNewAgentSessionValidatesModelsBeforeCreatingProvider(t *testing.T) {
-	providerCalls := 0
-	configured := &validatingBackendRuntime{
-		fakeBackendRuntime: &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-			providerCalls++
-			return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-				return agent.Response{}, nil
-			}), nil
-		}},
-		invalid: "unknown",
-	}
+func TestNewAgentSessionRejectsUnsupportedModel(t *testing.T) {
 	_, err := newAgentSession(resolvedConfig{
-		models: modelSet{main: "unknown", fast: "fast", balanced: "balanced"},
+		models: modelSet{main: "unknown", fast: "model", balanced: "model"},
 		cwd:    t.TempDir(),
-	}, environment{}, configured)
-	if err == nil || providerCalls != 0 || configured.closeCalls != 1 || !slices.Equal(configured.validated, []string{"unknown"}) {
-		t.Fatalf("error=%v provider calls=%d close calls=%d validated=%v", err, providerCalls, configured.closeCalls, configured.validated)
+	}, environment{}, testBackendRuntime(emptyProvider()))
+	var unsupported *backend.ModelNotSupportedError
+	if !errors.As(err, &unsupported) || unsupported.Model != "unknown" {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -90,20 +49,14 @@ func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 	usageCalls := 0
 	monthlyUsage := 12.34
 	limitRemaining := 87.66
-	backendRuntime := &fakeBackendRuntime{
-		newProvider: func() (agent.Provider, error) {
-			return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-				return agent.Response{}, nil
-			}), nil
-		},
-		metadata: func(string) backend.ModelMetadata {
-			return backend.ModelMetadata{
-				ContextWindow:  123_000,
-				ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh},
-				FastMode:       true,
-			}
-		},
-		usage: func(context.Context) (backend.AccountUsage, error) {
+	backendRuntime := &backend.Runtime{
+		Provider: emptyProvider(),
+		Catalog: map[string]backend.ModelMetadata{"model": {
+			ContextWindow:  123_000,
+			ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingHigh},
+			FastMode:       true,
+		}},
+		Usage: func(context.Context) (backend.AccountUsage, error) {
 			usageCalls++
 			return backend.AccountUsage{
 				Windows:           []backend.UsageWindow{{UsedPercent: 25}},
@@ -151,17 +104,15 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 	childStarted := make(chan struct{})
 	releaseChild := make(chan struct{})
 	var parentRequest agent.Request
-	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-		return providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
-			if len(request.Inputs) == 1 && request.Inputs[0].PlainText() == "child prompt" {
-				close(childStarted)
-				<-releaseChild
-				return agent.Response{Text: "child result"}, nil
-			}
-			parentRequest = request
-			return agent.Response{Text: "done"}, nil
-		}), nil
-	}}
+	backendRuntime := testBackendRuntime(providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
+		if len(request.Inputs) == 1 && request.Inputs[0].PlainText() == "child prompt" {
+			close(childStarted)
+			<-releaseChild
+			return agent.Response{Text: "child result"}, nil
+		}
+		parentRequest = request
+		return agent.Response{Text: "done"}, nil
+	}))
 	var tools []agent.Tool
 	session, err := newAgentSession(resolvedConfig{
 		models: modelSet{main: "model", fast: "model", balanced: "model"},
@@ -200,12 +151,7 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 }
 
 func TestNewAgentSessionRejectsUnsupportedFastMode(t *testing.T) {
-	configured := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-			return agent.Response{}, nil
-		}), nil
-	}}
-	backendRuntime := metadataFreeBackendRuntime{Runtime: configured}
+	backendRuntime := &backend.Runtime{Provider: emptyProvider(), Catalog: map[string]backend.ModelMetadata{"model": {}}}
 	session, err := newAgentSession(resolvedConfig{
 		models:   modelSet{main: "model", fast: "model", balanced: "model"},
 		fastMode: true,
@@ -214,27 +160,18 @@ func TestNewAgentSessionRejectsUnsupportedFastMode(t *testing.T) {
 	if session != nil || err == nil {
 		t.Fatalf("session=%v error=%v", session, err)
 	}
-	if configured.closeCalls != 1 {
-		t.Fatalf("backend close calls = %d", configured.closeCalls)
-	}
 }
 
 func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
-	provider := &profileMetadataProvider{
-		providerFunction: func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+	backendRuntime := &backend.Runtime{
+		Provider: providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
 			return agent.Response{Text: "done"}, nil
-		},
-		metadata: map[string]backend.ModelMetadata{
+		}),
+		Catalog: map[string]backend.ModelMetadata{
 			"main":     {ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingHigh}},
 			"fast":     {ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff}},
 			"balanced": {ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingHigh}},
 		},
-	}
-	backendRuntime := &fakeBackendRuntime{
-		newProvider: func() (agent.Provider, error) {
-			return provider, nil
-		},
-		metadata: provider.metadataFor,
 	}
 	var tools []agent.Tool
 	runtime := environment{newToolset: captureTools(&tools, additionalTools)}
@@ -245,9 +182,6 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 	}, runtime, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !slices.Equal(provider.requested, []string{"main", "fast", "balanced"}) {
-		t.Fatalf("metadata requests = %v", provider.requested)
 	}
 
 	result, err := executeTool(tools, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"fast","thinking_level":"high"}]}`)
@@ -261,29 +195,16 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 	if err := session.finish(nil); err != nil {
 		t.Fatal(err)
 	}
-	if backendRuntime.closeCalls != 1 {
-		t.Fatalf("backend close calls = %d, want 1", backendRuntime.closeCalls)
-	}
 }
 
 func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 	requests := make(chan agent.Request, 2)
-	provider := &profileMetadataProvider{
-		providerFunction: func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
+	backendRuntime := &backend.Runtime{
+		Provider: providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
 			requests <- request
 			return agent.Response{Text: "done"}, nil
-		},
-		metadata: map[string]backend.ModelMetadata{
-			"main":     {ThinkingLevels: agent.ThinkingLevels()},
-			"fast":     {ThinkingLevels: agent.ThinkingLevels()},
-			"balanced": {ThinkingLevels: agent.ThinkingLevels()},
-		},
-	}
-	backendRuntime := &fakeBackendRuntime{
-		newProvider: func() (agent.Provider, error) {
-			return provider, nil
-		},
-		metadata: provider.metadataFor,
+		}),
+		Catalog: testCatalog("main", "fast", "balanced"),
 	}
 	var tools []agent.Tool
 	runtime := environment{newToolset: captureTools(&tools, additionalTools)}
@@ -327,11 +248,9 @@ func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 	var tools []agent.Tool
 	runtime := environment{newToolset: captureTools(&tools, buildToolset)}
-	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-			return agent.Response{}, nil
-		}), nil
-	}}
+	backendRuntime := testBackendRuntime(providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+		return agent.Response{}, nil
+	}))
 	cwd := t.TempDir()
 	session, err := newAgentSession(resolvedConfig{models: modelSet{main: "model", fast: "model", balanced: "model"}, cwd: cwd}, runtime, backendRuntime)
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/terminal"
@@ -20,29 +21,29 @@ type sessionFactory struct {
 	home           string
 }
 
-func (factory sessionFactory) create(ctx context.Context, config resolvedConfig, driver backend.Driver) (*agentSession, error) {
-	backendRuntime, err := openBackendRuntime(ctx, driver, factory.home, factory.env.interrupts)
+func (factory sessionFactory) create(ctx context.Context, config resolvedConfig, selected backend.Backend) (*agentSession, error) {
+	runtime, err := openRuntime(ctx, selected, factory.home)
 	if err != nil {
 		return nil, err
 	}
-	return newStoredAgentSession(config, factory.env, backendRuntime, factory.store, factory.messageHistory, nil)
+	return newStoredAgentSession(config, factory.env, runtime, factory.store, factory.messageHistory, nil)
 }
 
-func (factory sessionFactory) open(ctx context.Context, cwd, sessionID string) (*agentSession, resolvedConfig, backend.Driver, error) {
-	config, handle, driver, err := resolveStoredSession(ctx, factory.store, factory.env, cwd, sessionID)
+func (factory sessionFactory) open(ctx context.Context, cwd, sessionID string) (*agentSession, resolvedConfig, backend.Backend, error) {
+	config, handle, selected, err := resolveStoredSession(ctx, factory.store, factory.env, cwd, sessionID)
 	if err != nil {
-		return nil, resolvedConfig{}, nil, err
+		return nil, resolvedConfig{}, backend.Backend{}, err
 	}
-	backendRuntime, err := openBackendRuntime(ctx, driver, factory.home, factory.env.interrupts)
+	runtime, err := openRuntime(ctx, selected, factory.home)
 	if err != nil {
 		_ = handle.Close()
-		return nil, resolvedConfig{}, nil, err
+		return nil, resolvedConfig{}, backend.Backend{}, err
 	}
-	session, err := newStoredAgentSession(config, factory.env, backendRuntime, factory.store, factory.messageHistory, handle)
+	session, err := newStoredAgentSession(config, factory.env, runtime, factory.store, factory.messageHistory, handle)
 	if err != nil {
-		return nil, resolvedConfig{}, nil, err
+		return nil, resolvedConfig{}, backend.Backend{}, err
 	}
-	return session, config, driver, nil
+	return session, config, selected, nil
 }
 
 func Run(ctx context.Context, options Options, dependencies Dependencies) error {
@@ -67,20 +68,20 @@ func run(ctx context.Context, options Options, dependencies Dependencies, newRun
 	messageHistory := newMessageHistoryStore(home)
 	factory := sessionFactory{env: env, store: store, messageHistory: messageHistory, home: home}
 
-	config, handle, driver, err := resolveInitialSession(ctx, options, env, store)
+	config, handle, selected, err := resolveInitialSession(ctx, options, env, store)
 	if err != nil {
 		return err
 	}
 	var session *agentSession
 	if handle == nil {
-		session, err = factory.create(ctx, config, driver)
+		session, err = factory.create(ctx, config, selected)
 	} else {
-		backendRuntime, openErr := openBackendRuntime(ctx, driver, home, env.interrupts)
+		runtime, openErr := openRuntime(ctx, selected, home)
 		if openErr != nil {
 			_ = closeSessionHandle(handle)
 			return openErr
 		}
-		session, err = newStoredAgentSession(config, env, backendRuntime, store, messageHistory, handle)
+		session, err = newStoredAgentSession(config, env, runtime, store, messageHistory, handle)
 	}
 	if err != nil {
 		return err
@@ -90,7 +91,7 @@ func run(ctx context.Context, options Options, dependencies Dependencies, newRun
 	if err != nil {
 		return session.finish(err)
 	}
-	runErr := runSessions(ctx, runner, session, config, driver, factory)
+	runErr := runSessions(ctx, runner, session, config, selected, factory)
 	return errors.Join(runErr, runnerCloser.Close())
 }
 
@@ -99,24 +100,23 @@ func resolveInitialSession(
 	arguments Options,
 	env environment,
 	store *sessionStore,
-) (resolvedConfig, *sessionHandle, backend.Driver, error) {
+) (resolvedConfig, *sessionHandle, backend.Backend, error) {
 	if !arguments.Resume {
-		driver, err := env.backends.Lookup(arguments.Provider)
+		selected, err := env.backends.Lookup(arguments.Provider)
 		if err != nil {
-			return resolvedConfig{}, nil, nil, err
+			return resolvedConfig{}, nil, backend.Backend{}, err
 		}
-		descriptor := driver.Descriptor()
-		config, err := resolveConfig(arguments, env, descriptor)
-		return config, nil, driver, err
+		config, err := resolveConfig(arguments, env, selected)
+		return config, nil, selected, err
 	}
 
 	cwd, err := resolveCWD("", env.getwd)
 	if err != nil {
-		return resolvedConfig{}, nil, nil, err
+		return resolvedConfig{}, nil, backend.Backend{}, err
 	}
-	config, handle, driver, err := resolveStoredSession(ctx, store, env, cwd, arguments.SessionID)
+	config, handle, selected, err := resolveStoredSession(ctx, store, env, cwd, arguments.SessionID)
 	config.noSandbox = arguments.NoSandbox
-	return config, handle, driver, err
+	return config, handle, selected, err
 }
 
 func resolveStoredSession(
@@ -125,25 +125,24 @@ func resolveStoredSession(
 	env environment,
 	lookupCWD string,
 	sessionID string,
-) (resolvedConfig, *sessionHandle, backend.Driver, error) {
+) (resolvedConfig, *sessionHandle, backend.Backend, error) {
 	handle, err := store.Open(ctx, lookupCWD, sessionID)
 	if err != nil {
-		return resolvedConfig{}, nil, nil, err
+		return resolvedConfig{}, nil, backend.Backend{}, err
 	}
 	record := handle.Record()
-	driver, err := env.backends.Lookup(record.Provider)
+	selected, err := env.backends.Lookup(record.Provider)
 	if err != nil {
 		_ = handle.Close()
-		return resolvedConfig{}, nil, nil, err
+		return resolvedConfig{}, nil, backend.Backend{}, err
 	}
-	descriptor := driver.Descriptor()
-	resolved, err := resolveConfig(optionsFromRecord(record), env, descriptor)
+	resolved, err := resolveConfig(optionsFromRecord(record), env, selected)
 	if err != nil {
 		_ = handle.Close()
-		return resolvedConfig{}, nil, nil, err
+		return resolvedConfig{}, nil, backend.Backend{}, err
 	}
 	resolved.warnings = append(resolved.warnings, handle.warnings...)
-	return resolved, handle, driver, nil
+	return resolved, handle, selected, nil
 }
 
 func runSessions(
@@ -151,7 +150,7 @@ func runSessions(
 	runner sessionRunner,
 	session *agentSession,
 	config resolvedConfig,
-	driver backend.Driver,
+	selected backend.Backend,
 	factory sessionFactory,
 ) error {
 	for {
@@ -167,19 +166,18 @@ func runSessions(
 			var err error
 			nextOptions := optionsFromConfig(config)
 			nextOptions.ThinkingLevel, nextOptions.FastMode = session.settings.Snapshot()
-			descriptor := driver.Descriptor()
-			config, err = resolveConfig(nextOptions, factory.env, descriptor)
+			config, err = resolveConfig(nextOptions, factory.env, selected)
 			if err != nil {
 				return err
 			}
-			session, err = factory.create(ctx, config, driver)
+			session, err = factory.create(ctx, config, selected)
 			if err != nil {
 				return err
 			}
 			continue
 		case terminal.RunResumeSession:
 			var err error
-			session, config, driver, err = factory.open(ctx, config.cwd, outcome.SessionID)
+			session, config, selected, err = factory.open(ctx, config.cwd, outcome.SessionID)
 			if err != nil {
 				return err
 			}
@@ -213,39 +211,10 @@ func optionsFromConfig(config resolvedConfig) Options {
 	}
 }
 
-func openBackendRuntime(ctx context.Context, driver backend.Driver, home string, interrupts <-chan os.Signal) (backend.Runtime, error) {
-	backendRuntime, err := driver.Open(backend.Options{Home: home})
-	if err != nil {
-		return nil, err
-	}
-	checker, checksCredentials := backendRuntime.(backend.CredentialChecker)
-	initializer, initializesModels := backendRuntime.(backend.ModelInitializer)
-	if !checksCredentials && !initializesModels {
-		return backendRuntime, nil
-	}
-
-	initializationCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go func() {
-		select {
-		case <-initializationCtx.Done():
-		case _, ok := <-interrupts:
-			if ok {
-				cancel()
-			}
-		}
-	}()
-	if checksCredentials {
-		if err := checker.CheckCredentials(initializationCtx); err != nil {
-			return nil, errors.Join(fmt.Errorf("authentication required: %w", err), closeBackendRuntime(backendRuntime))
-		}
-	}
-	if initializesModels {
-		if err := initializer.InitializeModels(initializationCtx); err != nil {
-			return nil, errors.Join(fmt.Errorf("initialize models: %w", err), closeBackendRuntime(backendRuntime))
-		}
-	}
-	return backendRuntime, nil
+func openRuntime(ctx context.Context, selected backend.Backend, home string) (*backend.Runtime, error) {
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
+	defer stop()
+	return selected.Open(ctx, home)
 }
 
 func closeSessionHandle(handle *sessionHandle) error {

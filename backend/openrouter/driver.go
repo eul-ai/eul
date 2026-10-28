@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
@@ -22,83 +21,55 @@ const (
 	credentialHTTPTimeout = 30 * time.Second
 )
 
-type Driver struct {
-	getenv     func(string) string
+type driver struct {
 	baseURL    string
 	httpClient *http.Client
 }
 
-var (
-	_ backend.Driver                = (*Driver)(nil)
-	_ backend.Runtime               = (*runtime)(nil)
-	_ backend.CredentialChecker     = (*runtime)(nil)
-	_ backend.UsageProvider         = (*runtime)(nil)
-	_ backend.ModelMetadataProvider = (*runtime)(nil)
-	_ backend.ModelInitializer      = (*runtime)(nil)
-	_ backend.ModelValidator        = (*runtime)(nil)
-)
-
-func New() *Driver {
-	return &Driver{getenv: os.Getenv, baseURL: defaultBaseURL}
+func New() backend.Backend {
+	return backend.Backend{ID: ID, Name: Name, Open: driver{baseURL: defaultBaseURL}.open}
 }
 
-func (*Driver) Descriptor() backend.Descriptor {
-	return backend.Descriptor{ID: ID, Name: Name}
-}
-
-func (driver *Driver) Open(backend.Options) (backend.Runtime, error) {
-	getenv := driver.getenv
-	if getenv == nil {
-		getenv = os.Getenv
-	}
-	apiKey := strings.TrimSpace(getenv("OPENROUTER_API_KEY"))
+func (driver driver) open(ctx context.Context, _ string) (*backend.Runtime, error) {
+	apiKey := strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
 	if apiKey == "" {
 		return nil, errors.New("openrouter: OPENROUTER_API_KEY is required")
 	}
 
-	baseURL := strings.TrimRight(driver.baseURL, "/")
-	if baseURL == "" {
-		baseURL = defaultBaseURL
-	}
 	generationClient := backendhttp.CloneNoRedirects(driver.httpClient, 0)
-	credentialClient := backendhttp.CloneNoRedirects(generationClient, credentialHTTPTimeout)
+	account := account{
+		apiKey:  apiKey,
+		baseURL: driver.baseURL,
+		client:  backendhttp.CloneNoRedirects(generationClient, credentialHTTPTimeout),
+	}
+	if _, err := account.loadKey(ctx); err != nil {
+		return nil, fmt.Errorf("openrouter: validate API key: %w", err)
+	}
+	catalog, err := account.loadModelCatalog(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("openrouter: load models: %w", err)
+	}
 
-	return &runtime{
-		apiKey:           apiKey,
-		baseURL:          baseURL,
-		generationClient: generationClient,
-		credentialClient: credentialClient,
-		models:           backend.NewModels[modelMetadata]("openrouter"),
+	models := buildModels(catalog)
+	metadata := make(map[string]backend.ModelMetadata, len(models))
+	for id, model := range models {
+		metadata[id] = model.backendMetadata()
+	}
+	return &backend.Runtime{
+		Provider: newClient(apiKey, driver.baseURL+"/responses", generationClient, models),
+		Usage:    account.usage,
+		Catalog:  metadata,
 	}, nil
 }
 
-type runtime struct {
-	apiKey           string
-	baseURL          string
-	generationClient *http.Client
-	credentialClient *http.Client
-	models           *backend.Models[modelMetadata]
+type account struct {
+	apiKey  string
+	baseURL string
+	client  *http.Client
 }
 
-func (configured *runtime) CheckCredentials(ctx context.Context) error {
-	if _, err := configured.loadKey(ctx); err != nil {
-		return fmt.Errorf("openrouter: validate API key: %w", err)
-	}
-	return nil
-}
-
-func (configured *runtime) InitializeModels(ctx context.Context) error {
-	catalog, err := configured.loadModelCatalog(ctx)
-	if err != nil {
-		return fmt.Errorf("openrouter: load models: %w", err)
-	}
-
-	configured.models.Replace(buildModels(catalog))
-	return nil
-}
-
-func (configured *runtime) Usage(ctx context.Context) (backend.AccountUsage, error) {
-	response, err := configured.loadKey(ctx)
+func (account account) usage(ctx context.Context) (backend.AccountUsage, error) {
+	response, err := account.loadKey(ctx)
 	if err != nil {
 		return backend.AccountUsage{}, fmt.Errorf("openrouter: load usage: %w", err)
 	}
@@ -107,31 +78,4 @@ func (configured *runtime) Usage(ctx context.Context) (backend.AccountUsage, err
 		MonthlyUsageUSD:   &response.Data.MonthlyUsage,
 		LimitRemainingUSD: response.Data.LimitRemaining,
 	}, nil
-}
-
-func (configured *runtime) NewProvider() (agent.Provider, error) {
-	return newClient(
-		configured.apiKey,
-		configured.baseURL+"/responses",
-		configured.generationClient,
-		configured.modelMetadata,
-	), nil
-}
-
-func (configured *runtime) modelMetadata(model string) modelMetadata {
-	metadata, _ := configured.models.Lookup(model)
-	return metadata
-}
-
-func (configured *runtime) ModelMetadata(model string) backend.ModelMetadata {
-	return configured.modelMetadata(model).backendMetadata()
-}
-
-func (configured *runtime) ValidateModel(model string) error {
-	_, err := configured.models.Lookup(model)
-	return err
-}
-
-func (*runtime) Close() error {
-	return nil
 }
