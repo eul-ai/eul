@@ -60,16 +60,15 @@ type streamResult struct {
 }
 
 type streamDecoder struct {
-	observer   agent.StreamObserver
+	observer   backendhttp.Observer
 	blocks     map[int]*blockAccumulator
 	usage      usageAccumulator
 	stopReason string
 	stopped    bool
-	delivery   backendhttp.DeliveryTracker
 }
 
 func readMessagesSSE(reader io.Reader, maximum int64, observer agent.StreamObserver) (streamResult, error) {
-	decoder := streamDecoder{observer: observer, blocks: make(map[int]*blockAccumulator)}
+	decoder := streamDecoder{observer: backendhttp.NewObserver(observer), blocks: make(map[int]*blockAccumulator)}
 	done, err := backendhttp.ReadSSE(reader, maximum, decoder.handleData)
 	if err != nil {
 		return streamResult{}, fmt.Errorf("read Anthropic Messages SSE: %w", err)
@@ -81,7 +80,7 @@ func readMessagesSSE(reader io.Reader, maximum int64, observer agent.StreamObser
 }
 
 func (decoder *streamDecoder) handleData(data []byte) (bool, error) {
-	if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
+	if bytes.Equal(data, []byte("[DONE]")) {
 		return false, nil
 	}
 
@@ -165,48 +164,16 @@ func (decoder *streamDecoder) stopBlock(index int) error {
 }
 
 func (decoder *streamDecoder) deliverBlockUpdate(block *blockAccumulator, update blockUpdate, complete bool) error {
-	if err := decoder.deliverText(update.text); err != nil {
+	if err := decoder.observer.Text(update.text); err != nil {
 		return err
 	}
-	if err := decoder.deliverReasoning(update.reasoning); err != nil {
+	if err := decoder.observer.Reasoning(update.reasoning); err != nil {
 		return err
 	}
 	if update.tool {
-		return decoder.deliverToolCall(block, complete)
+		return decoder.observer.ToolCall(block.toolID, block.toolName, block.toolArguments(), complete)
 	}
 	return nil
-}
-
-func (decoder *streamDecoder) deliverText(delta string) error {
-	if delta == "" || decoder.observer.Text == nil {
-		return nil
-	}
-	return decoder.delivery.Deliver("deliver text", func() error {
-		return decoder.observer.Text(delta)
-	})
-}
-
-func (decoder *streamDecoder) deliverReasoning(delta string) error {
-	if delta == "" || decoder.observer.Reasoning == nil {
-		return nil
-	}
-	return decoder.delivery.Deliver("deliver reasoning", func() error {
-		return decoder.observer.Reasoning(delta)
-	})
-}
-
-func (decoder *streamDecoder) deliverToolCall(block *blockAccumulator, complete bool) error {
-	if decoder.observer.ToolCall == nil {
-		return nil
-	}
-	return decoder.delivery.Deliver("deliver tool call", func() error {
-		return decoder.observer.ToolCall(agent.ToolCallSnapshot{
-			ID:           block.toolID,
-			Name:         block.toolName,
-			RawArguments: block.toolArguments(),
-			Complete:     complete,
-		})
-	})
 }
 
 func (decoder *streamDecoder) finish() (streamResult, error) {

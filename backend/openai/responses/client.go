@@ -98,10 +98,9 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 		return agent.Response{}, client.errorf("%v", err)
 	}
 
-	if text != "" && observer.Text != nil && !stream.sawTextDelta {
-		if err := observer.Text(text); err != nil {
-			deliveryErr := backendhttp.NewObserverError("deliver text", err)
-			return agent.Response{}, client.wrapf(deliveryErr, "%v", deliveryErr)
+	if !stream.sawTextDelta {
+		if err := backendhttp.NewObserver(observer).Text(text); err != nil {
+			return agent.Response{}, client.wrapf(err, "%v", err)
 		}
 	}
 

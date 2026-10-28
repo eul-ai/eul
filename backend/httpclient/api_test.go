@@ -105,7 +105,7 @@ func TestRetryGenerationClassifiesStreamErrors(t *testing.T) {
 		{name: "overloaded failure", err: NewFailureError("failed", APIError{Type: "api_error"}), wantRetry: true},
 		{name: "context failure", err: NewFailureError("failed", APIError{Code: "context_length_exceeded"}), wantContext: true},
 		{name: "permanent failure", err: NewFailureError("failed", APIError{Type: "invalid_request_error", Message: "bad request"})},
-		{name: "observer", err: NewObserverError("deliver text", ErrIncompleteStream)},
+		{name: "observer", err: deliver("deliver text", ErrIncompleteStream)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, retry := RetryGeneration(test.err, 1); retry != test.wantRetry {

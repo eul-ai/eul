@@ -54,19 +54,18 @@ type streamResult struct {
 }
 
 type streamDecoder struct {
-	observer                  agent.StreamObserver
+	observer                  backendhttp.Observer
 	text                      strings.Builder
 	reasoning                 strings.Builder
 	toolCalls                 toolCallAccumulator
 	usage                     *completionUsage
 	finishReason              string
-	delivery                  backendhttp.DeliveryTracker
 	serializeReasoningContent bool
 }
 
 func readCompletionSSE(reader io.Reader, maximum int64, observer agent.StreamObserver, serializeReasoningContent bool) (streamResult, error) {
 	decoder := streamDecoder{
-		observer:                  observer,
+		observer:                  backendhttp.NewObserver(observer),
 		toolCalls:                 newToolCallAccumulator(),
 		serializeReasoningContent: serializeReasoningContent,
 	}
@@ -81,9 +80,6 @@ func readCompletionSSE(reader io.Reader, maximum int64, observer agent.StreamObs
 }
 
 func (decoder *streamDecoder) handleData(data []byte) (bool, error) {
-	if len(data) == 0 {
-		return false, nil
-	}
 	if bytes.Equal(data, []byte("[DONE]")) {
 		return true, nil
 	}
@@ -118,30 +114,18 @@ func (decoder *streamDecoder) consumeDelta(delta completionDelta) error {
 	if visible == "" {
 		visible = delta.Refusal
 	}
-	if visible != "" {
-		decoder.text.WriteString(visible)
-		if decoder.observer.Text != nil {
-			if err := decoder.delivery.Deliver("deliver text", func() error {
-				return decoder.observer.Text(visible)
-			}); err != nil {
-				return err
-			}
-		}
+	decoder.text.WriteString(visible)
+	if err := decoder.observer.Text(visible); err != nil {
+		return err
 	}
 
 	reasoning := delta.ReasoningContent
 	if reasoning == "" {
 		reasoning = delta.Reasoning
 	}
-	if reasoning != "" {
-		decoder.reasoning.WriteString(reasoning)
-		if decoder.observer.Reasoning != nil {
-			if err := decoder.delivery.Deliver("deliver reasoning", func() error {
-				return decoder.observer.Reasoning(reasoning)
-			}); err != nil {
-				return err
-			}
-		}
+	decoder.reasoning.WriteString(reasoning)
+	if err := decoder.observer.Reasoning(reasoning); err != nil {
+		return err
 	}
 
 	for _, deltaCall := range delta.ToolCalls {
@@ -154,17 +138,10 @@ func (decoder *streamDecoder) consumeDelta(delta completionDelta) error {
 }
 
 func (decoder *streamDecoder) deliverToolCall(call streamedToolCall, complete bool) error {
-	if decoder.observer.ToolCall == nil || call.id == "" || call.name == "" {
+	if call.id == "" || call.name == "" {
 		return nil
 	}
-	return decoder.delivery.Deliver("deliver tool call", func() error {
-		return decoder.observer.ToolCall(agent.ToolCallSnapshot{
-			ID:           call.id,
-			Name:         call.name,
-			RawArguments: call.arguments,
-			Complete:     complete,
-		})
-	})
+	return decoder.observer.ToolCall(call.id, call.name, call.arguments, complete)
 }
 
 func (decoder *streamDecoder) finish() (streamResult, error) {

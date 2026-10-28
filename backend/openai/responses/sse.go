@@ -12,13 +12,6 @@ import (
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
-type streamObserver struct {
-	observer     agent.StreamObserver
-	sawDelta     bool
-	sawReasoning bool
-	delivery     backendhttp.DeliveryTracker
-}
-
 type responseStreamResult struct {
 	response     createResponseEnvelope
 	sawTextDelta bool
@@ -42,32 +35,28 @@ type streamedOutputItem struct {
 }
 
 type responseStreamDecoder struct {
-	observer  *streamObserver
-	response  createResponseEnvelope
-	output    []streamedOutputItem
-	toolCalls toolCallAccumulator
+	observer     backendhttp.Observer
+	sawText      bool
+	sawReasoning bool
+	response     createResponseEnvelope
+	output       []streamedOutputItem
+	toolCalls    toolCallAccumulator
 }
 
 func readResponsesSSE(reader io.Reader, maximum int64, observer agent.StreamObserver) (responseStreamResult, error) {
-	tracked := &streamObserver{observer: observer}
-	decoder := responseStreamDecoder{observer: tracked, toolCalls: newToolCallAccumulator()}
+	decoder := responseStreamDecoder{observer: backendhttp.NewObserver(observer), toolCalls: newToolCallAccumulator()}
 	done, err := backendhttp.ReadSSE(reader, maximum, decoder.handleData)
 	if err != nil {
-		err = fmt.Errorf("read Responses SSE: %w", err)
-	} else if !done {
-		err = backendhttp.ErrIncompleteStream
+		return responseStreamResult{}, fmt.Errorf("read Responses SSE: %w", err)
 	}
-	if err != nil {
-		return responseStreamResult{}, err
+	if !done {
+		return responseStreamResult{}, backendhttp.ErrIncompleteStream
 	}
-	return responseStreamResult{
-		response:     decoder.response,
-		sawTextDelta: tracked.sawDelta,
-	}, nil
+	return responseStreamResult{response: decoder.response, sawTextDelta: decoder.sawText}, nil
 }
 
 func (decoder *responseStreamDecoder) handleData(data []byte) (bool, error) {
-	if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
+	if bytes.Equal(data, []byte("[DONE]")) {
 		return false, nil
 	}
 	response, complete, err := decoder.handleEvent(data)
@@ -87,14 +76,16 @@ func (decoder *responseStreamDecoder) handleEvent(data []byte) (createResponseEn
 	case "error":
 		return createResponseEnvelope{}, false, streamError(event)
 	case "response.output_text.delta", "response.refusal.delta":
-		return createResponseEnvelope{}, false, decoder.observer.deliverText(event.Delta)
+		decoder.sawText = decoder.sawText || event.Delta != ""
+		return createResponseEnvelope{}, false, decoder.observer.Text(event.Delta)
 	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
-		return createResponseEnvelope{}, false, decoder.observer.deliverReasoning(event.Delta)
+		decoder.sawReasoning = decoder.sawReasoning || event.Delta != ""
+		return createResponseEnvelope{}, false, decoder.observer.Reasoning(event.Delta)
 	case "response.reasoning_summary_part.done":
-		if !decoder.observer.sawReasoning {
+		if !decoder.sawReasoning {
 			return createResponseEnvelope{}, false, nil
 		}
-		return createResponseEnvelope{}, false, decoder.observer.deliverReasoning("\n\n")
+		return createResponseEnvelope{}, false, decoder.observer.Reasoning("\n\n")
 	case "response.output_item.added":
 		return createResponseEnvelope{}, false, decoder.startToolCall(event)
 	case "response.function_call_arguments.delta":
@@ -123,7 +114,7 @@ func (decoder *responseStreamDecoder) startToolCall(event responseStreamEvent) e
 	if !deliver {
 		return nil
 	}
-	return decoder.observer.deliverToolCall(streamed, false)
+	return decoder.observer.ToolCall(streamed.id, streamed.name, streamed.arguments, false)
 }
 
 func (decoder *responseStreamDecoder) updateToolCall(event responseStreamEvent, complete bool) error {
@@ -131,7 +122,7 @@ func (decoder *responseStreamDecoder) updateToolCall(event responseStreamEvent, 
 	if !deliver {
 		return nil
 	}
-	return decoder.observer.deliverToolCall(streamed, complete)
+	return decoder.observer.ToolCall(streamed.id, streamed.name, streamed.arguments, complete)
 }
 
 func (decoder *responseStreamDecoder) finishToolCall(event responseStreamEvent) error {
@@ -139,56 +130,7 @@ func (decoder *responseStreamDecoder) finishToolCall(event responseStreamEvent) 
 	if !deliver {
 		return nil
 	}
-	return decoder.observer.deliverToolCall(streamed, true)
-}
-
-func (observer *streamObserver) deliverToolCall(streamed streamedToolCall, complete bool) error {
-	if observer.observer.ToolCall == nil {
-		return nil
-	}
-	snapshot := agent.ToolCallSnapshot{
-		ID:           streamed.id,
-		Name:         streamed.name,
-		RawArguments: streamed.arguments,
-		Complete:     complete,
-	}
-	return observer.delivery.Deliver("deliver tool call", func() error {
-		return observer.observer.ToolCall(snapshot)
-	})
-}
-
-func (observer *streamObserver) deliverText(delta string) error {
-	if delta == "" {
-		return nil
-	}
-
-	if observer.observer.Text != nil {
-		if err := observer.delivery.Deliver("deliver text", func() error {
-			return observer.observer.Text(delta)
-		}); err != nil {
-			return err
-		}
-	}
-
-	observer.sawDelta = true
-	return nil
-}
-
-func (observer *streamObserver) deliverReasoning(delta string) error {
-	if delta == "" {
-		return nil
-	}
-
-	if observer.observer.Reasoning != nil {
-		if err := observer.delivery.Deliver("deliver reasoning", func() error {
-			return observer.observer.Reasoning(delta)
-		}); err != nil {
-			return err
-		}
-	}
-
-	observer.sawReasoning = true
-	return nil
+	return decoder.observer.ToolCall(streamed.id, streamed.name, streamed.arguments, true)
 }
 
 func (decoder *responseStreamDecoder) terminal(event responseStreamEvent) (createResponseEnvelope, error) {

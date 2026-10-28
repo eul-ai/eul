@@ -67,7 +67,7 @@ func CompleteJSONSSE[T any](
 	if err == nil {
 		return result, nil
 	}
-	if IsObserverError(err) {
+	if isObserverError(err) {
 		return zero, config.ErrorConfig.Wrapf(err, "%v", err)
 	}
 

@@ -53,7 +53,7 @@ func RetryGeneration(err error, failedAttempts int) (time.Duration, bool) {
 }
 
 func retryableGeneration(err error) bool {
-	if IsContextLimit(err) || IsObserverError(err) {
+	if IsContextLimit(err) || isObserverError(err) {
 		return false
 	}
 
