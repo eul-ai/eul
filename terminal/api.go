@@ -39,7 +39,7 @@ type Controls struct {
 	Goal             func() (agent.GoalState, bool)
 	ClearGoal        func()
 	SetThinkingLevel func(agent.ThinkingLevel) error
-	SetFastMode      func(bool) error
+	SetFastMode      func(bool)
 }
 
 type SessionSummary struct {

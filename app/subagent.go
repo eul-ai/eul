@@ -9,6 +9,8 @@ import (
 	"github.com/eul-ai/eul/tool"
 )
 
+const childAgentInstructions = "This is a read-only research task. Inspect and report findings, but do not modify files. The main agent will make any edits."
+
 func modelForProfile(models backend.Models, profile subagent.Profile) string {
 	switch profile {
 	case subagent.ProfileFast:
@@ -32,7 +34,11 @@ func (runner childRunner) run(ctx context.Context, task subagent.Task, progress 
 	tools := buildToolset(runner.config.cwd, subagentToolAccess, runner.authorizeNetwork)
 	_, fastMode := runner.settings.Snapshot()
 	fastMode = fastMode && runner.models[task.ModelProfile].FastMode
-	child := agent.New(runner.provider, tools, childEngineOptions(runner.config, task.ModelProfile, task.ThinkingLevel, fastMode))
+	child := agent.New(runner.provider, tools, agent.Options{
+		Model:        modelForProfile(runner.config.models, task.ModelProfile),
+		Settings:     agent.NewSettings(task.ThinkingLevel, fastMode),
+		Instructions: systemPrompt(runner.config) + "\n\n" + childAgentInstructions,
+	})
 
 	var usage agent.Usage
 	result, err := child.Run(ctx, []agent.ContentPart{{Kind: agent.ContentPartText, Text: task.Prompt}}, func(event agent.Event) error {

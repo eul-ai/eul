@@ -49,9 +49,7 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 			if err := options.Controls.SetThinkingLevel(agent.ThinkingLow); err != nil {
 				t.Fatal(err)
 			}
-			if err := options.Controls.SetFastMode(true); err != nil {
-				t.Fatal(err)
-			}
+			options.Controls.SetFastMode(true)
 			return terminal.RunOutcome{Action: terminal.RunNewSession}, nil
 		},
 		func(_ context.Context, options terminal.Options) (terminal.RunOutcome, error) {

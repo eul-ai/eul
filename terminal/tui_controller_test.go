@@ -1544,13 +1544,12 @@ func TestTUIControllerRestoresSteeringAfterRunError(t *testing.T) {
 
 func TestTUIControllerTogglesFastMode(t *testing.T) {
 	var configured []bool
-	model := newTUIModel(80, 24, Options{Config: Config{FastModeAvailable: true}, Controls: Controls{SetFastMode: func(bool) error { return nil }}})
+	model := newTUIModel(80, 24, Options{Config: Config{FastModeAvailable: true}, Controls: Controls{SetFastMode: func(bool) {}}})
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		controls: Controls{SetFastMode: func(enabled bool) error {
+		controls: Controls{SetFastMode: func(enabled bool) {
 			configured = append(configured, enabled)
-			return nil
 		}},
 		stateChanges: StateChanges{Notify: nil},
 	}
@@ -1572,14 +1571,13 @@ func TestTUIControllerTogglesFastMode(t *testing.T) {
 
 func TestTUIControllerTogglesFastModeWhileRunning(t *testing.T) {
 	var configured bool
-	model := newTUIModel(80, 24, Options{Config: Config{FastModeAvailable: true}, Controls: Controls{SetFastMode: func(bool) error { return nil }}})
+	model := newTUIModel(80, 24, Options{Config: Config{FastModeAvailable: true}, Controls: Controls{SetFastMode: func(bool) {}}})
 	model.running = true
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		controls: Controls{SetFastMode: func(enabled bool) error {
+		controls: Controls{SetFastMode: func(enabled bool) {
 			configured = enabled
-			return nil
 		}},
 		stateChanges: StateChanges{Notify: func(Checkpoint, bool) error {
 			t.Fatal("checkpoint saved while running")

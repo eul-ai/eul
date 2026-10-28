@@ -3,9 +3,11 @@ package app
 import (
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
@@ -115,4 +117,25 @@ func readProjectInstructions(cwd string) (string, error) {
 		return "", fmt.Errorf("read AGENTS.md: %w", err)
 	}
 	return string(content), nil
+}
+
+const baseSystemPrompt = `You are a coding agent. Use the available tools to inspect and modify code. Be concise and report results clearly.`
+
+func systemPrompt(config resolvedConfig) string {
+	var prompt strings.Builder
+	prompt.WriteString(baseSystemPrompt)
+	prompt.WriteString("\n\nIndependent tool calls may run concurrently; separate dependent calls.\n")
+	if config.projectInstructions != "" {
+		prompt.WriteString("\n<project_instructions path=\"")
+		prompt.WriteString(html.EscapeString(filepath.ToSlash(filepath.Join(config.cwd, "AGENTS.md"))))
+		prompt.WriteString("\">\n")
+		prompt.WriteString(strings.TrimSuffix(config.projectInstructions, "\n"))
+		prompt.WriteString("\n</project_instructions>\n")
+	}
+	if section := skill.PromptSection(config.skills); section != "" {
+		prompt.WriteString("\n" + section + "\n")
+	}
+	prompt.WriteString("\nCurrent working directory: ")
+	prompt.WriteString(filepath.ToSlash(config.cwd))
+	return prompt.String()
 }

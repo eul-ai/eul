@@ -17,7 +17,6 @@ type terminalOptionsBuilder struct {
 	config             resolvedConfig
 	interrupts         <-chan os.Signal
 	metadata           backend.ModelMetadata
-	warnings           []string
 	loadUsage          func(context.Context) (backend.AccountUsage, error)
 	subagents          *subagent.Manager
 	permissionRequests <-chan terminal.PermissionRequest
@@ -61,13 +60,10 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 			Goal:             source.goal.State,
 			ClearGoal:        source.goal.Clear,
 			SetThinkingLevel: source.settings.SetThinkingLevel,
-			SetFastMode: func(enabled bool) error {
-				source.settings.SetFastMode(enabled)
-				return nil
-			},
+			SetFastMode:      source.settings.SetFastMode,
 		},
 		Sessions:       source.sessions,
-		StateChanges:   terminalStateChanges(source.checkpoints),
+		StateChanges:   terminal.StateChanges{Notify: source.checkpoints.SaveTerminalCheckpoint},
 		MessageHistory: source.messageHistory,
 		Config: terminal.Config{
 			Model:              source.config.models.Main,
@@ -78,7 +74,7 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 			FastModeAvailable:  source.metadata.FastMode,
 			ContextWindow:      source.metadata.ContextWindow,
 			Skills:             source.config.skills,
-			Warnings:           source.warnings,
+			Warnings:           source.config.warnings,
 			InitialCheckpoint:  source.initialCheckpoint,
 			SessionID:          source.sessionID,
 			PreviousTurnActive: source.previousTurnActive,
@@ -137,7 +133,7 @@ func expandSkillContent(content []agent.ContentPart, skills []skill.Skill) ([]ag
 
 func (callbacks *terminalCallbacks) sink(stream terminal.EventStream) agent.EventSink {
 	return func(event agent.Event) error {
-		if event.Kind != agent.EventCheckpoint || event.Checkpoint == nil || callbacks.checkpoints == nil {
+		if event.Kind != agent.EventCheckpoint {
 			return stream.Emit(event)
 		}
 
@@ -147,11 +143,4 @@ func (callbacks *terminalCallbacks) sink(stream terminal.EventStream) agent.Even
 		}
 		return callbacks.checkpoints.SaveSessionCheckpoint(*event.Checkpoint, terminalCheckpoint, true)
 	}
-}
-
-func terminalStateChanges(checkpoints *checkpointCoordinator) terminal.StateChanges {
-	if checkpoints == nil {
-		return terminal.StateChanges{}
-	}
-	return terminal.StateChanges{Notify: checkpoints.SaveTerminalCheckpoint}
 }

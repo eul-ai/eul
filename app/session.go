@@ -80,17 +80,19 @@ func newAgentSessionComponents(
 	if config.fastMode && !main.FastMode {
 		return nil, terminalOptionsBuilder{}, fmt.Errorf("fast mode is unavailable for model %q", config.models.Main)
 	}
-	warnings := append([]string(nil), config.warnings...)
 	authorizeNetwork, permissionRequests := newNetworkPermissionBroker(noSandbox)
 	settings := agent.NewSettings(main.ClampThinkingLevel(config.thinkingLevel), config.fastMode)
 
 	goal := &agent.Goal{}
 	tools, subagents := newSessionTools(config, runtime.Provider, metadata, settings, authorizeNetwork, goal)
-	options := engineOptions(config, config.models.Main, settings)
-	options.Checkpointing = true
-	options.Inbox = tool.NewSubagentInbox(subagents)
-	options.Goal = goal
-	engine := agent.New(runtime.Provider, tools, options)
+	engine := agent.New(runtime.Provider, tools, agent.Options{
+		Model:         config.models.Main,
+		Instructions:  systemPrompt(config),
+		Checkpointing: true,
+		Inbox:         tool.NewSubagentInbox(subagents),
+		Settings:      settings,
+		Goal:          goal,
+	})
 	session := &agentSession{
 		config:        config.sessionSettings,
 		engine:        engine,
@@ -101,7 +103,6 @@ func newAgentSessionComponents(
 		config:             config,
 		interrupts:         interrupts,
 		metadata:           main,
-		warnings:           warnings,
 		loadUsage:          runtime.Usage,
 		subagents:          subagents,
 		permissionRequests: permissionRequests,

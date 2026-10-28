@@ -58,9 +58,6 @@ func newStoredAgentSession(
 ) (*agentSession, error) {
 	session, options, err := newAgentSessionComponents(config, runtime, launcher.noSandbox, launcher.interrupts)
 	if err != nil {
-		if handle != nil {
-			_ = handle.Close()
-		}
 		return nil, err
 	}
 
