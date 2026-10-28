@@ -53,13 +53,13 @@ func openTestSession(t *testing.T, handle *Handle, provider agent.Provider, warn
 	engine := agent.New(provider, nil, agent.Options{Checkpoint: handle.Record().Agent})
 	subagents := subagent.NewManager(nil, handle.Record().Subagent)
 	t.Cleanup(subagents.Close)
-	return New(Config{
-		Handle:    handle,
-		Engine:    engine,
-		Subagents: subagents,
-		Settings:  agent.NewSettings(agent.ThinkingMedium, false),
-		Warnings:  warnings,
+	conversation := New(Config{
+		Handle:   handle,
+		Settings: agent.NewSettings(agent.ThinkingMedium, false),
+		Warnings: warnings,
 	})
+	conversation.Start(engine, subagents)
+	return conversation
 }
 
 func waitSettled(t *testing.T, s *Session) error {

@@ -11,20 +11,19 @@ import (
 )
 
 type terminalOptionsBuilder struct {
-	config             resolvedConfig
-	interrupts         <-chan os.Signal
-	metadata           backend.ModelMetadata
-	loadUsage          func(context.Context) (backend.AccountUsage, error)
-	permissionRequests <-chan terminal.PermissionRequest
-	settings           *agent.Settings
-	goal               *agent.Goal
-	conversation       *session.Session
-	sessions           terminal.Sessions
-	messageHistory     terminal.MessageHistory
-	draft              session.Draft
-	contextTokens      int64
-	initialPrompt      string
-	sessionID          string
+	config         resolvedConfig
+	interrupts     <-chan os.Signal
+	metadata       backend.ModelMetadata
+	loadUsage      func(context.Context) (backend.AccountUsage, error)
+	settings       *agent.Settings
+	goal           *agent.Goal
+	conversation   *session.Session
+	sessions       terminal.Sessions
+	messageHistory terminal.MessageHistory
+	draft          session.Draft
+	contextTokens  int64
+	initialPrompt  string
+	sessionID      string
 }
 
 func (source terminalOptionsBuilder) options() terminal.Options {
@@ -54,10 +53,7 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 			SessionID:         source.sessionID,
 			InitialPrompt:     source.initialPrompt,
 		},
-		Events: terminal.Events{
-			Interrupts:         source.interrupts,
-			PermissionRequests: source.permissionRequests,
-		},
+		Events:   terminal.Events{Interrupts: source.interrupts},
 		Services: terminal.Services{LoadUsage: source.loadUsage},
 	}
 }

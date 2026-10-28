@@ -237,20 +237,20 @@ func renderPermission(model *tuiModel, width, maximumHeight int) renderedInput {
 	return renderedInput{lines: lines, styledLines: styled}
 }
 
-func permissionButtons(selected PermissionDecision, style lineStyle) styledLine {
+func permissionButtons(selected session.PermissionDecision, style lineStyle) styledLine {
 	spans := []text.Span{
 		{Text: "› [d]eny once", Style: text.Style{Bold: true, Foreground: text.ForegroundError}},
 		{Text: "     [a]llow once"},
 		{Text: "     allow for [s]ession"},
 	}
 	switch selected {
-	case PermissionAllowOnce:
+	case session.PermissionAllowOnce:
 		spans = []text.Span{
 			{Text: "  [d]eny once"},
 			{Text: "   › [a]llow once", Style: text.Style{Bold: true, Foreground: text.ForegroundSuccess}},
 			{Text: "     allow for [s]ession"},
 		}
-	case PermissionAllowSession:
+	case session.PermissionAllowSession:
 		spans = []text.Span{
 			{Text: "  [d]eny once"},
 			{Text: "     [a]llow once"},

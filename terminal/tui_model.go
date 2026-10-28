@@ -92,16 +92,27 @@ type editorModel struct {
 	historyDraftCursor int
 }
 
-const permissionDecisionCount PermissionDecision = PermissionAllowSession + 1
+const permissionDecisionCount session.PermissionDecision = session.PermissionAllowSession + 1
 
 type permissionState struct {
-	queue    []PermissionRequest
-	selected PermissionDecision
+	queue    []*session.PermissionRequest
+	selected session.PermissionDecision
 	scroll   int
 }
 
 func (permission permissionState) active() bool {
 	return len(permission.queue) > 0
+}
+
+// syncPermissions follows the session's pending requests and starts over
+// with a fresh selection when the first of them changes.
+func (m *tuiModel) syncPermissions() {
+	queue := m.session.Permissions()
+	if len(queue) == 0 || !m.permission.active() || queue[0] != m.permission.queue[0] {
+		m.permission = permissionState{queue: queue}
+		return
+	}
+	m.permission.queue = queue
 }
 
 type permissionView struct {

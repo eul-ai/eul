@@ -65,6 +65,8 @@ type fakeSession struct {
 	compactions int
 	startErr    error
 	save        func(session.Draft) error
+	permissions []*session.PermissionRequest
+	decisions   []session.PermissionDecision
 }
 
 func newFakeSession() *fakeSession {
@@ -118,6 +120,7 @@ func (s *fakeSession) Interrupt() [][]agent.ContentPart {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.interrupted = s.running
+	s.permissions = nil
 	s.notify("interrupt")
 	return s.takeLocked()
 }
@@ -165,6 +168,30 @@ func (s *fakeSession) SaveDraft(draft session.Draft) error {
 		return nil
 	}
 	return s.save(draft)
+}
+
+func (s *fakeSession) Permissions() []*session.PermissionRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.permissions)
+}
+
+func (s *fakeSession) ResolvePermission(decision session.PermissionDecision) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.decisions = append(s.decisions, decision)
+	count := min(1, len(s.permissions))
+	if decision == session.PermissionAllowSession {
+		count = len(s.permissions)
+	}
+	s.permissions = slices.Delete(s.permissions, 0, count)
+}
+
+func (s *fakeSession) request(requests ...*session.PermissionRequest) session.Update {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.permissions = append(s.permissions, requests...)
+	return session.Update{Kind: session.UpdatePermissions}
 }
 
 func (s *fakeSession) event(event agent.Event) session.Update {

@@ -24,7 +24,6 @@ const (
 	tuiEventKey
 	tuiEventSession
 	tuiEventProviderUsage
-	tuiEventPermission
 	tuiEventClipboardImage
 	tuiEventFileSearch
 	tuiEventSpinner
@@ -37,7 +36,6 @@ type tuiEvent struct {
 	key           keys.Event
 	update        session.Update
 	providerUsage providerUsageMessage
-	permission    PermissionRequest
 	image         agent.Image
 	requestID     uint64
 	fileSearch    filesearch.Result
@@ -79,29 +77,28 @@ func newTUIController(config controllerOptions) *tuiController {
 }
 
 type tuiController struct {
-	model                        *tuiModel
-	renderer                     *tuiRenderer
-	controls                     Controls
-	output                       io.Writer
-	outputFD                     int
-	stopped                      <-chan struct{}
-	fileSearch                   *filesearch.Searcher
-	loadUsage                    func(context.Context) (backend.AccountUsage, error)
-	usageResults                 chan<- providerUsageMessage
-	usageLoading                 bool
-	usageLoads                   sync.WaitGroup
-	sessions                     Sessions
-	messageHistory               MessageHistory
-	readClipboardImage           func(context.Context) (agent.Image, error)
-	clipboardImages              chan<- tuiEvent
-	clipboardRequests            map[uint64]context.CancelFunc
-	nextClipboardID              uint64
-	exitAfterTurn                bool
-	exitAfterTurnErr             error
-	outcome                      RunOutcome
-	permissionsAllowedForSession bool
-	dirty                        bool
-	forceRedraw                  bool
+	model              *tuiModel
+	renderer           *tuiRenderer
+	controls           Controls
+	output             io.Writer
+	outputFD           int
+	stopped            <-chan struct{}
+	fileSearch         *filesearch.Searcher
+	loadUsage          func(context.Context) (backend.AccountUsage, error)
+	usageResults       chan<- providerUsageMessage
+	usageLoading       bool
+	usageLoads         sync.WaitGroup
+	sessions           Sessions
+	messageHistory     MessageHistory
+	readClipboardImage func(context.Context) (agent.Image, error)
+	clipboardImages    chan<- tuiEvent
+	clipboardRequests  map[uint64]context.CancelFunc
+	nextClipboardID    uint64
+	exitAfterTurn      bool
+	exitAfterTurnErr   error
+	outcome            RunOutcome
+	dirty              bool
+	forceRedraw        bool
 }
 
 func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, error) {
@@ -127,8 +124,6 @@ func (c *tuiController) dispatch(ctx context.Context, event tuiEvent) (bool, err
 		return c.handleUpdate(ctx, event.update)
 	case tuiEventProviderUsage:
 		return c.handleProviderUsage(event.providerUsage)
-	case tuiEventPermission:
-		return c.handlePermission(event.permission)
 	case tuiEventClipboardImage:
 		return c.handleClipboardImage(event.requestID, event.image, event.err)
 	case tuiEventFileSearch:
@@ -255,6 +250,8 @@ func (c *tuiController) handleUpdate(ctx context.Context, update session.Update)
 		c.model.applyAgentEvent(update.Event)
 	case session.UpdateSubagents:
 		c.model.subagentStatus = sanitizeSubagentStatus(update.Subagents)
+	case session.UpdatePermissions:
+		c.model.syncPermissions()
 	case session.UpdateSettled:
 		return c.handleSettled(ctx, update.Err)
 	}

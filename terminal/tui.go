@@ -164,7 +164,6 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 
 	interrupts := options.Events.Interrupts
 	updates := options.Session.Updates()
-	permissionRequests := options.Events.PermissionRequests
 	parentDone := ctx.Done()
 	for {
 		var event tuiEvent
@@ -186,12 +185,6 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 			event = tuiEvent{kind: tuiEventSession, update: update}
 		case message := <-usageResults:
 			event = tuiEvent{kind: tuiEventProviderUsage, providerUsage: message}
-		case request, ok := <-permissionRequests:
-			if !ok {
-				permissionRequests = nil
-				continue
-			}
-			event = tuiEvent{kind: tuiEventPermission, permission: request}
 		case event = <-clipboardImages:
 		case result := <-fileSearchResults:
 			event = tuiEvent{kind: tuiEventFileSearch, fileSearch: result}

@@ -34,6 +34,8 @@ type Session interface {
 	Append(session.EntryKind, string)
 	SetDraft(session.Draft)
 	SaveDraft(session.Draft) error
+	Permissions() []*session.PermissionRequest
+	ResolvePermission(session.PermissionDecision)
 }
 
 type Controls struct {
@@ -55,24 +57,6 @@ const (
 type RunOutcome struct {
 	Action    RunAction
 	SessionID string
-}
-
-type PermissionDecision uint8
-
-const (
-	PermissionDenyOnce PermissionDecision = iota
-	PermissionAllowOnce
-	PermissionAllowSession
-)
-
-type PermissionRequest struct {
-	Title        string
-	Subject      string
-	Description  string
-	Detail       string
-	DetailPrefix string
-	Notice       string
-	Response     chan<- PermissionDecision
 }
 
 type Config struct {
@@ -100,8 +84,7 @@ type MessageHistory struct {
 }
 
 type Events struct {
-	Interrupts         <-chan os.Signal
-	PermissionRequests <-chan PermissionRequest
+	Interrupts <-chan os.Signal
 }
 
 type Services struct {

@@ -173,43 +173,6 @@ func TestRunSessionsExitClosesSession(t *testing.T) {
 	}
 }
 
-func TestRunSessionsKeepsNoSandboxAcrossResumeAndNewSession(t *testing.T) {
-	ctx := context.Background()
-	cwd := t.TempDir()
-	backendRuntime := testBackendRuntime(emptyProvider())
-	backendRuntime.Catalog = testCatalog("gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra", "resume-main", "resume-fast", "resume-balanced")
-	launcher := testLauncher(t, cwd, backendRuntime)
-	launcher.noSandbox = true
-	targetID := createTargetSession(t, launcher, cwd, "resume target prompt")
-	initialSession := startTestSession(t, launcher, session.Settings{WorkingDirectory: cwd, ThinkingLevel: agent.ThinkingHigh})
-
-	unsandboxed := func(options terminal.Options) {
-		if options.Events.PermissionRequests != nil {
-			t.Fatalf("session %q asks for network permissions without a sandbox", options.Config.SessionID)
-		}
-	}
-	runner := &scriptedSessionRunner{steps: []func(context.Context, terminal.Options) (terminal.RunOutcome, error){
-		func(_ context.Context, options terminal.Options) (terminal.RunOutcome, error) {
-			unsandboxed(options)
-			return terminal.RunOutcome{Action: terminal.RunResumeSession, SessionID: targetID}, nil
-		},
-		func(_ context.Context, options terminal.Options) (terminal.RunOutcome, error) {
-			unsandboxed(options)
-			return terminal.RunOutcome{Action: terminal.RunNewSession}, nil
-		},
-		func(_ context.Context, options terminal.Options) (terminal.RunOutcome, error) {
-			unsandboxed(options)
-			return terminal.RunOutcome{Action: terminal.RunExit}, nil
-		},
-	}}
-	if err := runSessions(ctx, runner.Run, initialSession, launcher); err != nil {
-		t.Fatal(err)
-	}
-	if len(runner.options) != 3 {
-		t.Fatalf("runner calls = %d, want 3", len(runner.options))
-	}
-}
-
 func TestLaunchResumeKeepsPrompt(t *testing.T) {
 	cwd := t.TempDir()
 	backendRuntime := testBackendRuntime(emptyProvider())

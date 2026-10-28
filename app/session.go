@@ -35,20 +35,11 @@ func newStoredAgentSession(
 	if err != nil {
 		return nil, fmt.Errorf("load message history: %w", err)
 	}
-	stored, options, err := newAgentSessionComponents(config, runtime, record, launcher.noSandbox, launcher.interrupts)
+	stored, options, err := newAgentSessionComponents(config, runtime, handle, launcher.noSandbox, launcher.interrupts)
 	if err != nil {
 		return nil, err
 	}
 
-	stored.conversation = session.New(session.Config{
-		Handle:    handle,
-		Engine:    stored.engine,
-		Subagents: stored.subagents,
-		Settings:  stored.agentSettings,
-		Skills:    config.skills,
-		Warnings:  config.warnings,
-	})
-	options.conversation = stored.conversation
 	options.messageHistory = terminal.MessageHistory{
 		Entries: historyEntries,
 		Append: func(entry string) error {
@@ -114,10 +105,11 @@ func resolveModelMetadata(runtime *backend.Runtime, models backend.Models) (map[
 func newAgentSessionComponents(
 	config resolvedConfig,
 	runtime *backend.Runtime,
-	record session.Record,
+	handle *session.Handle,
 	noSandbox bool,
 	interrupts <-chan os.Signal,
 ) (*agentSession, terminalOptionsBuilder, error) {
+	record := handle.Record()
 	metadata, err := resolveModelMetadata(runtime, config.Models)
 	if err != nil {
 		return nil, terminalOptionsBuilder{}, err
@@ -126,10 +118,19 @@ func newAgentSessionComponents(
 	if config.FastMode && !main.FastMode {
 		return nil, terminalOptionsBuilder{}, fmt.Errorf("fast mode is unavailable for model %q", config.Models.Main)
 	}
-	authorizeNetwork, permissionRequests := newNetworkPermissionBroker(noSandbox)
 	settings := agent.NewSettings(main.ClampThinkingLevel(config.ThinkingLevel), config.FastMode)
-
 	goal := &agent.Goal{}
+	conversation := session.New(session.Config{
+		Handle:   handle,
+		Settings: settings,
+		Skills:   config.skills,
+		Warnings: config.warnings,
+	})
+	var authorizeNetwork tool.NetworkAuthorizer
+	if !noSandbox {
+		authorizeNetwork = conversation.AuthorizeNetwork
+	}
+
 	tools, subagents := newSessionTools(config, runtime.Provider, metadata, settings, authorizeNetwork, goal, record.Subagent)
 	engine := agent.New(runtime.Provider, tools, agent.Options{
 		Model:         config.Models.Main,
@@ -141,20 +142,22 @@ func newAgentSessionComponents(
 		Settings:      settings,
 		Goal:          goal,
 	})
+	conversation.Start(engine, subagents)
 	session := &agentSession{
 		config:        config.Settings,
 		engine:        engine,
 		subagents:     subagents,
 		agentSettings: settings,
+		conversation:  conversation,
 	}
 	terminalOptions := terminalOptionsBuilder{
-		config:             config,
-		interrupts:         interrupts,
-		metadata:           main,
-		loadUsage:          runtime.Usage,
-		permissionRequests: permissionRequests,
-		settings:           settings,
-		goal:               goal,
+		config:       config,
+		interrupts:   interrupts,
+		metadata:     main,
+		loadUsage:    runtime.Usage,
+		settings:     settings,
+		goal:         goal,
+		conversation: conversation,
 	}
 	return session, terminalOptions, nil
 }

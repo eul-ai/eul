@@ -35,7 +35,7 @@ type tuiAction struct {
 	text               string
 	content            []agent.ContentPart
 	thinkingLevel      agent.ThinkingLevel
-	permissionDecision PermissionDecision
+	permissionDecision session.PermissionDecision
 }
 
 func handleKeyInput(model *tuiModel, key keys.Event, frame terminalFrame) (tuiAction, error) {
@@ -147,18 +147,18 @@ func reducePermissionKey(model *tuiModel, key keys.Event) tuiAction {
 	case keys.Text:
 		switch strings.ToLower(strings.TrimSpace(key.Text)) {
 		case "a":
-			return permissionAction(PermissionAllowOnce)
+			return permissionAction(session.PermissionAllowOnce)
 		case "d":
-			return permissionAction(PermissionDenyOnce)
+			return permissionAction(session.PermissionDenyOnce)
 		case "s":
-			return permissionAction(PermissionAllowSession)
+			return permissionAction(session.PermissionAllowSession)
 		}
 	case keys.Left:
-		if model.permission.selected > PermissionDenyOnce {
+		if model.permission.selected > session.PermissionDenyOnce {
 			model.permission.selected--
 		}
 	case keys.Right:
-		if model.permission.selected < PermissionAllowSession {
+		if model.permission.selected < session.PermissionAllowSession {
 			model.permission.selected++
 		}
 	case keys.Tab:
@@ -176,19 +176,19 @@ func reducePermissionKey(model *tuiModel, key keys.Event) tuiAction {
 	case keys.Enter:
 		return permissionAction(model.permission.selected)
 	case keys.Escape:
-		return permissionAction(PermissionDenyOnce)
+		return permissionAction(session.PermissionDenyOnce)
 	case keys.CtrlC:
 		if model.running {
 			return tuiAction{kind: tuiActionCancel}
 		}
-		return permissionAction(PermissionDenyOnce)
+		return permissionAction(session.PermissionDenyOnce)
 	case keys.EOF, keys.CtrlD:
 		return tuiAction{kind: tuiActionExit}
 	}
 	return tuiAction{}
 }
 
-func permissionAction(decision PermissionDecision) tuiAction {
+func permissionAction(decision session.PermissionDecision) tuiAction {
 	return tuiAction{kind: tuiActionResolvePermission, permissionDecision: decision}
 }
 

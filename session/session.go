@@ -19,6 +19,7 @@ type UpdateKind uint8
 const (
 	UpdateEvent UpdateKind = iota
 	UpdateSubagents
+	UpdatePermissions
 	UpdateSettled
 )
 
@@ -32,19 +33,18 @@ type Update struct {
 }
 
 type Config struct {
-	Handle    *Handle
-	Engine    *agent.Engine
-	Subagents *subagent.Manager
-	Settings  *agent.Settings
-	Skills    []skill.Skill
-	Warnings  []string
+	Handle   *Handle
+	Settings *agent.Settings
+	Skills   []skill.Skill
+	Warnings []string
 }
 
 type operation func(context.Context, agent.EventSink) error
 
 // Session owns a conversation: it runs its turns, queues the prompts sent
 // while a turn runs, and saves the transcript with the agent and subagent
-// state. mu guards the transcript, the draft and the turn. saveMu serializes
+// state. mu guards the transcript, the draft, the turn and the permission
+// requests. saveMu serializes
 // saves so that they reach the disk in the order they were taken, without
 // holding mu while writing. Updates are never sent while holding either.
 //
@@ -63,22 +63,25 @@ type Session struct {
 
 	saveMu sync.Mutex
 
-	mu          sync.Mutex
-	transcript  Transcript
-	draft       Draft
-	running     bool
-	interrupted bool
-	cancel      context.CancelFunc
-	queue       [][]agent.ContentPart
-	steered     int
+	mu             sync.Mutex
+	transcript     Transcript
+	draft          Draft
+	running        bool
+	interrupted    bool
+	cancel         context.CancelFunc
+	queue          [][]agent.ContentPart
+	steered        int
+	permissions    []*PermissionRequest
+	networkAllowed bool
 }
 
+// New opens a session around a stored conversation. Its tools may use
+// AuthorizeNetwork before Start hands it the engine and subagents that run
+// them.
 func New(config Config) *Session {
 	record := config.Handle.Record()
 	s := &Session{
 		handle:     config.Handle,
-		engine:     config.Engine,
-		subagents:  config.Subagents,
 		settings:   config.Settings,
 		skills:     config.Skills,
 		updates:    make(chan Update, 256),
@@ -92,8 +95,13 @@ func New(config Config) *Session {
 	for _, warning := range config.Warnings {
 		s.transcript.Append(EntryNotice, warning)
 	}
-	s.workers.Go(s.watchSubagents)
 	return s
+}
+
+func (s *Session) Start(engine *agent.Engine, subagents *subagent.Manager) {
+	s.engine = engine
+	s.subagents = subagents
+	s.workers.Go(s.watchSubagents)
 }
 
 func (s *Session) Updates() <-chan Update {
@@ -127,7 +135,8 @@ func (s *Session) Compact() error {
 	return nil
 }
 
-// Interrupt cancels the running turn and returns the queued prompts.
+// Interrupt cancels the running turn, denies the pending permission
+// requests and returns the queued prompts.
 func (s *Session) Interrupt() [][]agent.ContentPart {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -135,6 +144,7 @@ func (s *Session) Interrupt() [][]agent.ContentPart {
 		s.interrupted = true
 		s.cancel()
 	}
+	s.answerLocked(len(s.permissions), false)
 	return s.takeQueuedLocked()
 }
 

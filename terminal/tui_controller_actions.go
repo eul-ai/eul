@@ -63,7 +63,8 @@ func (c *tuiController) runAction(ctx context.Context, action tuiAction) (bool, 
 		c.model.reserveImage(requestID)
 		go loadClipboardImage(readContext, requestID, c.readClipboardImage, c.clipboardImages, c.stopped)
 	case tuiActionResolvePermission:
-		c.resolvePermission(action.permissionDecision)
+		c.model.session.ResolvePermission(action.permissionDecision)
+		c.model.syncPermissions()
 	case tuiActionCopy:
 		encoded := base64.StdEncoding.EncodeToString([]byte(action.text))
 		if err := writeOutput(c.output, "\x1b]52;c;%s\x07", encoded); err != nil {
@@ -97,8 +98,8 @@ func (c *tuiController) interruptTurn() {
 }
 
 func (c *tuiController) cancelTurn() {
-	c.respondPermissions(PermissionDenyOnce)
 	c.model.restoreQueued(c.model.session.Interrupt())
+	c.model.syncPermissions()
 	c.model.activity = activity{kind: activityCanceling}
 }
 
