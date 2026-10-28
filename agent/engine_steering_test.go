@@ -42,7 +42,7 @@ func TestEngineQueuesSteeringDuringGenerationOneAtATime(t *testing.T) {
 		err    error
 	}, 1)
 	go func() {
-		result, err := engine.Run(context.Background(), "start", func(event Event) error {
+		result, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 			events = append(events, event)
 			return nil
 		})
@@ -101,7 +101,7 @@ func TestEnginePreservesImageSteeringContent(t *testing.T) {
 	done := make(chan error, 1)
 	var delivered []ContentPart
 	go func() {
-		_, err := engine.Run(context.Background(), "start", func(event Event) error {
+		_, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 			if event.Kind == EventSteering {
 				delivered = cloneContentParts(event.Content)
 			}
@@ -165,7 +165,7 @@ func TestEngineDeliversSteeringAfterCompleteToolBatch(t *testing.T) {
 	var events []Event
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(context.Background(), "start", func(event Event) error {
+		_, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 			events = append(events, event)
 			return nil
 		})
@@ -223,7 +223,7 @@ func TestEngineDoesNotCheckpointSteeringWhenDeliveryEventFails(t *testing.T) {
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(context.Background(), "start", func(event Event) error {
+		_, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 			if event.Kind == EventSteering {
 				return sinkErr
 			}
@@ -241,7 +241,7 @@ func TestEngineDoesNotCheckpointSteeringWhenDeliveryEventFails(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	result, err := engine.Run(context.Background(), "steer", discardEvents)
+	result, err := engine.Run(context.Background(), textParts("steer"), discardEvents)
 	if err != nil || result.Text != "recovered" {
 		t.Fatalf("recovery result = %+v, error = %v", result, err)
 	}
@@ -272,7 +272,7 @@ func TestEnginePreservesToolResultsWhenSteeringDeliveryEventFails(t *testing.T) 
 		return ToolResult{Output: "result"}, nil
 	}}, Options{})
 	queued := false
-	_, err := engine.Run(context.Background(), "start", func(event Event) error {
+	_, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 		switch event.Kind {
 		case EventToolExecute:
 			queued = engine.Steer(textParts("steer"))
@@ -288,13 +288,13 @@ func TestEnginePreservesToolResultsWhenSteeringDeliveryEventFails(t *testing.T) 
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	result, err := engine.Run(context.Background(), "steer", discardEvents)
+	result, err := engine.Run(context.Background(), textParts("steer"), discardEvents)
 	if err != nil || result.Text != "recovered" {
 		t.Fatalf("recovery result = %+v, error = %v", result, err)
 	}
 }
 
-func TestEngineClearsQueuedSteeringAfterCancellationAndReset(t *testing.T) {
+func TestEngineClearsQueuedSteeringAfterCancellation(t *testing.T) {
 	started := make(chan struct{})
 	provider := streamingProviderFunc(func(ctx context.Context, _ Request, _ TextSink, _ TextSink, _ ToolCallSink) (Response, error) {
 		close(started)
@@ -305,7 +305,7 @@ func TestEngineClearsQueuedSteeringAfterCancellationAndReset(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(ctx, "start", discardEvents)
+		_, err := engine.Run(ctx, textParts("start"), discardEvents)
 		done <- err
 	}()
 
@@ -322,11 +322,5 @@ func TestEngineClearsQueuedSteeringAfterCancellationAndReset(t *testing.T) {
 	}
 	if engine.Steer(textParts("late")) {
 		t.Fatal("canceled engine accepted steering")
-	}
-	if err := engine.Reset(); err != nil {
-		t.Fatal(err)
-	}
-	if queued := engine.ClearSteering(); len(queued) != 0 {
-		t.Fatalf("reset steering = %+v", queued)
 	}
 }

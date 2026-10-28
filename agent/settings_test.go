@@ -34,7 +34,7 @@ func TestThinkingLevelMapOrdersAndClampsLevels(t *testing.T) {
 		ThinkingXHigh:   ThinkingHigh,
 		ThinkingMax:     ThinkingHigh,
 	} {
-		if got := levels.Clamp(requested); got != want {
+		if got := ClampThinkingLevel(requested, levels.SupportedLevels()); got != want {
 			t.Fatalf("Clamp(%q) = %q, want %q", requested, got, want)
 		}
 	}

@@ -47,7 +47,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.engine.Run(context.Background(), "first prompt", func(agent.Event) error { return nil }); err != nil {
+	if _, err := first.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "first prompt"}}, func(agent.Event) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	terminalCheckpoint := sessionStoreTestTerminalCheckpoint(t, "first prompt")
@@ -80,7 +80,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	if len(summaries) != 0 {
 		t.Fatalf("current session was listed: %+v", summaries)
 	}
-	if _, err := second.engine.Run(context.Background(), "next prompt", func(agent.Event) error { return nil }); err != nil {
+	if _, err := second.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "next prompt"}}, func(agent.Event) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if err := second.finish(nil); err != nil {

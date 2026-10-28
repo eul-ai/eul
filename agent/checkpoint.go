@@ -146,5 +146,5 @@ func (e *Engine) commitCheckpoint(current conversationState, sink EventSink) err
 	}
 
 	checkpoint := e.checkpointLocked()
-	return emit(sink, Event{Kind: EventCheckpoint, Checkpoint: &checkpoint})
+	return sink(Event{Kind: EventCheckpoint, Checkpoint: &checkpoint})
 }

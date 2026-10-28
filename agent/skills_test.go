@@ -69,7 +69,7 @@ func TestEngineExpandsSkillCommandWithoutMovingImage(t *testing.T) {
 		},
 	}}
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{Skills: skills})
-	if _, err := engine.RunContent(context.Background(), []ContentPart{
+	if _, err := engine.Run(context.Background(), []ContentPart{
 		{Kind: ContentPartText, Text: "  "},
 		{Kind: ContentPartText, Text: "/skill:review before"},
 		{Kind: ContentPartImage, Image: &Image{MediaType: "image/png", Data: []byte("png")}},
@@ -126,7 +126,7 @@ func TestEngineExpandsSkillCommandsBeforeProviderRequest(t *testing.T) {
 		},
 	}}
 	engine := newTestEngine(t, provider, &fakeToolbox{definitions: []ToolDefinition{{Name: "read"}}}, Options{Skills: skills})
-	if _, err := engine.Run(context.Background(), "/skill:review check tests", discardEvents); err != nil {
+	if _, err := engine.Run(context.Background(), textParts("/skill:review check tests"), discardEvents); err != nil {
 		t.Fatal(err)
 	}
 }

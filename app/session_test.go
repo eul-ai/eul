@@ -198,7 +198,7 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 		t.Fatalf("active subagents = %+v", status.Active)
 	}
 
-	if _, err := session.engine.Run(context.Background(), "inspect parent", func(agent.Event) error { return nil }); err != nil {
+	if _, err := session.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "inspect parent"}}, func(agent.Event) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(parentRequest.Instructions, status.Active[0].ID) || !strings.Contains(parentRequest.Instructions, status.Active[0].Task) {
@@ -328,7 +328,7 @@ func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 	if request.Model != "main" || request.ThinkingLevel != agent.ThinkingHigh {
 		t.Fatalf("high request = %+v", request)
 	}
-	if err := session.engine.SetThinkingLevel(agent.ThinkingMinimal); err != nil {
+	if err := session.settings.SetThinkingLevel(agent.ThinkingMinimal); err != nil {
 		t.Fatal(err)
 	}
 	request = launch("minimal")

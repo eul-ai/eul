@@ -184,16 +184,6 @@ func (arbiter *continuationArbiter) completeGoal() error {
 	}
 }
 
-func (arbiter *continuationArbiter) reset() {
-	arbiter.mu.Lock()
-	defer arbiter.mu.Unlock()
-
-	arbiter.steering = nil
-	arbiter.toolRoundSteering = nil
-	arbiter.acceptingSteering = false
-	arbiter.goal = nil
-}
-
 func (arbiter *continuationArbiter) next(point continuationPoint) (pendingContinuation, bool) {
 	arbiter.mu.Lock()
 	defer arbiter.mu.Unlock()

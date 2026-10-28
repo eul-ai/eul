@@ -46,7 +46,7 @@ func runChildAgent(
 	}
 	child := agent.New(provider, registry, childEngineOptions(config, modelProfile, thinkingLevel, fastMode))
 	var liveUsage agent.Usage
-	result, runErr := child.Run(ctx, task, func(event agent.Event) error {
+	result, runErr := child.Run(ctx, []agent.ContentPart{{Kind: agent.ContentPartText, Text: task}}, func(event agent.Event) error {
 		switch event.Kind {
 		case agent.EventCompactionEnd, agent.EventContextUsage:
 			liveUsage.InputTokens += event.Usage.InputTokens

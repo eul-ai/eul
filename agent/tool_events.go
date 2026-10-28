@@ -59,7 +59,7 @@ func (tracker *toolEventTracker) emitLocked(event Event) error {
 	if tracker.sinkErr != nil {
 		return tracker.sinkErr
 	}
-	if err := emit(tracker.sink, event); err != nil {
+	if err := tracker.sink(event); err != nil {
 		tracker.sinkErr = err
 		return err
 	}

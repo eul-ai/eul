@@ -53,7 +53,7 @@ func TestEngineRetriesGenerationBeforeObservableEvents(t *testing.T) {
 	}}
 	var events []Event
 	engine := newTestEngine(t, provider, toolbox, Options{})
-	result, err := engine.Run(context.Background(), "write the file", func(event Event) error {
+	result, err := engine.Run(context.Background(), textParts("write the file"), func(event Event) error {
 		events = append(events, event)
 		return nil
 	})
@@ -123,7 +123,7 @@ func TestEngineRetriesGenerationAfterObservableEvent(t *testing.T) {
 			}
 			var events []Event
 			engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
-			result, err := engine.Run(context.Background(), "start", func(event Event) error {
+			result, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 				events = append(events, event)
 				return nil
 			})
@@ -158,7 +158,7 @@ func TestEngineDoesNotRetryAfterVisibleSinkFailure(t *testing.T) {
 		},
 	}
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
-	_, err := engine.Run(context.Background(), "start", func(event Event) error {
+	_, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 		if event.Kind == EventAssistantText {
 			return sinkErr
 		}
@@ -191,7 +191,7 @@ func TestEngineDoesNotCompactAfterRetryEventSinkFailure(t *testing.T) {
 		},
 	}
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
-	_, err := engine.Run(context.Background(), "start", func(event Event) error {
+	_, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 		if event.Kind == EventGenerationRetry {
 			return sinkErr
 		}
@@ -226,7 +226,7 @@ func TestEngineDoesNotCompactAfterObservableGenerationError(t *testing.T) {
 		},
 	}
 	engine := newTestEngine(t, compacting, &fakeToolbox{}, Options{})
-	_, err := engine.Run(context.Background(), "start", discardEvents)
+	_, err := engine.Run(context.Background(), textParts("start"), discardEvents)
 	if !errors.Is(err, contextLimit) || generateCalls != 1 || policyCalls != 0 || compactCalls != 0 {
 		t.Fatalf("generate calls = %d, policy calls = %d, compact calls = %d, error = %v", generateCalls, policyCalls, compactCalls, err)
 	}
@@ -262,7 +262,7 @@ func TestEngineDoesNotCompactWhenRetryDeclinedAfterObservableEvent(t *testing.T)
 		},
 	}
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
-	_, err := engine.Run(context.Background(), "start", discardEvents)
+	_, err := engine.Run(context.Background(), textParts("start"), discardEvents)
 	if !errors.Is(err, contextLimit) || generateCalls != 1 || retryCalls != 1 || policyCalls != 0 || compactCalls != 0 {
 		t.Fatalf("generate calls = %d, retry calls = %d, policy calls = %d, compact calls = %d, error = %v", generateCalls, retryCalls, policyCalls, compactCalls, err)
 	}
@@ -286,7 +286,7 @@ func TestEngineStopsGenerationRetryBackoffWhenCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(ctx, "start", discardEvents)
+		_, err := engine.Run(ctx, textParts("start"), discardEvents)
 		done <- err
 	}()
 

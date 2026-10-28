@@ -98,7 +98,7 @@ func (e *Engine) expandSkillContent(content []ContentPart) ([]ContentPart, error
 }
 
 func (e *Engine) request(current conversationState) Request {
-	thinkingLevel, fastMode := e.currentSettings()
+	thinkingLevel, fastMode := e.settings.Snapshot()
 	return Request{
 		SessionID:     e.sessionID,
 		Model:         e.model,
@@ -192,7 +192,7 @@ func (e *Engine) generateResponse(ctx context.Context, request Request, sink Eve
 		if !retry {
 			return Response{}, nil, observed, newProviderGenerationError(err)
 		}
-		if err := emit(sink, Event{Kind: EventGenerationRetry, Attempt: failedAttempts + 1}); err != nil {
+		if err := sink(Event{Kind: EventGenerationRetry, Attempt: failedAttempts + 1}); err != nil {
 			return Response{}, nil, false, err
 		}
 		if err := waitForRetry(ctx, delay); err != nil {
@@ -244,7 +244,7 @@ func (e *Engine) compactAfterError(ctx context.Context, sink EventSink, request 
 }
 
 func (e *Engine) compactRequest(ctx context.Context, sink EventSink, compactor Compactor, request Request, current conversationState) (Request, conversationState, Usage, error) {
-	if err := emit(sink, Event{Kind: EventCompactionStart}); err != nil {
+	if err := sink(Event{Kind: EventCompactionStart}); err != nil {
 		return request, current, Usage{}, err
 	}
 
@@ -265,7 +265,7 @@ func (e *Engine) compactRequest(ctx context.Context, sink EventSink, compactor C
 	current = conversationState{state: compacted.State}
 	request.State = current.state
 	request.Inputs = nil
-	if err := emit(sink, Event{Kind: EventCompactionEnd, Usage: compacted.Usage}); err != nil {
+	if err := sink(Event{Kind: EventCompactionEnd, Usage: compacted.Usage}); err != nil {
 		return request, current, compacted.Usage, err
 	}
 	if err := e.commitCheckpoint(current, sink); err != nil {

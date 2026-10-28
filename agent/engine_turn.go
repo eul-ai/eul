@@ -72,7 +72,7 @@ func (turn *engineTurn) generate(prepared generationPreparation) generationOutco
 func (turn *engineTurn) reconcileResponse(response Response, toolEvents *toolEventTracker) (bool, error) {
 	turn.responseContinuation = conversationState{state: response.State, usage: response.Usage}
 	addUsage(&turn.result.Usage, response.Usage)
-	if err := emit(turn.sink, Event{Kind: EventContextUsage, Usage: response.Usage}); err != nil {
+	if err := turn.sink(Event{Kind: EventContextUsage, Usage: response.Usage}); err != nil {
 		turn.responseContinuation.inputs = unexecutedToolInputs(response.ToolCalls, err)
 		turn.responseContinuation.checkpoint(turn.engine)
 		return false, err

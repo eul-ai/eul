@@ -158,7 +158,7 @@ func TestEngineClearsQueuedSteeringAfterFailure(t *testing.T) {
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(context.Background(), "start", discardEvents)
+		_, err := engine.Run(context.Background(), textParts("start"), discardEvents)
 		done <- err
 	}()
 
@@ -176,7 +176,7 @@ func TestEngineClearsQueuedSteeringAfterFailure(t *testing.T) {
 	if engine.Steer(textParts("late")) {
 		t.Fatal("failed engine accepted steering")
 	}
-	result, err := engine.Run(context.Background(), "next", discardEvents)
+	result, err := engine.Run(context.Background(), textParts("next"), discardEvents)
 	if err != nil || result.Text != "recovered" {
 		t.Fatalf("recovery result = %+v, error = %v", result, err)
 	}
@@ -193,33 +193,21 @@ func TestEngineRejectsConcurrentOperations(t *testing.T) {
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(context.Background(), "first", discardEvents)
+		_, err := engine.Run(context.Background(), textParts("first"), discardEvents)
 		done <- err
 	}()
 	<-started
 
-	if _, err := engine.Run(context.Background(), "second", discardEvents); !errors.Is(err, errEngineBusy) {
+	if _, err := engine.Run(context.Background(), textParts("second"), discardEvents); !errors.Is(err, errEngineBusy) {
 		t.Fatalf("concurrent Run() error = %v", err)
-	}
-	if err := engine.Reset(); !errors.Is(err, errEngineBusy) {
-		t.Fatalf("concurrent Reset() error = %v", err)
 	}
 	if err := engine.Compact(context.Background(), discardEvents); !errors.Is(err, errEngineBusy) {
 		t.Fatalf("concurrent Compact() error = %v", err)
-	}
-	if err := engine.SetThinkingLevel(ThinkingHigh); err != nil {
-		t.Fatalf("concurrent SetThinkingLevel() error = %v", err)
-	}
-	if got := engine.currentThinkingLevel(); got != ThinkingHigh {
-		t.Fatalf("concurrent thinking level = %q", got)
 	}
 
 	close(release)
 	if err := <-done; err != nil {
 		t.Fatal(err)
-	}
-	if err := engine.Reset(); err != nil {
-		t.Fatalf("Reset() after Run = %v", err)
 	}
 }
 
@@ -246,11 +234,11 @@ func TestEngineUsesThinkingLevelChangedDuringRunForNextGeneration(t *testing.T) 
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(context.Background(), "first", discardEvents)
+		_, err := engine.Run(context.Background(), textParts("first"), discardEvents)
 		done <- err
 	}()
 	<-started
-	if err := engine.SetThinkingLevel(ThinkingHigh); err != nil {
+	if err := engine.settings.SetThinkingLevel(ThinkingHigh); err != nil {
 		t.Fatal(err)
 	}
 	close(release)
@@ -282,11 +270,11 @@ func TestEngineUsesFastModeChangedDuringRunForNextGeneration(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(context.Background(), "first", discardEvents)
+		_, err := engine.Run(context.Background(), textParts("first"), discardEvents)
 		done <- err
 	}()
 	<-started
-	engine.SetFastMode(true)
+	engine.settings.SetFastMode(true)
 	close(release)
 	if err := <-done; err != nil {
 		t.Fatal(err)
@@ -310,16 +298,16 @@ func TestEngineSendsCurrentThinkingLevel(t *testing.T) {
 	}}
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
 
-	if _, err := engine.Run(context.Background(), "first", discardEvents); err != nil {
+	if _, err := engine.Run(context.Background(), textParts("first"), discardEvents); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.SetThinkingLevel(ThinkingHigh); err != nil {
+	if err := engine.settings.SetThinkingLevel(ThinkingHigh); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := engine.Run(context.Background(), "second", discardEvents); err != nil {
+	if _, err := engine.Run(context.Background(), textParts("second"), discardEvents); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.SetThinkingLevel("extreme"); err == nil {
+	if err := engine.settings.SetThinkingLevel("extreme"); err == nil {
 		t.Fatal("invalid thinking level accepted")
 	}
 }
@@ -335,7 +323,7 @@ func TestEngineRejectsPreCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := engine.Run(ctx, "canceled", discardEvents); !errors.Is(err, context.Canceled) {
+	if _, err := engine.Run(ctx, textParts("canceled"), discardEvents); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context.Canceled", err)
 	}
 }
@@ -357,7 +345,7 @@ func TestEngineRunContent(t *testing.T) {
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
 	image := &Image{MediaType: "image/png", Data: []byte("png")}
 
-	if _, err := engine.RunContent(context.Background(), []ContentPart{
+	if _, err := engine.Run(context.Background(), []ContentPart{
 		{Kind: ContentPartText, Text: "describe "},
 		{Kind: ContentPartImage, Image: image},
 		{Kind: ContentPartText, Text: " please"},
@@ -376,7 +364,7 @@ func TestEnginePreservesTextOnlyContent(t *testing.T) {
 		},
 	}}
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
-	if _, err := engine.RunContent(context.Background(), []ContentPart{
+	if _, err := engine.Run(context.Background(), []ContentPart{
 		{Kind: ContentPartText, Text: "before"},
 		{Kind: ContentPartText, Text: "after"},
 	}, discardEvents); err != nil {
@@ -410,7 +398,7 @@ func TestProviderRetryOwnsContent(t *testing.T) {
 		{Kind: ContentPartImage, Image: &Image{MediaType: "image/png", Data: []byte("png")}},
 	}
 
-	if _, err := engine.RunContent(context.Background(), content, discardEvents); err != nil {
+	if _, err := engine.Run(context.Background(), content, discardEvents); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -436,10 +424,10 @@ func TestProviderRequestOwnsContent(t *testing.T) {
 		{Kind: ContentPartImage, Image: &Image{MediaType: "image/png", Data: []byte("png")}},
 	}
 
-	if _, err := engine.RunContent(context.Background(), content, discardEvents); err == nil {
+	if _, err := engine.Run(context.Background(), content, discardEvents); err == nil {
 		t.Fatal("first run succeeded")
 	}
-	if _, err := engine.RunContent(context.Background(), content, discardEvents); err != nil {
+	if _, err := engine.Run(context.Background(), content, discardEvents); err != nil {
 		t.Fatal(err)
 	}
 }

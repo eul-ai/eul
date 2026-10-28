@@ -44,7 +44,7 @@ func TestSteeringSignalInterruptsToolWaitAndDeliversContinuation(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(context.Background(), "start", discardEvents)
+		_, err := engine.Run(context.Background(), textParts("start"), discardEvents)
 		done <- err
 	}()
 	<-toolbox.started

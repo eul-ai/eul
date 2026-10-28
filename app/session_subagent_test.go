@@ -52,7 +52,7 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, runErr := session.engine.Run(context.Background(), "test prompt", func(agent.Event) error { return nil })
+	result, runErr := session.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "test prompt"}}, func(agent.Event) error { return nil })
 	if err := session.finish(runErr); err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, runErr := session.engine.Run(context.Background(), "review in parallel", func(agent.Event) error { return nil })
+	result, runErr := session.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "review in parallel"}}, func(agent.Event) error { return nil })
 	if err := session.finish(runErr); err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) 
 	waitStarted := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(context.Background(), "start", func(event agent.Event) error {
+		_, err := engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "start"}}, func(event agent.Event) error {
 			if event.Kind == agent.EventToolStart && event.Call.Name == "wait_for_subagent" {
 				close(waitStarted)
 			}

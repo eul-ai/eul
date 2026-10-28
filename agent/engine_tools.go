@@ -70,7 +70,7 @@ func (e *Engine) executeToolRound(ctx context.Context, calls []ToolCall, toolEve
 
 	inputs := make([]Input, len(results))
 	for index, result := range results {
-		inputs[index] = toolResultInput(result)
+		inputs[index] = NewToolResultInput(result)
 	}
 	if err := ctx.Err(); err != nil {
 		return inputs, err
@@ -81,7 +81,7 @@ func (e *Engine) executeToolRound(ctx context.Context, calls []ToolCall, toolEve
 func unexecutedToolInputs(calls []ToolCall, cause error) []Input {
 	inputs := make([]Input, len(calls))
 	for index, call := range calls {
-		inputs[index] = toolResultInput(ToolResult{
+		inputs[index] = NewToolResultInput(ToolResult{
 			CallID:  call.ID,
 			Tool:    call.Name,
 			Output:  "tool was not executed: " + cause.Error(),

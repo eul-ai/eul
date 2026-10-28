@@ -24,6 +24,7 @@ type terminalOptionsBuilder struct {
 	subagentUpdates    <-chan subagent.Status
 	permissionRequests <-chan terminal.PermissionRequest
 	engine             *agent.Engine
+	settings           *agent.Settings
 	checkpoints        *checkpointCoordinator
 	sessions           terminal.Sessions
 	messageHistory     terminal.MessageHistory
@@ -98,9 +99,9 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 			SetGoal:          source.engine.SetGoal,
 			Goal:             source.engine.Goal,
 			ClearGoal:        source.engine.ClearGoal,
-			SetThinkingLevel: source.engine.SetThinkingLevel,
+			SetThinkingLevel: source.settings.SetThinkingLevel,
 			SetFastMode: func(enabled bool) error {
-				source.engine.SetFastMode(enabled)
+				source.settings.SetFastMode(enabled)
 				return nil
 			},
 		},
@@ -143,7 +144,7 @@ func newTerminalCallbacks(engine *agent.Engine, checkpoints *checkpointCoordinat
 func (callbacks *terminalCallbacks) operations() terminal.Operations {
 	return terminal.Operations{
 		RunTurn: func(ctx context.Context, content []agent.ContentPart, stream terminal.EventStream) error {
-			_, err := callbacks.engine.RunContent(ctx, content, callbacks.sink(stream))
+			_, err := callbacks.engine.Run(ctx, content, callbacks.sink(stream))
 			return err
 		},
 		Compact: func(ctx context.Context, stream terminal.EventStream) error {

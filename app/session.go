@@ -177,6 +177,7 @@ func newAgentSessionComponents(
 		subagentUpdates:    tools.subagentUpdates,
 		permissionRequests: permissionRequests,
 		engine:             engine,
+		settings:           settings,
 	}
 	return session, options, nil
 }

@@ -30,7 +30,7 @@ func TestEngineUsesFallbackPresentationForExecutionOnlyToolbox(t *testing.T) {
 	}
 	var presentations []ToolPresentation
 	engine := newTestEngine(t, provider, toolbox, Options{})
-	if _, err := engine.Run(context.Background(), "start", func(event Event) error {
+	if _, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 		if event.Kind == EventToolStart {
 			presentations = append(presentations, event.Presentation)
 		}
@@ -113,7 +113,7 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 
 	engine := newTestEngine(t, provider, toolbox, Options{Model: "test-model"})
 	var events []Event
-	result, err := engine.Run(context.Background(), "inspect the file", func(event Event) error {
+	result, err := engine.Run(context.Background(), textParts("inspect the file"), func(event Event) error {
 		events = append(events, event)
 		return nil
 	})
@@ -135,7 +135,7 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 		t.Fatalf("unexpected event payloads: %+v", events)
 	}
 
-	next, err := engine.Run(context.Background(), "next question", discardEvents)
+	next, err := engine.Run(context.Background(), textParts("next question"), discardEvents)
 	if err != nil {
 		t.Fatalf("second Run() error = %v", err)
 	}
@@ -211,7 +211,7 @@ func TestEngineUsesFinalPresentationOnlyOnToolEnd(t *testing.T) {
 	}}
 	var events []Event
 	engine := newTestEngine(t, provider, toolbox, Options{})
-	if _, err := engine.Run(context.Background(), "edit", func(event Event) error {
+	if _, err := engine.Run(context.Background(), textParts("edit"), func(event Event) error {
 		events = append(events, event)
 		return nil
 	}); err != nil {
@@ -281,7 +281,7 @@ func TestEngineStreamsToolPresentationBeforeGenerationAndExecutionFinish(t *test
 	}
 
 	engine := newTestEngine(t, provider, toolbox, Options{Model: "test-model"})
-	if _, err := engine.Run(context.Background(), "write", func(event Event) error {
+	if _, err := engine.Run(context.Background(), textParts("write"), func(event Event) error {
 		events = append(events, event)
 		return nil
 	}); err != nil {
@@ -338,7 +338,7 @@ func TestEngineSerializesConcurrentToolSnapshots(t *testing.T) {
 	}}
 	var events []Event
 	engine := newTestEngine(t, provider, toolbox, Options{Model: "test-model"})
-	if _, err := engine.Run(context.Background(), "write", func(event Event) error {
+	if _, err := engine.Run(context.Background(), textParts("write"), func(event Event) error {
 		events = append(events, event)
 		return nil
 	}); err != nil {
@@ -366,7 +366,7 @@ func TestEngineClosesStreamedToolsInStartOrderOnProviderFailure(t *testing.T) {
 	})
 	var events []Event
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{Model: "test-model"})
-	_, err := engine.Run(context.Background(), "write", func(event Event) error {
+	_, err := engine.Run(context.Background(), textParts("write"), func(event Event) error {
 		events = append(events, event)
 		return nil
 	})
@@ -420,7 +420,7 @@ func TestEngineExecutesMultipleCallsConcurrentlyAndReturnsResultsInProviderOrder
 	var events []Event
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(context.Background(), "run both", func(event Event) error {
+		_, err := engine.Run(context.Background(), textParts("run both"), func(event Event) error {
 			events = append(events, event)
 			return nil
 		})
@@ -522,7 +522,7 @@ func TestEngineCancelsParallelCallsOnUpdateFailureAndPreservesResults(t *testing
 	engine := newTestEngine(t, provider, toolbox, Options{})
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(context.Background(), "run", func(event Event) error {
+		_, err := engine.Run(context.Background(), textParts("run"), func(event Event) error {
 			if event.Kind == EventToolUpdate && event.Call.ID == "update" {
 				return updateFailure
 			}
@@ -555,7 +555,7 @@ func TestEngineCancelsParallelCallsOnUpdateFailureAndPreservesResults(t *testing
 		t.Fatal("update failure did not cancel sibling tool")
 	}
 
-	result, err := engine.Run(context.Background(), "continue", discardEvents)
+	result, err := engine.Run(context.Background(), textParts("continue"), discardEvents)
 	if err != nil || result.Text != "recovered" {
 		t.Fatalf("continued result = %+v, error = %v", result, err)
 	}
@@ -581,7 +581,7 @@ func TestEngineReturnsUnknownToolsToProvider(t *testing.T) {
 	}}
 
 	engine := newTestEngine(t, provider, toolbox, Options{})
-	result, err := engine.Run(context.Background(), "recover", discardEvents)
+	result, err := engine.Run(context.Background(), textParts("recover"), discardEvents)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -619,7 +619,7 @@ func TestEngineDoesNotLimitToolRounds(t *testing.T) {
 	}}
 
 	engine := newTestEngine(t, provider, toolbox, Options{})
-	result, err := engine.Run(context.Background(), "loop", discardEvents)
+	result, err := engine.Run(context.Background(), textParts("loop"), discardEvents)
 	if err != nil || result.Text != "done" {
 		t.Fatalf("result = %+v, error = %v", result, err)
 	}
@@ -653,7 +653,7 @@ func TestEngineHonorsCancellationDuringToolExecution(t *testing.T) {
 	done := make(chan error, 1)
 	var events []Event
 	go func() {
-		_, err := engine.Run(ctx, "wait", func(event Event) error {
+		_, err := engine.Run(ctx, textParts("wait"), func(event Event) error {
 			events = append(events, event)
 			return nil
 		})
@@ -682,39 +682,12 @@ func TestEngineHonorsCancellationDuringToolExecution(t *testing.T) {
 	if !events[len(events)-1].Result.IsError {
 		t.Fatalf("canceled tool result = %+v", events[len(events)-1].Result)
 	}
-	result, err := engine.Run(context.Background(), "continue", discardEvents)
+	result, err := engine.Run(context.Background(), textParts("continue"), discardEvents)
 	if err != nil {
 		t.Fatalf("Run() after cancellation error = %v", err)
 	}
 	if result.Text != "recovered" {
 		t.Fatalf("Run() after cancellation text = %q", result.Text)
-	}
-}
-
-func TestEngineResetDiscardsProviderState(t *testing.T) {
-	provider := &scriptedProvider{t: t, steps: []providerStep{
-		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if len(request.State) != 0 {
-				t.Fatalf("initial state = %q", request.State)
-			}
-			return Response{Text: "first", State: []byte("saved")}, nil
-		},
-		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if len(request.State) != 0 || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputUser || request.Inputs[0].PlainText() != "second" {
-				t.Fatalf("request after reset = %+v", request)
-			}
-			return Response{Text: "second"}, nil
-		},
-	}}
-	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
-
-	if _, err := engine.Run(context.Background(), "first", discardEvents); err != nil {
-		t.Fatalf("first Run() error = %v", err)
-	}
-	engine.conversation.inputs = []Input{{Kind: InputToolResult, CallID: "pending", Tool: "write", Text: "pending"}}
-	engine.Reset()
-	if _, err := engine.Run(context.Background(), "second", discardEvents); err != nil {
-		t.Fatalf("second Run() error = %v", err)
 	}
 }
 
@@ -735,7 +708,7 @@ func TestEngineTreatsToolLocalDeadlineAsRecoverable(t *testing.T) {
 	}}
 	engine := newTestEngine(t, provider, toolbox, Options{})
 
-	result, err := engine.Run(context.Background(), "run", discardEvents)
+	result, err := engine.Run(context.Background(), textParts("run"), discardEvents)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}

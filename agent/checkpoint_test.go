@@ -151,7 +151,7 @@ func TestEngineCheckpointEventsMarkResumableBoundaries(t *testing.T) {
 	}}, Options{Checkpointing: true})
 
 	var events []Event
-	if _, err := engine.Run(context.Background(), "start", func(event Event) error {
+	if _, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 		events = append(events, event)
 		return nil
 	}); err != nil {
@@ -189,7 +189,7 @@ func TestCheckpointFailureStopsGoalContinuation(t *testing.T) {
 	}
 	persistErr := errors.New("persist failed")
 
-	_, err := engine.Run(context.Background(), "start", func(event Event) error {
+	_, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 		if event.Kind == EventCheckpoint {
 			return persistErr
 		}

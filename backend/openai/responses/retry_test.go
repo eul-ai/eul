@@ -127,7 +127,7 @@ func TestClientRetriesTransientGenerationThroughEngine(t *testing.T) {
 	engine := agent.New(client, emptyToolbox{}, agent.Options{Model: "test-model"})
 
 	var retries []agent.Event
-	result, err := engine.Run(context.Background(), "hello", func(event agent.Event) error {
+	result, err := engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "hello"}}, func(event agent.Event) error {
 		if event.Kind == agent.EventGenerationRetry {
 			retries = append(retries, event)
 		}
@@ -157,7 +157,7 @@ func TestClientRetriesInterruptedStreamAfterToolCallDelivery(t *testing.T) {
 	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 	engine := agent.New(client, emptyToolbox{}, agent.Options{Model: "test-model"})
 
-	result, err := engine.Run(context.Background(), "hello", func(agent.Event) error { return nil })
+	result, err := engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "hello"}}, func(agent.Event) error { return nil })
 	if err != nil || result.Text != "recovered" || calls.Load() != 2 {
 		t.Fatalf("result = %+v, error = %v, calls = %d", result, err, calls.Load())
 	}

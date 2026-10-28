@@ -34,7 +34,7 @@ func TestEngineContinuesActiveGoalBeforeSettling(t *testing.T) {
 	}
 
 	var events []Event
-	result, err := engine.Run(context.Background(), "start", func(event Event) error {
+	result, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 		events = append(events, event)
 		return nil
 	})
@@ -74,7 +74,7 @@ func TestEngineGivesSteeringPriorityOverGoal(t *testing.T) {
 	var events []Event
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(context.Background(), "start", func(event Event) error {
+		_, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 			events = append(events, event)
 			return nil
 		})
@@ -128,7 +128,7 @@ func TestEngineDrainsSteeringBeforeGoalContinuation(t *testing.T) {
 	var events []Event
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(context.Background(), "start", func(event Event) error {
+		_, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 			events = append(events, event)
 			return nil
 		})
@@ -181,7 +181,7 @@ func TestEngineDoesNotInjectGoalAfterToolBatch(t *testing.T) {
 	}
 
 	var events []Event
-	if _, err := engine.Run(context.Background(), "start", func(event Event) error {
+	if _, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 		events = append(events, event)
 		return nil
 	}); err != nil {
@@ -228,7 +228,7 @@ func TestEngineClearGoalDuringToolBatchFinishesResultsAndStopsContinuation(t *te
 	var events []Event
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(context.Background(), "start", func(event Event) error {
+		_, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 			events = append(events, event)
 			return nil
 		})
@@ -274,7 +274,7 @@ func TestEngineCompletionToolStopsGoalContinuation(t *testing.T) {
 	}
 
 	var events []Event
-	result, err := engine.Run(context.Background(), "start", func(event Event) error {
+	result, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 		events = append(events, event)
 		return nil
 	})
@@ -309,7 +309,7 @@ func TestEngineRollsBackGoalInputWhenEventFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := engine.Run(context.Background(), "first", func(event Event) error {
+	_, err := engine.Run(context.Background(), textParts("first"), func(event Event) error {
 		if event.Kind == EventGoalContinuation {
 			return sinkErr
 		}
@@ -318,7 +318,7 @@ func TestEngineRollsBackGoalInputWhenEventFails(t *testing.T) {
 	if !errors.Is(err, sinkErr) {
 		t.Fatalf("first run error = %v", err)
 	}
-	result, err := engine.Run(context.Background(), "recover", discardEvents)
+	result, err := engine.Run(context.Background(), textParts("recover"), discardEvents)
 	if err != nil || result.Text != "recovered" {
 		t.Fatalf("recovery result=%+v error=%v", result, err)
 	}
@@ -342,7 +342,7 @@ func TestEngineClearGoalDuringGenerationPreventsContinuation(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(context.Background(), "start", discardEvents)
+		_, err := engine.Run(context.Background(), textParts("start"), discardEvents)
 		done <- err
 	}()
 	<-started
@@ -402,7 +402,7 @@ func TestEngineToolLifecycleFailureRetainsGoalWithoutContinuing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := engine.Run(context.Background(), "start", func(event Event) error {
+	_, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 		if event.Kind == EventToolExecute {
 			return sinkErr
 		}
@@ -427,7 +427,7 @@ func TestEngineFailureRetainsGoal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := engine.Run(context.Background(), "start", discardEvents); !errors.Is(err, failure) {
+	if _, err := engine.Run(context.Background(), textParts("start"), discardEvents); !errors.Is(err, failure) {
 		t.Fatalf("run error = %v", err)
 	}
 	goal, ok := engine.Goal()
@@ -451,7 +451,7 @@ func TestEngineCancellationRetainsGoal(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.Run(ctx, "start", discardEvents)
+		_, err := engine.Run(ctx, textParts("start"), discardEvents)
 		done <- err
 	}()
 	<-started
@@ -462,18 +462,5 @@ func TestEngineCancellationRetainsGoal(t *testing.T) {
 	goal, ok := engine.Goal()
 	if !ok || goal.Objective != "continue" || goal.Complete {
 		t.Fatalf("goal after cancellation = %+v, exists=%v", goal, ok)
-	}
-}
-
-func TestEngineResetClearsGoal(t *testing.T) {
-	engine := newTestEngine(t, &scriptedProvider{t: t}, &fakeToolbox{}, Options{})
-	if err := engine.SetGoal("continue"); err != nil {
-		t.Fatal(err)
-	}
-	if err := engine.Reset(); err != nil {
-		t.Fatal(err)
-	}
-	if goal, ok := engine.Goal(); ok {
-		t.Fatalf("goal after reset = %+v", goal)
 	}
 }

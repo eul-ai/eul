@@ -63,15 +63,7 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 	}
 }
 
-func (e *Engine) Run(ctx context.Context, userText string, sink EventSink) (RunResult, error) {
-	return e.run(ctx, []ContentPart{{Kind: ContentPartText, Text: userText}}, sink)
-}
-
-func (e *Engine) RunContent(ctx context.Context, content []ContentPart, sink EventSink) (RunResult, error) {
-	return e.run(ctx, content, sink)
-}
-
-func (e *Engine) run(ctx context.Context, content []ContentPart, sink EventSink) (RunResult, error) {
+func (e *Engine) Run(ctx context.Context, content []ContentPart, sink EventSink) (RunResult, error) {
 	if !e.mu.TryLock() {
 		return RunResult{}, errEngineBusy
 	}
@@ -86,11 +78,11 @@ func (e *Engine) run(ctx context.Context, content []ContentPart, sink EventSink)
 		return RunResult{}, err
 	}
 
-	e.beginContinuations()
-	defer e.endContinuations()
+	e.continuations.beginRun()
+	defer e.continuations.endRun()
 
 	current := e.conversation.clone()
-	current.inputs = append(current.inputs, userInput(content))
+	current.inputs = append(current.inputs, NewUserInput(content...))
 	return (&engineTurn{
 		engine:  e,
 		ctx:     ctx,
@@ -147,34 +139,6 @@ func (e *Engine) SetSessionID(sessionID string) {
 	e.sessionID = sessionID
 }
 
-func (e *Engine) SetThinkingLevel(level ThinkingLevel) error {
-	return e.settings.SetThinkingLevel(level)
-}
-
-func (e *Engine) SetFastMode(enabled bool) {
-	e.settings.SetFastMode(enabled)
-}
-
-func (e *Engine) currentThinkingLevel() ThinkingLevel {
-	level, _ := e.currentSettings()
-	return level
-}
-
-func (e *Engine) currentSettings() (ThinkingLevel, bool) {
-	return e.settings.Snapshot()
-}
-
-func (e *Engine) Reset() error {
-	if !e.mu.TryLock() {
-		return errEngineBusy
-	}
-	defer e.mu.Unlock()
-
-	e.conversation = conversationState{}
-	e.continuations.reset()
-	return nil
-}
-
 func (e *Engine) Steer(content []ContentPart) bool {
 	return e.continuations.steer(content)
 }
@@ -199,39 +163,19 @@ func (e *Engine) CompleteGoal() error {
 	return e.continuations.completeGoal()
 }
 
-func (e *Engine) beginContinuations() {
-	e.continuations.beginRun()
-}
-
-func (e *Engine) endContinuations() {
-	e.continuations.endRun()
-}
-
 func deliverContinuation(current *conversationState, next pendingContinuation, sink EventSink) error {
-	current.inputs = append(current.inputs, userInput(next.content))
+	current.inputs = append(current.inputs, NewUserInput(next.content...))
 	event := Event{Kind: EventSteering, Content: cloneContentParts(next.content)}
 	if next.kind == continuationGoal {
 		event.Kind = EventGoalContinuation
 		event.Text = NewUserInput(next.content...).PlainText()
 		event.Content = nil
 	}
-	if err := emit(sink, event); err != nil {
+	if err := sink(event); err != nil {
 		current.inputs = current.inputs[:len(current.inputs)-1]
 		return err
 	}
 	return nil
-}
-
-func userInput(content []ContentPart) Input {
-	return NewUserInput(content...)
-}
-
-func toolResultInput(result ToolResult) Input {
-	return NewToolResultInput(result)
-}
-
-func emit(sink EventSink, event Event) error {
-	return sink(event)
 }
 
 func addUsage(total *Usage, usage Usage) {

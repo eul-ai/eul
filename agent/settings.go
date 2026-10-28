@@ -58,10 +58,6 @@ func (levels ThinkingLevelMap) SupportedLevels() []ThinkingLevel {
 	return supported
 }
 
-func (levels ThinkingLevelMap) Clamp(level ThinkingLevel) ThinkingLevel {
-	return ClampThinkingLevel(level, levels.SupportedLevels())
-}
-
 func ClampThinkingLevel(level ThinkingLevel, supported []ThinkingLevel) ThinkingLevel {
 	if slices.Contains(supported, level) {
 		return level

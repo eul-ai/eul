@@ -73,7 +73,7 @@ func TestEngineDeliversAndAcknowledgesInbox(t *testing.T) {
 	})
 	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, AdditionalInstructions: inbox.additionalInstructions})
 
-	result, err := engine.Run(context.Background(), "start", discardEvents)
+	result, err := engine.Run(context.Background(), textParts("start"), discardEvents)
 	if err != nil || result.Text != "answer" {
 		t.Fatalf("result = %+v, error = %v", result, err)
 	}
@@ -90,7 +90,7 @@ func TestEngineAcknowledgesInboxOnlyAfterCheckpointSucceeds(t *testing.T) {
 	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, AdditionalInstructions: inbox.additionalInstructions, Checkpointing: true})
 	persistErr := errors.New("persist failed")
 
-	_, err := engine.Run(context.Background(), "start", func(event Event) error {
+	_, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 		if event.Kind == EventCheckpoint {
 			return persistErr
 		}
@@ -108,7 +108,7 @@ func TestEngineLeavesInboxPendingAfterGenerationFailure(t *testing.T) {
 	})
 	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, AdditionalInstructions: inbox.additionalInstructions})
 
-	if _, err := engine.Run(context.Background(), "start", discardEvents); err == nil {
+	if _, err := engine.Run(context.Background(), textParts("start"), discardEvents); err == nil {
 		t.Fatal("generation succeeded")
 	}
 	if len(inbox.acknowledged) != 0 || len(inbox.messages) != 1 {
@@ -155,7 +155,7 @@ func TestEngineAutomaticallyCompactsOrdinaryStateBeforeDeliveringInbox(t *testin
 	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, AdditionalInstructions: inbox.additionalInstructions})
 	engine.conversation.state = []byte("full")
 
-	result, err := engine.Run(context.Background(), "start", discardEvents)
+	result, err := engine.Run(context.Background(), textParts("start"), discardEvents)
 	if err != nil || result.Text != "synthesized" || generateCalls != 1 || len(inbox.acknowledged) != 1 {
 		t.Fatalf("result = %+v, error = %v, generate calls = %d, acknowledgements = %v", result, err, generateCalls, inbox.acknowledged)
 	}
@@ -204,7 +204,7 @@ func TestEngineReattachesInboxAfterErrorCompaction(t *testing.T) {
 	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, AdditionalInstructions: inbox.additionalInstructions})
 	engine.conversation.state = []byte("full")
 
-	result, err := engine.Run(context.Background(), "start", discardEvents)
+	result, err := engine.Run(context.Background(), textParts("start"), discardEvents)
 	if err != nil || result.Text != "synthesized" || generateCalls != 2 || len(inbox.acknowledged) != 1 {
 		t.Fatalf("result = %+v, error = %v, generate calls = %d, acknowledgements = %v", result, err, generateCalls, inbox.acknowledged)
 	}
@@ -242,7 +242,7 @@ func TestEngineCompletionAfterSettlementRemainsForNextUserTurn(t *testing.T) {
 	})
 	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, AdditionalInstructions: inbox.additionalInstructions})
 
-	if _, err := engine.Run(context.Background(), "first", discardEvents); err != nil {
+	if _, err := engine.Run(context.Background(), textParts("first"), discardEvents); err != nil {
 		t.Fatal(err)
 	}
 	for {
@@ -257,7 +257,7 @@ func TestEngineCompletionAfterSettlementRemainsForNextUserTurn(t *testing.T) {
 	if calls != 1 || len(inbox.acknowledged) != 0 {
 		t.Fatalf("calls = %d, acknowledgements = %v", calls, inbox.acknowledged)
 	}
-	if _, err := engine.Run(context.Background(), "second", discardEvents); err != nil {
+	if _, err := engine.Run(context.Background(), textParts("second"), discardEvents); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 || len(inbox.acknowledged) != 1 {
@@ -294,7 +294,7 @@ func TestEngineSettlementDeliversCompletionThatRacesFinalAnswer(t *testing.T) {
 	})
 	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, AdditionalInstructions: inbox.additionalInstructions})
 
-	result, err := engine.Run(context.Background(), "start", discardEvents)
+	result, err := engine.Run(context.Background(), textParts("start"), discardEvents)
 	if err != nil || result.Text != "final" || calls != 2 {
 		t.Fatalf("result = %+v, error = %v, calls = %d", result, err, calls)
 	}

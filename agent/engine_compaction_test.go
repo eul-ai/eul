@@ -33,10 +33,10 @@ func TestEngineGenerationFailurePreservesPriorContextAndUserInput(t *testing.T) 
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
 	engine.conversation.state = []byte("stable")
 
-	if _, err := engine.Run(context.Background(), "first question", discardEvents); !errors.Is(err, failure) {
+	if _, err := engine.Run(context.Background(), textParts("first question"), discardEvents); !errors.Is(err, failure) {
 		t.Fatalf("first Run() error = %v", err)
 	}
-	result, err := engine.Run(context.Background(), "second question", discardEvents)
+	result, err := engine.Run(context.Background(), textParts("second question"), discardEvents)
 	if err != nil || result.Text != "continued" {
 		t.Fatalf("continued result = %+v, error = %v", result, err)
 	}
@@ -98,7 +98,7 @@ func TestEngineCompactionSinkFailuresPreservePhaseContinuation(t *testing.T) {
 			engine.conversation.usage = Usage{TotalTokens: 100}
 
 			failed := false
-			_, err := engine.Run(context.Background(), "first", func(event Event) error {
+			_, err := engine.Run(context.Background(), textParts("first"), func(event Event) error {
 				if event.Kind == test.failKind && !failed {
 					failed = true
 					return failure
@@ -108,7 +108,7 @@ func TestEngineCompactionSinkFailuresPreservePhaseContinuation(t *testing.T) {
 			if !errors.Is(err, failure) {
 				t.Fatalf("Run() error = %v, want sink failure", err)
 			}
-			result, err := engine.Run(context.Background(), "continue", discardEvents)
+			result, err := engine.Run(context.Background(), textParts("continue"), discardEvents)
 			if err != nil || result.Text != "recovered" || generateCalls != 1 {
 				t.Fatalf("continued result = %+v, error = %v, generate calls = %d", result, err, generateCalls)
 			}
@@ -250,7 +250,7 @@ func TestEngineEventSinkFailuresPreserveResponseContinuation(t *testing.T) {
 			})
 			engine := newTestEngine(t, provider, test.toolbox, Options{})
 			failed := false
-			_, err := engine.Run(context.Background(), "first", func(event Event) error {
+			_, err := engine.Run(context.Background(), textParts("first"), func(event Event) error {
 				if event.Kind == test.failKind && !failed {
 					failed = true
 					return failure
@@ -260,7 +260,7 @@ func TestEngineEventSinkFailuresPreserveResponseContinuation(t *testing.T) {
 			if !errors.Is(err, failure) {
 				t.Fatalf("Run() error = %v, want sink failure", err)
 			}
-			result, err := engine.Run(context.Background(), "continue", discardEvents)
+			result, err := engine.Run(context.Background(), textParts("continue"), discardEvents)
 			if err != nil || result.Text != "recovered" || executed != test.wantExecuted {
 				t.Fatalf("continued result = %+v, error = %v, executions = %d", result, err, executed)
 			}
@@ -291,7 +291,7 @@ func TestEngineCancellationAfterCompletedToolRoundPreservesResult(t *testing.T) 
 	}}
 	engine := newTestEngine(t, provider, toolbox, Options{})
 	ctx, cancel := context.WithCancel(context.Background())
-	_, err := engine.Run(ctx, "first", func(event Event) error {
+	_, err := engine.Run(ctx, textParts("first"), func(event Event) error {
 		if event.Kind == EventToolEnd {
 			cancel()
 		}
@@ -300,7 +300,7 @@ func TestEngineCancellationAfterCompletedToolRoundPreservesResult(t *testing.T) 
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context.Canceled", err)
 	}
-	result, err := engine.Run(context.Background(), "continue", discardEvents)
+	result, err := engine.Run(context.Background(), textParts("continue"), discardEvents)
 	if err != nil || result.Text != "recovered" || toolExecutions != 1 {
 		t.Fatalf("continued result = %+v, error = %v, executions = %d", result, err, toolExecutions)
 	}
@@ -336,11 +336,11 @@ func TestEngineCompactsBeforeNextUserGeneration(t *testing.T) {
 	}
 	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
 
-	if _, err := engine.Run(context.Background(), "first", discardEvents); err != nil {
+	if _, err := engine.Run(context.Background(), textParts("first"), discardEvents); err != nil {
 		t.Fatalf("first Run() error = %v", err)
 	}
 	var events []Event
-	result, err := engine.Run(context.Background(), "next", func(event Event) error {
+	result, err := engine.Run(context.Background(), textParts("next"), func(event Event) error {
 		events = append(events, event)
 		return nil
 	})
@@ -394,7 +394,7 @@ func TestEngineCompactsToolContinuation(t *testing.T) {
 	}}
 	engine := newTestEngine(t, provider, toolbox, Options{})
 
-	result, err := engine.Run(context.Background(), "inspect", discardEvents)
+	result, err := engine.Run(context.Background(), textParts("inspect"), discardEvents)
 	if err != nil || result.Text != "done" {
 		t.Fatalf("result = %+v, error = %v", result, err)
 	}
@@ -460,7 +460,7 @@ func TestEngineCompactsToolContinuationAfterGenerationError(t *testing.T) {
 	}}
 	var events []Event
 	engine := newTestEngine(t, compacting, toolbox, Options{})
-	result, err := engine.Run(context.Background(), "inspect", func(event Event) error {
+	result, err := engine.Run(context.Background(), textParts("inspect"), func(event Event) error {
 		events = append(events, event)
 		return nil
 	})
@@ -500,7 +500,7 @@ func TestEngineAttemptsErrorCompactionOnce(t *testing.T) {
 	}
 	engine := newTestEngine(t, compacting, &fakeToolbox{}, Options{})
 
-	_, err := engine.Run(context.Background(), "hello", discardEvents)
+	_, err := engine.Run(context.Background(), textParts("hello"), discardEvents)
 	if !errors.Is(err, contextLimit) {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -528,7 +528,7 @@ func TestEngineErrorCompactionFailurePreservesContinuation(t *testing.T) {
 	engine.conversation.state = []byte("stable")
 	engine.conversation.usage = Usage{TotalTokens: 100}
 
-	_, err := engine.Run(context.Background(), "hello", discardEvents)
+	_, err := engine.Run(context.Background(), textParts("hello"), discardEvents)
 	if !errors.Is(err, compactFailure) {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -575,11 +575,11 @@ func TestEngineCompactionFailureAfterToolPreservesContinuation(t *testing.T) {
 	engine.conversation.state = []byte("stable")
 	engine.conversation.usage = Usage{TotalTokens: 50}
 
-	_, err := engine.Run(context.Background(), "change", discardEvents)
+	_, err := engine.Run(context.Background(), textParts("change"), discardEvents)
 	if !errors.Is(err, compactError) {
 		t.Fatalf("Run() error = %v", err)
 	}
-	result, err := engine.Run(context.Background(), "continue", discardEvents)
+	result, err := engine.Run(context.Background(), textParts("continue"), discardEvents)
 	if err != nil || result.Text != "recovered" {
 		t.Fatalf("continued result = %+v, error = %v", result, err)
 	}
@@ -634,40 +634,5 @@ func TestEngineRejectsOnDemandCompactionWithoutContext(t *testing.T) {
 
 	if err := engine.Compact(context.Background(), discardEvents); err == nil {
 		t.Fatalf("Compact() error = %v", err)
-	}
-}
-
-func TestEngineResetClearsCompactionUsage(t *testing.T) {
-	scripted := &scriptedProvider{t: t, steps: []providerStep{
-		func(context.Context, Request, TextSink) (Response, error) {
-			return Response{Text: "first", State: []byte("state"), Usage: Usage{TotalTokens: 100}}, nil
-		},
-		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			if len(request.State) != 0 {
-				t.Fatalf("state after reset = %q", request.State)
-			}
-			return Response{Text: "second"}, nil
-		},
-	}}
-	provider := &compactingProvider{
-		Provider: scripted,
-		shouldCompact: func(request Request, usage Usage) bool {
-			if len(request.State) == 0 && usage != (Usage{}) {
-				t.Fatalf("usage without state = %+v", usage)
-			}
-			return false
-		},
-		compact: func(context.Context, Request) (CompactResponse, error) {
-			t.Fatal("unexpected compaction")
-			return CompactResponse{}, nil
-		},
-	}
-	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
-	if _, err := engine.Run(context.Background(), "first", discardEvents); err != nil {
-		t.Fatal(err)
-	}
-	engine.Reset()
-	if _, err := engine.Run(context.Background(), "second", discardEvents); err != nil {
-		t.Fatal(err)
 	}
 }
