@@ -19,6 +19,7 @@ type terminalFrame struct {
 	conversationTop        int
 	conversationLines      []string
 	conversationSeparators []string
+	conversationMarkdown   []conversationMarkdown
 	conversationVersion    uint64
 	conversationTruncated  bool
 }
@@ -29,6 +30,7 @@ type renderPreparation struct {
 	conversationLines      []styledLine
 	conversationPlain      []string
 	conversationSeparators []string
+	conversationMarkdown   []conversationMarkdown
 	conversationTruncated  bool
 	scrollTop              int
 }
@@ -50,6 +52,7 @@ func (r *tuiRenderer) prepare(model *tuiModel) renderPreparation {
 		conversationLines:      r.conversationLines,
 		conversationPlain:      r.conversationPlain,
 		conversationSeparators: r.conversationSeparators,
+		conversationMarkdown:   r.conversationMarkdown,
 		conversationTruncated:  r.conversationBlockStart > 0,
 		scrollTop:              model.scrollTop,
 	}
@@ -189,6 +192,7 @@ func (r *tuiRenderer) flattenConversation(model *tuiModel) {
 	lines := make([]styledLine, 0, lineCapacity)
 	plain := make([]string, 0, plainCapacity)
 	separators := make([]string, 0, lineCapacity)
+	markdown := make([]conversationMarkdown, 0, len(r.conversationMarkdown))
 	blankPlain := renderedLineText(styledLine{}, model.width)
 	appendBlank := func() {
 		lines = append(lines, styledLine{})
@@ -203,6 +207,9 @@ func (r *tuiRenderer) flattenConversation(model *tuiModel) {
 	totalBlocks := len(r.conversationBlocks) + len(pendingSteering)
 	appendedBlocks := 0
 	appendBlock := func(rendered renderedConversationBlock) {
+		if rendered.markdown != "" {
+			markdown = append(markdown, conversationMarkdown{row: len(lines), rows: len(rendered.lines), source: rendered.markdown})
+		}
 		lines = append(lines, rendered.lines...)
 		plain = append(plain, rendered.plain...)
 		separators = append(separators, rendered.separators...)
@@ -224,9 +231,11 @@ func (r *tuiRenderer) flattenConversation(model *tuiModel) {
 	r.conversationLines = lines
 	r.conversationPlain = plain
 	r.conversationSeparators = separators
+	r.conversationMarkdown = markdown
 }
 
 func renderConversationBlock(block conversationBlock, width int) renderedConversationBlock {
+	markdown, _ := markdownSource(block)
 	lines := conversationBlockLines(block, width)
 	plain := make([]string, len(lines))
 	separators := make([]string, len(lines))
@@ -234,7 +243,7 @@ func renderConversationBlock(block conversationBlock, width int) renderedConvers
 		plain[index] = renderedLineText(line, width)
 		separators[index] = line.breakBefore.SourceSeparator()
 	}
-	return renderedConversationBlock{block: block, lines: lines, plain: plain, separators: separators}
+	return renderedConversationBlock{block: block, lines: lines, plain: plain, separators: separators, markdown: markdown}
 }
 
 func conversationBlocksEqual(left, right conversationBlock) bool {
@@ -275,6 +284,7 @@ func projectTerminalFrame(model *tuiModel, prepared renderPreparation) terminalF
 		conversationTop:        prepared.scrollTop,
 		conversationLines:      prepared.conversationPlain,
 		conversationSeparators: prepared.conversationSeparators,
+		conversationMarkdown:   prepared.conversationMarkdown,
 		conversationVersion:    model.conversationVersion,
 		conversationTruncated:  prepared.conversationTruncated,
 	}

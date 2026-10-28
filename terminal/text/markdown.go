@@ -18,6 +18,7 @@ const (
 type markdownBlock struct {
 	kind         markdownBlockKind
 	lines        []string
+	lineIndex    int
 	headingLevel int
 	quoteDepth   int
 	listPrefix   string
@@ -62,7 +63,7 @@ func parseMarkdownBlocks(source string) []markdownBlock {
 			for index < len(sourceLines) && strings.TrimSpace(sourceLines[index]) != "```" {
 				index++
 			}
-			blocks = append(blocks, markdownBlock{kind: markdownBlockFencedCode, lines: sourceLines[start:index]})
+			blocks = append(blocks, markdownBlock{kind: markdownBlockFencedCode, lines: sourceLines[start:index], lineIndex: start})
 			if index < len(sourceLines) {
 				index++
 			}
@@ -71,35 +72,35 @@ func parseMarkdownBlocks(source string) []markdownBlock {
 			for index < len(sourceLines) && sourceLines[index] == "" {
 				index++
 			}
-			blocks = append(blocks, markdownBlock{kind: markdownBlockBlank, lines: sourceLines[start:index]})
+			blocks = append(blocks, markdownBlock{kind: markdownBlockBlank, lines: sourceLines[start:index], lineIndex: start})
 		default:
 			if level, content, ok := parseMarkdownHeading(line); ok {
 				blocks = append(blocks, markdownBlock{
-					kind: markdownBlockHeading, lines: []string{content}, headingLevel: level,
+					kind: markdownBlockHeading, lines: []string{content}, lineIndex: index, headingLevel: level,
 				})
 				index++
 				continue
 			}
 			if isMarkdownThematicBreak(line) {
-				blocks = append(blocks, markdownBlock{kind: markdownBlockThematicBreak})
+				blocks = append(blocks, markdownBlock{kind: markdownBlockThematicBreak, lineIndex: index})
 				index++
 				continue
 			}
 			if depth, content, ok := parseMarkdownBlockQuote(line); ok {
 				blocks = append(blocks, markdownBlock{
-					kind: markdownBlockBlockQuote, lines: []string{content}, quoteDepth: depth,
+					kind: markdownBlockBlockQuote, lines: []string{content}, lineIndex: index, quoteDepth: depth,
 				})
 				index++
 				continue
 			}
 			if table, end, ok := parseMarkdownTable(sourceLines, index); ok {
-				blocks = append(blocks, markdownBlock{kind: markdownBlockTable, table: table})
+				blocks = append(blocks, markdownBlock{kind: markdownBlockTable, lineIndex: index, table: table})
 				index = end
 				continue
 			}
 			if prefix, content, ok := parseMarkdownListItem(line); ok {
 				blocks = append(blocks, markdownBlock{
-					kind: markdownBlockListItem, lines: []string{content}, listPrefix: prefix,
+					kind: markdownBlockListItem, lines: []string{content}, lineIndex: index, listPrefix: prefix,
 				})
 				index++
 				continue
@@ -109,7 +110,7 @@ func parseMarkdownBlocks(source string) []markdownBlock {
 			for index < len(sourceLines) && !startsMarkdownBlock(sourceLines, index) {
 				index++
 			}
-			blocks = append(blocks, markdownBlock{kind: markdownBlockParagraph, lines: sourceLines[start:index]})
+			blocks = append(blocks, markdownBlock{kind: markdownBlockParagraph, lines: sourceLines[start:index], lineIndex: start})
 		}
 	}
 	return blocks
@@ -403,13 +404,12 @@ func wrapMarkdownBlock(block markdownBlock, width int) []Line {
 
 func wrapMarkdownBlockQuote(depth int, content string, width int) []Line {
 	prefixStyle := Style{Foreground: ForegroundMuted}
-	prefix := strings.Repeat("│ ", depth)
 	if content == "" {
-		prefix = Truncate(strings.TrimRight(prefix, " "), width, false)
+		prefix := Truncate(strings.TrimRight(strings.Repeat("│ ", depth), " "), width, false)
 		return []Line{{Spans: AppendSpan(nil, prefix, prefixStyle)}}
 	}
 
-	prefix = Truncate(prefix, max(0, width-1), false)
+	prefix := markdownQuotePrefix(depth, width)
 	prefixWidth := Width(prefix)
 	wrapped := WrapSpans(ParseInline(content), width-prefixWidth)
 	for index := range wrapped {
@@ -420,6 +420,10 @@ func wrapMarkdownBlockQuote(depth int, content string, width int) []Line {
 		wrapped[index].Spans = spans
 	}
 	return wrapped
+}
+
+func markdownQuotePrefix(depth, width int) string {
+	return Truncate(strings.Repeat("│ ", depth), max(0, width-1), false)
 }
 
 func wrapMarkdownListItem(prefix, content string, width int) []Line {

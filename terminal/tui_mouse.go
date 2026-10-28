@@ -103,27 +103,14 @@ func selectedText(model *tuiModel, frame terminalFrame) string {
 		return ""
 	}
 
-	lines := frame.plainRows
 	if bounds.start.conversation {
-		return selectedConversationText(frame.conversationLines, frame.conversationSeparators, bounds)
+		return selectedConversationText(frame, bounds)
 	}
-	return selectedTextFromLines(lines, bounds)
+	return selectedTextFromLines(frame.plainRows, bounds)
 }
 
-func selectedConversationText(lines, separators []string, bounds selectionBounds) string {
-	return selectedTextFromLinesWithSeparators(lines, bounds, conversationPadding, func(row int) string {
-		if row < len(separators) {
-			return separators[row]
-		}
-		return "\n"
-	})
-}
-
-func selectedTextFromLines(lines []string, bounds selectionBounds) string {
-	return selectedTextFromLinesWithSeparators(lines, bounds, 0, func(int) string { return "\n" })
-}
-
-func selectedTextFromLinesWithSeparators(lines []string, bounds selectionBounds, leftPadding int, separator func(int) string) string {
+func selectedConversationText(frame terminalFrame, bounds selectionBounds) string {
+	lines := frame.conversationLines
 	if len(lines) == 0 || bounds.start.row >= len(lines) || bounds.end.row < 0 {
 		return ""
 	}
@@ -133,14 +120,70 @@ func selectedTextFromLinesWithSeparators(lines []string, bounds selectionBounds,
 	var selected strings.Builder
 	for row := startRow; row <= endRow; row++ {
 		if row > startRow {
-			selected.WriteString(separator(row))
+			selected.WriteString(conversationSeparator(frame.conversationSeparators, row))
 		}
-		columns := selectedColumns(lines[row], row, bounds)
-		line := text.Slice(lines[row], columns.start, columns.end)
-		line = strings.TrimRightFunc(line, unicode.IsSpace)
-		selected.WriteString(trimLeftPadding(line, leftPadding))
+		if markdown, ok := conversationMarkdownAt(frame.conversationMarkdown, row); ok {
+			lastRow := min(endRow, markdown.row+markdown.rows-1)
+			selected.WriteString(selectedMarkdown(markdown, frame.width, bounds, row, lastRow))
+			row = lastRow
+			continue
+		}
+		selected.WriteString(selectedLineText(lines[row], row, bounds, conversationPadding))
 	}
 	return selected.String()
+}
+
+func conversationSeparator(separators []string, row int) string {
+	if row < len(separators) {
+		return separators[row]
+	}
+	return "\n"
+}
+
+func conversationMarkdownAt(blocks []conversationMarkdown, row int) (conversationMarkdown, bool) {
+	for _, block := range blocks {
+		if row >= block.row && row < block.row+block.rows {
+			return block, true
+		}
+	}
+	return conversationMarkdown{}, false
+}
+
+func selectedMarkdown(markdown conversationMarkdown, width int, bounds selectionBounds, firstRow, lastRow int) string {
+	startColumn := 0
+	if firstRow == bounds.start.row {
+		startColumn = bounds.start.column - conversationPadding
+	}
+	endColumn := width
+	if lastRow == bounds.end.row {
+		endColumn = bounds.end.column - conversationPadding
+	}
+
+	return text.MarkdownSelection(markdown.source, conversationContentWidth(width), firstRow-markdown.row, startColumn, lastRow-markdown.row, endColumn)
+}
+
+func selectedTextFromLines(lines []string, bounds selectionBounds) string {
+	if len(lines) == 0 || bounds.start.row >= len(lines) || bounds.end.row < 0 {
+		return ""
+	}
+
+	startRow := max(0, bounds.start.row)
+	endRow := min(len(lines)-1, bounds.end.row)
+	var selected strings.Builder
+	for row := startRow; row <= endRow; row++ {
+		if row > startRow {
+			selected.WriteByte('\n')
+		}
+		selected.WriteString(selectedLineText(lines[row], row, bounds, 0))
+	}
+	return selected.String()
+}
+
+func selectedLineText(line string, row int, bounds selectionBounds, leftPadding int) string {
+	columns := selectedColumns(line, row, bounds)
+	selected := text.Slice(line, columns.start, columns.end)
+	selected = strings.TrimRightFunc(selected, unicode.IsSpace)
+	return trimLeftPadding(selected, leftPadding)
 }
 
 func trimLeftPadding(line string, padding int) string {

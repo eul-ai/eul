@@ -346,10 +346,30 @@ func ParseInline(source string) []Span {
 }
 
 func parseInline(source string, inherited Style) []Span {
+	return parseInlineSource(source, inherited, 0, nil)
+}
+
+// parseInlineSource parses like parseInline. A non-nil offsets receives, for every byte of the returned span text,
+// its byte offset in the markdown, where source itself starts at offset base.
+func parseInlineSource(source string, inherited Style, base int, offsets *[]int) []Span {
 	var spans []Span
+	appendText := func(start, end int, style Style) {
+		spans = AppendSpan(spans, source[start:end], style)
+		if offsets == nil {
+			return
+		}
+		for offset := base + start; offset < base+end; offset++ {
+			*offsets = append(*offsets, offset)
+		}
+	}
+	appendNested := func(start, end int, style Style) {
+		for _, span := range parseInlineSource(source[start:end], style, base+start, offsets) {
+			spans = AppendSpan(spans, span.Text, span.Style)
+		}
+	}
 	plainStart := 0
 	appendPlain := func(end int) {
-		spans = AppendSpan(spans, source[plainStart:end], inherited)
+		appendText(plainStart, end, inherited)
 		plainStart = end
 	}
 
@@ -359,9 +379,7 @@ func parseInline(source string, inherited Style) []Span {
 				appendPlain(index)
 				style := inherited
 				style.Link = destination
-				for _, span := range parseInline(label, style) {
-					spans = AppendSpan(spans, span.Text, span.Style)
-				}
+				appendNested(index+1, index+1+len(label), style)
 				index += consumed
 				plainStart = index
 				continue
@@ -370,7 +388,11 @@ func parseInline(source string, inherited Style) []Span {
 				appendPlain(index)
 				style := inherited
 				style.Link = destination
-				spans = AppendSpan(spans, destination, style)
+				start := index
+				if source[index] == '<' {
+					start++
+				}
+				appendText(start, start+len(destination), style)
 				index += consumed
 				plainStart = index
 				continue
@@ -407,13 +429,10 @@ func parseInline(source string, inherited Style) []Span {
 			if closing > 0 {
 				appendPlain(index)
 				contentEnd := contentStart + closing
-				content := source[contentStart:contentEnd]
 				if style.Code {
-					spans = AppendSpan(spans, content, mergeStyles(inherited, style))
+					appendText(contentStart, contentEnd, mergeStyles(inherited, style))
 				} else {
-					for _, span := range parseInline(content, mergeStyles(inherited, style)) {
-						spans = AppendSpan(spans, span.Text, span.Style)
-					}
+					appendNested(contentStart, contentEnd, mergeStyles(inherited, style))
 				}
 				index = contentEnd + len(delimiter)
 				plainStart = index
