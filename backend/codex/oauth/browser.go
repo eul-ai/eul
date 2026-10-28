@@ -24,7 +24,7 @@ func (m *Manager) loginBrowser(ctx context.Context, presentURL func(string) erro
 		return credentials{}, err
 	}
 
-	callback, err := m.startLoopbackCallback(state)
+	callback, err := startLoopbackCallback(state)
 	if err != nil {
 		return credentials{}, err
 	}
@@ -33,7 +33,7 @@ func (m *Manager) loginBrowser(ctx context.Context, presentURL func(string) erro
 	if presentURL == nil {
 		return credentials{}, errors.New("oauth: browser login interaction is unavailable")
 	}
-	authURL := m.authorizationURL(callback.redirectURI, challenge, state)
+	authURL := authorizationURL(callback.redirectURI, challenge, state)
 	if err := presentURL(authURL); err != nil {
 		return credentials{}, fmt.Errorf("oauth: present authorization URL: %w", err)
 	}
@@ -48,7 +48,7 @@ func (m *Manager) loginBrowser(ctx context.Context, presentURL func(string) erro
 	return m.exchangeCode(loginCtx, code, verifier, callback.redirectURI)
 }
 
-func (m *Manager) authorizationURL(redirectURI, challenge, state string) string {
+func authorizationURL(redirectURI, challenge, state string) string {
 	values := url.Values{
 		"response_type":              {"code"},
 		"client_id":                  {clientID},
@@ -61,7 +61,7 @@ func (m *Manager) authorizationURL(redirectURI, challenge, state string) string 
 		"codex_cli_simplified_flow":  {"true"},
 		"originator":                 {"eul"},
 	}
-	return m.authBaseURL + "/oauth/authorize?" + values.Encode()
+	return authBaseURL + "/oauth/authorize?" + values.Encode()
 }
 
 func generatePKCE() (string, string, error) {

@@ -5,10 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/eul-ai/eul/backend"
@@ -21,9 +18,9 @@ type deviceAuthorization struct {
 }
 
 type deviceAuthorizationResponse struct {
-	DeviceAuthID string          `json:"device_auth_id"`
-	UserCode     string          `json:"user_code"`
-	Interval     json.RawMessage `json:"interval"`
+	DeviceAuthID string      `json:"device_auth_id"`
+	UserCode     string      `json:"user_code"`
+	Interval     json.Number `json:"interval"`
 }
 
 type deviceAuthorizationCompletion struct {
@@ -44,7 +41,7 @@ func (m *Manager) loginDevice(ctx context.Context, presentCode func(backend.Devi
 		return credentials{}, errors.New("oauth: device login interaction is unavailable")
 	}
 	if err := presentCode(backend.DeviceCode{
-		VerificationURL: m.authBaseURL + "/codex/device",
+		VerificationURL: authBaseURL + "/codex/device",
 		UserCode:        authorization.userCode,
 	}); err != nil {
 		return credentials{}, fmt.Errorf("oauth: present device code: %w", err)
@@ -60,7 +57,7 @@ func (m *Manager) loginDevice(ctx context.Context, presentCode func(backend.Devi
 	if err != nil {
 		return credentials{}, err
 	}
-	return m.exchangeCode(pollCtx, completion.AuthorizationCode, completion.CodeVerifier, m.authBaseURL+deviceRedirectPath)
+	return m.exchangeCode(pollCtx, completion.AuthorizationCode, completion.CodeVerifier, authBaseURL+deviceRedirectPath)
 }
 
 func (m *Manager) startDeviceAuthorization(ctx context.Context) (deviceAuthorization, error) {
@@ -80,17 +77,17 @@ func (m *Manager) startDeviceAuthorization(ctx context.Context) (deviceAuthoriza
 	if err := json.Unmarshal(response.body, &wire); err != nil {
 		return deviceAuthorization{}, errors.New("oauth: invalid device authorization response")
 	}
-	interval, err := parseInterval(wire.Interval)
+	seconds, err := wire.Interval.Float64()
 	if err != nil || wire.DeviceAuthID == "" || wire.UserCode == "" {
 		return deviceAuthorization{}, errors.New("oauth: invalid device authorization response")
 	}
-	return deviceAuthorization{id: wire.DeviceAuthID, userCode: wire.UserCode, interval: interval}, nil
+	return deviceAuthorization{id: wire.DeviceAuthID, userCode: wire.UserCode, interval: time.Duration(seconds * float64(time.Second))}, nil
 }
 
 func (m *Manager) pollDeviceAuthorization(ctx context.Context, authorization deviceAuthorization) (deviceAuthorizationCompletion, error) {
 	pollDelay := authorization.interval
 	for {
-		if err := m.sleep(ctx, pollDelay); err != nil {
+		if err := sleepContext(ctx, pollDelay); err != nil {
 			return deviceAuthorizationCompletion{}, err
 		}
 
@@ -135,28 +132,4 @@ func errorCode(value any) string {
 	default:
 		return ""
 	}
-}
-
-func parseInterval(raw json.RawMessage) (time.Duration, error) {
-	if len(raw) == 0 {
-		return 0, errors.New("missing interval")
-	}
-	var number float64
-	if err := json.Unmarshal(raw, &number); err != nil {
-		var text string
-		if json.Unmarshal(raw, &text) != nil {
-			return 0, errors.New("invalid interval")
-		}
-		parsed, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
-		if err != nil {
-			return 0, errors.New("invalid interval")
-		}
-		number = parsed
-	}
-
-	if math.IsNaN(number) || math.IsInf(number, 0) || number < 1 || number > 300 {
-		return 0, errors.New("invalid interval")
-	}
-
-	return time.Duration(number * float64(time.Second)), nil
 }

@@ -24,7 +24,7 @@ func (m *Manager) exchangeCode(ctx context.Context, code, verifier, redirectURI 
 	if err != nil {
 		return credentials{}, err
 	}
-	return m.credentialsFromTokenResponse(response, "")
+	return credentialsFromTokenResponse(response, "")
 }
 
 func (m *Manager) refresh(ctx context.Context, old credentials) (credentials, error) {
@@ -38,7 +38,7 @@ func (m *Manager) refresh(ctx context.Context, old credentials) (credentials, er
 	if err != nil {
 		return credentials{}, err
 	}
-	return m.credentialsFromTokenResponse(response, old.RefreshToken)
+	return credentialsFromTokenResponse(response, old.RefreshToken)
 }
 
 type tokenResponse struct {
@@ -47,13 +47,13 @@ type tokenResponse struct {
 	ExpiresIn    float64 `json:"expires_in"`
 }
 
-func (m *Manager) credentialsFromTokenResponse(response boundedResponse, previousRefresh string) (credentials, error) {
+func credentialsFromTokenResponse(response boundedResponse, previousRefresh string) (credentials, error) {
 	if response.status < 200 || response.status >= 300 {
 		return credentials{}, fmt.Errorf("oauth: token request failed with HTTP %d", response.status)
 	}
 
 	var token tokenResponse
-	if err := json.Unmarshal(response.body, &token); err != nil || token.AccessToken == "" || token.ExpiresIn <= 0 || token.ExpiresIn > 366*24*60*60 {
+	if err := json.Unmarshal(response.body, &token); err != nil || token.AccessToken == "" || token.ExpiresIn <= 0 {
 		return credentials{}, errors.New("oauth: invalid token response")
 	}
 	if token.RefreshToken == "" {
@@ -69,11 +69,9 @@ func (m *Manager) credentialsFromTokenResponse(response boundedResponse, previou
 	}
 
 	return credentials{
-		Version:      credentialVersion,
-		Type:         "oauth",
 		AccessToken:  token.AccessToken,
 		RefreshToken: token.RefreshToken,
-		ExpiresAt:    m.now().Add(time.Duration(token.ExpiresIn * float64(time.Second))).UnixMilli(),
+		ExpiresAt:    time.Now().Add(time.Duration(token.ExpiresIn * float64(time.Second))).UnixMilli(),
 		AccountID:    accountID,
 	}, nil
 }
@@ -85,7 +83,7 @@ func accountIDFromJWT(token string) (string, error) {
 	}
 
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil || len(payload) > 64*1024 {
+	if err != nil {
 		return "", errors.New("oauth: access token has an invalid JWT payload")
 	}
 

@@ -34,7 +34,7 @@ func handlerClient(handler http.HandlerFunc) *http.Client {
 
 func writeCredential(t *testing.T, path, accessToken string) {
 	t.Helper()
-	credential := fmt.Sprintf(`{"version":1,"type":"oauth","access_token":%q,"refresh_token":"refresh","expires_at":%d,"account_id":"account"}`, accessToken, time.Now().Add(time.Hour).UnixMilli())
+	credential := fmt.Sprintf(`{"access_token":%q,"refresh_token":"refresh","expires_at":%d,"account_id":"account"}`, accessToken, time.Now().Add(time.Hour).UnixMilli())
 	if err := os.WriteFile(path, []byte(credential), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func testManager(t *testing.T, accessToken string) *oauth.Manager {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "auth.json")
 	writeCredential(t, path, accessToken)
-	return oauth.NewManager(path, oauth.Options{})
+	return oauth.NewManager(path)
 }
 
 func TestClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
@@ -141,7 +141,7 @@ func TestClientResolvesCredentialPerRequest(t *testing.T) {
 		authorization = request.Header.Get("Authorization")
 		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
 	})
-	client := newClient(oauth.NewManager(path, oauth.Options{}), httpClient)
+	client := newClient(oauth.NewManager(path), httpClient)
 	request := agent.Request{Model: modelMain, ThinkingLevel: agent.ThinkingMedium, Inputs: []agent.Input{agent.NewTextInput("hello")}}
 	if _, err := client.Generate(context.Background(), request, agent.StreamObserver{}); err != nil || authorization != "Bearer first" {
 		t.Fatalf("first authorization = %q, error = %v", authorization, err)
@@ -158,7 +158,7 @@ func TestClientCredentialErrorsPropagateWithoutRequest(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 		return nil, transportFailure
 	})}
-	manager := oauth.NewManager(filepath.Join(t.TempDir(), "auth.json"), oauth.Options{})
+	manager := oauth.NewManager(filepath.Join(t.TempDir(), "auth.json"))
 	_, err := newClient(manager, httpClient).Generate(context.Background(), agent.Request{Model: modelMain, ThinkingLevel: agent.ThinkingMedium}, agent.StreamObserver{})
 	if err == nil || errors.Is(err, transportFailure) {
 		t.Fatalf("Generate() error = %v", err)

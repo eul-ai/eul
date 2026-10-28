@@ -45,7 +45,7 @@ func (*Driver) Descriptor() backend.Descriptor {
 }
 
 func (*Driver) Open(options backend.Options) (backend.Runtime, error) {
-	return &runtime{manager: oauth.NewManager(filepath.Join(options.Home, "auth.json"), oauth.Options{})}, nil
+	return &runtime{manager: oauth.NewManager(filepath.Join(options.Home, "auth.json"))}, nil
 }
 
 type runtime struct {

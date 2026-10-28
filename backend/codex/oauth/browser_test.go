@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,7 +19,8 @@ func TestBrowserLoginPKCEAndCredentialStorage(t *testing.T) {
 	access := testJWT(t, accountID, "one")
 	var mu sync.Mutex
 	var authorize url.Values
-	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	path := filepath.Join(t.TempDir(), "private", "auth.json")
+	manager := newTestManager(path, func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/oauth/token" {
 			t.Errorf("unexpected auth path %s", request.URL.Path)
 			http.NotFound(writer, request)
@@ -37,13 +37,8 @@ func TestBrowserLoginPKCEAndCredentialStorage(t *testing.T) {
 			t.Errorf("invalid exchange form: %v", request.Form)
 		}
 		writeTestJSON(t, writer, map[string]any{"access_token": access, "refresh_token": "refresh-one", "expires_in": 600, "id_token": "ignored"})
-	}))
-	defer server.Close()
+	})
 
-	path := filepath.Join(t.TempDir(), "private", "auth.json")
-	callbackListener := newPipeListener()
-	manager := NewManager(path, Options{HTTPClient: server.Client(), AuthBaseURL: server.URL, CallbackAddress: "127.0.0.1:0"})
-	manager.listen = func(string, string) (net.Listener, error) { return callbackListener, nil }
 	err := manager.LoginBrowser(context.Background(), func(raw string) error {
 		parsed, err := url.Parse(raw)
 		if err != nil {
@@ -56,8 +51,7 @@ func TestBrowserLoginPKCEAndCredentialStorage(t *testing.T) {
 		mu.Lock()
 		authorize = values
 		mu.Unlock()
-		callback := values.Get("redirect_uri") + "?code=authorization-code&state=" + url.QueryEscape(values.Get("state"))
-		response, err := requestCallback(callbackListener, callback)
+		response, err := requestCallback(values.Get("redirect_uri") + "?code=authorization-code&state=" + url.QueryEscape(values.Get("state")))
 		if err != nil {
 			return err
 		}
@@ -99,6 +93,10 @@ func TestBrowserLoginPKCEAndCredentialStorage(t *testing.T) {
 	if !strings.Contains(string(body), "refresh-one") || strings.Contains(string(body), "authorization-code") {
 		t.Fatalf("stored credential = %s", body)
 	}
+}
+
+func requestCallback(rawURL string) (*http.Response, error) {
+	return http.Get(strings.Replace(rawURL, "localhost", "127.0.0.1", 1))
 }
 
 func sha256Base64(value string) string {

@@ -20,8 +20,8 @@ type loopbackCallback struct {
 	server      *http.Server
 }
 
-func (m *Manager) startLoopbackCallback(expectedState string) (*loopbackCallback, error) {
-	listener, err := m.listen("tcp", m.callbackAddress)
+func startLoopbackCallback(expectedState string) (*loopbackCallback, error) {
+	listener, err := net.Listen("tcp", callbackAddress)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: start loopback callback: %w", err)
 	}

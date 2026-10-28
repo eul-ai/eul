@@ -4,9 +4,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
-
-	"github.com/eul-ai/eul/backend/testhttp"
 )
 
 func testJWT(t *testing.T, accountID, marker string) string {
@@ -24,10 +23,24 @@ func testJWT(t *testing.T, accountID, marker string) string {
 	return header + "." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
 }
 
-type oauthRoundTripperFunc func(*http.Request) (*http.Response, error)
+type roundTripperFunc func(*http.Request) (*http.Response, error)
 
-func (function oauthRoundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+func (function roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return function(request)
+}
+
+func handlerTransport(handler http.HandlerFunc) http.RoundTripper {
+	return roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		recorder := httptest.NewRecorder()
+		handler(recorder, request)
+		return recorder.Result(), nil
+	})
+}
+
+func newTestManager(path string, handler http.HandlerFunc) *Manager {
+	manager := NewManager(path)
+	manager.httpClient.Transport = handlerTransport(handler)
+	return manager
 }
 
 func writeTestJSON(t *testing.T, writer http.ResponseWriter, value any) {
@@ -38,15 +51,10 @@ func writeTestJSON(t *testing.T, writer http.ResponseWriter, value any) {
 	}
 }
 
-func newTestServer(t *testing.T, handler http.Handler) *testhttp.Server {
-	t.Helper()
-	return testhttp.NewServer(handler)
-}
-
 func readCredentials(path string) (credentials, error) {
-	return (&credentialStore{path: path, sleep: sleepContext}).read()
+	return (&credentialStore{path: path}).read()
 }
 
 func writeCredentials(path string, credential credentials) error {
-	return (&credentialStore{path: path, sleep: sleepContext}).write(credential)
+	return (&credentialStore{path: path}).write(credential)
 }

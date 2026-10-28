@@ -17,7 +17,7 @@ type boundedResponse struct {
 }
 
 func (m *Manager) doJSON(ctx context.Context, method, path string, body []byte) (boundedResponse, error) {
-	request, err := http.NewRequestWithContext(ctx, method, m.authBaseURL+path, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, method, authBaseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return boundedResponse{}, errors.New("oauth: create authentication request")
 	}
@@ -27,7 +27,7 @@ func (m *Manager) doJSON(ctx context.Context, method, path string, body []byte) 
 }
 
 func (m *Manager) doForm(ctx context.Context, path string, values url.Values) (boundedResponse, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, m.authBaseURL+path, strings.NewReader(values.Encode()))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, authBaseURL+path, strings.NewReader(values.Encode()))
 	if err != nil {
 		return boundedResponse{}, errors.New("oauth: create token request")
 	}
