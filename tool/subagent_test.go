@@ -54,7 +54,9 @@ func TestSubagentLaunchUsesPerTaskPolicyDefaultsAndSurfacesManagerValidation(t *
 }
 
 func TestSubagentLaunchSchemaPlacesPolicyOnTasks(t *testing.T) {
-	definition := NewLaunchSubagents(nil).Definition()
+	manager := subagent.NewManager(subagent.Config{})
+	defer manager.Close()
+	definition := NewLaunchSubagents(manager).Definition()
 	if _, ok := definition.Parameters.Properties["model_profile"]; ok {
 		t.Fatal("launch-level model profile remains in schema")
 	}

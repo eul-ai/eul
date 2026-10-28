@@ -1,9 +1,7 @@
 package tool
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,23 +64,6 @@ func TestWritePresentationStreamsBoundedPreviewWithoutWriting(t *testing.T) {
 	result := executeJSON(t, writeTool, map[string]any{"path": "preview.txt", "content": content})
 	if result.IsError || mustReadFile(t, filepath.Join(cwd, "preview.txt")) != content {
 		t.Fatalf("write result=%+v", result)
-	}
-}
-
-func TestWriteCancellationAfterNonTransactionalWriteIsFatal(t *testing.T) {
-	cwd := t.TempDir()
-	writeTool := NewWrite(cwd)
-	ctx := &cancelAfterChecksContext{cancelAfter: 3}
-
-	result, err := writeTool.Execute(ctx, json.RawMessage(`{"path":"file.txt","content":"written"}`), discardUpdates)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("write cancellation error = %v", err)
-	}
-	if !result.IsError {
-		t.Fatalf("write cancellation result = %+v", result)
-	}
-	if got := mustReadFile(t, filepath.Join(cwd, "file.txt")); got != "written" {
-		t.Fatalf("non-transactional write content = %q", got)
 	}
 }
 

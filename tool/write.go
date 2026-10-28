@@ -146,14 +146,8 @@ func (w workspace) write(ctx context.Context, args writeArguments, _ agent.ToolU
 		return agent.ToolResult{}, err
 	}
 
-	fileWriteErr := os.WriteFile(path, []byte(*args.Content), 0o666)
-	if contextErr := ctx.Err(); contextErr != nil {
-		result := errorResult(writeToolName, fmt.Errorf("canceled during non-transactional write; file may have changed: %w", contextErr))
-		return result, contextErr
-	}
-
-	if fileWriteErr != nil {
-		return agent.ToolResult{}, fileWriteErr
+	if err := os.WriteFile(path, []byte(*args.Content), 0o666); err != nil {
+		return agent.ToolResult{}, err
 	}
 
 	return successResult(fmt.Sprintf("wrote %d bytes to %s", len(*args.Content), escapeOutputName(w.display(path)))), nil

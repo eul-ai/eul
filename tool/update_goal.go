@@ -31,9 +31,6 @@ func NewUpdateGoal(complete func() error) Tool {
 			if args.Status != "complete" {
 				return agent.ToolResult{}, errors.New(`status must be "complete"`)
 			}
-			if complete == nil {
-				return agent.ToolResult{}, errors.New("goal completion is unavailable")
-			}
 			err := complete()
 			switch {
 			case err == nil:

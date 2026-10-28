@@ -49,10 +49,6 @@ func launchDefinitionFor(manager *subagent.Manager) agent.ToolDefinition {
 }
 
 func subagentThinkingLevelDescription(manager *subagent.Manager) string {
-	if manager == nil {
-		return formatThinkingLevelChoices(agent.ThinkingLevels()) + "; null inherits the parent."
-	}
-
 	profiles := []subagent.Profile{subagent.ProfileFast, subagent.ProfileBalanced, subagent.ProfileMain}
 	choices := make([]string, len(profiles))
 	for index, profile := range profiles {
@@ -97,15 +93,13 @@ var cancelDefinition = agent.ToolDefinition{
 	}, "ids"),
 }
 
-type subagentTask struct {
-	Description   string  `json:"description"`
-	Prompt        string  `json:"prompt"`
-	ModelProfile  *string `json:"model_profile"`
-	ThinkingLevel *string `json:"thinking_level"`
-}
-
 type launchArguments struct {
-	Tasks []subagentTask `json:"tasks"`
+	Tasks []struct {
+		Description   string              `json:"description"`
+		Prompt        string              `json:"prompt"`
+		ModelProfile  subagent.Profile    `json:"model_profile"`
+		ThinkingLevel agent.ThinkingLevel `json:"thinking_level"`
+	} `json:"tasks"`
 }
 
 type waitArguments struct {
@@ -127,7 +121,11 @@ func NewLaunchSubagents(manager *subagent.Manager) Tool {
 			return launchPresentation(len(args.Tasks), fmt.Sprintf("Starting %d subagent(s).", len(args.Tasks)))
 		},
 		run: func(_ context.Context, args launchArguments, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
-			jobs, err := manager.Start(toSubagentTasks(args.Tasks))
+			tasks := make([]subagent.Task, len(args.Tasks))
+			for index, task := range args.Tasks {
+				tasks[index] = subagent.Task(task)
+			}
+			jobs, err := manager.Start(tasks)
 			if err != nil {
 				return agent.ToolResult{}, err
 			}
@@ -224,18 +222,4 @@ func NewCancelSubagents(manager *subagent.Manager) Tool {
 			return successResult("Canceling subagents:\n- " + strings.Join(canceled, "\n- ")), nil
 		},
 	}
-}
-
-func toSubagentTasks(tasks []subagentTask) []subagent.Task {
-	converted := make([]subagent.Task, len(tasks))
-	for index, task := range tasks {
-		converted[index] = subagent.Task{Description: task.Description, Prompt: task.Prompt}
-		if task.ModelProfile != nil {
-			converted[index].ModelProfile = subagent.Profile(*task.ModelProfile)
-		}
-		if task.ThinkingLevel != nil {
-			converted[index].ThinkingLevel = agent.ThinkingLevel(*task.ThinkingLevel)
-		}
-	}
-	return converted
 }
