@@ -187,7 +187,7 @@ func checkpointModel(model *tuiModel, queued [][]agent.ContentPart) Checkpoint {
 			Content:     checkpointContent(block.content),
 			ToolCallID:  block.toolCallID,
 			Tool:        block.tool.Clone(),
-			ToolOutcome: block.toolOutcome,
+			ToolOutcome: block.tool.Outcome,
 		}
 	}
 
@@ -215,18 +215,18 @@ func restoreModelCheckpoint(model *tuiModel, checkpoint Checkpoint) {
 	model.blocks = make([]conversationBlock, len(data.Blocks))
 	for index, block := range data.Blocks {
 		kind := block.Kind
-		outcome := block.ToolOutcome
+		tool := block.Tool
+		tool.Outcome = block.ToolOutcome
 		if kind == blockToolPending {
 			kind = blockToolError
-			outcome = "interrupted"
+			tool.Outcome = "interrupted"
 		}
 		model.blocks[index] = conversationBlock{
-			kind:        kind,
-			text:        sanitizeAssistantText(block.Text),
-			content:     displayParts(restoreCheckpointContent(block.Content)),
-			toolCallID:  block.ToolCallID,
-			tool:        sanitizeToolPresentation(agent.ToolCall{ID: block.ToolCallID}, block.Tool),
-			toolOutcome: sanitizeAssistantText(outcome),
+			kind:       kind,
+			text:       sanitizeAssistantText(block.Text),
+			content:    displayParts(restoreCheckpointContent(block.Content)),
+			toolCallID: block.ToolCallID,
+			tool:       sanitizeToolPresentation(tool),
 		}
 	}
 	model.history = data.History

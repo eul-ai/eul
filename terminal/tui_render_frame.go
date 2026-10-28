@@ -234,7 +234,6 @@ func renderConversationBlock(block conversationBlock, width int) renderedConvers
 		plain[index] = renderedLineText(line, width)
 		separators[index] = line.breakBefore.SourceSeparator()
 	}
-	block.tool = block.tool.Clone()
 	return renderedConversationBlock{block: block, lines: lines, plain: plain, separators: separators}
 }
 
@@ -243,7 +242,6 @@ func conversationBlocksEqual(left, right conversationBlock) bool {
 		left.text == right.text &&
 		slices.Equal(left.content, right.content) &&
 		left.toolCallID == right.toolCallID &&
-		left.toolOutcome == right.toolOutcome &&
 		left.tool.Equal(right.tool)
 }
 

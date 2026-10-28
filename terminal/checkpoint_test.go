@@ -221,7 +221,7 @@ func TestVersionTwoTerminalCheckpointFixture(t *testing.T) {
 	}
 
 	model := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint}})
-	if len(model.blocks) != len(wantKinds) || model.blocks[3].kind != blockToolError || model.blocks[3].toolOutcome != "interrupted" {
+	if len(model.blocks) != len(wantKinds) || model.blocks[3].kind != blockToolError || model.blocks[3].tool.Outcome != "interrupted" {
 		t.Fatalf("restored blocks = %+v", model.blocks)
 	}
 	if model.inputText() != "queued\n\ndraft" || model.contextTokens != 42 || len(model.history) != 2 {

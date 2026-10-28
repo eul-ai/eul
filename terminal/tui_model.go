@@ -36,13 +36,11 @@ const (
 )
 
 type conversationBlock struct {
-	kind        blockKind
-	text        string
-	content     []agent.ContentPart
-	toolCallID  string
-	toolName    string
-	tool        agent.ToolPresentation
-	toolOutcome string
+	kind       blockKind
+	text       string
+	content    []agent.ContentPart
+	toolCallID string
+	tool       agent.ToolPresentation
 }
 
 const imageAttachmentLabel = "[image attached]"
@@ -338,16 +336,15 @@ func (m *tuiModel) applyAgentEvent(event agent.Event) {
 	case agent.EventToolExecute:
 		m.turnExecutedTool = true
 		m.updateTool(event.Call, event.Presentation)
-		index := m.toolBlockIndex(event.Call.ID)
-		m.setActiveActivity(activity{kind: activityTool, detail: toolActivityDetail(event.Call, m.blocks[index].tool)})
+		m.setActiveActivity(toolActivity(event.Call.Name))
 	case agent.EventToolEnd:
 		m.finishTool(event.Call, event.Presentation, event.Result)
-		if detail, ok := m.pendingToolActivity(); ok {
-			m.setActiveActivity(activity{kind: activityTool, detail: detail})
-		} else {
-			m.setActiveActivity(activity{kind: activityThinking})
-		}
+		m.setActiveActivity(m.pendingToolActivity())
 	}
+}
+
+func toolActivity(name string) activity {
+	return activity{kind: activityTool, detail: singleLine(name, maxToolPresentationSummaryBytes)}
 }
 
 func (m *tuiModel) startTool(call agent.ToolCall, presentation agent.ToolPresentation) {
@@ -355,11 +352,10 @@ func (m *tuiModel) startTool(call agent.ToolCall, presentation agent.ToolPresent
 	m.blocks = append(m.blocks, conversationBlock{
 		kind:       blockToolPending,
 		toolCallID: call.ID,
-		toolName:   call.Name,
-		tool:       sanitizeToolPresentation(call, presentation),
+		tool:       sanitizeToolPresentation(presentation),
 	})
 	m.conversationChanged()
-	m.setActiveActivity(activity{kind: activityTool, detail: toolActivityDetail(call, m.blocks[len(m.blocks)-1].tool)})
+	m.setActiveActivity(toolActivity(call.Name))
 }
 
 func (m *tuiModel) updateTool(call agent.ToolCall, presentation agent.ToolPresentation) {
@@ -368,17 +364,11 @@ func (m *tuiModel) updateTool(call agent.ToolCall, presentation agent.ToolPresen
 		m.startTool(call, presentation)
 		return
 	}
-	if call.Name != "" {
-		m.blocks[index].toolName = call.Name
-	}
-	m.blocks[index].tool = sanitizeToolPresentation(call, presentation)
+	m.blocks[index].tool = sanitizeToolPresentation(presentation)
 	m.conversationChanged()
 }
 
 func (m *tuiModel) finishTool(call agent.ToolCall, presentation agent.ToolPresentation, result agent.ToolResult) {
-	if call.Name == "" {
-		call.Name = result.Tool
-	}
 	kind := blockTool
 	if result.IsError {
 		kind = blockToolError
@@ -389,13 +379,9 @@ func (m *tuiModel) finishTool(call agent.ToolCall, presentation agent.ToolPresen
 		index = len(m.blocks) - 1
 	}
 
-	block := &m.blocks[index]
-	block.kind = kind
-	if call.Name != "" {
-		block.toolName = call.Name
-	}
-	block.tool = sanitizeToolPresentation(call, presentation)
-	block.toolOutcome = sanitizeAssistantText(toolResultOutcome(result, presentation))
+	presentation.Outcome = toolResultOutcome(result, presentation)
+	m.blocks[index].kind = kind
+	m.blocks[index].tool = sanitizeToolPresentation(presentation)
 	m.conversationChanged()
 }
 
@@ -408,13 +394,13 @@ func (m *tuiModel) toolBlockIndex(callID string) int {
 	return -1
 }
 
-func (m *tuiModel) pendingToolActivity() (string, bool) {
+func (m *tuiModel) pendingToolActivity() activity {
 	for index := len(m.blocks) - 1; index >= 0; index-- {
 		if m.blocks[index].kind == blockToolPending {
-			return toolActivityDetail(agent.ToolCall{Name: m.blocks[index].toolName}, m.blocks[index].tool), true
+			return toolActivity(m.blocks[index].tool.Title)
 		}
 	}
-	return "", false
+	return activity{kind: activityThinking}
 }
 
 func (m *tuiModel) setActiveActivity(next activity) {
@@ -451,7 +437,7 @@ func (m *tuiModel) finishPendingTools(outcome string) {
 			continue
 		}
 		m.blocks[index].kind = blockToolError
-		m.blocks[index].toolOutcome = outcome
+		m.blocks[index].tool.Outcome = outcome
 		m.conversationChanged()
 	}
 }

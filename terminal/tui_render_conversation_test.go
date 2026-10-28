@@ -174,8 +174,8 @@ func TestAssistantReasoningAndToolDetailsRenderInlineMarkdown(t *testing.T) {
 		{kind: blockAssistant, text: "Use *care* and **`code`**"},
 		{kind: blockTool, tool: agent.ToolPresentation{
 			Title: "launch_subagents", Arguments: "(3)", Markdown: true,
-			Lines: []string{"1. complete — Read `./terminal/api.go`"},
-		}, toolOutcome: "ok"},
+			Lines: []string{"1. complete — Read `./terminal/api.go`"}, Outcome: "ok",
+		}},
 	}, 80)
 	if lines[0].text != "Planning" || lines[2].text != "Use care and code" {
 		t.Fatalf("lines = %+v", lines)
@@ -247,8 +247,8 @@ func TestBashToolShowsOutputTailAndDuration(t *testing.T) {
 			TailLines: 5,
 			Elapsed:   2*time.Second + 900*time.Millisecond,
 			Timeout:   120 * time.Second,
+			Outcome:   "exit status: 0",
 		},
-		toolOutcome: "exit status: 0",
 	}}, 80)
 
 	var texts []string
@@ -431,13 +431,11 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 	}
 
 	model.blocks[1].kind = blockTool
-	model.blocks[1].tool.Lines[0] = "after"
-	model.blocks[1].tool.Diff[0].Text = "new diff"
-	model.blocks[1].toolOutcome = "ok"
-	model.conversationChanged()
-	if renderer.conversationBlocks[1].block.tool.Lines[0] != "before" || renderer.conversationBlocks[1].block.tool.Diff[0].Text != "old diff" {
-		t.Fatal("cached block shares tool presentation slices with the model")
+	model.blocks[1].tool = agent.ToolPresentation{
+		Title: "read", Arguments: "README.md", Lines: []string{"after"}, Outcome: "ok",
+		Diff: []agent.ToolDiffLine{{Kind: agent.ToolDiffLineAdded, NewLine: 1, Text: "new diff"}},
 	}
+	model.conversationChanged()
 	assertCachedConversationMatchesUncached(t, renderer, model)
 
 	beforeWidthChange := &renderer.conversationBlocks[0].lines[0]
@@ -568,7 +566,7 @@ func TestTUIModelCorrelatesAndSanitizesStreamingToolBlocks(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.applyAgentEvent(agent.Event{
 		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "one", Name: "write"},
-		Presentation: agent.ToolPresentation{Title: "write one", Lines: []string{"partial"}},
+		Presentation: agent.ToolPresentation{Title: "write", Lines: []string{"partial"}},
 	})
 	model.applyAgentEvent(agent.Event{
 		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "two", Name: "launch_subagents"},
@@ -577,7 +575,7 @@ func TestTUIModelCorrelatesAndSanitizesStreamingToolBlocks(t *testing.T) {
 	model.applyAgentEvent(agent.Event{
 		Kind: agent.EventToolUpdate, Call: agent.ToolCall{ID: "one", Name: "write"},
 		Presentation: agent.ToolPresentation{
-			Title: "write one", Lines: []string{"safe\x1b[31m"},
+			Title: "write", Lines: []string{"safe\x1b[31m"},
 			Diff: []agent.ToolDiffLine{{Kind: agent.ToolDiffLineAdded, NewLine: 1, Text: "new\x1b[32m"}},
 		},
 	})
@@ -589,8 +587,13 @@ func TestTUIModelCorrelatesAndSanitizesStreamingToolBlocks(t *testing.T) {
 
 	first := model.blocks[model.toolBlockIndex("one")]
 	second := model.blocks[model.toolBlockIndex("two")]
-	if first.kind != blockToolPending || first.tool.Lines[0] != "safe�[31m" || first.tool.Diff[0].Text != "new�[32m" {
-		t.Fatalf("first block = %+v", first)
+	var rendered []string
+	for _, line := range conversationBlockLines(first, 80) {
+		rendered = append(rendered, renderedLineText(line, 80))
+	}
+	output := strings.Join(rendered, "\n")
+	if first.kind != blockToolPending || strings.Contains(output, "\x1b") || !strings.Contains(output, "safe�[31m") || !strings.Contains(output, "new�[32m") {
+		t.Fatalf("first block = %+v, rendered = %q", first, output)
 	}
 	if second.kind != blockTool || second.tool.Lines[0] != "complete" {
 		t.Fatalf("second block = %+v", second)

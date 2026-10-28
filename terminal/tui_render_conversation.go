@@ -123,12 +123,8 @@ func toolConversationLines(block conversationBlock, width int, style lineStyle, 
 	if block.tool.Arguments != "" {
 		heading = text.AppendSpan(heading, " "+block.tool.Arguments, text.Style{})
 	}
-	outcome := block.toolOutcome
-	if outcome == "" && block.kind == blockToolPending {
-		outcome = block.tool.Outcome
-	}
-	if outcome != "" {
-		heading = text.AppendSpan(heading, " — "+outcome, text.Style{Foreground: titleForeground})
+	if block.tool.Outcome != "" {
+		heading = text.AppendSpan(heading, " — "+block.tool.Outcome, text.Style{Foreground: titleForeground})
 	}
 
 	lines := make([]styledLine, 0, len(block.tool.Lines)+len(block.tool.Diff)+4)
@@ -141,14 +137,14 @@ func toolConversationLines(block conversationBlock, width int, style lineStyle, 
 	contentAdded := false
 	if len(block.tool.Lines) > 0 {
 		var bodyLines []styledLine
-		body := strings.Join(block.tool.Lines, "\n")
+		body := sanitizeAssistantText(strings.Join(block.tool.Lines, "\n"))
 		if block.tool.Markdown {
 			bodyLines = append(bodyLines, markdownConversationLines(body, width, style, padding)...)
 		} else {
 			bodyLines = append(bodyLines, hardWrappedLines(body, width, style, padding)...)
 		}
 		if block.tool.LinesTruncated {
-			markerLines := len(text.Wrap(block.tool.Lines[len(block.tool.Lines)-1], width))
+			markerLines := len(text.Wrap(sanitizeAssistantText(block.tool.Lines[len(block.tool.Lines)-1]), width))
 			for index := max(0, len(bodyLines)-markerLines); index < len(bodyLines); index++ {
 				bodyLines[index].style.foreground = currentTheme.muted
 			}
@@ -221,7 +217,7 @@ func toolDiffConversationLines(diff []agent.ToolDiffLine, width int, style lineS
 		if lineNumber > 0 {
 			lineNumberText = fmt.Sprintf("%*d", lineNumberWidth, lineNumber)
 		}
-		for _, wrapped := range text.Wrap(prefix+lineNumberText+" "+line.Text, width) {
+		for _, wrapped := range text.Wrap(prefix+lineNumberText+" "+sanitizeAssistantText(line.Text), width) {
 			lines = append(lines, styledLine{text: wrapped, style: lineStyle, padding: padding})
 		}
 	}
