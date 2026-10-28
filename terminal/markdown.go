@@ -55,6 +55,7 @@ const (
 type markdownBlock struct {
 	kind         markdownBlockKind
 	lines        []string
+	lineIndex    int
 	headingLevel int
 	quoteDepth   int
 	listPrefix   string
@@ -99,7 +100,7 @@ func parseMarkdownBlocks(text string) []markdownBlock {
 			for index < len(sourceLines) && strings.TrimSpace(sourceLines[index]) != "```" {
 				index++
 			}
-			blocks = append(blocks, markdownBlock{kind: markdownBlockFencedCode, lines: sourceLines[start:index]})
+			blocks = append(blocks, markdownBlock{kind: markdownBlockFencedCode, lines: sourceLines[start:index], lineIndex: start})
 			if index < len(sourceLines) {
 				index++
 			}
@@ -108,35 +109,35 @@ func parseMarkdownBlocks(text string) []markdownBlock {
 			for index < len(sourceLines) && sourceLines[index] == "" {
 				index++
 			}
-			blocks = append(blocks, markdownBlock{kind: markdownBlockBlank, lines: sourceLines[start:index]})
+			blocks = append(blocks, markdownBlock{kind: markdownBlockBlank, lines: sourceLines[start:index], lineIndex: start})
 		default:
 			if level, content, ok := parseMarkdownHeading(line); ok {
 				blocks = append(blocks, markdownBlock{
-					kind: markdownBlockHeading, lines: []string{content}, headingLevel: level,
+					kind: markdownBlockHeading, lines: []string{content}, lineIndex: index, headingLevel: level,
 				})
 				index++
 				continue
 			}
 			if isMarkdownThematicBreak(line) {
-				blocks = append(blocks, markdownBlock{kind: markdownBlockThematicBreak})
+				blocks = append(blocks, markdownBlock{kind: markdownBlockThematicBreak, lineIndex: index})
 				index++
 				continue
 			}
 			if depth, content, ok := parseMarkdownBlockQuote(line); ok {
 				blocks = append(blocks, markdownBlock{
-					kind: markdownBlockBlockQuote, lines: []string{content}, quoteDepth: depth,
+					kind: markdownBlockBlockQuote, lines: []string{content}, lineIndex: index, quoteDepth: depth,
 				})
 				index++
 				continue
 			}
 			if table, end, ok := parseMarkdownTable(sourceLines, index); ok {
-				blocks = append(blocks, markdownBlock{kind: markdownBlockTable, table: table})
+				blocks = append(blocks, markdownBlock{kind: markdownBlockTable, lineIndex: index, table: table})
 				index = end
 				continue
 			}
 			if prefix, content, ok := parseMarkdownListItem(line); ok {
 				blocks = append(blocks, markdownBlock{
-					kind: markdownBlockListItem, lines: []string{content}, listPrefix: prefix,
+					kind: markdownBlockListItem, lines: []string{content}, lineIndex: index, listPrefix: prefix,
 				})
 				index++
 				continue
@@ -146,7 +147,7 @@ func parseMarkdownBlocks(text string) []markdownBlock {
 			for index < len(sourceLines) && !startsMarkdownBlock(sourceLines, index) {
 				index++
 			}
-			blocks = append(blocks, markdownBlock{kind: markdownBlockParagraph, lines: sourceLines[start:index]})
+			blocks = append(blocks, markdownBlock{kind: markdownBlockParagraph, lines: sourceLines[start:index], lineIndex: start})
 		}
 	}
 	return blocks
@@ -440,13 +441,12 @@ func wrapMarkdownBlock(block markdownBlock, width int) []formattedLine {
 
 func wrapMarkdownBlockQuote(depth int, content string, width int) []formattedLine {
 	prefixStyle := inlineStyle{foreground: inlineForegroundMuted}
-	prefix := strings.Repeat("│ ", depth)
 	if content == "" {
-		prefix = truncateCells(strings.TrimRight(prefix, " "), width, false)
+		prefix := truncateCells(strings.TrimRight(strings.Repeat("│ ", depth), " "), width, false)
 		return []formattedLine{{text: prefix, spans: []inlineSpan{{text: prefix, style: prefixStyle}}}}
 	}
 
-	prefix = truncateCells(prefix, max(0, width-1), false)
+	prefix := markdownQuotePrefix(depth, width)
 	prefixWidth := cellWidth(prefix)
 	wrapped := wrapInlineSpans(parseInlineMarkdown(content), width-prefixWidth)
 	for index := range wrapped {
@@ -459,6 +459,10 @@ func wrapMarkdownBlockQuote(depth int, content string, width int) []formattedLin
 		wrapped[index].spans = spans
 	}
 	return wrapped
+}
+
+func markdownQuotePrefix(depth, width int) string {
+	return truncateCells(strings.Repeat("│ ", depth), max(0, width-1), false)
 }
 
 func wrapMarkdownListItem(prefix, content string, width int) []formattedLine {
@@ -889,10 +893,30 @@ func parseInlineMarkdown(text string) []inlineSpan {
 }
 
 func parseInlineMarkdownStyle(text string, inherited inlineStyle) []inlineSpan {
+	return parseInlineMarkdownSource(text, inherited, 0, nil)
+}
+
+// parseInlineMarkdownSource parses like parseInlineMarkdownStyle. A non-nil offsets receives, for every byte of the
+// returned span text, its byte offset in the source, where text itself starts at offset base.
+func parseInlineMarkdownSource(text string, inherited inlineStyle, base int, offsets *[]int) []inlineSpan {
 	var spans []inlineSpan
+	appendText := func(start, end int, style inlineStyle) {
+		appendInlineSpan(&spans, text[start:end], style)
+		if offsets == nil {
+			return
+		}
+		for offset := base + start; offset < base+end; offset++ {
+			*offsets = append(*offsets, offset)
+		}
+	}
+	appendNested := func(start, end int, style inlineStyle) {
+		for _, span := range parseInlineMarkdownSource(text[start:end], style, base+start, offsets) {
+			appendInlineSpan(&spans, span.text, span.style)
+		}
+	}
 	plainStart := 0
 	appendPlain := func(end int) {
-		appendInlineSpan(&spans, text[plainStart:end], inherited)
+		appendText(plainStart, end, inherited)
 		plainStart = end
 	}
 
@@ -902,9 +926,7 @@ func parseInlineMarkdownStyle(text string, inherited inlineStyle) []inlineSpan {
 				appendPlain(index)
 				style := inherited
 				style.link = destination
-				for _, span := range parseInlineMarkdownStyle(label, style) {
-					appendInlineSpan(&spans, span.text, span.style)
-				}
+				appendNested(index+1, index+1+len(label), style)
 				index += consumed
 				plainStart = index
 				continue
@@ -913,7 +935,11 @@ func parseInlineMarkdownStyle(text string, inherited inlineStyle) []inlineSpan {
 				appendPlain(index)
 				style := inherited
 				style.link = destination
-				appendInlineSpan(&spans, destination, style)
+				start := index
+				if text[index] == '<' {
+					start++
+				}
+				appendText(start, start+len(destination), style)
 				index += consumed
 				plainStart = index
 				continue
@@ -950,13 +976,10 @@ func parseInlineMarkdownStyle(text string, inherited inlineStyle) []inlineSpan {
 			if closing > 0 {
 				appendPlain(index)
 				contentEnd := contentStart + closing
-				content := text[contentStart:contentEnd]
 				if style.code {
-					appendInlineSpan(&spans, content, mergeInlineStyles(inherited, style))
+					appendText(contentStart, contentEnd, mergeInlineStyles(inherited, style))
 				} else {
-					for _, span := range parseInlineMarkdownStyle(content, mergeInlineStyles(inherited, style)) {
-						appendInlineSpan(&spans, span.text, span.style)
-					}
+					appendNested(contentStart, contentEnd, mergeInlineStyles(inherited, style))
 				}
 				index = contentEnd + len(delimiter)
 				plainStart = index

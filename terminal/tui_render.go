@@ -21,6 +21,14 @@ type renderedConversationBlock struct {
 	lines      []styledLine
 	plain      []string
 	separators []string
+	markdown   string
+}
+
+// conversationMarkdown locates the rows rendered from a markdown source within the conversation.
+type conversationMarkdown struct {
+	row    int
+	rows   int
+	source string
 }
 
 type tuiRenderer struct {
@@ -30,6 +38,7 @@ type tuiRenderer struct {
 	conversationLines      []styledLine
 	conversationPlain      []string
 	conversationSeparators []string
+	conversationMarkdown   []conversationMarkdown
 	conversationWidth      int
 	conversationVersion    uint64
 	conversationPrepared   bool

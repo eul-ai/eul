@@ -79,21 +79,15 @@ func displayContent(content []agent.ContentPart) string {
 	return inlineSpanText(contentDisplaySpans(content))
 }
 
+func conversationContentWidth(width int) int {
+	return max(1, width-conversationPadding*2)
+}
+
 func conversationBlockLines(block conversationBlock, width int) []styledLine {
 	style := blockPresentation(block.kind)
-	text := block.text
-	if block.kind == blockReasoning {
-		text = strings.Trim(text, "\n")
-	}
-	if block.kind == blockUser && len(block.content) > 0 {
-		text = displayContent(block.content)
-	}
-
 	padding := conversationPadding
-	contentWidth := width - padding*2
-	if contentWidth < 1 {
-		contentWidth = 1
-	}
+	contentWidth := conversationContentWidth(width)
+	markdown, isMarkdown := markdownSource(block)
 
 	var lines []styledLine
 	switch {
@@ -101,19 +95,17 @@ func conversationBlockLines(block conversationBlock, width int) []styledLine {
 		lines = append(lines, styledLine{style: style, padding: padding})
 		lines = append(lines, toolConversationLines(block, contentWidth, style, padding)...)
 		lines = append(lines, styledLine{style: style, padding: padding})
-	case block.kind == blockUser && len(block.content) > 0 && contentHasImage(block.content):
+	case block.kind == blockUser && contentHasImage(block.content):
 		for _, line := range wrapInlineSpans(contentDisplaySpans(block.content), contentWidth) {
 			lines = append(lines, styledLine{
 				text: line.text, spans: line.spans, style: style, padding: padding,
 				breakBefore: line.breakBefore,
 			})
 		}
-	case block.kind == blockUser && len(block.content) > 0:
-		lines = append(lines, markdownConversationLines(contentText(block.content), contentWidth, style, padding)...)
-	case isInlineMarkdownBlock(block.kind):
-		lines = append(lines, markdownConversationLines(text, contentWidth, style, padding)...)
+	case isMarkdown:
+		lines = append(lines, markdownConversationLines(markdown, contentWidth, style, padding)...)
 	default:
-		for _, line := range wrapConversationProse(text, contentWidth) {
+		for _, line := range wrapConversationProse(block.text, contentWidth) {
 			lines = append(lines, styledLine{
 				text: line.text, style: style, padding: padding,
 				breakBefore: line.breakBefore,
@@ -279,12 +271,19 @@ func isToolBlock(kind blockKind) bool {
 	return kind == blockToolPending || kind == blockTool || kind == blockToolError
 }
 
-func isInlineMarkdownBlock(kind blockKind) bool {
-	switch kind {
-	case blockUser, blockAssistant, blockReasoning:
-		return true
+func markdownSource(block conversationBlock) (string, bool) {
+	switch block.kind {
+	case blockUser:
+		if len(block.content) == 0 {
+			return block.text, true
+		}
+		return contentText(block.content), !contentHasImage(block.content)
+	case blockAssistant:
+		return block.text, true
+	case blockReasoning:
+		return strings.Trim(block.text, "\n"), true
 	default:
-		return false
+		return "", false
 	}
 }
 

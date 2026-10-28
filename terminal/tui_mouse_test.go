@@ -3,6 +3,7 @@ package terminal
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -91,6 +92,27 @@ func TestMouseDragSelectsAndCopiesRenderedText(t *testing.T) {
 	}
 }
 
+func TestMouseDragCopiesMarkdownSource(t *testing.T) {
+	model := newTUIModel(40, 10, Options{})
+	model.appendBlock(blockAssistant, "Here is **some** text.\n\n- first **item**\n- second item")
+	committed := buildTerminalFrame(model)
+
+	var output bytes.Buffer
+	for _, event := range []mouseEvent{
+		{kind: mousePress, column: 9, row: 1},
+		{kind: mouseRelease, column: 7, row: 3},
+	} {
+		if exit, err := handleModelMouse(model, &output, committed, event); err != nil || exit {
+			t.Fatalf("handle mouse %+v: exit=%t err=%v", event, exit, err)
+		}
+	}
+
+	encoded := base64.StdEncoding.EncodeToString([]byte("**some** text.\n\n- first"))
+	if got, want := output.String(), "\x1b]52;c;"+encoded+"\x07"; got != want {
+		t.Fatalf("clipboard output = %q, want %q", got, want)
+	}
+}
+
 func TestMouseSelectionDoesNotHighlightConversationPadding(t *testing.T) {
 	model := newTUIModel(20, 10, Options{})
 	model.appendBlock(blockAssistant, "alpha")
@@ -133,7 +155,7 @@ func TestMouseSelectionOmitsConversationPaddingAndWrappedNewlines(t *testing.T) 
 		end:   selectionPoint{row: 2, column: 7, conversation: true},
 	}
 
-	if got := selectedConversationText(frame.conversationLines, frame.conversationSeparators, bounds); got != "abcdefghij" {
+	if got := selectedConversationText(frame, bounds); got != "abcdefghij" {
 		t.Fatalf("selected text = %q, want %q", got, "abcdefghij")
 	}
 }
@@ -147,7 +169,7 @@ func TestMouseSelectionPreservesSoftWrapWhitespace(t *testing.T) {
 		end:   selectionPoint{row: 2, column: 7, conversation: true},
 	}
 
-	if got := selectedConversationText(frame.conversationLines, frame.conversationSeparators, bounds); got != "abc  def" {
+	if got := selectedConversationText(frame, bounds); got != "abc  def" {
 		t.Fatalf("selected text = %q, want %q", got, "abc  def")
 	}
 }
@@ -161,7 +183,7 @@ func TestMouseSelectionPreservesExplicitConversationNewlines(t *testing.T) {
 		end:   selectionPoint{row: 2, column: 7, conversation: true},
 	}
 
-	if got := selectedConversationText(frame.conversationLines, frame.conversationSeparators, bounds); got != "abc\ndef" {
+	if got := selectedConversationText(frame, bounds); got != "abc\ndef" {
 		t.Fatalf("selected text = %q, want %q", got, "abc\\ndef")
 	}
 }
