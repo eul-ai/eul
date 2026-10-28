@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/eul-ai/eul/agent"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
+	"github.com/eul-ai/eul/backend/protocol"
 )
 
 type createResponseEnvelope struct {
@@ -42,17 +44,49 @@ type outputContentPart struct {
 	Refusal string `json:"refusal"`
 }
 
-func normalizeResponse(response createResponseEnvelope) (string, []agent.ToolCall, agent.Usage, error) {
+func (createResponseRequest) Read(body io.Reader, observer agent.StreamObserver) (protocol.Result, error) {
+	stream, err := readResponsesSSE(body, observer)
+	if err != nil {
+		return protocol.Result{}, err
+	}
+
+	result, err := normalizeResponse(stream.response)
+	if err != nil {
+		return protocol.Result{}, err
+	}
+	if !stream.sawTextDelta {
+		if err := backendhttp.NewObserver(observer).Text(result.Text); err != nil {
+			return protocol.Result{}, err
+		}
+	}
+	return result, nil
+}
+
+func (createResponseRequest) SummaryItems(summary string, continueTask bool) []json.RawMessage {
+	summaryItem, _ := json.Marshal(inputMessage{Role: "assistant", Content: summary})
+	items := []json.RawMessage{summaryItem}
+	if !continueTask {
+		return items
+	}
+
+	continuation, _ := json.Marshal(inputMessage{
+		Role:    "user",
+		Content: []inputContentPart{{Type: "input_text", Text: protocol.Continuation}},
+	})
+	return append(items, continuation)
+}
+
+func normalizeResponse(response createResponseEnvelope) (protocol.Result, error) {
 	if err := validateCompletedResponse(response); err != nil {
-		return "", nil, agent.Usage{}, err
+		return protocol.Result{}, err
 	}
 
 	text, calls, err := normalizeOutput(response.Output)
 	if err != nil {
-		return "", nil, agent.Usage{}, err
+		return protocol.Result{}, err
 	}
 
-	return text, calls, normalizeUsage(response.Usage), nil
+	return protocol.Result{Text: text, ToolCalls: calls, Output: response.Output, Usage: normalizeUsage(response.Usage)}, nil
 }
 
 func validateCompletedResponse(response createResponseEnvelope) error {

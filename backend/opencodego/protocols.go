@@ -8,48 +8,40 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/backend/protocol"
 	"github.com/eul-ai/eul/backend/protocol/anthropic"
 	"github.com/eul-ai/eul/backend/protocol/chatcompletions"
 	"github.com/eul-ai/eul/backend/protocol/responses"
 )
 
-func newProtocolClients(apiKey, baseURL string, httpClient *http.Client, models *backend.Models[modelInfo]) map[wireProtocol]protocolClient {
-	return map[wireProtocol]protocolClient{
-		protocolResponses: responses.New(responses.Options{
-			HTTPClient:     httpClient,
-			Endpoint:       baseURL + "/responses",
-			ErrorPrefix:    "opencode go",
-			PrepareRequest: prepareBearerRequest(apiKey),
-			RequestOptions: func(request agent.Request) (responses.RequestOptions, error) {
-				return responseRequestOptions(models, request)
+func newProtocolClients(apiKey, baseURL string, httpClient *http.Client, models *backend.Models[modelInfo]) map[wireProtocol]*protocol.Client {
+	newClient := func(path string, codec protocol.Codec, prepare func(*http.Request)) *protocol.Client {
+		return protocol.New(protocol.Options{
+			Codec:       codec,
+			HTTPClient:  httpClient,
+			Endpoint:    baseURL + path,
+			ErrorPrefix: "opencode go",
+			PrepareRequest: func(_ context.Context, request *http.Request) error {
+				prepare(request)
+				return nil
 			},
-		}),
-		protocolChatCompletions: chatcompletions.New(chatcompletions.Options{
-			HTTPClient:     httpClient,
-			Endpoint:       baseURL + "/chat/completions",
-			ErrorPrefix:    "opencode go",
-			PrepareRequest: prepareBearerRequest(apiKey),
-			RequestOptions: func(request agent.Request) (chatcompletions.RequestOptions, error) {
-				return chatRequestOptions(models, request)
+			ContextWindow: func(model string) int64 {
+				info, _ := models.Lookup(model)
+				return info.contextWindow
 			},
-		}),
-		protocolAnthropicMessages: anthropic.New(anthropic.Options{
-			HTTPClient:     httpClient,
-			Endpoint:       baseURL + "/messages",
-			ErrorPrefix:    "opencode go",
-			PrepareRequest: prepareAnthropicRequest(apiKey),
-			RequestOptions: func(request agent.Request) (anthropic.RequestOptions, error) {
-				return anthropicRequestOptions(models, request)
-			},
-			PromptCaching: true,
-		}),
+		})
 	}
-}
-
-func prepareBearerRequest(apiKey string) func(context.Context, *http.Request) error {
-	return func(_ context.Context, request *http.Request) error {
-		setBearerHeaders(request, apiKey)
-		return nil
+	bearer := func(request *http.Request) { setBearerHeaders(request, apiKey) }
+	return map[wireProtocol]*protocol.Client{
+		protocolResponses: newClient("/responses", responses.Codec{Options: func(request agent.Request) (responses.RequestOptions, error) {
+			return responseRequestOptions(models, request)
+		}}, bearer),
+		protocolChatCompletions: newClient("/chat/completions", chatcompletions.Codec{Options: func(request agent.Request) (chatcompletions.RequestOptions, error) {
+			return chatRequestOptions(models, request)
+		}}, bearer),
+		protocolAnthropicMessages: newClient("/messages", anthropic.Codec{Options: func(request agent.Request) (anthropic.RequestOptions, error) {
+			return anthropicRequestOptions(models, request)
+		}}, func(request *http.Request) { setAnthropicHeaders(request, apiKey) }),
 	}
 }
 
@@ -63,14 +55,11 @@ func (configured *runtime) authorize(request *http.Request) {
 	setBearerHeaders(request, configured.apiKey)
 }
 
-func prepareAnthropicRequest(apiKey string) func(context.Context, *http.Request) error {
-	return func(_ context.Context, request *http.Request) error {
-		request.Header.Set("x-api-key", apiKey)
-		request.Header.Set("anthropic-version", "2023-06-01")
-		request.Header.Set("User-Agent", "eul")
-		request.Header.Set("x-opencode-client", "eul")
-		return nil
-	}
+func setAnthropicHeaders(request *http.Request, apiKey string) {
+	request.Header.Set("x-api-key", apiKey)
+	request.Header.Set("anthropic-version", "2023-06-01")
+	request.Header.Set("User-Agent", "eul")
+	request.Header.Set("x-opencode-client", "eul")
 }
 
 func responseRequestOptions(models *backend.Models[modelInfo], request agent.Request) (responses.RequestOptions, error) {

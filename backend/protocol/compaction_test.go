@@ -26,8 +26,8 @@ func TestShouldCompact(t *testing.T) {
 		{name: "pending image", request: agent.Request{State: state, Inputs: []agent.Input{image}}, usage: agent.Usage{TotalTokens: 100}, contextWindow: 1_248, want: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := ShouldCompact(test.request, test.usage, test.contextWindow); got != test.want {
-				t.Fatalf("ShouldCompact() = %t, want %t", got, test.want)
+			if got := shouldCompact(test.request, test.usage, test.contextWindow); got != test.want {
+				t.Fatalf("shouldCompact() = %t, want %t", got, test.want)
 			}
 		})
 	}
@@ -39,22 +39,22 @@ func TestPrepareAndValidateSummary(t *testing.T) {
 		Inputs:       []agent.Input{agent.NewTextInput("pending")},
 		Tools:        []agent.ToolDefinition{{Name: "read"}},
 	}
-	prepared, continueTask := PrepareSummary(original)
-	if !continueTask || prepared.Instructions != SummaryInstructions || len(prepared.Tools) != 0 || len(prepared.Inputs) != 2 {
+	prepared, continueTask := prepareSummary(original)
+	if !continueTask || prepared.Instructions != summaryInstructions || len(prepared.Tools) != 0 || len(prepared.Inputs) != 2 {
 		t.Fatalf("prepared request = %+v, continue = %v", prepared, continueTask)
 	}
 	if original.Instructions != "original" || len(original.Inputs) != 1 || len(original.Tools) != 1 {
 		t.Fatalf("original request changed: %+v", original)
 	}
 
-	summary, err := ValidateSummary("  result  ", 0)
-	if err != nil || summary != "result" || !strings.Contains(FormatSummary(summary), summary) {
+	summary, err := validateSummary("  result  ", 0)
+	if err != nil || summary != "result" || !strings.Contains(formatSummary(summary), summary) {
 		t.Fatalf("summary = %q, error = %v", summary, err)
 	}
-	if _, err := ValidateSummary("result", 1); err == nil {
+	if _, err := validateSummary("result", 1); err == nil {
 		t.Fatal("summary with a tool call was accepted")
 	}
-	if _, err := ValidateSummary(" ", 0); err == nil {
+	if _, err := validateSummary(" ", 0); err == nil {
 		t.Fatal("empty summary was accepted")
 	}
 }

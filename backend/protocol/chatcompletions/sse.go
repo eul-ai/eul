@@ -9,6 +9,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
+	"github.com/eul-ai/eul/backend/protocol"
 )
 
 type completionChunk struct {
@@ -44,14 +45,6 @@ type completionUsage struct {
 	TotalTokens      int64 `json:"total_tokens"`
 }
 
-type streamResult struct {
-	text      string
-	reasoning string
-	calls     []agent.ToolCall
-	assistant json.RawMessage
-	usage     agent.Usage
-}
-
 type streamDecoder struct {
 	observer                  backendhttp.Observer
 	text                      strings.Builder
@@ -62,7 +55,7 @@ type streamDecoder struct {
 	serializeReasoningContent bool
 }
 
-func readCompletionSSE(reader io.Reader, observer agent.StreamObserver, serializeReasoningContent bool) (streamResult, error) {
+func readCompletionSSE(reader io.Reader, observer agent.StreamObserver, serializeReasoningContent bool) (protocol.Result, error) {
 	decoder := streamDecoder{
 		observer:                  backendhttp.NewObserver(observer),
 		toolCalls:                 newToolCallAccumulator(),
@@ -70,10 +63,10 @@ func readCompletionSSE(reader io.Reader, observer agent.StreamObserver, serializ
 	}
 	done, err := backendhttp.ReadSSE(reader, decoder.handleData)
 	if err != nil {
-		return streamResult{}, fmt.Errorf("read Chat Completions SSE: %w", err)
+		return protocol.Result{}, fmt.Errorf("read Chat Completions SSE: %w", err)
 	}
 	if !done && decoder.finishReason == "" {
-		return streamResult{}, backendhttp.ErrIncompleteStream
+		return protocol.Result{}, backendhttp.ErrIncompleteStream
 	}
 	return decoder.finish()
 }
@@ -143,63 +136,50 @@ func (decoder *streamDecoder) deliverToolCall(call streamedToolCall, complete bo
 	return decoder.observer.ToolCall(call.id, call.name, call.arguments, complete)
 }
 
-func (decoder *streamDecoder) finish() (streamResult, error) {
+func (decoder *streamDecoder) finish() (protocol.Result, error) {
 	if decoder.finishReason == "" {
-		return streamResult{}, backendhttp.ErrIncompleteStream
+		return protocol.Result{}, backendhttp.ErrIncompleteStream
 	}
 	switch decoder.finishReason {
 	case "stop", "tool_calls", "content_filter":
 	case "length":
-		return streamResult{}, fmt.Errorf("chat completion stopped with finish reason %q", decoder.finishReason)
+		return protocol.Result{}, fmt.Errorf("chat completion stopped with finish reason %q", decoder.finishReason)
 	default:
-		return streamResult{}, fmt.Errorf("chat completion has unsupported finish reason %q", decoder.finishReason)
+		return protocol.Result{}, fmt.Errorf("chat completion has unsupported finish reason %q", decoder.finishReason)
 	}
 
 	finalizedCalls, err := decoder.toolCalls.finalize()
 	if err != nil {
-		return streamResult{}, err
+		return protocol.Result{}, err
 	}
 	calls := make([]agent.ToolCall, 0, len(finalizedCalls))
 	wireCalls := make([]toolCall, 0, len(finalizedCalls))
 	for _, finalized := range finalizedCalls {
 		if err := decoder.deliverToolCall(finalized.streamed, true); err != nil {
-			return streamResult{}, err
+			return protocol.Result{}, err
 		}
 		calls = append(calls, finalized.call)
 		wireCalls = append(wireCalls, finalized.wire)
 	}
 
 	text := decoder.text.String()
-	reasoning := decoder.reasoning.String()
-	assistant, err := encodeAssistantMessage(text, reasoning, wireCalls, decoder.serializeReasoningContent)
-	if err != nil {
-		return streamResult{}, err
-	}
-
-	return streamResult{
-		text:      text,
-		reasoning: reasoning,
-		calls:     calls,
-		assistant: assistant,
-		usage:     normalizeUsage(decoder.usage),
-	}, nil
-}
-
-func encodeAssistantMessage(text, reasoning string, calls []toolCall, serializeReasoning bool) (json.RawMessage, error) {
 	var content any
 	if text != "" {
 		content = text
 	}
-	assistant, err := json.Marshal(assistantMessage{
+	assistant, _ := json.Marshal(assistantMessage{
 		Role:             "assistant",
 		Content:          content,
-		ReasoningContent: reasoningContent(reasoning, serializeReasoning),
-		ToolCalls:        calls,
+		ReasoningContent: reasoningContent(decoder.reasoning.String(), decoder.serializeReasoningContent),
+		ToolCalls:        wireCalls,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("encode assistant message: %w", err)
-	}
-	return assistant, nil
+
+	return protocol.Result{
+		Text:      text,
+		ToolCalls: calls,
+		Output:    []json.RawMessage{assistant},
+		Usage:     normalizeUsage(decoder.usage),
+	}, nil
 }
 
 func normalizeUsage(usage *completionUsage) agent.Usage {

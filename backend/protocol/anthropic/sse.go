@@ -10,6 +10,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
+	"github.com/eul-ai/eul/backend/protocol"
 )
 
 type streamEvent struct {
@@ -51,13 +52,6 @@ type usageAccumulator struct {
 	cacheCreationTokens int64
 }
 
-type streamResult struct {
-	text      string
-	calls     []agent.ToolCall
-	assistant json.RawMessage
-	usage     agent.Usage
-}
-
 type streamDecoder struct {
 	observer   backendhttp.Observer
 	blocks     map[int]*blockAccumulator
@@ -66,14 +60,14 @@ type streamDecoder struct {
 	stopped    bool
 }
 
-func readMessagesSSE(reader io.Reader, observer agent.StreamObserver) (streamResult, error) {
+func readMessagesSSE(reader io.Reader, observer agent.StreamObserver) (protocol.Result, error) {
 	decoder := streamDecoder{observer: backendhttp.NewObserver(observer), blocks: make(map[int]*blockAccumulator)}
 	done, err := backendhttp.ReadSSE(reader, decoder.handleData)
 	if err != nil {
-		return streamResult{}, fmt.Errorf("read Anthropic Messages SSE: %w", err)
+		return protocol.Result{}, fmt.Errorf("read Anthropic Messages SSE: %w", err)
 	}
 	if !done {
-		return streamResult{}, backendhttp.ErrIncompleteStream
+		return protocol.Result{}, backendhttp.ErrIncompleteStream
 	}
 	return decoder.finish()
 }
@@ -175,18 +169,18 @@ func (decoder *streamDecoder) deliverBlockUpdate(block *blockAccumulator, update
 	return nil
 }
 
-func (decoder *streamDecoder) finish() (streamResult, error) {
+func (decoder *streamDecoder) finish() (protocol.Result, error) {
 	if !decoder.stopped || decoder.stopReason == "" {
-		return streamResult{}, backendhttp.ErrIncompleteStream
+		return protocol.Result{}, backendhttp.ErrIncompleteStream
 	}
 	switch decoder.stopReason {
 	case "end_turn", "stop_sequence", "tool_use", "refusal":
 	case "model_context_window_exceeded":
-		return streamResult{}, backendhttp.ErrContextLimit
+		return protocol.Result{}, backendhttp.ErrContextLimit
 	case "max_tokens", "pause_turn":
-		return streamResult{}, fmt.Errorf("anthropic message stopped with reason %q", decoder.stopReason)
+		return protocol.Result{}, fmt.Errorf("anthropic message stopped with reason %q", decoder.stopReason)
 	default:
-		return streamResult{}, fmt.Errorf("anthropic message has unsupported stop reason %q", decoder.stopReason)
+		return protocol.Result{}, fmt.Errorf("anthropic message has unsupported stop reason %q", decoder.stopReason)
 	}
 
 	indexes := make([]int, 0, len(decoder.blocks))
@@ -201,7 +195,7 @@ func (decoder *streamDecoder) finish() (streamResult, error) {
 	for _, index := range indexes {
 		wire, call, blockText, err := decoder.blocks[index].finalize()
 		if err != nil {
-			return streamResult{}, err
+			return protocol.Result{}, err
 		}
 		wireBlocks = append(wireBlocks, wire)
 		text.WriteString(blockText)
@@ -212,9 +206,9 @@ func (decoder *streamDecoder) finish() (streamResult, error) {
 
 	assistant, err := marshalWireMessage("assistant", wireBlocks)
 	if err != nil {
-		return streamResult{}, err
+		return protocol.Result{}, err
 	}
-	return streamResult{text: text.String(), calls: calls, assistant: assistant, usage: decoder.normalizeUsage()}, nil
+	return protocol.Result{Text: text.String(), ToolCalls: calls, Output: []json.RawMessage{assistant}, Usage: decoder.normalizeUsage()}, nil
 }
 
 func (decoder *streamDecoder) mergeUsage(usage *wireUsage) {

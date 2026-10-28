@@ -268,8 +268,7 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 				Body:       errorReadCloser{err: syscall.ECONNRESET},
 			}, nil
 		})
-		client := New(Options{
-			PrepareRequest: testPrepareRequest("key"), RequestOptions: testRequestOptions,
+		client := newTestClient(t, "key", Options{
 			Endpoint:   "https://example.com/responses",
 			HTTPClient: &http.Client{Transport: transport},
 		})

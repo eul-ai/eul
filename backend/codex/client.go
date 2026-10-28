@@ -4,64 +4,41 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend/codex/oauth"
-	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 	"github.com/eul-ai/eul/backend/protocol"
 	"github.com/eul-ai/eul/backend/protocol/responses"
 )
 
 const baseURL = "https://chatgpt.com/backend-api"
 
-type client struct {
-	manager   *oauth.Manager
-	responses *responses.Client
+type provider struct {
+	*protocol.Client
+	codec responses.Codec
 }
 
-var (
-	_ agent.Provider              = (*client)(nil)
-	_ agent.GenerationRetryPolicy = (*client)(nil)
-	_ agent.Compactor             = (*client)(nil)
-	_ agent.CompactionErrorPolicy = (*client)(nil)
-)
+var _ agent.Compactor = provider{}
 
-func newClient(manager *oauth.Manager, httpClient *http.Client) *client {
-	c := &client{manager: manager}
-	c.responses = responses.New(responses.Options{
-		HTTPClient:                httpClient,
-		Endpoint:                  baseURL + "/codex/responses",
-		ErrorPrefix:               "openai",
-		PrepareRequest:            c.prepareRequest,
-		RequestOptions:            requestOptions,
-		EncodeInboxAsAgentMessage: true,
-	})
-	return c
+func newProvider(manager *oauth.Manager, httpClient *http.Client) provider {
+	codec := responses.Codec{Options: requestOptions, InboxAsAgentMessage: true}
+	return provider{
+		Client: protocol.New(protocol.Options{
+			Codec:       codec,
+			HTTPClient:  httpClient,
+			Endpoint:    baseURL + "/codex/responses",
+			ErrorPrefix: "openai",
+			PrepareRequest: func(ctx context.Context, request *http.Request) error {
+				return prepareRequest(ctx, manager, request)
+			},
+			ContextWindow: func(model string) int64 { return models[model].contextWindow },
+		}),
+		codec: codec,
+	}
 }
 
-func (c *client) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {
-	return c.responses.Generate(ctx, request, observer)
-}
-
-func (*client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
-	return protocol.ShouldCompact(request, usage, models[request.Model].contextWindow)
-}
-
-func (c *client) Compact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {
-	return c.responses.Compact(ctx, request)
-}
-
-func (*client) RetryGeneration(err error, failedAttempts int) (time.Duration, bool) {
-	return backendhttp.RetryGeneration(err, failedAttempts)
-}
-
-func (*client) ShouldCompactAfterError(_ agent.Request, err error) bool {
-	return backendhttp.IsContextLimit(err)
-}
-
-func (c *client) prepareRequest(ctx context.Context, request *http.Request) error {
-	credential, err := resolveCredential(ctx, c.manager)
+func prepareRequest(ctx context.Context, manager *oauth.Manager, request *http.Request) error {
+	credential, err := resolveCredential(ctx, manager)
 	if err != nil {
 		return err
 	}

@@ -10,38 +10,31 @@ import (
 )
 
 func TestBuildCreateRequest(t *testing.T) {
-	state, err := protocol.EncodeState([]json.RawMessage{json.RawMessage(`{"type":"reasoning","encrypted_content":"opaque"}`)})
+	history := []json.RawMessage{json.RawMessage(`{"type":"reasoning","encrypted_content":"opaque"}`)}
+	wire, newItems, err := testCodec().build(agent.Request{
+		Model:  "model",
+		Inputs: []agent.Input{{Kind: agent.InputToolResult, CallID: "call_1", Tool: "read", Text: "failed", IsError: true}},
+		Tools:  []agent.ToolDefinition{strictTestTool("read")},
+	}, history)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	build, err := testClient().buildWireRequest(agent.Request{
-		Model:    "model",
-		FastMode: true,
-		State:    state,
-		Inputs:   []agent.Input{{Kind: agent.InputToolResult, CallID: "call_1", Tool: "read", Text: "failed", IsError: true}},
-		Tools:    []agent.ToolDefinition{strictTestTool("read")},
-	})
-	if err != nil {
-		t.Fatal(err)
+	if wire.Model != "model" || len(wire.Input) != 2 || len(newItems) != 1 || len(wire.Tools) != 1 || !wire.Tools[0].Strict || wire.ToolChoice != "auto" || !wire.ParallelToolCalls {
+		t.Fatalf("wire=%+v newItems=%s", wire, newItems)
+	}
+	if !strings.Contains(string(newItems[0]), `[tool error]\nfailed`) {
+		t.Fatalf("tool result = %s", newItems[0])
 	}
 
-	if build.wire.Model != "model" || build.wire.ServiceTier != "" || len(build.wire.Input) != 2 || len(build.newItems) != 1 || len(build.wire.Tools) != 1 || !build.wire.Tools[0].Strict {
-		t.Fatalf("build=%+v", build)
-	}
-	compact, err := testClient().buildCompactRequest(agent.Request{Model: "model", FastMode: true})
-	if err != nil || compact.wire.ServiceTier != "" {
-		t.Fatalf("compact request=%+v error=%v", compact, err)
-	}
-	if !strings.Contains(string(build.newItems[0]), `[tool error]\nfailed`) {
-		t.Fatalf("tool result = %s", build.newItems[0])
+	summary, _, err := testCodec().build(agent.Request{Model: "model"}, nil)
+	if err != nil || summary.ToolChoice != "" || summary.ParallelToolCalls {
+		t.Fatalf("request without tools = %+v, error = %v", summary, err)
 	}
 }
 
 func TestEncodeInboxInputAsAgentMessage(t *testing.T) {
-	client := testClient()
-	client.encodeInboxAsAgentMessage = true
-	items, err := client.encodeInputs([]agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}})
+	items, err := Codec{InboxAsAgentMessage: true}.encodeInputs([]agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +51,7 @@ func TestEncodeInboxInputAsAgentMessage(t *testing.T) {
 }
 
 func TestEncodeInboxInputAsUserMessageByDefault(t *testing.T) {
-	items, err := testClient().encodeInputs([]agent.Input{agent.NewInboxInput("result")})
+	items, err := Codec{}.encodeInputs([]agent.Input{agent.NewInboxInput("result")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,13 +65,13 @@ func TestEncodeInboxInputAsUserMessageByDefault(t *testing.T) {
 }
 
 func TestInboxInputSurvivesContinuationState(t *testing.T) {
-	client := testClient()
-	client.encodeInboxAsAgentMessage = true
-	build, err := client.buildWireRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}}})
+	codec := testCodec()
+	codec.InboxAsAgentMessage = true
+	wire, newItems, err := codec.build(agent.Request{Inputs: []agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := protocol.EncodeState(build.newItems)
+	state, err := protocol.EncodeState(newItems)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,8 +79,8 @@ func TestInboxInputSurvivesContinuationState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(build.wire.Input) != 1 || len(restored) != 1 || string(build.wire.Input[0]) != string(restored[0]) {
-		t.Fatalf("request = %s, restored = %s", build.wire.Input, restored)
+	if len(wire.Input) != 1 || len(restored) != 1 || string(wire.Input[0]) != string(restored[0]) {
+		t.Fatalf("request = %s, restored = %s", wire.Input, restored)
 	}
 }
 
@@ -95,14 +88,14 @@ func TestBuildCreateRequestRejectsInvalidInputKinds(t *testing.T) {
 	for _, input := range []agent.Input{
 		{Kind: "unknown", Text: "value"},
 	} {
-		if _, err := testClient().buildWireRequest(agent.Request{Inputs: []agent.Input{input}}); err == nil {
+		if _, _, err := testCodec().build(agent.Request{Inputs: []agent.Input{input}}, nil); err == nil {
 			t.Fatalf("input %+v was accepted", input)
 		}
 	}
 }
 
 func TestEncodeInputContentInOrder(t *testing.T) {
-	items, err := testClient().encodeInputs([]agent.Input{{
+	items, err := Codec{}.encodeInputs([]agent.Input{{
 		Kind: agent.InputUser,
 		Content: []agent.ContentPart{
 			{Kind: agent.ContentPartText, Text: "before"},
@@ -139,11 +132,11 @@ func TestOrderedInputContentSurvivesContinuationState(t *testing.T) {
 		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("one")}},
 		{Kind: agent.ContentPartText, Text: "after"},
 	}
-	build, err := testClient().buildWireRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputUser, Content: parts}}})
+	wire, newItems, err := testCodec().build(agent.Request{Inputs: []agent.Input{{Kind: agent.InputUser, Content: parts}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := protocol.EncodeState(build.newItems)
+	state, err := protocol.EncodeState(newItems)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,13 +144,13 @@ func TestOrderedInputContentSurvivesContinuationState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(build.wire.Input) != 1 || len(restored) != 1 || string(build.wire.Input[0]) != string(restored[0]) {
-		t.Fatalf("request = %s, restored = %s", build.wire.Input, restored)
+	if len(wire.Input) != 1 || len(restored) != 1 || string(wire.Input[0]) != string(restored[0]) {
+		t.Fatalf("request = %s, restored = %s", wire.Input, restored)
 	}
 }
 
 func TestEncodeTextAndImageOnlyContent(t *testing.T) {
-	text, err := testClient().encodeInputs([]agent.Input{agent.NewTextInput("hello")})
+	text, err := Codec{}.encodeInputs([]agent.Input{agent.NewTextInput("hello")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +161,7 @@ func TestEncodeTextAndImageOnlyContent(t *testing.T) {
 		t.Fatalf("text input = %s, error = %v", text[0], err)
 	}
 
-	image, err := testClient().encodeInputs([]agent.Input{{
+	image, err := Codec{}.encodeInputs([]agent.Input{{
 		Kind: agent.InputUser,
 		Content: []agent.ContentPart{{
 			Kind:  agent.ContentPartImage,
@@ -187,90 +180,22 @@ func TestEncodeTextAndImageOnlyContent(t *testing.T) {
 }
 
 func TestBuildCompactRequest(t *testing.T) {
-	build, err := testClient().buildCompactRequest(agent.Request{
+	built, newItems, err := testCodec().BuildCompaction(agent.Request{
 		Model:  "model",
 		Inputs: []agent.Input{agent.NewTextInput("hello")},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(build.wire.Input) != 2 || len(build.input) != 1 {
-		t.Fatalf("compact input count = %d, want 2", len(build.wire.Input))
+	wire := built.(createResponseRequest)
+	if len(wire.Input) != 2 || len(newItems) != 1 {
+		t.Fatalf("compact input = %s, new items = %s", wire.Input, newItems)
 	}
 
 	var trigger struct {
 		Type string `json:"type"`
 	}
-	if err := json.Unmarshal(build.wire.Input[1], &trigger); err != nil || trigger.Type != "compaction_trigger" {
-		t.Fatalf("compact trigger = %s, error = %v", build.wire.Input[1], err)
+	if err := json.Unmarshal(wire.Input[1], &trigger); err != nil || trigger.Type != "compaction_trigger" {
+		t.Fatalf("compact trigger = %s, error = %v", wire.Input[1], err)
 	}
-}
-
-func TestCompactedStateItemsRetainsOnlyGenuineUserMessages(t *testing.T) {
-	input := []json.RawMessage{
-		json.RawMessage(`{"type":"reasoning"}`),
-		json.RawMessage(`{"type":"message","role":"assistant"}`),
-		json.RawMessage(`{"role":"user","content":[{"type":"input_text","text":"human"}]}`),
-		json.RawMessage(`{"role":"user","content":"legacy inbox"}`),
-		json.RawMessage(`{"type":"agent_message","content":[{"type":"input_text","text":"inbox"}]}`),
-		json.RawMessage(`{"role":"developer","content":[{"type":"input_text","text":"old instructions"}]}`),
-		json.RawMessage(`{"role":"system","content":[{"type":"input_text","text":"old system"}]}`),
-		json.RawMessage(`{"type":"compaction","encrypted_content":"old"}`),
-	}
-	output := []json.RawMessage{json.RawMessage(`{"type":"compaction","encrypted_content":"new"}`)}
-
-	items := compactedStateItems(input, output)
-	if len(items) != 2 || !strings.Contains(string(items[0]), `"text":"human"`) || !strings.Contains(string(items[1]), `"encrypted_content":"new"`) {
-		t.Fatalf("compacted items = %s", items)
-	}
-}
-
-func TestCompactedStateItemsKeepsNewestUsersWithinBudget(t *testing.T) {
-	input := []json.RawMessage{
-		json.RawMessage(`{"role":"user","content":[{"type":"input_text","text":"oldest message"}]}`),
-		json.RawMessage(`{"role":"user","content":[{"type":"input_text","text":"ééé"}]}`),
-		json.RawMessage(`{"role":"user","content":[{"type":"input_text","text":"new"}]}`),
-	}
-	output := []json.RawMessage{json.RawMessage(`{"type":"compaction"}`)}
-
-	items := compactedStateItemsWithBudget(input, output, 2)
-	if len(items) != 3 || !strings.Contains(string(items[0]), `"text":"éé"`) || !strings.Contains(string(items[1]), `"text":"new"`) || string(items[2]) != `{"type":"compaction"}` {
-		t.Fatalf("compacted items = %s", items)
-	}
-}
-
-func TestCompactedStateItemsAccountsForImages(t *testing.T) {
-	input := []json.RawMessage{
-		json.RawMessage(`{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,abc"}]}`),
-		json.RawMessage(`{"role":"user","content":[{"type":"input_text","text":"new"}]}`),
-	}
-
-	withoutImage := compactedStateItemsWithBudget(input, nil, retainedImageTokens)
-	if len(withoutImage) != 1 || !strings.Contains(string(withoutImage[0]), `"text":"new"`) {
-		t.Fatalf("without image = %s", withoutImage)
-	}
-
-	withImage := compactedStateItemsWithBudget(input, nil, retainedImageTokens+1)
-	if len(withImage) != 2 || !strings.Contains(string(withImage[0]), `"input_image"`) || !strings.Contains(string(withImage[1]), `"text":"new"`) {
-		t.Fatalf("with image = %s", withImage)
-	}
-}
-
-func TestConfiguredRequestOwnsMutableOptions(t *testing.T) {
-	reasoning := &Reasoning{Effort: "high", Summary: "auto"}
-	include := []string{"reasoning.encrypted_content"}
-	configured := configureCommonRequest(createResponseRequest{}, RequestOptions{
-		Reasoning: reasoning,
-		Include:   include,
-	})
-
-	reasoning.Effort = "low"
-	include[0] = "changed"
-	if configured.Reasoning == reasoning || configured.Reasoning.Effort != "high" || configured.Include[0] != "reasoning.encrypted_content" {
-		t.Fatalf("configured request retained mutable options: %+v", configured)
-	}
-}
-
-func testClient() *Client {
-	return &Client{}
 }

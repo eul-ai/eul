@@ -59,20 +59,20 @@ func TestReadCompletionSSEStreamsAndNormalizes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.text != "answer " || text != result.text || result.reasoning != "think " || reasoning != result.reasoning {
+	if result.Text != "answer " || text != result.Text || reasoning != "think " {
 		t.Fatalf("result=%+v text=%q reasoning=%q", result, text, reasoning)
 	}
-	if result.usage != (agent.Usage{InputTokens: 10, OutputTokens: 4, TotalTokens: 14}) {
-		t.Fatalf("usage = %+v", result.usage)
+	if result.Usage != (agent.Usage{InputTokens: 10, OutputTokens: 4, TotalTokens: 14}) {
+		t.Fatalf("usage = %+v", result.Usage)
 	}
-	if len(result.calls) != 2 || result.calls[0].ID != "call_1" || result.calls[0].Name != "read" || string(result.calls[0].Arguments) != `{"p":"a"}` || result.calls[1].ID != "call_2" || string(result.calls[1].Arguments) != `{"p":"b"}` {
-		t.Fatalf("calls = %+v", result.calls)
+	if len(result.ToolCalls) != 2 || result.ToolCalls[0].ID != "call_1" || result.ToolCalls[0].Name != "read" || string(result.ToolCalls[0].Arguments) != `{"p":"a"}` || result.ToolCalls[1].ID != "call_2" || string(result.ToolCalls[1].Arguments) != `{"p":"b"}` {
+		t.Fatalf("calls = %+v", result.ToolCalls)
 	}
 	if len(snapshots) != 5 || !snapshots[len(snapshots)-1].Complete {
 		t.Fatalf("snapshots = %+v", snapshots)
 	}
-	if !strings.Contains(string(result.assistant), `"reasoning_content":"think "`) || !strings.Contains(string(result.assistant), `"tool_calls"`) {
-		t.Fatalf("assistant = %s", result.assistant)
+	if !strings.Contains(string(result.Output[0]), `"reasoning_content":"think "`) || !strings.Contains(string(result.Output[0]), `"tool_calls"`) {
+		t.Fatalf("assistant = %s", result.Output[0])
 	}
 }
 
@@ -86,8 +86,8 @@ func TestReadCompletionSSEStreamsRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.text != "cannot help" || delivered != result.text || !strings.Contains(string(result.assistant), "cannot help") {
-		t.Fatalf("result=%+v delivered=%q assistant=%s", result, delivered, result.assistant)
+	if result.Text != "cannot help" || delivered != result.Text || !strings.Contains(string(result.Output[0]), "cannot help") {
+		t.Fatalf("result=%+v delivered=%q assistant=%s", result, delivered, result.Output[0])
 	}
 }
 
@@ -109,8 +109,8 @@ func TestReadCompletionSSEAcceptsSplitToolMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.calls) != 1 || result.calls[0].ID != "call_1" || result.calls[0].Name != "read" || string(result.calls[0].Arguments) != `{"path":"a"}` {
-		t.Fatalf("calls = %+v", result.calls)
+	if len(result.ToolCalls) != 1 || result.ToolCalls[0].ID != "call_1" || result.ToolCalls[0].Name != "read" || string(result.ToolCalls[0].Arguments) != `{"path":"a"}` {
+		t.Fatalf("calls = %+v", result.ToolCalls)
 	}
 	if len(snapshots) != 2 || snapshots[0].Complete || !snapshots[1].Complete {
 		t.Fatalf("snapshots = %+v", snapshots)
@@ -140,12 +140,12 @@ func TestReadCompletionSSESerializesEmptyReasoningContentWhenRequested(t *testin
 				t.Fatal(err)
 			}
 			var assistant map[string]json.RawMessage
-			if err := json.Unmarshal(result.assistant, &assistant); err != nil {
+			if err := json.Unmarshal(result.Output[0], &assistant); err != nil {
 				t.Fatal(err)
 			}
 			reasoning, exists := assistant["reasoning_content"]
 			if exists != test.wantField || exists && string(reasoning) != `""` {
-				t.Fatalf("assistant = %s", result.assistant)
+				t.Fatalf("assistant = %s", result.Output[0])
 			}
 		})
 	}
@@ -156,7 +156,7 @@ func TestReadCompletionSSERequiresFinishReason(t *testing.T) {
 	if !errors.Is(err, backendhttp.ErrIncompleteStream) {
 		t.Fatalf("error = %v", err)
 	}
-	if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {
+	if _, retry := backendhttp.RetryGeneration(err, 1); !retry {
 		t.Fatal("incomplete stream is not retryable")
 	}
 }
@@ -167,7 +167,7 @@ func TestReadCompletionSSERetriesAfterDelivery(t *testing.T) {
 	if !errors.Is(err, backendhttp.ErrIncompleteStream) {
 		t.Fatalf("error = %v", err)
 	}
-	if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {
+	if _, retry := backendhttp.RetryGeneration(err, 1); !retry {
 		t.Fatal("partial stream is not retryable")
 	}
 }

@@ -9,7 +9,8 @@ import (
 )
 
 func TestBuildRequestEncodesAnthropicInputs(t *testing.T) {
-	build, err := buildWireRequest(agent.Request{
+	codec := Codec{Options: func(agent.Request) (RequestOptions, error) { return RequestOptions{MaxTokens: 100}, nil }}
+	built, newMessages, err := codec.Build(agent.Request{
 		Model:        "model",
 		Instructions: "instructions",
 		Inputs: []agent.Input{
@@ -24,16 +25,17 @@ func TestBuildRequestEncodesAnthropicInputs(t *testing.T) {
 			Description: "Read a file",
 			Parameters:  agent.JSONSchema{Type: "object"},
 		}},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if build.wire.Model != "model" || len(build.wire.System) != 1 || build.wire.System[0].Text != "instructions" || len(build.wire.Messages) != 1 || len(build.history) != 0 || len(build.newMessages) != 1 || len(build.wire.Tools) != 1 {
-		t.Fatalf("request=%+v history=%d new=%d", build.wire, len(build.history), len(build.newMessages))
+	wire := built.(createRequest)
+	if wire.Model != "model" || len(wire.System) != 1 || wire.System[0].Text != "instructions" || len(wire.Messages) != 1 || len(newMessages) != 1 || len(wire.Tools) != 1 {
+		t.Fatalf("request=%+v new=%d", wire, len(newMessages))
 	}
 
 	var encoded wireMessage
-	if err := json.Unmarshal(build.wire.Messages[0], &encoded); err != nil {
+	if err := json.Unmarshal(newMessages[0], &encoded); err != nil {
 		t.Fatal(err)
 	}
 	var blocks []contentBlock
@@ -91,28 +93,5 @@ func TestPromptCacheControlMarksStableBoundariesWithoutMutatingRequest(t *testin
 	original, _ := json.Marshal(request)
 	if strings.Contains(string(original), `"cache_control"`) {
 		t.Fatalf("original request was mutated: %s", original)
-	}
-}
-
-func TestConfigureRequestValidatesThinkingBudget(t *testing.T) {
-	for _, test := range []struct {
-		name      string
-		maxTokens int
-		budget    int
-		wantError bool
-	}{
-		{name: "below minimum", maxTokens: 2000, budget: 1023, wantError: true},
-		{name: "not below max", maxTokens: 1024, budget: 1024, wantError: true},
-		{name: "valid", maxTokens: 1025, budget: 1024},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			client := &Client{requestOptions: func(agent.Request) (RequestOptions, error) {
-				return RequestOptions{MaxTokens: test.maxTokens, Thinking: &Thinking{Type: "enabled", BudgetTokens: test.budget}}, nil
-			}}
-			err := client.configureRequest(agent.Request{}, &createRequest{})
-			if (err != nil) != test.wantError {
-				t.Fatalf("configureRequest() error = %v", err)
-			}
-		})
 	}
 }

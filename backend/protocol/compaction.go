@@ -7,7 +7,7 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-const SummaryInstructions = `Create a concise, standalone handoff summary of the conversation so another coding agent can continue the task.
+const summaryInstructions = `Create a concise, standalone handoff summary of the conversation so another coding agent can continue the task.
 
 Preserve only continuation-critical facts: the user's current goal, requirements, and constraints; important decisions and rationale; relevant files, symbols, and code details; changes already made; commands and tests run with their outcomes; errors and unresolved issues; and the exact next steps. Include pending user requests and relevant tool findings. Do not continue the task or address the user. Output only the summary.`
 
@@ -22,15 +22,15 @@ const (
 	maxStateBytes       = 16 * 1024 * 1024
 )
 
-func PrepareSummary(request agent.Request) (agent.Request, bool) {
+func prepareSummary(request agent.Request) (agent.Request, bool) {
 	continueTask := len(request.Inputs) != 0
-	request.Instructions = SummaryInstructions
+	request.Instructions = summaryInstructions
 	request.Tools = nil
 	request.Inputs = append(append([]agent.Input(nil), request.Inputs...), agent.NewTextInput(summaryRequest))
 	return request, continueTask
 }
 
-func ValidateSummary(text string, toolCallCount int) (string, error) {
+func validateSummary(text string, toolCallCount int) (string, error) {
 	if toolCallCount != 0 {
 		return "", errors.New("summary response contains tool calls")
 	}
@@ -42,11 +42,11 @@ func ValidateSummary(text string, toolCallCount int) (string, error) {
 	return summary, nil
 }
 
-func FormatSummary(summary string) string {
+func formatSummary(summary string) string {
 	return summaryIntroduction + "\n\n" + summary
 }
 
-func ShouldCompact(request agent.Request, usage agent.Usage, contextWindow int64) bool {
+func shouldCompact(request agent.Request, usage agent.Usage, contextWindow int64) bool {
 	if len(request.State) == 0 {
 		return false
 	}

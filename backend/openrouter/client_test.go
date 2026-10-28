@@ -83,6 +83,7 @@ func TestClientConfiguresOpenRouterResponsesAdapter(t *testing.T) {
 		SessionID:     "session-123",
 		Model:         "vendor/model",
 		ThinkingLevel: agent.ThinkingHigh,
+		Tools:         []agent.ToolDefinition{{Name: "read", Parameters: agent.JSONSchema{Type: "object"}}},
 	}, agent.StreamObserver{})
 	if err != nil || calls != 1 {
 		t.Fatalf("Generate() error = %v, calls = %d", err, calls)

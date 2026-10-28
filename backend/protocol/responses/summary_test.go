@@ -17,7 +17,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 		if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
 			t.Fatal(err)
 		}
-		if wire.Instructions != protocol.SummaryInstructions || len(wire.Tools) != 0 || wire.ToolChoice != "" || wire.ParallelToolCalls || len(wire.Input) != 3 {
+		if wire.Instructions == "" || wire.Instructions == "original instructions" || len(wire.Tools) != 0 || wire.ToolChoice != "" || wire.ParallelToolCalls || len(wire.Input) != 3 {
 			t.Errorf("summary request = %+v", wire)
 		}
 		if !strings.Contains(string(wire.Input[0]), "old answer") || !strings.Contains(string(wire.Input[1]), "pending request") {
@@ -44,7 +44,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	compacted, err := client.SemanticCompact(context.Background(), agent.Request{
+	compacted, err := client.Compact(context.Background(), agent.Request{
 		Model:         "test-model",
 		ThinkingLevel: agent.ThinkingOff,
 		Instructions:  "original instructions",
@@ -76,12 +76,12 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 		t.Fatalf("continuation message = %s, error = %v", items[1], err)
 	}
 
-	continued, err := client.buildWireRequest(agent.Request{State: compacted.State})
+	continued, _, err := testCodec().build(agent.Request{}, items)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(continued.wire.Input) != 2 {
-		t.Fatalf("continued input = %s", continued.wire.Input)
+	if len(continued.Input) != 2 {
+		t.Fatalf("continued input = %s", continued.Input)
 	}
 }
 
@@ -93,7 +93,7 @@ func TestManualSemanticCompactionPreservesTurnBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	compacted, err := client.SemanticCompact(context.Background(), agent.Request{
+	compacted, err := client.Compact(context.Background(), agent.Request{
 		Model:         "test-model",
 		ThinkingLevel: agent.ThinkingOff,
 		State:         state,
@@ -102,21 +102,22 @@ func TestManualSemanticCompactionPreservesTurnBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	continued, err := client.buildWireRequest(agent.Request{
-		State:  compacted.State,
-		Inputs: []agent.Input{agent.NewTextInput("new request")},
-	})
+	items, err := protocol.DecodeState(compacted.State)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(continued.wire.Input) != 2 {
-		t.Fatalf("continued input = %s", continued.wire.Input)
+	continued, _, err := testCodec().build(agent.Request{Inputs: []agent.Input{agent.NewTextInput("new request")}}, items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(continued.Input) != 2 {
+		t.Fatalf("continued input = %s", continued.Input)
 	}
 	var summaryMessage, userMessage inputMessage
-	if err := json.Unmarshal(continued.wire.Input[0], &summaryMessage); err != nil || summaryMessage.Role != "assistant" {
-		t.Fatalf("summary message = %s, error = %v", continued.wire.Input[0], err)
+	if err := json.Unmarshal(continued.Input[0], &summaryMessage); err != nil || summaryMessage.Role != "assistant" {
+		t.Fatalf("summary message = %s, error = %v", continued.Input[0], err)
 	}
-	if err := json.Unmarshal(continued.wire.Input[1], &userMessage); err != nil || userMessage.Role != "user" {
-		t.Fatalf("user message = %s, error = %v", continued.wire.Input[1], err)
+	if err := json.Unmarshal(continued.Input[1], &userMessage); err != nil || userMessage.Role != "user" {
+		t.Fatalf("user message = %s, error = %v", continued.Input[1], err)
 	}
 }

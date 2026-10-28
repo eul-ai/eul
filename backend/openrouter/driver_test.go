@@ -12,6 +12,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/backend/protocol"
 )
 
 type driverRoundTripperFunc func(*http.Request) (*http.Response, error)
@@ -130,7 +131,7 @@ func TestRuntimeChecksCredentialsInitializesModelsAndCreatesProvider(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	configuredProvider, ok := provider.(*client)
+	configuredProvider, ok := provider.(*protocol.Client)
 	if !ok {
 		t.Fatalf("provider = %T", provider)
 	}

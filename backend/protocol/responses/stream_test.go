@@ -27,12 +27,12 @@ func TestResponsesSSEOrdersCompletedItemsByOutputIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text, _, _, err := normalizeResponse(response.response)
+	result, err := normalizeResponse(response.response)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if text != "firstsecond" {
-		t.Fatalf("text = %q, want %q", text, "firstsecond")
+	if result.Text != "firstsecond" {
+		t.Fatalf("text = %q, want %q", result.Text, "firstsecond")
 	}
 }
 
@@ -67,7 +67,7 @@ func TestResponsesSSERetriesAfterDelivery(t *testing.T) {
 			if deliveries != 1 || !errors.Is(err, backendhttp.ErrIncompleteStream) {
 				t.Fatalf("deliveries=%d error=%v", deliveries, err)
 			}
-			if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {
+			if _, retry := backendhttp.RetryGeneration(err, 1); !retry {
 				t.Fatal("partial response is not retryable")
 			}
 		})

@@ -35,17 +35,14 @@ func TestHTTPErrorRetryAndContextClassification(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			client := New(Options{
-				Endpoint: "https://example.test/v1/chat/completions",
-				HTTPClient: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
-					return &http.Response{
-						StatusCode: test.status,
-						Status:     http.StatusText(test.status),
-						Header:     make(http.Header),
-						Body:       io.NopCloser(strings.NewReader(test.body)),
-					}, nil
-				})},
-			})
+			client := newTestClient(roundTripperFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: test.status,
+					Status:     http.StatusText(test.status),
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(test.body)),
+				}, nil
+			}), RequestOptions{})
 			_, err := client.Generate(context.Background(), agent.Request{
 				Model:  "model",
 				Inputs: []agent.Input{agent.NewTextInput("hello")},
@@ -64,7 +61,7 @@ func TestHTTPErrorRetryAndContextClassification(t *testing.T) {
 }
 
 func TestGenerateHonorsCanceledContext(t *testing.T) {
-	client := New(Options{Endpoint: "https://example.test/v1/chat/completions"})
+	client := newTestClient(nil, RequestOptions{})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := client.Generate(ctx, agent.Request{}, agent.StreamObserver{}); err != context.Canceled {

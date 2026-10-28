@@ -64,20 +64,20 @@ func TestReadMessagesSSEStreamsAndPreservesBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.text != "answer" || text != result.text || reasoning != "consider " {
+	if result.Text != "answer" || text != result.Text || reasoning != "consider " {
 		t.Fatalf("result=%+v text=%q reasoning=%q", result, text, reasoning)
 	}
-	if result.usage != (agent.Usage{InputTokens: 11, OutputTokens: 5, TotalTokens: 16}) {
-		t.Fatalf("usage = %+v", result.usage)
+	if result.Usage != (agent.Usage{InputTokens: 11, OutputTokens: 5, TotalTokens: 16}) {
+		t.Fatalf("usage = %+v", result.Usage)
 	}
-	if len(result.calls) != 1 || result.calls[0].ID != "call_1" || result.calls[0].Name != "read" || string(result.calls[0].Arguments) != `{"path":"a"}` {
-		t.Fatalf("calls = %+v", result.calls)
+	if len(result.ToolCalls) != 1 || result.ToolCalls[0].ID != "call_1" || result.ToolCalls[0].Name != "read" || string(result.ToolCalls[0].Arguments) != `{"path":"a"}` {
+		t.Fatalf("calls = %+v", result.ToolCalls)
 	}
 	if len(snapshots) != 3 || !snapshots[len(snapshots)-1].Complete {
 		t.Fatalf("snapshots = %+v", snapshots)
 	}
-	if !strings.Contains(string(result.assistant), `"signature":"signed"`) || !strings.Contains(string(result.assistant), `"tool_use"`) {
-		t.Fatalf("assistant = %s", result.assistant)
+	if !strings.Contains(string(result.Output[0]), `"signature":"signed"`) || !strings.Contains(string(result.Output[0]), `"tool_use"`) {
+		t.Fatalf("assistant = %s", result.Output[0])
 	}
 }
 
@@ -94,8 +94,8 @@ func TestReadMessagesSSEAcceptsRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.text != "cannot help" {
-		t.Fatalf("text = %q", result.text)
+	if result.Text != "cannot help" {
+		t.Fatalf("text = %q", result.Text)
 	}
 }
 
@@ -127,8 +127,8 @@ func TestReadMessagesSSEOrdersMultipleToolCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.calls) != 2 || result.calls[0].ID != "call_1" || result.calls[1].ID != "call_2" {
-		t.Fatalf("calls = %+v", result.calls)
+	if len(result.ToolCalls) != 2 || result.ToolCalls[0].ID != "call_1" || result.ToolCalls[1].ID != "call_2" {
+		t.Fatalf("calls = %+v", result.ToolCalls)
 	}
 }
 
@@ -158,7 +158,7 @@ func TestReadMessagesSSERetriesAfterDelivery(t *testing.T) {
 	if !errors.Is(err, backendhttp.ErrIncompleteStream) {
 		t.Fatalf("error = %v", err)
 	}
-	if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {
+	if _, retry := backendhttp.RetryGeneration(err, 1); !retry {
 		t.Fatal("partial stream is not retryable")
 	}
 }

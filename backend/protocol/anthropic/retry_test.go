@@ -36,22 +36,16 @@ func TestHTTPErrorRetryAndContextClassification(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			client := New(Options{
-				Endpoint: "https://example.test/v1/messages",
-				RequestOptions: func(agent.Request) (RequestOptions, error) {
-					return RequestOptions{MaxTokens: 100}, nil
-				},
-				HTTPClient: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
-					header := make(http.Header)
-					header.Set("retry-after-ms", "2000")
-					return &http.Response{
-						StatusCode: test.status,
-						Status:     http.StatusText(test.status),
-						Header:     header,
-						Body:       io.NopCloser(strings.NewReader(test.body)),
-					}, nil
-				})},
-			})
+			client := newTestClient(roundTripperFunc(func(*http.Request) (*http.Response, error) {
+				header := make(http.Header)
+				header.Set("retry-after-ms", "2000")
+				return &http.Response{
+					StatusCode: test.status,
+					Status:     http.StatusText(test.status),
+					Header:     header,
+					Body:       io.NopCloser(strings.NewReader(test.body)),
+				}, nil
+			}), RequestOptions{MaxTokens: 100})
 			_, err := client.Generate(context.Background(), agent.Request{
 				Model:  "model",
 				Inputs: []agent.Input{agent.NewTextInput("hello")},
@@ -76,20 +70,14 @@ func TestHTTPErrorRetryAndContextClassification(t *testing.T) {
 func TestGenerateClosesBodyWhenCanceledDuringRead(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	body := &cancelingReadCloser{cancel: cancel}
-	client := New(Options{
-		Endpoint: "https://example.test/v1/messages",
-		RequestOptions: func(agent.Request) (RequestOptions, error) {
-			return RequestOptions{MaxTokens: 100}, nil
-		},
-		HTTPClient: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Status:     "200 OK",
-				Header:     make(http.Header),
-				Body:       body,
-			}, nil
-		})},
-	})
+	client := newTestClient(roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       body,
+		}, nil
+	}), RequestOptions{MaxTokens: 100})
 
 	_, err := client.Generate(ctx, agent.Request{Model: "model", Inputs: []agent.Input{agent.NewTextInput("hello")}}, agent.StreamObserver{})
 	if err != context.Canceled || !body.closed {
@@ -113,7 +101,7 @@ func (reader *cancelingReadCloser) Close() error {
 }
 
 func TestGenerateHonorsCanceledContext(t *testing.T) {
-	client := New(Options{Endpoint: "https://example.test/v1/messages"})
+	client := newTestClient(nil, RequestOptions{})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := client.Generate(ctx, agent.Request{}, agent.StreamObserver{}); err != context.Canceled {

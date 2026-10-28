@@ -6,20 +6,14 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend/protocol"
 )
 
 func TestBuildRequestEncodesInputsToolsAndState(t *testing.T) {
 	stateMessage := json.RawMessage(`{"role":"assistant","content":"earlier"}`)
-	state, err := protocol.EncodeState([]json.RawMessage{stateMessage})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	build, err := buildWireRequest(agent.Request{
+	codec := Codec{Options: func(agent.Request) (RequestOptions, error) { return RequestOptions{}, nil }}
+	wire, newMessages, err := codec.Build(agent.Request{
 		Model:        "model",
 		Instructions: "instructions",
-		State:        state,
 		Inputs: []agent.Input{
 			agent.NewUserInput(
 				agent.ContentPart{Kind: agent.ContentPartText, Text: "look "},
@@ -33,13 +27,13 @@ func TestBuildRequestEncodesInputsToolsAndState(t *testing.T) {
 			Description: "Read a file",
 			Parameters:  agent.JSONSchema{Type: "object"},
 		}},
-	})
+	}, []json.RawMessage{stateMessage})
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := build.wire
-	if request.Model != "model" || len(request.Messages) != 4 || len(build.history) != 1 || len(build.newMessages) != 2 || len(request.Tools) != 1 || !request.Tools[0].Function.Strict {
-		t.Fatalf("request = %+v, history=%d new=%d", request, len(build.history), len(build.newMessages))
+	request := wire.(createRequest)
+	if request.Model != "model" || len(request.Messages) != 4 || len(newMessages) != 2 || len(request.Tools) != 1 || !request.Tools[0].Function.Strict {
+		t.Fatalf("request = %+v, new=%d", request, len(newMessages))
 	}
 
 	var system message

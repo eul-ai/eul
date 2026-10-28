@@ -112,7 +112,7 @@ func TestClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 	})
 
 	var delivered, reasoning string
-	response, err := newClient(testManager(t, token), httpClient).Generate(context.Background(), agent.Request{
+	response, err := newProvider(testManager(t, token), httpClient).Generate(context.Background(), agent.Request{
 		Model:         modelMain,
 		ThinkingLevel: agent.ThinkingXHigh,
 		FastMode:      true,
@@ -120,6 +120,7 @@ func TestClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 			agent.NewTextInput("hello"),
 			agent.NewInboxInput("subagent result"),
 		},
+		Tools: []agent.ToolDefinition{{Name: "read", Parameters: agent.JSONSchema{Type: "object"}}},
 	}, agent.StreamObserver{
 		Text:      func(text string) error { delivered += text; return nil },
 		Reasoning: func(text string) error { reasoning += text; return nil },
@@ -141,7 +142,7 @@ func TestClientResolvesCredentialPerRequest(t *testing.T) {
 		authorization = request.Header.Get("Authorization")
 		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
 	})
-	client := newClient(oauth.NewManager(path), httpClient)
+	client := newProvider(oauth.NewManager(path), httpClient)
 	request := agent.Request{Model: modelMain, ThinkingLevel: agent.ThinkingMedium, Inputs: []agent.Input{agent.NewTextInput("hello")}}
 	if _, err := client.Generate(context.Background(), request, agent.StreamObserver{}); err != nil || authorization != "Bearer first" {
 		t.Fatalf("first authorization = %q, error = %v", authorization, err)
@@ -159,7 +160,7 @@ func TestClientCredentialErrorsPropagateWithoutRequest(t *testing.T) {
 		return nil, transportFailure
 	})}
 	manager := oauth.NewManager(filepath.Join(t.TempDir(), "auth.json"))
-	_, err := newClient(manager, httpClient).Generate(context.Background(), agent.Request{Model: modelMain, ThinkingLevel: agent.ThinkingMedium}, agent.StreamObserver{})
+	_, err := newProvider(manager, httpClient).Generate(context.Background(), agent.Request{Model: modelMain, ThinkingLevel: agent.ThinkingMedium}, agent.StreamObserver{})
 	if err == nil || errors.Is(err, transportFailure) {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -191,7 +192,7 @@ func TestClientCompactsAndReplaysSharedState(t *testing.T) {
 		}
 	})
 
-	client := newClient(testManager(t, "token"), httpClient)
+	client := newProvider(testManager(t, "token"), httpClient)
 	compacted, err := client.Compact(context.Background(), agent.Request{
 		Model: modelMain, ThinkingLevel: agent.ThinkingMedium, Inputs: []agent.Input{agent.NewTextInput("compact me")},
 	})
@@ -207,7 +208,7 @@ func TestClientCompactsAndReplaysSharedState(t *testing.T) {
 }
 
 func TestClientShouldCompact(t *testing.T) {
-	client := newClient(nil, nil)
+	client := newProvider(nil, nil)
 	state := []byte(`{"version":1}`)
 	limit := models[modelMain].contextWindow * 9 / 10
 	tests := []struct {

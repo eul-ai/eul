@@ -8,7 +8,7 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-func (client *Client) encodeInputs(inputs []agent.Input) ([]json.RawMessage, error) {
+func (codec Codec) encodeInputs(inputs []agent.Input) ([]json.RawMessage, error) {
 	items := make([]json.RawMessage, len(inputs))
 	for index, input := range inputs {
 		var value any
@@ -20,7 +20,7 @@ func (client *Client) encodeInputs(inputs []agent.Input) ([]json.RawMessage, err
 			}
 			value = inputMessage{Role: "user", Content: content}
 		case agent.InputInbox:
-			if client.encodeInboxAsAgentMessage {
+			if codec.InboxAsAgentMessage {
 				value = inputAgentMessage{
 					Type:      "agent_message",
 					Author:    "/root/subagents",

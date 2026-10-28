@@ -19,7 +19,9 @@ import (
 	"github.com/eul-ai/eul/backend/protocol"
 )
 
-func generate(client *Client, ctx context.Context, request agent.Request, onText, onReasoning agent.TextSink, onToolCall agent.ToolCallSink) (agent.Response, error) {
+type Options = protocol.Options
+
+func generate(client *protocol.Client, ctx context.Context, request agent.Request, onText, onReasoning agent.TextSink, onToolCall agent.ToolCallSink) (agent.Response, error) {
 	return client.Generate(ctx, request, agent.StreamObserver{Text: onText, Reasoning: onReasoning, ToolCall: onToolCall})
 }
 
@@ -216,7 +218,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		transport := roundTripperFunc(func(*http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: errorReadCloser{err: context.DeadlineExceeded}}, nil
 		})
-		client := New(Options{PrepareRequest: testPrepareRequest("token"), RequestOptions: testRequestOptions, Endpoint: "https://example.com/responses", HTTPClient: &http.Client{Transport: transport}})
+		client := newTestClient(t, "token", Options{Endpoint: "https://example.com/responses", HTTPClient: &http.Client{Transport: transport}})
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("Generate() error = %v", err)
@@ -288,12 +290,10 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 
 func TestClientValidatesRequestsBeforePreparingRequest(t *testing.T) {
 	var prepareCalls atomic.Int32
-	options := testOptions("", "http://127.0.0.1:1")
-	options.PrepareRequest = func(context.Context, *http.Request) error {
+	client := newTestClient(t, "", Options{PrepareRequest: func(context.Context, *http.Request) error {
 		prepareCalls.Add(1)
 		return nil
-	}
-	client := New(options)
+	}})
 
 	invalidState := baseRequest()
 	invalidState.State = []byte(`not-json`)
@@ -308,33 +308,7 @@ func TestClientValidatesRequestsBeforePreparingRequest(t *testing.T) {
 	}
 }
 
-func TestNewCopiesInjectedClientBeforeApplyingPolicy(t *testing.T) {
-	redirect := func(*http.Request, []*http.Request) error { return nil }
-	transport := http.DefaultTransport
-	injected := &http.Client{Transport: transport, CheckRedirect: redirect}
-
-	client := New(Options{
-		Endpoint:       "https://example.com/responses",
-		HTTPClient:     injected,
-		RequestOptions: testRequestOptions,
-		PrepareRequest: testPrepareRequest("token"),
-	})
-	if client.httpClient == injected || client.httpClient.Transport != transport || client.httpClient.Timeout != 0 {
-		t.Fatalf("owned client=%p injected=%p transport=%T timeout=%s", client.httpClient, injected, client.httpClient.Transport, client.httpClient.Timeout)
-	}
-	if injected.Timeout != 0 || injected.CheckRedirect == nil {
-		t.Fatalf("injected client was mutated: timeout=%s redirect missing=%t", injected.Timeout, injected.CheckRedirect == nil)
-	}
-	request, _ := http.NewRequest(http.MethodGet, "https://example.com", nil)
-	if err := client.httpClient.CheckRedirect(request, nil); !errors.Is(err, http.ErrUseLastResponse) {
-		t.Fatalf("owned redirect policy error = %v", err)
-	}
-	if err := injected.CheckRedirect(request, nil); err != nil {
-		t.Fatalf("injected redirect policy changed: %v", err)
-	}
-}
-
-func newTestClient(t *testing.T, token string, overrides Options) *Client {
+func newTestClient(t *testing.T, token string, overrides Options) *protocol.Client {
 	t.Helper()
 	if overrides.Endpoint == "" {
 		overrides.Endpoint = "https://example.test/codex/responses"
@@ -342,19 +316,16 @@ func newTestClient(t *testing.T, token string, overrides Options) *Client {
 	if overrides.PrepareRequest == nil {
 		overrides.PrepareRequest = testPrepareRequest(token)
 	}
-	if overrides.RequestOptions == nil {
-		overrides.RequestOptions = testRequestOptions
-	}
-	client := New(overrides)
-
-	return client
+	overrides.Codec = testCodec()
+	overrides.ContextWindow = func(string) int64 { return 0 }
+	return protocol.New(overrides)
 }
 
-func testOptions(token, endpoint string) Options {
-	return Options{Endpoint: endpoint, PrepareRequest: testPrepareRequest(token), RequestOptions: testRequestOptions}
+func testCodec() Codec {
+	return Codec{Options: testRequestOptions}
 }
 
-func testPrepareRequest(token string) PrepareRequestFunc {
+func testPrepareRequest(token string) func(context.Context, *http.Request) error {
 	return func(_ context.Context, request *http.Request) error {
 		request.Header.Set("Authorization", "Bearer "+token)
 		request.Header.Set("chatgpt-account-id", "account")
@@ -436,34 +407,6 @@ func responseServer(t *testing.T, status int, body string) *http.Client {
 		writer.WriteHeader(status)
 		_, _ = io.WriteString(writer, body)
 	}))
-}
-
-func compactResponseServer(t *testing.T, status int, body string) *http.Client {
-	t.Helper()
-	return handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		if status < 200 || status >= 300 {
-			writer.Header().Set("Content-Type", "application/json")
-			writer.WriteHeader(status)
-			_, _ = io.WriteString(writer, body)
-			return
-		}
-
-		writer.Header().Set("Content-Type", "text/event-stream")
-		writer.WriteHeader(status)
-		_, _ = fmt.Fprintf(writer, "data: {\"type\":\"response.completed\",\"response\":%s}\n\n", body)
-	}))
-}
-
-func writeCompactSSE(t *testing.T, writer http.ResponseWriter, value any) {
-	t.Helper()
-	var payload bytes.Buffer
-	if err := json.NewEncoder(&payload).Encode(value); err != nil {
-		t.Errorf("encode compact response: %v", err)
-		return
-	}
-
-	writer.Header().Set("Content-Type", "text/event-stream")
-	_, _ = fmt.Fprintf(writer, "data: {\"type\":\"response.completed\",\"response\":%s}\n\n", bytes.TrimSpace(payload.Bytes()))
 }
 
 func writeJSON(t *testing.T, writer http.ResponseWriter, value any) {

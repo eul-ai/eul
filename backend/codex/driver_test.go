@@ -25,12 +25,12 @@ func TestDriverOpensRuntimeWithAuthenticationAndProviderCreation(t *testing.T) {
 	if err := checker.CheckCredentials(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	provider, err := backendRuntime.NewProvider()
+	created, err := backendRuntime.NewProvider()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := provider.(*client); !ok {
-		t.Fatalf("provider = %T", provider)
+	if _, ok := created.(provider); !ok {
+		t.Fatalf("provider = %T", created)
 	}
 	if err := backendRuntime.Close(); err != nil {
 		t.Fatal(err)

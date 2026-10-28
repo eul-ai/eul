@@ -71,7 +71,7 @@ func (configured *runtime) CheckCredentials(ctx context.Context) error {
 }
 
 func (configured *runtime) NewProvider() (agent.Provider, error) {
-	return newClient(configured.manager, configured.httpClient), nil
+	return newProvider(configured.manager, configured.httpClient), nil
 }
 
 func (*runtime) ModelMetadata(model string) backend.ModelMetadata {
