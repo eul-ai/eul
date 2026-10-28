@@ -45,7 +45,7 @@ type Client struct {
 
 func New(options Options) *Client {
 	return &Client{
-		httpClient:     backendhttp.CloneNoRedirects(options.HTTPClient, backendhttp.DefaultGenerationHTTPTimeout),
+		httpClient:     backendhttp.CloneNoRedirects(options.HTTPClient, 0),
 		endpoint:       options.Endpoint,
 		errorConfig:    backendhttp.APIErrorConfig{Prefix: options.ErrorPrefix},
 		prepareRequest: options.PrepareRequest,

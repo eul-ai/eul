@@ -146,6 +146,39 @@ func TestCompleteJSONSSEOwnsRequestLifecycle(t *testing.T) {
 	}
 }
 
+func TestCompleteJSONSSECancelsIdleResponseOnly(t *testing.T) {
+	previous := idleTimeout
+	idleTimeout = 100 * time.Millisecond
+	defer func() { idleTimeout = previous }()
+
+	const chunks = 5
+	client := &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		reader, writer := io.Pipe()
+		go func() {
+			for range chunks {
+				time.Sleep(idleTimeout * 2 / 5)
+				_, _ = io.WriteString(writer, "x")
+			}
+			<-request.Context().Done()
+			writer.CloseWithError(request.Context().Err())
+		}()
+		return &http.Response{StatusCode: http.StatusOK, Body: reader}, nil
+	})}
+
+	received := 0
+	_, err := CompleteJSONSSE(context.Background(), JSONSSEConfig{HTTPClient: client, Endpoint: "https://example.test"}, struct{}{}, "request", func(reader io.Reader, _ int64) (struct{}, error) {
+		data, err := io.ReadAll(reader)
+		received = len(data)
+		return struct{}{}, err
+	})
+	if received != chunks || !errors.Is(err, errIdleTimeout) {
+		t.Fatalf("received=%d error=%v", received, err)
+	}
+	if _, retry := RetryGeneration(err, 1); !retry {
+		t.Fatal("idle timeout is not retryable")
+	}
+}
+
 func TestDecodeBoundedJSONAndText(t *testing.T) {
 	var decoded map[string]int
 	truncated, err := decodeBoundedJSON(strings.NewReader(`{"value":1}`), 64, &decoded)

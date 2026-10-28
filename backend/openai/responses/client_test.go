@@ -319,7 +319,7 @@ func TestNewCopiesInjectedClientBeforeApplyingPolicy(t *testing.T) {
 		RequestOptions: testRequestOptions,
 		PrepareRequest: testPrepareRequest("token"),
 	})
-	if client.httpClient == injected || client.httpClient.Transport != transport || client.httpClient.Timeout != backendhttp.DefaultGenerationHTTPTimeout {
+	if client.httpClient == injected || client.httpClient.Transport != transport || client.httpClient.Timeout != 0 {
 		t.Fatalf("owned client=%p injected=%p transport=%T timeout=%s", client.httpClient, injected, client.httpClient.Transport, client.httpClient.Timeout)
 	}
 	if injected.Timeout != 0 || injected.CheckRedirect == nil {

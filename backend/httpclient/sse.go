@@ -8,7 +8,26 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
+
+var (
+	idleTimeout    = 10 * time.Minute
+	errIdleTimeout = fmt.Errorf("response idle timeout: %w", context.DeadlineExceeded)
+)
+
+type idleReader struct {
+	reader io.Reader
+	idle   *time.Timer
+}
+
+func (reader idleReader) Read(data []byte) (int, error) {
+	read, err := reader.reader.Read(data)
+	if read > 0 {
+		reader.idle.Reset(idleTimeout)
+	}
+	return read, err
+}
 
 func newJSONSSERequest(ctx context.Context, endpoint string, body []byte) (*http.Request, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
@@ -44,7 +63,9 @@ func CompleteJSONSSE[T any](
 		return zero, config.ErrorConfig.Errorf("%s exceeds %d bytes", operation, maxRequestBytes)
 	}
 
-	request, err := newJSONSSERequest(ctx, config.Endpoint, body)
+	requestCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	request, err := newJSONSSERequest(requestCtx, config.Endpoint, body)
 	if err != nil {
 		return zero, config.ErrorConfig.Errorf("create %s: %v", operation, err)
 	}
@@ -57,17 +78,25 @@ func CompleteJSONSSE[T any](
 		}
 	}
 
+	idle := time.AfterFunc(idleTimeout, func() { cancel(errIdleTimeout) })
+	defer idle.Stop()
 	response, err := config.ErrorConfig.Do(ctx, config.HTTPClient, request, operation)
 	if err != nil {
+		if context.Cause(requestCtx) == errIdleTimeout {
+			return zero, config.ErrorConfig.retryableWrapf(errIdleTimeout, "%s: %v", operation, errIdleTimeout)
+		}
 		return zero, err
 	}
 	defer response.Body.Close()
 
-	result, err := read(response.Body, maxResponseBytes)
-	if err == nil {
+	idle.Reset(idleTimeout)
+	result, err := read(idleReader{reader: response.Body, idle: idle}, maxResponseBytes)
+	switch {
+	case err == nil:
 		return result, nil
-	}
-	if isObserverError(err) {
+	case context.Cause(requestCtx) == errIdleTimeout:
+		return zero, config.ErrorConfig.retryableWrapf(errIdleTimeout, "%s: %v", operation, errIdleTimeout)
+	case isObserverError(err):
 		return zero, config.ErrorConfig.Wrapf(err, "%v", err)
 	}
 
