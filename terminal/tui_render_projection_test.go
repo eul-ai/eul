@@ -1,9 +1,11 @@
 package terminal
 
+import "github.com/eul-ai/eul/session"
+
 func modelConversationLines(model *tuiModel, width int) []styledLine {
-	blocks := append([]conversationBlock(nil), model.blocks...)
+	blocks := append([]session.Entry(nil), model.transcript.Entries...)
 	for _, content := range model.pendingSteering() {
-		blocks = append(blocks, conversationBlock{kind: blockInfo, text: "Queued: " + displayContent(content) + " (alt+↑ to restore)"})
+		blocks = append(blocks, session.Entry{Kind: session.EntryInfo, Text: "Queued: " + displayContent(content) + " (alt+↑ to restore)"})
 	}
 	lines := conversationLines(blocks, width)
 	result := make([]styledLine, 0, len(lines)+conversationVerticalPadding*2)
@@ -13,7 +15,7 @@ func modelConversationLines(model *tuiModel, width int) []styledLine {
 	return result
 }
 
-func conversationLines(blocks []conversationBlock, width int) []styledLine {
+func conversationLines(blocks []session.Entry, width int) []styledLine {
 	var lines []styledLine
 	for index, block := range blocks {
 		lines = append(lines, conversationBlockLines(block, width)...)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/filesearch"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/terminal/text"
 )
 
@@ -160,7 +161,7 @@ func TestSubmittedImageMarkerWrapsAtomically(t *testing.T) {
 		{Kind: agent.ContentPartText, Text: "12345"},
 		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png"}},
 	}
-	lines := conversationBlockLines(conversationBlock{kind: blockUser, content: content}, 20)
+	lines := conversationBlockLines(session.Entry{Kind: session.EntryUser, Content: content}, 20)
 	if len(lines) != 2 || lines[0].text != "12345" || lines[1].text == "" {
 		t.Fatalf("lines = %+v", lines)
 	}
@@ -185,7 +186,7 @@ func TestSubmittedImagesRenderInline(t *testing.T) {
 		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png"}},
 		{Kind: agent.ContentPartText, Text: " after"},
 	}
-	lines := conversationBlockLines(conversationBlock{kind: blockUser, content: content}, 80)
+	lines := conversationBlockLines(session.Entry{Kind: session.EntryUser, Content: content}, 80)
 	if len(lines) != 1 || !strings.Contains(lines[0].text, "before ") || !strings.Contains(lines[0].text, " after") || strings.Index(lines[0].text, "before ") >= strings.Index(lines[0].text, " after") {
 		t.Fatalf("lines = %+v", lines)
 	}
@@ -248,7 +249,7 @@ func TestInputWrapsAtWordBoundaries(t *testing.T) {
 }
 
 func TestPaddedBlockBackgroundFillsWidth(t *testing.T) {
-	style := blockPresentation(blockTool)
+	style := blockPresentation(session.EntryTool)
 	var frame strings.Builder
 	renderLine(&frame, 1, 6, styledLine{text: "x", style: style, padding: conversationPadding})
 

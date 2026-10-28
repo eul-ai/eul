@@ -4,34 +4,9 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
-
-	"github.com/eul-ai/eul/agent"
 )
 
 const maxToolPresentationSummaryBytes = 500
-
-func toolResultOutcome(result agent.ToolResult, presentation agent.ToolPresentation) string {
-	if presentation.Outcome != "" {
-		return presentation.Outcome
-	}
-	if !result.IsError {
-		return "ok"
-	}
-	detail := result.Output
-	if newline := strings.IndexByte(detail, '\n'); newline >= 0 {
-		detail = detail[:newline]
-	}
-	if detail == "" {
-		return "error"
-	}
-	return "error: " + detail
-}
-
-func sanitizeToolPresentation(presentation agent.ToolPresentation) agent.ToolPresentation {
-	presentation.Arguments = singleLine(presentation.Arguments, maxToolPresentationSummaryBytes)
-	presentation.Outcome = singleLine(presentation.Outcome, maxToolPresentationSummaryBytes)
-	return presentation
-}
 
 func sanitizeAssistantText(value string) string {
 	return strings.Map(func(character rune) rune {

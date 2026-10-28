@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
 )
@@ -187,7 +188,7 @@ func (handle *sessionHandle) Save(
 	next.Subagent = subagentCheckpoint
 	next.Terminal = terminalCheckpoint
 	if next.Description == "" {
-		next.Description = terminalCheckpoint.Description()
+		next.Description = session.Description(terminalCheckpoint.Entries)
 	}
 	handle.record = next
 	if next.Description == "" {

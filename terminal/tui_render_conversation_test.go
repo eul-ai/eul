@@ -9,20 +9,21 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/terminal/keys"
 	"github.com/eul-ai/eul/terminal/text"
 )
 
 func TestConversationBlocksUseCurrentTheme(t *testing.T) {
-	lines := conversationLines([]conversationBlock{
-		{kind: blockUser, text: "user"},
-		{kind: blockAssistant, text: "assistant"},
-		{kind: blockReasoning, text: "summary"},
-		{kind: blockToolPending, toolName: "pending tool"},
-		{kind: blockTool, toolName: "successful tool"},
-		{kind: blockToolError, toolName: "failed tool"},
-		{kind: blockContext, text: "context"},
-		{kind: blockError, text: "error"},
+	lines := conversationLines([]session.Entry{
+		{Kind: session.EntryUser, Text: "user"},
+		{Kind: session.EntryAssistant, Text: "assistant"},
+		{Kind: session.EntryReasoning, Text: "summary"},
+		{Kind: session.EntryToolPending, ToolName: "pending tool"},
+		{Kind: session.EntryTool, ToolName: "successful tool"},
+		{Kind: session.EntryToolError, ToolName: "failed tool"},
+		{Kind: session.EntryContext, Text: "context"},
+		{Kind: session.EntryError, Text: "error"},
 	}, 40)
 	want := map[string]lineStyle{
 		"user":            {foreground: currentTheme.yellow},
@@ -50,9 +51,9 @@ func TestConversationBlocksUseCurrentTheme(t *testing.T) {
 }
 
 func TestUserMessagesRenderInlineMarkdown(t *testing.T) {
-	lines := conversationLines([]conversationBlock{{
-		kind: blockUser,
-		text: "Use **bold**, *italic*, and `code`",
+	lines := conversationLines([]session.Entry{{
+		Kind: session.EntryUser,
+		Text: "Use **bold**, *italic*, and `code`",
 	}}, 80)
 	if len(lines) != 1 || lines[0].text != "Use bold, italic, and code" {
 		t.Fatalf("lines = %+v", lines)
@@ -73,7 +74,7 @@ func TestUserMessagesRenderInlineMarkdown(t *testing.T) {
 }
 
 func TestConversationProseWrapsAtWordBoundaries(t *testing.T) {
-	lines := conversationLines([]conversationBlock{{kind: blockAssistant, text: "alpha beta"}}, 10)
+	lines := conversationLines([]session.Entry{{Kind: session.EntryAssistant, Text: "alpha beta"}}, 10)
 	if len(lines) != 2 || lines[0].text != "alpha" || lines[1].text != "beta" {
 		t.Fatalf("lines = %+v", lines)
 	}
@@ -83,9 +84,9 @@ func TestConversationProseWrapsAtWordBoundaries(t *testing.T) {
 }
 
 func TestRawToolOutputRemainsHardWrapped(t *testing.T) {
-	lines := conversationLines([]conversationBlock{{
-		kind:     blockTool,
-		toolName: "bash", tool: agent.ToolPresentation{Lines: []string{"abc def"}},
+	lines := conversationLines([]session.Entry{{
+		Kind:     session.EntryTool,
+		ToolName: "bash", Tool: agent.ToolPresentation{Lines: []string{"abc def"}},
 	}}, 7)
 	if !slices.ContainsFunc(lines, func(line styledLine) bool { return line.text == "abc d" }) {
 		t.Fatalf("lines = %+v", lines)
@@ -93,10 +94,10 @@ func TestRawToolOutputRemainsHardWrapped(t *testing.T) {
 }
 
 func TestToolDiffRemainsHardWrapped(t *testing.T) {
-	lines := conversationLines([]conversationBlock{{
-		kind:     blockTool,
-		toolName: "edit",
-		tool: agent.ToolPresentation{
+	lines := conversationLines([]session.Entry{{
+		Kind:     session.EntryTool,
+		ToolName: "edit",
+		Tool: agent.ToolPresentation{
 			Diff: []agent.ToolDiffLine{{Kind: agent.ToolDiffLineContext, OldLine: 1, NewLine: 1, Text: "abc def"}},
 		},
 	}}, 10)
@@ -106,9 +107,9 @@ func TestToolDiffRemainsHardWrapped(t *testing.T) {
 }
 
 func TestAssistantFencedCodeUsesCodePresentation(t *testing.T) {
-	lines := conversationLines([]conversationBlock{{
-		kind: blockAssistant,
-		text: "before\n```go\n**literal**\n```\nafter",
+	lines := conversationLines([]session.Entry{{
+		Kind: session.EntryAssistant,
+		Text: "before\n```go\n**literal**\n```\nafter",
 	}}, 80)
 	if len(lines) != 3 || lines[0].text != "before" || lines[1].text != "**literal**" || lines[2].text != "after" {
 		t.Fatalf("lines = %+v", lines)
@@ -128,7 +129,7 @@ func TestAssistantFencedCodeUsesCodePresentation(t *testing.T) {
 }
 
 func TestAssistantThematicBreakUsesMutedPresentation(t *testing.T) {
-	lines := conversationLines([]conversationBlock{{kind: blockAssistant, text: "---"}}, 10)
+	lines := conversationLines([]session.Entry{{Kind: session.EntryAssistant, Text: "---"}}, 10)
 	if len(lines) != 1 || lines[0].text != "────────" {
 		t.Fatalf("lines = %+v", lines)
 	}
@@ -138,7 +139,7 @@ func TestAssistantThematicBreakUsesMutedPresentation(t *testing.T) {
 }
 
 func TestAssistantBlockQuoteUsesMutedGutter(t *testing.T) {
-	lines := conversationLines([]conversationBlock{{kind: blockAssistant, text: "> quote"}}, 20)
+	lines := conversationLines([]session.Entry{{Kind: session.EntryAssistant, Text: "> quote"}}, 20)
 	if len(lines) != 1 || lines[0].text != "│ quote" {
 		t.Fatalf("lines = %+v", lines)
 	}
@@ -152,9 +153,9 @@ func TestAssistantBlockQuoteUsesMutedGutter(t *testing.T) {
 }
 
 func TestAssistantLinksAreClickable(t *testing.T) {
-	lines := conversationLines([]conversationBlock{{
-		kind: blockAssistant,
-		text: "Read [the docs](https://example.com/docs)",
+	lines := conversationLines([]session.Entry{{
+		Kind: session.EntryAssistant,
+		Text: "Read [the docs](https://example.com/docs)",
 	}}, 80)
 	if len(lines) != 1 || lines[0].text != "Read the docs" {
 		t.Fatalf("lines = %+v", lines)
@@ -169,10 +170,10 @@ func TestAssistantLinksAreClickable(t *testing.T) {
 }
 
 func TestAssistantReasoningAndToolDetailsRenderInlineMarkdown(t *testing.T) {
-	lines := conversationLines([]conversationBlock{
-		{kind: blockReasoning, text: "**Planning**"},
-		{kind: blockAssistant, text: "Use *care* and **`code`**"},
-		{kind: blockTool, toolName: "launch_subagents", tool: agent.ToolPresentation{
+	lines := conversationLines([]session.Entry{
+		{Kind: session.EntryReasoning, Text: "**Planning**"},
+		{Kind: session.EntryAssistant, Text: "Use *care* and **`code`**"},
+		{Kind: session.EntryTool, ToolName: "launch_subagents", Tool: agent.ToolPresentation{
 			Arguments: "(3)", Markdown: true,
 			Lines: []string{"1. complete — Read `./terminal/api.go`"}, Outcome: "ok",
 		}},
@@ -222,10 +223,10 @@ func TestAssistantReasoningAndToolDetailsRenderInlineMarkdown(t *testing.T) {
 }
 
 func TestToolTruncationMarkerIsMuted(t *testing.T) {
-	lines := conversationLines([]conversationBlock{{
-		kind:     blockTool,
-		toolName: "write",
-		tool: agent.ToolPresentation{
+	lines := conversationLines([]session.Entry{{
+		Kind:     session.EntryTool,
+		ToolName: "write",
+		Tool: agent.ToolPresentation{
 			Arguments:      "tool/subagent.go",
 			Lines:          []string{"package tool", "opaque-summary"},
 			LinesTruncated: true,
@@ -238,10 +239,10 @@ func TestToolTruncationMarkerIsMuted(t *testing.T) {
 }
 
 func TestBashToolShowsOutputTailAndDuration(t *testing.T) {
-	lines := conversationLines([]conversationBlock{{
-		kind:     blockTool,
-		toolName: "bash",
-		tool: agent.ToolPresentation{
+	lines := conversationLines([]session.Entry{{
+		Kind:     session.EntryTool,
+		ToolName: "bash",
+		Tool: agent.ToolPresentation{
 			Arguments: "go test ./...",
 			Lines:     []string{"one", "two", "three", "ok github.com/eul-ai/eul/cmd", "ok github.com/eul-ai/eul/provider", "ok github.com/eul-ai/eul/terminal", "ok github.com/eul-ai/eul/tool", "ok github.com/eul-ai/eul/terminal race"},
 			TailLines: 5,
@@ -273,10 +274,10 @@ func TestBashToolShowsOutputTailAndDuration(t *testing.T) {
 }
 
 func TestPendingBashToolShowsElapsedTime(t *testing.T) {
-	lines := conversationLines([]conversationBlock{{
-		kind:     blockToolPending,
-		toolName: "bash",
-		tool: agent.ToolPresentation{
+	lines := conversationLines([]session.Entry{{
+		Kind:     session.EntryToolPending,
+		ToolName: "bash",
+		Tool: agent.ToolPresentation{
 			Lines:   []string{"running"},
 			Elapsed: time.Second + 200*time.Millisecond,
 		},
@@ -292,10 +293,10 @@ func TestPendingBashToolShowsElapsedTime(t *testing.T) {
 }
 
 func TestToolTailLimitCountsWrappedVisualLines(t *testing.T) {
-	lines := conversationLines([]conversationBlock{{
-		kind:     blockTool,
-		toolName: "bash",
-		tool: agent.ToolPresentation{
+	lines := conversationLines([]session.Entry{{
+		Kind:     session.EntryTool,
+		ToolName: "bash",
+		Tool: agent.ToolPresentation{
 			Lines:     []string{strings.Repeat("x", 100)},
 			TailLines: 5,
 		},
@@ -313,9 +314,9 @@ func TestToolTailLimitCountsWrappedVisualLines(t *testing.T) {
 }
 
 func TestToolPlainTextDetailsPreserveMarkdownMarkers(t *testing.T) {
-	lines := conversationLines([]conversationBlock{{
-		kind:     blockTool,
-		toolName: "write", tool: agent.ToolPresentation{Arguments: "README.md", Lines: []string{"Use `literal` and **markers**"}},
+	lines := conversationLines([]session.Entry{{
+		Kind:     session.EntryTool,
+		ToolName: "write", Tool: agent.ToolPresentation{Arguments: "README.md", Lines: []string{"Use `literal` and **markers**"}},
 	}}, 80)
 	for _, line := range lines {
 		if line.text == "Use `literal` and **markers**" {
@@ -329,10 +330,10 @@ func TestToolPlainTextDetailsPreserveMarkdownMarkers(t *testing.T) {
 }
 
 func TestToolDiffLinesUseAddedRemovedAndContextColors(t *testing.T) {
-	lines := conversationLines([]conversationBlock{{
-		kind:     blockTool,
-		toolName: "edit",
-		tool: agent.ToolPresentation{
+	lines := conversationLines([]session.Entry{{
+		Kind:     session.EntryTool,
+		ToolName: "edit",
+		Tool: agent.ToolPresentation{
 			Arguments: "sample.txt",
 			Diff: []agent.ToolDiffLine{
 				{Kind: agent.ToolDiffLineContext, OldLine: 1, NewLine: 1, Text: "before"},
@@ -373,7 +374,7 @@ func TestToolDiffLinesUseAddedRemovedAndContextColors(t *testing.T) {
 }
 
 func TestToolBlockHasHorizontalAndVerticalPadding(t *testing.T) {
-	lines := conversationLines([]conversationBlock{{kind: blockTool, toolName: "tool output"}}, 40)
+	lines := conversationLines([]session.Entry{{Kind: session.EntryTool, ToolName: "tool output"}}, 40)
 	if len(lines) != 3 {
 		t.Fatalf("lines = %+v", lines)
 	}
@@ -389,7 +390,7 @@ func TestToolBlockHasHorizontalAndVerticalPadding(t *testing.T) {
 
 func TestConversationWindowHasVerticalPadding(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
-	model.appendBlock(blockUser, "message")
+	model.appendEntry(session.EntryUser, "message")
 	lines := modelConversationLines(model, 40)
 
 	if len(lines) != 3 || lines[0].text != "" || lines[1].text != "message" || lines[2].text != "" {
@@ -399,17 +400,17 @@ func TestConversationWindowHasVerticalPadding(t *testing.T) {
 
 func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 	model := newTUIModel(48, 12, Options{Config: Config{Model: "model"}})
-	model.appendBlock(blockUser, "Use **bold** text")
-	model.startTool(agent.ToolCall{ID: "read-1", Name: "read"}, agent.ToolPresentation{
+	model.appendEntry(session.EntryUser, "Use **bold** text")
+	model.applyAgentEvent(agent.Event{Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "read-1", Name: "read"}, Presentation: agent.ToolPresentation{
 		Arguments: "README.md", Lines: []string{"before"},
 		Diff: []agent.ToolDiffLine{{Kind: agent.ToolDiffLineAdded, NewLine: 1, Text: "old diff"}},
-	})
-	model.appendStream(blockAssistant, "Active `streaming` response")
+	}})
+	streamAssistantText(model, "Active `streaming` response")
 
 	renderer := &tuiRenderer{}
 	assertCachedConversationMatchesUncached(t, renderer, model)
 	plainBeforeImage := slices.Clone(renderer.conversationBlocks[0].plain)
-	model.blocks[0].content = []agent.ContentPart{
+	model.transcript.Entries[0].Content = []agent.ContentPart{
 		{Kind: agent.ContentPartText, Text: "before "},
 		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("one")}},
 	}
@@ -422,7 +423,7 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 	previousFrame := projectTerminalFrame(model, renderer.prepare(model))
 	previousPlain := append([]string(nil), previousFrame.conversationLines...)
 
-	model.appendStream(blockAssistant, " with another delta")
+	streamAssistantText(model, " with another delta")
 	assertCachedConversationMatchesUncached(t, renderer, model)
 	if &renderer.conversationBlocks[0].lines[0] != firstBlockLine {
 		t.Fatal("unchanged historical block was rerendered after active stream update")
@@ -431,8 +432,8 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 		t.Fatal("conversation update mutated the previous frame's plain lines")
 	}
 
-	model.blocks[1].kind = blockTool
-	model.blocks[1].tool = agent.ToolPresentation{
+	model.transcript.Entries[1].Kind = session.EntryTool
+	model.transcript.Entries[1].Tool = agent.ToolPresentation{
 		Arguments: "README.md", Lines: []string{"after"}, Outcome: "ok",
 		Diff: []agent.ToolDiffLine{{Kind: agent.ToolDiffLineAdded, NewLine: 1, Text: "new diff"}},
 	}
@@ -461,7 +462,7 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 	assertCachedConversationMatchesUncached(t, renderer, model)
 
 	checkpoint := checkpointModel(model, nil)
-	model.blocks = nil
+	model.transcript.Entries = nil
 	model.conversationChanged()
 	assertCachedConversationMatchesUncached(t, renderer, model)
 	if len(renderer.conversationBlocks) != 0 {
@@ -475,10 +476,10 @@ func TestPendingSteeringRendersAndDeliversInTranscriptOrder(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
 	model.appendUserContent(textContent("initial"))
 	model.beginTurnOperation()
-	model.appendStream(blockAssistant, "answer")
+	streamAssistantText(model, "answer")
 	model.steering.accepted = [][]agent.ContentPart{testTextContent("redirect")}
 	controller := tuiController{model: model}
-	model.appendStream(blockAssistant, " continues")
+	streamAssistantText(model, " continues")
 
 	lines := modelConversationLines(model, 40)
 	var rendered []string
@@ -487,8 +488,8 @@ func TestPendingSteeringRendersAndDeliversInTranscriptOrder(t *testing.T) {
 	}
 	redirectIndex := slices.IndexFunc(rendered, func(text string) bool { return strings.Contains(text, "redirect") })
 	shortcutIndex := slices.IndexFunc(rendered, func(text string) bool { return strings.Contains(text, "alt+↑") })
-	if len(model.blocks) != 2 || model.blocks[1].text != "answer continues" || redirectIndex < 0 || shortcutIndex < 0 {
-		t.Fatalf("blocks=%+v lines=%q", model.blocks, rendered)
+	if len(model.transcript.Entries) != 2 || model.transcript.Entries[1].Text != "answer continues" || redirectIndex < 0 || shortcutIndex < 0 {
+		t.Fatalf("blocks=%+v lines=%q", model.transcript.Entries, rendered)
 	}
 	if frame := buildTerminalFrame(model); !frame.cursorVisible {
 		t.Fatal("cursor hidden while agent is running")
@@ -497,8 +498,8 @@ func TestPendingSteeringRendersAndDeliversInTranscriptOrder(t *testing.T) {
 	if _, err := controller.handleAgentEvent(engineMessage{event: &agent.Event{Kind: agent.EventSteering, Content: testTextContent("redirect")}}); err != nil {
 		t.Fatal(err)
 	}
-	if len(controller.model.steering.pending()) != 0 || len(model.blocks) != 3 || model.blocks[2].kind != blockUser || model.blocks[2].text != "redirect" {
-		t.Fatalf("steering=%+v blocks=%+v", controller.model.steering.pending(), model.blocks)
+	if len(controller.model.steering.pending()) != 0 || len(model.transcript.Entries) != 3 || model.transcript.Entries[2].Kind != session.EntryUser || model.transcript.Entries[2].Text != "redirect" {
+		t.Fatalf("steering=%+v blocks=%+v", controller.model.steering.pending(), model.transcript.Entries)
 	}
 }
 
@@ -518,8 +519,8 @@ func TestPendingImageSteeringRendersAndDelivers(t *testing.T) {
 	if _, err := controller.handleAgentEvent(engineMessage{event: &agent.Event{Kind: agent.EventSteering, Content: content}}); err != nil {
 		t.Fatal(err)
 	}
-	if len(model.steering.pending()) != 0 || len(model.blocks) != 1 || !slices.Equal(model.blocks[0].content, displayParts(content)) {
-		t.Fatalf("steering = %+v, blocks = %+v", model.steering.pending(), model.blocks)
+	if len(model.steering.pending()) != 0 || len(model.transcript.Entries) != 1 || !slices.Equal(model.transcript.Entries[0].Content, []agent.ContentPart{{Kind: agent.ContentPartText, Text: "describe "}, {Kind: agent.ContentPartImage}}) {
+		t.Fatalf("steering = %+v, blocks = %+v", model.steering.pending(), model.transcript.Entries)
 	}
 }
 
@@ -527,24 +528,24 @@ func TestGoalContinuationHasDistinctTranscriptBlock(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
 	model.appendUserContent(textContent("initial"))
 	model.beginTurnOperation()
-	model.appendStream(blockAssistant, "first response")
+	streamAssistantText(model, "first response")
 	model.steering.accepted = [][]agent.ContentPart{testTextContent("same text")}
 
 	model.applyAgentEvent(agent.Event{Kind: agent.EventGoalContinuation, Text: "same text"})
-	if len(model.steering.pending()) != 1 || len(model.blocks) != 3 || model.blocks[2].kind != blockInfo {
-		t.Fatalf("steering=%+v blocks=%+v", model.steering.pending(), model.blocks)
+	if len(model.steering.pending()) != 1 || len(model.transcript.Entries) != 3 || model.transcript.Entries[2].Kind != session.EntryInfo {
+		t.Fatalf("steering=%+v blocks=%+v", model.steering.pending(), model.transcript.Entries)
 	}
-	model.appendStream(blockAssistant, "second response")
-	if len(model.blocks) != 4 || model.blocks[3].kind != blockAssistant {
-		t.Fatalf("goal continuation did not separate assistant streams: %+v", model.blocks)
+	streamAssistantText(model, "second response")
+	if len(model.transcript.Entries) != 4 || model.transcript.Entries[3].Kind != session.EntryAssistant {
+		t.Fatalf("goal continuation did not separate assistant streams: %+v", model.transcript.Entries)
 	}
 }
 
 func TestReasoningSummaryHasBalancedVerticalSpace(t *testing.T) {
-	lines := conversationLines([]conversationBlock{
-		{kind: blockUser, text: "user"},
-		{kind: blockReasoning, text: "\nsummary\n\n"},
-		{kind: blockAssistant, text: "answer"},
+	lines := conversationLines([]session.Entry{
+		{Kind: session.EntryUser, Text: "user"},
+		{Kind: session.EntryReasoning, Text: "\nsummary\n\n"},
+		{Kind: session.EntryAssistant, Text: "answer"},
 	}, 40)
 	if len(lines) != 5 || lines[1].text != "" || lines[2].text != "summary" || lines[3].text != "" {
 		t.Fatalf("lines = %+v", lines)
@@ -556,7 +557,7 @@ func TestReasoningSummaryHasBalancedVerticalSpace(t *testing.T) {
 
 func TestRenderFrameSanitizesConversationText(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
-	model.appendStream(blockAssistant, "safe\x1b[31m\rrewrite")
+	streamAssistantText(model, "safe\x1b[31m\rrewrite")
 	frame := renderFrame(model)
 	if strings.Contains(frame, "safe\x1b[31m") || !strings.Contains(frame, "safe�[31m�rewrite") {
 		t.Fatalf("unsafe frame = %q", frame)
@@ -586,17 +587,17 @@ func TestTUIModelCorrelatesAndSanitizesStreamingToolBlocks(t *testing.T) {
 		Result:       agent.ToolResult{Tool: "launch_subagents"},
 	})
 
-	first := model.blocks[model.toolBlockIndex("one")]
-	second := model.blocks[model.toolBlockIndex("two")]
+	first := model.transcript.Entries[0]
+	second := model.transcript.Entries[1]
 	var rendered []string
 	for _, line := range conversationBlockLines(first, 80) {
 		rendered = append(rendered, renderedLineText(line, 80))
 	}
 	output := strings.Join(rendered, "\n")
-	if first.kind != blockToolPending || strings.Contains(output, "\x1b") || !strings.Contains(output, "safe�[31m") || !strings.Contains(output, "new�[32m") {
+	if first.Kind != session.EntryToolPending || strings.Contains(output, "\x1b") || !strings.Contains(output, "safe�[31m") || !strings.Contains(output, "new�[32m") {
 		t.Fatalf("first block = %+v, rendered = %q", first, output)
 	}
-	if second.kind != blockTool || second.tool.Lines[0] != "complete" {
+	if second.Kind != session.EntryTool || second.Tool.Lines[0] != "complete" {
 		t.Fatalf("second block = %+v", second)
 	}
 	if model.activity.kind != activityTool || model.activity.detail != "write" {
@@ -619,9 +620,9 @@ func TestTUIToolActivityOmitsArguments(t *testing.T) {
 		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "read-1", Name: "read"},
 		Presentation: agent.ToolPresentation{Arguments: "first\n" + strings.Repeat("x", 1_000)},
 	})
-	block := model.blocks[model.toolBlockIndex("read-1")]
-	if strings.Contains(block.tool.Arguments, "\n") || len(block.tool.Arguments) > maxToolPresentationSummaryBytes || model.activity.detail != "read" {
-		t.Fatalf("presentation=%+v activity=%q", block.tool, model.activity.detail)
+	block := model.transcript.Entries[0]
+	if strings.Contains(block.Tool.Arguments, "\n") || len(block.Tool.Arguments) > maxToolPresentationSummaryBytes || model.activity.detail != "read" {
+		t.Fatalf("presentation=%+v activity=%q", block.Tool, model.activity.detail)
 	}
 }
 
@@ -634,8 +635,8 @@ func TestInterruptedTurnClosesPendingToolBlocks(t *testing.T) {
 		Presentation: agent.ToolPresentation{Lines: []string{"partial"}},
 	})
 	model.finishTurn(context.Canceled)
-	block := model.blocks[model.toolBlockIndex("write-1")]
-	if block.kind != blockToolError {
+	block := model.transcript.Entries[0]
+	if block.Kind != session.EntryToolError {
 		t.Fatalf("block = %+v", block)
 	}
 }
@@ -643,7 +644,7 @@ func TestInterruptedTurnClosesPendingToolBlocks(t *testing.T) {
 func TestConversationDividerIndicatesTextBelow(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
 	for index := 0; index < 8; index++ {
-		model.appendBlock(blockInfo, strings.Repeat(string(rune('a'+index)), 20))
+		model.appendEntry(session.EntryInfo, strings.Repeat(string(rune('a'+index)), 20))
 	}
 
 	var renderer tuiRenderer
@@ -671,7 +672,7 @@ func TestConversationDividerIndicatesTextBelow(t *testing.T) {
 func TestAltDownJumpsConversationToBottom(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
 	for index := 0; index < 8; index++ {
-		model.appendBlock(blockInfo, strings.Repeat(string(rune('a'+index)), 20))
+		model.appendEntry(session.EntryInfo, strings.Repeat(string(rune('a'+index)), 20))
 	}
 
 	var renderer tuiRenderer
@@ -699,7 +700,7 @@ func TestAltDownJumpsConversationToBottom(t *testing.T) {
 func TestConversationScrollingStopsAndResumesFollowing(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
 	for index := 0; index < 8; index++ {
-		model.appendBlock(blockInfo, strings.Repeat(string(rune('a'+index)), 20))
+		model.appendEntry(session.EntryInfo, strings.Repeat(string(rune('a'+index)), 20))
 	}
 	var renderer tuiRenderer
 	_ = renderModel(&renderer, model)
@@ -713,7 +714,7 @@ func TestConversationScrollingStopsAndResumesFollowing(t *testing.T) {
 		t.Fatalf("after page up: following=%v top=%d bottom=%d", model.following, model.scrollTop, bottom)
 	}
 	oldTop := model.scrollTop
-	model.appendBlock(blockInfo, "new output")
+	model.appendEntry(session.EntryInfo, "new output")
 	_ = renderModel(&renderer, model)
 	if model.scrollTop != oldTop {
 		t.Fatalf("scrolled viewport moved from %d to %d", oldTop, model.scrollTop)

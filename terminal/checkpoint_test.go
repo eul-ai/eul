@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal/keys"
 )
@@ -17,7 +18,7 @@ import (
 func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	model := newTUIModel(80, 24, Options{MessageHistory: MessageHistory{Entries: []string{"global prompt"}}})
 	model.appendUserContent(textContent("  First line of the prompt  \nsecond line"))
-	model.appendBlock(blockAssistant, "answer")
+	model.appendEntry(session.EntryAssistant, "answer")
 	model.running = false
 	model.subagentStatus = subagent.Status{Active: []subagent.JobStatus{{State: subagent.StateRunning}}, PendingCompletions: []subagent.Completion{{Status: subagent.StateComplete}}}
 	if err := model.insertInput("draft"); err != nil {
@@ -26,9 +27,6 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	queued := [][]agent.ContentPart{testTextContent("accepted"), testTextContent("deferred")}
 
 	checkpoint := checkpointModel(model, queued)
-	if description := checkpoint.Description(); description != "First line of the prompt" {
-		t.Fatalf("description = %q", description)
-	}
 	encoded, err := json.Marshal(checkpoint)
 	if err != nil {
 		t.Fatal(err)
@@ -42,11 +40,11 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 		Config:         Config{InitialCheckpoint: &decoded, ContextTokens: 42},
 		MessageHistory: MessageHistory{Entries: []string{"global prompt"}},
 	})
-	if restored.running || restored.streamText.Len() != 0 || restored.activity.kind != activityReady || len(restored.subagentStatus.Active) != 0 {
+	if restored.running || restored.activity.kind != activityReady || len(restored.subagentStatus.Active) != 0 {
 		t.Fatalf("runtime state was restored: %+v", restored)
 	}
-	if len(restored.blocks) != 2 || restored.blocks[0].kind != blockUser || restored.blocks[1].text != "answer" {
-		t.Fatalf("blocks = %+v", restored.blocks)
+	if len(restored.transcript.Entries) != 2 || restored.transcript.Entries[0].Kind != session.EntryUser || restored.transcript.Entries[1].Text != "answer" {
+		t.Fatalf("blocks = %+v", restored.transcript.Entries)
 	}
 	if restored.inputText() != "accepted\n\ndeferred\n\ndraft" || restored.cursor != len(restored.input) {
 		t.Fatalf("input=%q cursor=%d", restored.inputText(), restored.cursor)
@@ -61,19 +59,19 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 
 func TestTerminalCheckpointSnapshotsOpenStream(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
-	model.appendStream(blockAssistant, "first")
-	model.appendStream(blockAssistant, " second")
+	streamAssistantText(model, "first")
+	streamAssistantText(model, " second")
 	checkpoint := checkpointModel(model, nil)
 
-	model.appendStream(blockAssistant, " third")
-	if checkpoint.Blocks[0].Text != "first second" || model.blocks[0].text != "first second third" {
-		t.Fatalf("checkpoint=%q model=%q", checkpoint.Blocks[0].Text, model.blocks[0].text)
+	streamAssistantText(model, " third")
+	if checkpoint.Entries[0].Text != "first second" || model.transcript.Entries[0].Text != "first second third" {
+		t.Fatalf("checkpoint=%q model=%q", checkpoint.Entries[0].Text, model.transcript.Entries[0].Text)
 	}
 
 	restored := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint}})
-	restored.appendStream(blockAssistant, "new")
-	if len(restored.blocks) != 2 || restored.blocks[0].text != "first second" || restored.blocks[1].text != "new" {
-		t.Fatalf("restored blocks = %+v", restored.blocks)
+	streamAssistantText(restored, "new")
+	if len(restored.transcript.Entries) != 2 || restored.transcript.Entries[0].Text != "first second" || restored.transcript.Entries[1].Text != "new" {
+		t.Fatalf("restored blocks = %+v", restored.transcript.Entries)
 	}
 }
 
@@ -134,46 +132,31 @@ func TestTerminalCheckpointPreservesInlineImagePositions(t *testing.T) {
 		{Kind: agent.ContentPartText, Text: " after"},
 	})
 	checkpoint := checkpointModel(model, nil)
-	if len(checkpoint.Blocks[0].Content) != 3 || checkpoint.Blocks[0].Content[1].Kind != agent.ContentPartImage {
-		t.Fatalf("checkpoint content = %+v", checkpoint.Blocks[0].Content)
+	if len(checkpoint.Entries[0].Content) != 3 || checkpoint.Entries[0].Content[1].Kind != agent.ContentPartImage {
+		t.Fatalf("checkpoint content = %+v", checkpoint.Entries[0].Content)
 	}
 
 	restored := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint}})
-	content := restored.blocks[0].content
+	content := restored.transcript.Entries[0].Content
 	if len(content) != 3 || content[0].Text != "before " || content[1].Kind != agent.ContentPartImage || content[2].Text != " after" {
 		t.Fatalf("restored content = %+v", content)
 	}
 }
 
-func TestTerminalCheckpointRestoreInterruptsPendingToolsAndClampsCursor(t *testing.T) {
-	checkpoint := Checkpoint{
-		Blocks: []Block{{Kind: blockToolPending, ToolCallID: "call", ToolName: "edit"}},
-		Input:  "ab",
-		Cursor: 9,
-	}
+func TestTerminalCheckpointRestoreClampsCursor(t *testing.T) {
+	checkpoint := Checkpoint{Input: "ab", Cursor: 9}
 
 	model := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint}})
-	if len(model.blocks) != 1 || model.blocks[0].kind != blockToolError || model.blocks[0].tool.Outcome != "interrupted" {
-		t.Fatalf("restored blocks = %+v", model.blocks)
-	}
 	if model.inputText() != "ab" || model.cursor != 2 {
 		t.Fatalf("input = %q, cursor = %d", model.inputText(), model.cursor)
-	}
-}
-
-func TestImageOnlyCheckpointDescription(t *testing.T) {
-	model := newTUIModel(80, 24, Options{})
-	model.appendUserContent([]agent.ContentPart{{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png"}}})
-	if description := checkpointModel(model, nil).Description(); description == "" {
-		t.Fatal("image-only checkpoint has no description")
 	}
 }
 
 func TestPreviousActiveSessionShowsWarning(t *testing.T) {
 	checkpoint := Checkpoint{}
 	model := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint, PreviousTurnActive: true}})
-	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo {
-		t.Fatalf("blocks = %+v", model.blocks)
+	if len(model.transcript.Entries) != 1 || model.transcript.Entries[0].Kind != session.EntryInfo {
+		t.Fatalf("blocks = %+v", model.transcript.Entries)
 	}
 }
 
@@ -181,8 +164,8 @@ func TestStartupWarningsAreShownAfterRestoredConversation(t *testing.T) {
 	checkpoint := Checkpoint{}
 	warning := "opaque-warning-sentinel"
 	model := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint, Warnings: []string{warning}}})
-	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo || !strings.Contains(model.blocks[0].text, warning) {
-		t.Fatalf("blocks = %+v", model.blocks)
+	if len(model.transcript.Entries) != 1 || model.transcript.Entries[0].Kind != session.EntryInfo || !strings.Contains(model.transcript.Entries[0].Text, warning) {
+		t.Fatalf("blocks = %+v", model.transcript.Entries)
 	}
 }
 

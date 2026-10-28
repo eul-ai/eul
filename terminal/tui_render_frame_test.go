@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/terminal/text"
 )
 
@@ -44,7 +45,7 @@ func TestRendererOnlyWritesChangedRows(t *testing.T) {
 
 func TestRendererUsesScrollRegionForSingleConversationRow(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
-	model.appendBlock(blockAssistant, "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten")
+	model.appendEntry(session.EntryAssistant, "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten")
 	var renderer tuiRenderer
 	_ = renderModel(&renderer, model)
 
@@ -84,12 +85,12 @@ func TestRendererUsesScrollRegionForSingleConversationRow(t *testing.T) {
 
 func TestRendererDoesNotScrollRegionWhenConversationChanges(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
-	model.appendBlock(blockAssistant, "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten")
+	model.appendEntry(session.EntryAssistant, "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten")
 	var renderer tuiRenderer
 	_ = renderModel(&renderer, model)
 
 	scrollConversationBy(model, -1, renderer.frame)
-	model.appendBlock(blockInfo, "dynamic output")
+	model.appendEntry(session.EntryInfo, "dynamic output")
 	update := renderModel(&renderer, model)
 	if strings.Contains(update, ansiScrollUp) || strings.Contains(update, ansiScrollDown) {
 		t.Fatalf("dynamic conversation update used terminal scrolling: %q", update)
@@ -117,7 +118,7 @@ func TestRendererForcesFullRedrawAfterResizeOrCtrlL(t *testing.T) {
 func TestRendererLimitsHistoryAfterWidthResize(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
 	for index := range 300 {
-		model.appendBlock(blockInfo, fmt.Sprintf("history %03d", index))
+		model.appendEntry(session.EntryInfo, fmt.Sprintf("history %03d", index))
 	}
 	var renderer tuiRenderer
 	_ = renderModel(&renderer, model)
@@ -153,7 +154,7 @@ func TestRendererLimitsHistoryAfterWidthResize(t *testing.T) {
 func TestRendererLoadsTruncatedResizeHistoryWhenScrollingPastTop(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
 	for index := range 300 {
-		model.appendBlock(blockInfo, fmt.Sprintf("history %03d", index))
+		model.appendEntry(session.EntryInfo, fmt.Sprintf("history %03d", index))
 	}
 	var renderer tuiRenderer
 	_ = renderModel(&renderer, model)
@@ -181,7 +182,7 @@ func TestRendererLoadsTruncatedResizeHistoryWhenScrollingPastTop(t *testing.T) {
 func TestRendererPreservesViewportWhenHeightExtendsResizeHistory(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
 	for index := range 400 {
-		model.appendBlock(blockInfo, fmt.Sprintf("history %03d", index))
+		model.appendEntry(session.EntryInfo, fmt.Sprintf("history %03d", index))
 	}
 	var renderer tuiRenderer
 	_ = renderModel(&renderer, model)
@@ -205,7 +206,7 @@ func TestRendererPreservesViewportWhenHeightExtendsResizeHistory(t *testing.T) {
 func TestRendererReflowsFullHistoryWhenResizeHistoryIsScrolled(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
 	for index := range 300 {
-		model.appendBlock(blockInfo, fmt.Sprintf("history %03d", index))
+		model.appendEntry(session.EntryInfo, fmt.Sprintf("history %03d", index))
 	}
 	var renderer tuiRenderer
 	_ = renderModel(&renderer, model)
@@ -230,7 +231,7 @@ func TestRendererReflowsFullHistoryWhenResizeHistoryIsScrolled(t *testing.T) {
 func TestRenderFrameHandlesTinyDimensions(t *testing.T) {
 	for _, size := range [][2]int{{1, 1}, {2, 2}, {3, 3}, {4, 4}} {
 		model := newTUIModel(size[0], size[1], Options{Config: Config{Model: "model", ThinkingLevel: agent.ThinkingHigh}})
-		model.appendBlock(blockAssistant, "界")
+		model.appendEntry(session.EntryAssistant, "界")
 		if frame := renderFrame(model); frame == "" {
 			t.Fatalf("renderFrame(%dx%d) returned empty frame", size[0], size[1])
 		}

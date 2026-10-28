@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal/text"
 )
@@ -19,30 +20,6 @@ var (
 	errTooManyImages  = fmt.Errorf("a prompt can include at most %d images", maxAttachedImages)
 	errImagesTooLarge = fmt.Errorf("attached images exceed %d MiB", maxAttachedImagesTotalBytes/(1024*1024))
 )
-
-type blockKind uint8
-
-// Values are persisted in terminal checkpoints and must remain stable.
-const (
-	blockUser        blockKind = 0
-	blockAssistant   blockKind = 1
-	blockReasoning   blockKind = 2
-	blockToolPending blockKind = 3
-	blockTool        blockKind = 4
-	blockToolError   blockKind = 5
-	blockContext     blockKind = 6
-	blockError       blockKind = 7
-	blockInfo        blockKind = 8
-)
-
-type conversationBlock struct {
-	kind       blockKind
-	text       string
-	content    []agent.ContentPart
-	toolCallID string
-	toolName   string
-	tool       agent.ToolPresentation
-}
 
 const imageAttachmentLabel = "[image attached]"
 
@@ -74,10 +51,8 @@ func (a activity) animated() bool {
 }
 
 type conversationModel struct {
-	blocks                    []conversationBlock
+	transcript                session.Transcript
 	conversationVersion       uint64
-	streamKind                blockKind
-	streamText                strings.Builder
 	scrollTop                 int
 	following                 bool
 	historyExpansionRequested bool
@@ -156,11 +131,10 @@ func (permission permissionState) view() permissionView {
 }
 
 type operationModel struct {
-	steering         steeringCoordinator
-	permission       permissionState
-	turnExecutedTool bool
-	running          bool
-	interrupted      bool
+	steering    steeringCoordinator
+	permission  permissionState
+	running     bool
+	interrupted bool
 }
 
 type statusModel struct {
@@ -230,10 +204,10 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 		restoreModelCheckpoint(model, *options.Config.InitialCheckpoint)
 	}
 	if options.Config.PreviousTurnActive {
-		model.appendBlock(blockInfo, "Previous session ended during an active turn; tool side effects may remain")
+		model.appendEntry(session.EntryInfo, "Previous session ended during an active turn; tool side effects may remain")
 	}
 	for _, warning := range options.Config.Warnings {
-		model.appendBlock(blockInfo, warning)
+		model.appendEntry(session.EntryInfo, warning)
 	}
 	return model
 }
@@ -276,29 +250,8 @@ func (m *tuiModel) clearSteering(clear func() [][]agent.ContentPart) [][]agent.C
 	return messages
 }
 
-func (m *tuiModel) appendStream(kind blockKind, text string) {
-	text = sanitizeAssistantText(text)
-	if text == "" {
-		return
-	}
-
-	if m.streamText.Len() > 0 && m.streamKind == kind && len(m.blocks) > 0 {
-		m.streamText.WriteString(text)
-		m.blocks[len(m.blocks)-1].text = m.streamText.String()
-		m.conversationChanged()
-		return
-	}
-
-	m.closeStream()
-	m.streamText.WriteString(text)
-	m.blocks = append(m.blocks, conversationBlock{kind: kind, text: m.streamText.String()})
-	m.conversationChanged()
-	m.streamKind = kind
-}
-
-func (m *tuiModel) appendBlock(kind blockKind, text string) {
-	m.closeStream()
-	m.blocks = append(m.blocks, conversationBlock{kind: kind, text: sanitizeAssistantText(text)})
+func (m *tuiModel) appendEntry(kind session.EntryKind, text string) {
+	m.transcript.Append(kind, text)
 	m.conversationChanged()
 }
 
@@ -306,22 +259,18 @@ func (m *tuiModel) conversationChanged() {
 	m.conversationVersion++
 }
 
-func (m *tuiModel) closeStream() {
-	m.streamText.Reset()
-}
-
 func (m *tuiModel) applyAgentEvent(event agent.Event) {
+	m.transcript.Apply(event)
+	m.conversationChanged()
+
 	switch event.Kind {
 	case agent.EventAssistantReasoning:
-		m.appendStream(blockReasoning, event.Text)
 		m.setActiveActivity(activity{kind: activityThinking})
 	case agent.EventAssistantText:
-		m.appendStream(blockAssistant, event.Text)
 		m.setActiveActivity(activity{kind: activityResponding})
 	case agent.EventCompactionStart:
 		m.setActiveActivity(activity{kind: activityCompacting})
 	case agent.EventCompactionEnd:
-		m.appendBlock(blockContext, "Context compacted")
 		m.contextTokens = 0
 		m.setActiveActivity(activity{kind: activityThinking})
 	case agent.EventContextUsage:
@@ -329,18 +278,10 @@ func (m *tuiModel) applyAgentEvent(event agent.Event) {
 	case agent.EventGenerationRetry:
 		m.setActiveActivity(activity{kind: activityRetrying, detail: "attempt " + strconv.Itoa(event.Attempt)})
 	case agent.EventGoalContinuation:
-		m.appendBlock(blockInfo, "Goal continuing")
 		m.setActiveActivity(activity{kind: activityThinking})
-	case agent.EventToolStart:
-		m.startTool(event.Call, event.Presentation)
-	case agent.EventToolUpdate:
-		m.updateTool(event.Call, event.Presentation)
-	case agent.EventToolExecute:
-		m.turnExecutedTool = true
-		m.updateTool(event.Call, event.Presentation)
+	case agent.EventToolStart, agent.EventToolExecute:
 		m.setActiveActivity(toolActivity(event.Call.Name))
 	case agent.EventToolEnd:
-		m.finishTool(event.Call, event.Presentation, event.Result)
 		m.setActiveActivity(m.pendingToolActivity())
 	}
 }
@@ -349,58 +290,11 @@ func toolActivity(name string) activity {
 	return activity{kind: activityTool, detail: singleLine(name, maxToolPresentationSummaryBytes)}
 }
 
-func (m *tuiModel) startTool(call agent.ToolCall, presentation agent.ToolPresentation) {
-	m.closeStream()
-	m.blocks = append(m.blocks, conversationBlock{
-		kind:       blockToolPending,
-		toolCallID: call.ID,
-		toolName:   singleLine(call.Name, maxToolPresentationSummaryBytes),
-		tool:       sanitizeToolPresentation(presentation),
-	})
-	m.conversationChanged()
-	m.setActiveActivity(toolActivity(call.Name))
-}
-
-func (m *tuiModel) updateTool(call agent.ToolCall, presentation agent.ToolPresentation) {
-	index := m.toolBlockIndex(call.ID)
-	if index < 0 {
-		m.startTool(call, presentation)
-		return
-	}
-	m.blocks[index].tool = sanitizeToolPresentation(presentation)
-	m.conversationChanged()
-}
-
-func (m *tuiModel) finishTool(call agent.ToolCall, presentation agent.ToolPresentation, result agent.ToolResult) {
-	kind := blockTool
-	if result.IsError {
-		kind = blockToolError
-	}
-	index := m.toolBlockIndex(call.ID)
-	if index < 0 {
-		m.startTool(call, presentation)
-		index = len(m.blocks) - 1
-	}
-
-	presentation.Outcome = toolResultOutcome(result, presentation)
-	m.blocks[index].kind = kind
-	m.blocks[index].tool = sanitizeToolPresentation(presentation)
-	m.conversationChanged()
-}
-
-func (m *tuiModel) toolBlockIndex(callID string) int {
-	for index := len(m.blocks) - 1; index >= 0; index-- {
-		if m.blocks[index].toolCallID == callID && isToolBlock(m.blocks[index].kind) {
-			return index
-		}
-	}
-	return -1
-}
-
 func (m *tuiModel) pendingToolActivity() activity {
-	for index := len(m.blocks) - 1; index >= 0; index-- {
-		if m.blocks[index].kind == blockToolPending {
-			return toolActivity(m.blocks[index].toolName)
+	entries := m.transcript.Entries
+	for index := len(entries) - 1; index >= 0; index-- {
+		if entries[index].Kind == session.EntryToolPending {
+			return toolActivity(entries[index].ToolName)
 		}
 	}
 	return activity{kind: activityThinking}
@@ -434,21 +328,8 @@ func (m *tuiModel) restoreSteering(messages [][]agent.ContentPart) {
 	m.clearInputPickers()
 }
 
-func (m *tuiModel) finishPendingTools(outcome string) {
-	for index := range m.blocks {
-		if m.blocks[index].kind != blockToolPending {
-			continue
-		}
-		m.blocks[index].kind = blockToolError
-		m.blocks[index].tool.Outcome = outcome
-		m.conversationChanged()
-	}
-}
-
 func (m *tuiModel) appendUserContent(content []agent.ContentPart) {
-	m.closeStream()
-	content = displayParts(content)
-	m.blocks = append(m.blocks, conversationBlock{kind: blockUser, text: contentText(content), content: content})
+	m.transcript.AppendUser(content)
 	m.conversationChanged()
 }
 
@@ -456,7 +337,6 @@ func (m *tuiModel) beginTurnOperation() {
 	m.running = true
 	m.refreshCommandPickerAvailability()
 	m.interrupted = false
-	m.turnExecutedTool = false
 	m.activity = activity{kind: activityThinking}
 }
 
@@ -470,38 +350,17 @@ func (m *tuiModel) beginCompaction() {
 	m.running = true
 	m.refreshCommandPickerAvailability()
 	m.interrupted = false
-	m.turnExecutedTool = false
 	m.activity = activity{kind: activityCompacting}
 }
 
 func (m *tuiModel) finishTurn(runErr error) {
 	m.running = false
 	m.refreshCommandPickerAvailability()
-	m.closeStream()
-	executedTool := m.turnExecutedTool
-	m.turnExecutedTool = false
+	m.transcript.FinishTurn(m.interrupted, runErr)
+	m.conversationChanged()
 
-	if m.interrupted {
-		m.finishPendingTools("canceled")
-		message := "Interrupted"
-		if executedTool {
-			message = "Interrupted; tool side effects may remain"
-		}
-		m.appendBlock(blockInfo, message)
-		m.activity = activity{kind: activityReady}
-		return
+	m.activity = activity{kind: activityReady}
+	if !m.interrupted && runErr != nil {
+		m.activity = activity{kind: activityError, detail: singleLine(runErr.Error(), 500)}
 	}
-
-	if runErr == nil {
-		m.activity = activity{kind: activityReady}
-		return
-	}
-
-	m.finishPendingTools("failed")
-	detail := singleLine(runErr.Error(), 500)
-	m.appendBlock(blockError, detail)
-	if executedTool {
-		m.appendBlock(blockInfo, "Tool turn interrupted; tool side effects may remain")
-	}
-	m.activity = activity{kind: activityError, detail: detail}
 }

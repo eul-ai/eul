@@ -3,6 +3,8 @@ package terminal
 import (
 	"fmt"
 	"testing"
+
+	"github.com/eul-ai/eul/session"
 )
 
 func BenchmarkTUIResizeTranscript(b *testing.B) {
@@ -10,7 +12,7 @@ func BenchmarkTUIResizeTranscript(b *testing.B) {
 		b.Run(fmt.Sprintf("blocks-%d", blockCount), func(b *testing.B) {
 			model := newTUIModel(120, 40, Options{Config: Config{Model: "benchmark"}})
 			for index := range blockCount {
-				model.appendBlock(blockAssistant, fmt.Sprintf("Response **%d** with `code` and enough text to exercise markdown wrapping across the conversation.", index))
+				model.appendEntry(session.EntryAssistant, fmt.Sprintf("Response **%d** with `code` and enough text to exercise markdown wrapping across the conversation.", index))
 			}
 			renderer := &tuiRenderer{}
 			_, frame := renderer.renderPending(model, false)
@@ -37,9 +39,9 @@ func BenchmarkTUIRenderStreamingTranscript(b *testing.B) {
 		b.Run(fmt.Sprintf("blocks-%d", blockCount), func(b *testing.B) {
 			model := newTUIModel(120, 40, Options{Config: Config{Model: "benchmark"}})
 			for index := 0; index < blockCount-1; index++ {
-				model.appendBlock(blockAssistant, fmt.Sprintf("Response **%d** with `code` and enough text to exercise markdown wrapping across the conversation.", index))
+				model.appendEntry(session.EntryAssistant, fmt.Sprintf("Response **%d** with `code` and enough text to exercise markdown wrapping across the conversation.", index))
 			}
-			model.appendStream(blockAssistant, "Active response with `streaming` text.")
+			streamAssistantText(model, "Active response with `streaming` text.")
 
 			renderer := &tuiRenderer{}
 			_, frame := renderer.renderPending(model, false)
@@ -52,7 +54,7 @@ func BenchmarkTUIRenderStreamingTranscript(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
-				model.blocks[len(model.blocks)-1].text = variants[index%len(variants)]
+				model.transcript.Entries[len(model.transcript.Entries)-1].Text = variants[index%len(variants)]
 				model.conversationChanged()
 				_, frame = renderer.renderPending(model, false)
 				renderer.commit(frame)

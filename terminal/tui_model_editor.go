@@ -401,14 +401,6 @@ func contentEqual(left, right []agent.ContentPart) bool {
 	return true
 }
 
-func displayParts(content []agent.ContentPart) []agent.ContentPart {
-	parts := make([]agent.ContentPart, len(content))
-	for index, part := range content {
-		parts[index] = agent.ContentPart{Kind: part.Kind, Text: sanitizeAssistantText(part.Text)}
-	}
-	return parts
-}
-
 func editorItemsFromContent(content []agent.ContentPart) []editorItem {
 	var items []editorItem
 	for _, part := range content {

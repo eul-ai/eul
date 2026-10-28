@@ -9,6 +9,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/session"
 )
 
 func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
@@ -39,7 +40,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.terminalOptions.Config.InitialCheckpoint == nil || second.terminalOptions.Config.InitialCheckpoint.Description() != "first prompt" {
+	if second.terminalOptions.Config.InitialCheckpoint == nil || session.Description(second.terminalOptions.Config.InitialCheckpoint.Entries) != "first prompt" {
 		t.Fatalf("terminal checkpoint = %+v", second.terminalOptions.Config.InitialCheckpoint)
 	}
 	if second.terminalOptions.Config.ContextTokens != 42 {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal/keys"
 )
@@ -274,8 +275,8 @@ func TestHandleKeyRunsTurnAndAppliesOrderedEvents(t *testing.T) {
 				if model.running || model.activity.kind != activityReady || model.contextTokens != 42 {
 					t.Fatalf("model after turn = %+v", model)
 				}
-				if len(model.blocks) != 2 || model.blocks[0].kind != blockUser || model.blocks[1].text != "answer" {
-					t.Fatalf("blocks = %+v", model.blocks)
+				if len(model.transcript.Entries) != 2 || model.transcript.Entries[0].Kind != session.EntryUser || model.transcript.Entries[1].Text != "answer" {
+					t.Fatalf("blocks = %+v", model.transcript.Entries)
 				}
 				return
 			}
@@ -330,9 +331,9 @@ func TestHandleKeyCancelsIncompleteToolTurnWithoutResettingConversation(t *testi
 				continue
 			}
 			model.finishTurn(message.err)
-			last := model.blocks[len(model.blocks)-1]
-			if model.contextTokens != 456 || model.activity.kind != activityReady || last.kind != blockInfo {
-				t.Fatalf("context=%d activity=%+v blocks=%+v", model.contextTokens, model.activity, model.blocks)
+			last := model.transcript.Entries[len(model.transcript.Entries)-1]
+			if model.contextTokens != 456 || model.activity.kind != activityReady || last.Kind != session.EntryInfo {
+				t.Fatalf("context=%d activity=%+v blocks=%+v", model.contextTokens, model.activity, model.transcript.Entries)
 			}
 			return
 		case <-timeout:
@@ -461,8 +462,8 @@ func TestHandleKeyCommands(t *testing.T) {
 			t.Fatalf("command %q exit=%v err=%v", command, exit, err)
 		}
 	}
-	if len(model.blocks) != 2 || model.blocks[0].kind != blockInfo || model.blocks[1].kind != blockError {
-		t.Fatalf("blocks = %+v", model.blocks)
+	if len(model.transcript.Entries) != 2 || model.transcript.Entries[0].Kind != session.EntryInfo || model.transcript.Entries[1].Kind != session.EntryError {
+		t.Fatalf("blocks = %+v", model.transcript.Entries)
 	}
 
 	if err := model.insertInput("/exit"); err != nil {
@@ -479,8 +480,8 @@ func TestHandleKeyCommands(t *testing.T) {
 	if err != nil || !exit {
 		t.Fatalf("new command exit=%v err=%v", exit, err)
 	}
-	if len(model.blocks) != 2 {
-		t.Fatalf("blocks=%+v", model.blocks)
+	if len(model.transcript.Entries) != 2 {
+		t.Fatalf("blocks=%+v", model.transcript.Entries)
 	}
 }
 

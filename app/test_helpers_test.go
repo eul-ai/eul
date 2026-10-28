@@ -10,6 +10,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
 )
@@ -80,7 +81,7 @@ func startTestSession(t *testing.T, launcher *launcher, settings sessionSettings
 }
 
 func testTerminalCheckpoint(prompt string) terminal.Checkpoint {
-	return terminal.Checkpoint{Blocks: []terminal.Block{{Text: prompt}}}
+	return terminal.Checkpoint{Entries: []session.Entry{{Kind: session.EntryUser, Text: prompt}}}
 }
 
 func createStoredSession(t *testing.T, store *sessionStore, settings sessionSettings, prompt string) *sessionHandle {

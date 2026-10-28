@@ -155,6 +155,11 @@ func optionsForEngine(engine fakeEngineAPI, options Options) Options {
 	return options
 }
 
+func streamAssistantText(model *tuiModel, text string) {
+	model.transcript.Apply(agent.Event{Kind: agent.EventAssistantText, Text: text})
+	model.conversationChanged()
+}
+
 func TestNewRunnerRequiresTerminal(t *testing.T) {
 	var output bytes.Buffer
 	if _, err := NewRunner(strings.NewReader("/exit\n"), &output); !errors.Is(err, errNotTerminal) {

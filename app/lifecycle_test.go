@@ -8,6 +8,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/terminal"
 )
 
@@ -126,7 +127,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 			if options.Config.Model != "resume-main" || options.Config.ThinkingLevel != agent.ThinkingMedium || !options.Config.FastMode || options.Config.WorkingDirectory != targetCWD {
 				t.Fatalf("resumed options = model %q, thinking %q, fast %v, cwd %q", options.Config.Model, options.Config.ThinkingLevel, options.Config.FastMode, options.Config.WorkingDirectory)
 			}
-			if options.Config.InitialCheckpoint == nil || options.Config.InitialCheckpoint.Description() != "resume target prompt" {
+			if options.Config.InitialCheckpoint == nil || session.Description(options.Config.InitialCheckpoint.Entries) != "resume target prompt" {
 				t.Fatalf("resumed checkpoint = %#v", options.Config.InitialCheckpoint)
 			}
 			return terminal.RunOutcome{Action: terminal.RunExit}, nil

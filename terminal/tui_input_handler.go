@@ -7,6 +7,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/filesearch"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/terminal/keys"
 )
 
@@ -338,7 +339,7 @@ func reduceSubmission(model *tuiModel) tuiAction {
 		setInputError(model, errors.New("commands cannot be queued while the agent is running"))
 	default:
 		model.finishSubmission(content)
-		model.appendBlock(blockError, "Unknown command "+singleLine(trimmed, 120))
+		model.appendEntry(session.EntryError, "Unknown command "+singleLine(trimmed, 120))
 		model.activity = activity{kind: activityError, detail: "unknown command"}
 	}
 	return tuiAction{}

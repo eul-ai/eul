@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/terminal/text"
 )
 
@@ -34,8 +35,8 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 		Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, FastMode: true, ContextWindow: 272_000,
 	}})
 	model.contextTokens = 84_320
-	model.appendBlock(blockUser, "hello")
-	model.appendStream(blockAssistant, "answer")
+	model.appendEntry(session.EntryUser, "hello")
+	streamAssistantText(model, "answer")
 	model.activity = activity{kind: activityThinking}
 
 	frame := renderFrame(model)
@@ -184,25 +185,25 @@ func TestTUIModelTracksActivityAndContext(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.contextTokens = 100
 	model.applyAgentEvent(agent.Event{Kind: agent.EventCompactionStart})
-	if model.activity.kind != activityCompacting || len(model.blocks) != 0 {
-		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.blocks)
+	if model.activity.kind != activityCompacting || len(model.transcript.Entries) != 0 {
+		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.transcript.Entries)
 	}
 	model.applyAgentEvent(agent.Event{Kind: agent.EventCompactionEnd})
-	if model.activity.kind != activityThinking || model.contextTokens != 0 || len(model.blocks) != 1 || model.blocks[0].kind != blockContext || model.blocks[0].text != "Context compacted" {
-		t.Fatalf("activity = %+v, context = %d, blocks = %+v", model.activity, model.contextTokens, model.blocks)
+	if model.activity.kind != activityThinking || model.contextTokens != 0 || len(model.transcript.Entries) != 1 || model.transcript.Entries[0].Kind != session.EntryContext || model.transcript.Entries[0].Text != "Context compacted" {
+		t.Fatalf("activity = %+v, context = %d, blocks = %+v", model.activity, model.contextTokens, model.transcript.Entries)
 	}
 	model.applyAgentEvent(agent.Event{Kind: agent.EventContextUsage, Usage: agent.Usage{TotalTokens: 123}})
 	if model.contextTokens != 123 {
 		t.Fatalf("context tokens = %d", model.contextTokens)
 	}
 	model.applyAgentEvent(agent.Event{Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "call-1", Name: "read"}, Presentation: agent.ToolPresentation{Arguments: "file.go"}})
-	if model.activity.kind != activityTool || model.activity.detail != "read" || model.blocks[len(model.blocks)-1].kind != blockToolPending {
-		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.blocks)
+	if model.activity.kind != activityTool || model.activity.detail != "read" || model.transcript.Entries[len(model.transcript.Entries)-1].Kind != session.EntryToolPending {
+		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.transcript.Entries)
 	}
-	toolBlocks := len(model.blocks)
+	toolBlocks := len(model.transcript.Entries)
 	model.applyAgentEvent(agent.Event{Kind: agent.EventToolEnd, Call: agent.ToolCall{ID: "call-1", Name: "read"}, Presentation: agent.ToolPresentation{Arguments: "file.go"}, Result: agent.ToolResult{Tool: "read", IsError: true, Output: "failed"}})
-	last := model.blocks[len(model.blocks)-1]
-	if model.activity.kind != activityThinking || len(model.blocks) != toolBlocks || last.kind != blockToolError {
-		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.blocks)
+	last := model.transcript.Entries[len(model.transcript.Entries)-1]
+	if model.activity.kind != activityThinking || len(model.transcript.Entries) != toolBlocks || last.Kind != session.EntryToolError {
+		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.transcript.Entries)
 	}
 }

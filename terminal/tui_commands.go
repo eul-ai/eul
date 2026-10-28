@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/skill"
 	"github.com/eul-ai/eul/terminal/keys"
 )
@@ -121,7 +122,7 @@ func findCommand(commands []slashCommand, input string) (slashCommand, string, b
 }
 
 func (c *tuiController) showHelp(context.Context, string) (bool, error) {
-	c.model.appendBlock(blockInfo, commandHelpText(c.model.commands))
+	c.model.appendEntry(session.EntryInfo, commandHelpText(c.model.commands))
 	return false, nil
 }
 
@@ -156,7 +157,7 @@ func (c *tuiController) toggleFastMode(context.Context, string) (bool, error) {
 	if c.model.fastMode {
 		state = "on"
 	}
-	c.model.appendBlock(blockInfo, "Fast mode "+state)
+	c.model.appendEntry(session.EntryInfo, "Fast mode "+state)
 	return false, nil
 }
 
@@ -184,7 +185,7 @@ func (c *tuiController) goal(ctx context.Context, objective string) (bool, error
 		return false, nil
 	}
 	if c.model.running {
-		c.model.appendBlock(blockInfo, "Goal set: "+objective)
+		c.model.appendEntry(session.EntryInfo, "Goal set: "+objective)
 		return false, nil
 	}
 	return false, c.startTurn(ctx, textContent(objective))
@@ -198,11 +199,11 @@ func (c *tuiController) showGoal() {
 	goal, ok := c.controls.Goal()
 	switch {
 	case !ok:
-		c.model.appendBlock(blockInfo, "No goal is set")
+		c.model.appendEntry(session.EntryInfo, "No goal is set")
 	case goal.Complete:
-		c.model.appendBlock(blockInfo, "Goal complete: "+goal.Objective)
+		c.model.appendEntry(session.EntryInfo, "Goal complete: "+goal.Objective)
 	default:
-		c.model.appendBlock(blockInfo, "Goal: "+goal.Objective)
+		c.model.appendEntry(session.EntryInfo, "Goal: "+goal.Objective)
 	}
 }
 
@@ -214,10 +215,10 @@ func (c *tuiController) clearGoal() {
 	_, hadGoal := c.controls.Goal()
 	c.controls.ClearGoal()
 	if hadGoal {
-		c.model.appendBlock(blockInfo, "Goal cleared")
+		c.model.appendEntry(session.EntryInfo, "Goal cleared")
 		return
 	}
-	c.model.appendBlock(blockInfo, "No goal is set")
+	c.model.appendEntry(session.EntryInfo, "No goal is set")
 }
 
 func (c *tuiController) loadSkill(ctx context.Context, prompt string) (bool, error) {

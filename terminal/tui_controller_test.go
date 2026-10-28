@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/skill"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal/keys"
@@ -453,8 +454,8 @@ func TestTUIControllerSubmittingCancelsPendingImage(t *testing.T) {
 	}
 	<-canceled
 	<-launched
-	if !model.running || len(model.blocks) != 1 || model.inputText() != "" || len(controller.clipboardRequests) != 0 {
-		t.Fatalf("running = %v, blocks = %+v, input = %q, requests = %d", model.running, model.blocks, model.inputText(), len(controller.clipboardRequests))
+	if !model.running || len(model.transcript.Entries) != 1 || model.inputText() != "" || len(controller.clipboardRequests) != 0 {
+		t.Fatalf("running = %v, blocks = %+v, input = %q, requests = %d", model.running, model.transcript.Entries, model.inputText(), len(controller.clipboardRequests))
 	}
 }
 
@@ -542,8 +543,8 @@ func TestTUIControllerKeepsDraftWhenActiveCheckpointFails(t *testing.T) {
 	if _, err := controller.applyAction(context.Background(), action); !errors.Is(err, checkpointErr) {
 		t.Fatalf("error = %v", err)
 	}
-	if model.inputText() != "before " || model.imageCount() != 1 || model.running || len(model.blocks) != 0 {
-		t.Fatalf("input = %q, images = %d, running = %v, blocks = %+v", model.inputText(), model.imageCount(), model.running, model.blocks)
+	if model.inputText() != "before " || model.imageCount() != 1 || model.running || len(model.transcript.Entries) != 0 {
+		t.Fatalf("input = %q, images = %d, running = %v, blocks = %+v", model.inputText(), model.imageCount(), model.running, model.transcript.Entries)
 	}
 }
 
@@ -558,7 +559,7 @@ func TestTUIControllerActiveCheckpointOmitsUncommittedSubmission(t *testing.T) {
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 		stateChanges: StateChanges{Notify: func(terminalCheckpoint Checkpoint, active bool) error {
-			if !active || len(terminalCheckpoint.Blocks) != 0 {
+			if !active || len(terminalCheckpoint.Entries) != 0 {
 				t.Fatalf("active=%v terminal=%+v", active, terminalCheckpoint)
 			}
 			return errors.New("stop before launch")
@@ -568,8 +569,8 @@ func TestTUIControllerActiveCheckpointOmitsUncommittedSubmission(t *testing.T) {
 	if err := controller.startTurn(context.Background(), content); err == nil {
 		t.Fatal("start succeeded")
 	}
-	if len(model.blocks) != 0 || model.running {
-		t.Fatalf("blocks = %+v, running = %v", model.blocks, model.running)
+	if len(model.transcript.Entries) != 0 || model.running {
+		t.Fatalf("blocks = %+v, running = %v", model.transcript.Entries, model.running)
 	}
 }
 
@@ -588,7 +589,7 @@ func TestTUIControllerSubmitsClipboardImageAfterCheckpoint(t *testing.T) {
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: messages, stopped: make(chan struct{}),
 		stateChanges: StateChanges{Notify: func(checkpoint Checkpoint, active bool) error {
-			if !active || len(checkpoint.Blocks) != 0 {
+			if !active || len(checkpoint.Entries) != 0 {
 				t.Fatalf("active=%v checkpoint=%+v", active, checkpoint)
 			}
 			events <- "checkpoint"
@@ -738,11 +739,11 @@ func TestTUIControllerStartsOperationsAfterActiveCheckpoint(t *testing.T) {
 				t.Fatalf("launch operation = %q", launched)
 			}
 			if test.wantUserBlock {
-				if len(model.blocks) != 1 || model.blocks[0].kind != blockUser || model.blocks[0].text != test.prompt {
-					t.Fatalf("blocks = %+v", model.blocks)
+				if len(model.transcript.Entries) != 1 || model.transcript.Entries[0].Kind != session.EntryUser || model.transcript.Entries[0].Text != test.prompt {
+					t.Fatalf("blocks = %+v", model.transcript.Entries)
 				}
-			} else if len(model.blocks) != 0 {
-				t.Fatalf("blocks = %+v", model.blocks)
+			} else if len(model.transcript.Entries) != 0 {
+				t.Fatalf("blocks = %+v", model.transcript.Entries)
 			}
 			select {
 			case message := <-messages:
@@ -872,15 +873,15 @@ func TestTUIControllerSendsSkillCommandTextToTurn(t *testing.T) {
 	if calls := engine.snapshot(); !slices.Equal(calls, []string{"/skill:review check tests"}) {
 		t.Fatalf("calls = %q", calls)
 	}
-	if len(model.blocks) != 1 || model.blocks[0].kind != blockUser || model.blocks[0].text != "/skill:review check tests" {
-		t.Fatalf("blocks = %+v", model.blocks)
+	if len(model.transcript.Entries) != 1 || model.transcript.Entries[0].Kind != session.EntryUser || model.transcript.Entries[0].Text != "/skill:review check tests" {
+		t.Fatalf("blocks = %+v", model.transcript.Entries)
 	}
 }
 
 func TestTUIControllerNewSessionKeepsCurrentConversation(t *testing.T) {
 	engine := &fakeEngine{}
 	model := newTUIModel(80, 24, Options{})
-	model.appendBlock(blockAssistant, "keep me")
+	model.appendEntry(session.EntryAssistant, "keep me")
 	if err := model.insertInput("/new"); err != nil {
 		t.Fatal(err)
 	}
@@ -893,8 +894,8 @@ func TestTUIControllerNewSessionKeepsCurrentConversation(t *testing.T) {
 	if err != nil || !exit || controller.outcome.Action != RunNewSession {
 		t.Fatalf("transition exit=%v outcome=%+v error=%v", exit, controller.outcome, err)
 	}
-	if len(model.blocks) != 1 || model.blocks[0].text != "keep me" {
-		t.Fatalf("blocks = %+v", model.blocks)
+	if len(model.transcript.Entries) != 1 || model.transcript.Entries[0].Text != "keep me" {
+		t.Fatalf("blocks = %+v", model.transcript.Entries)
 	}
 }
 
@@ -909,7 +910,7 @@ func TestTUIControllerCompactsConversation(t *testing.T) {
 	stopped := make(chan struct{})
 	defer close(stopped)
 	model := newTUIModel(80, 24, Options{})
-	model.appendBlock(blockAssistant, "existing conversation")
+	model.appendEntry(session.EntryAssistant, "existing conversation")
 	model.contextTokens = 90
 	if err := model.insertInput("/compact"); err != nil {
 		t.Fatal(err)
@@ -939,8 +940,8 @@ func TestTUIControllerCompactsConversation(t *testing.T) {
 	if engine.compactionCount() != 1 || model.running || model.activity.kind != activityReady || model.contextTokens != 0 {
 		t.Fatalf("compactions=%d running=%v activity=%+v context=%d", engine.compactionCount(), model.running, model.activity, model.contextTokens)
 	}
-	if len(model.blocks) != 2 || model.blocks[0].text != "existing conversation" || model.blocks[1].kind != blockContext || model.blocks[1].text != "Context compacted" {
-		t.Fatalf("blocks = %+v", model.blocks)
+	if len(model.transcript.Entries) != 2 || model.transcript.Entries[0].Text != "existing conversation" || model.transcript.Entries[1].Kind != session.EntryContext || model.transcript.Entries[1].Text != "Context compacted" {
+		t.Fatalf("blocks = %+v", model.transcript.Entries)
 	}
 }
 
@@ -959,8 +960,8 @@ func TestTUIControllerSetsShowsAndClearsGoal(t *testing.T) {
 	if _, err := controller.applyAction(ctx, commandAction("/goal", "")); err != nil {
 		t.Fatal(err)
 	}
-	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo {
-		t.Fatalf("blocks = %+v", model.blocks)
+	if len(model.transcript.Entries) != 1 || model.transcript.Entries[0].Kind != session.EntryInfo {
+		t.Fatalf("blocks = %+v", model.transcript.Entries)
 	}
 
 	if _, err := controller.applyAction(ctx, commandAction("/goal", "finish migration")); err != nil {
@@ -983,15 +984,15 @@ func TestTUIControllerSetsShowsAndClearsGoal(t *testing.T) {
 	if _, err := controller.applyAction(ctx, commandAction("/goal", "")); err != nil {
 		t.Fatal(err)
 	}
-	if model.blocks[len(model.blocks)-1].kind != blockInfo || !strings.Contains(model.blocks[len(model.blocks)-1].text, "finish migration") {
-		t.Fatalf("goal status block = %+v", model.blocks[len(model.blocks)-1])
+	if model.transcript.Entries[len(model.transcript.Entries)-1].Kind != session.EntryInfo || !strings.Contains(model.transcript.Entries[len(model.transcript.Entries)-1].Text, "finish migration") {
+		t.Fatalf("goal status block = %+v", model.transcript.Entries[len(model.transcript.Entries)-1])
 	}
 
 	if _, err := controller.applyAction(ctx, commandAction("/goal", "clear")); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := engine.Goal(); ok || model.blocks[len(model.blocks)-1].kind != blockInfo {
-		t.Fatalf("goal still set or wrong block: %+v", model.blocks[len(model.blocks)-1])
+	if _, ok := engine.Goal(); ok || model.transcript.Entries[len(model.transcript.Entries)-1].Kind != session.EntryInfo {
+		t.Fatalf("goal still set or wrong block: %+v", model.transcript.Entries[len(model.transcript.Entries)-1])
 	}
 }
 
@@ -1017,11 +1018,11 @@ func TestTUIControllerShowsHelpAndGoalWhileRunning(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if !model.running || checkpointCalls != 0 || len(model.blocks) != 2 {
-		t.Fatalf("running=%v checkpoints=%d blocks=%+v", model.running, checkpointCalls, model.blocks)
+	if !model.running || checkpointCalls != 0 || len(model.transcript.Entries) != 2 {
+		t.Fatalf("running=%v checkpoints=%d blocks=%+v", model.running, checkpointCalls, model.transcript.Entries)
 	}
-	if model.blocks[0].kind != blockInfo || model.blocks[1].kind != blockInfo || !strings.Contains(model.blocks[1].text, "finish migration") {
-		t.Fatalf("blocks=%+v", model.blocks)
+	if model.transcript.Entries[0].Kind != session.EntryInfo || model.transcript.Entries[1].Kind != session.EntryInfo || !strings.Contains(model.transcript.Entries[1].Text, "finish migration") {
+		t.Fatalf("blocks=%+v", model.transcript.Entries)
 	}
 }
 
@@ -1041,8 +1042,8 @@ func TestTUIControllerSetsGoalWhileRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	goal, ok := engine.Goal()
-	last := model.blocks[len(model.blocks)-1]
-	if !ok || goal.Objective != "finish migration" || !model.running || last.kind != blockInfo || !strings.Contains(last.text, "finish migration") {
+	last := model.transcript.Entries[len(model.transcript.Entries)-1]
+	if !ok || goal.Objective != "finish migration" || !model.running || last.Kind != session.EntryInfo || !strings.Contains(last.Text, "finish migration") {
 		t.Fatalf("goal=%+v exists=%v running=%v block=%+v", goal, ok, model.running, last)
 	}
 	if calls := engine.snapshot(); len(calls) != 0 {
@@ -1068,8 +1069,8 @@ func TestTUIControllerClearsGoalWhileRunning(t *testing.T) {
 	if _, ok := engine.Goal(); ok {
 		t.Fatal("goal survived running clear command")
 	}
-	last := model.blocks[len(model.blocks)-1]
-	if !model.running || last.kind != blockInfo {
+	last := model.transcript.Entries[len(model.transcript.Entries)-1]
+	if !model.running || last.Kind != session.EntryInfo {
 		t.Fatalf("running=%v block=%+v", model.running, last)
 	}
 }
@@ -1278,7 +1279,7 @@ func TestRenderFailureDoesNotCommitUnseenFrame(t *testing.T) {
 func TestCleanRenderSkipsViewportPreparation(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
 	for range 10 {
-		model.appendBlock(blockInfo, "line")
+		model.appendEntry(session.EntryInfo, "line")
 	}
 	renderer := &tuiRenderer{}
 	dirty := false
@@ -1293,14 +1294,14 @@ func TestCleanRenderSkipsViewportPreparation(t *testing.T) {
 
 func TestMouseSelectionUsesCommittedFrame(t *testing.T) {
 	model := newTUIModel(20, 10, Options{})
-	model.appendBlock(blockAssistant, "alpha")
+	model.appendEntry(session.EntryAssistant, "alpha")
 	renderer := &tuiRenderer{}
 	_ = renderModel(renderer, model)
 	committed := renderer.frame
 
-	model.blocks = nil
+	model.transcript.Entries = nil
 	model.conversationChanged()
-	model.appendBlock(blockAssistant, "new unseen text")
+	model.appendEntry(session.EntryAssistant, "new unseen text")
 	reduceMouse(model, keys.Mouse{Kind: keys.MousePress, Column: 1, Row: 1}, committed)
 	action := reduceMouse(model, keys.Mouse{Kind: keys.MouseRelease, Column: 5, Row: 1}, committed)
 	if action.kind != tuiActionCopy || action.text != "alpha" || strings.Contains(action.text, "unseen") {
@@ -1311,7 +1312,7 @@ func TestMouseSelectionUsesCommittedFrame(t *testing.T) {
 func TestMouseWheelUsesCommittedConversationBounds(t *testing.T) {
 	model := newTUIModel(20, 8, Options{})
 	for range 8 {
-		model.appendBlock(blockInfo, "visible line")
+		model.appendEntry(session.EntryInfo, "visible line")
 	}
 	renderer := &tuiRenderer{}
 	_ = renderModel(renderer, model)
@@ -1320,7 +1321,7 @@ func TestMouseWheelUsesCommittedConversationBounds(t *testing.T) {
 		t.Fatalf("committed top = %d", committedTop)
 	}
 	for range 8 {
-		model.appendBlock(blockInfo, "unseen line")
+		model.appendEntry(session.EntryInfo, "unseen line")
 	}
 
 	reduceMouse(model, keys.Mouse{Kind: keys.MouseWheelUp}, renderer.frame)
@@ -1500,8 +1501,8 @@ func TestTUIControllerStartsDeferredImageSteering(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("deferred turn did not finish")
 	}
-	if len(model.steering.pending()) != 0 || len(model.blocks) != 1 || !slices.Equal(model.blocks[0].content, displayParts(content)) {
-		t.Fatalf("steering = %+v, blocks = %+v", model.steering.pending(), model.blocks)
+	if len(model.steering.pending()) != 0 || len(model.transcript.Entries) != 1 || !slices.Equal(model.transcript.Entries[0].Content, []agent.ContentPart{{Kind: agent.ContentPartText, Text: "describe "}, {Kind: agent.ContentPartImage}}) {
+		t.Fatalf("steering = %+v, blocks = %+v", model.steering.pending(), model.transcript.Entries)
 	}
 }
 
@@ -1518,8 +1519,8 @@ func TestTUIControllerIgnoresSteeringDeliveredAfterRestoration(t *testing.T) {
 	if _, err := controller.handleAgentEvent(engineMessage{event: &agent.Event{Kind: agent.EventSteering, Content: testTextContent("accepted")}}); err != nil {
 		t.Fatal(err)
 	}
-	if len(model.blocks) != 0 || model.inputText() != "accepted" {
-		t.Fatalf("blocks=%+v input=%q", model.blocks, model.inputText())
+	if len(model.transcript.Entries) != 0 || model.inputText() != "accepted" {
+		t.Fatalf("blocks=%+v input=%q", model.transcript.Entries, model.inputText())
 	}
 }
 
@@ -1564,8 +1565,8 @@ func TestTUIControllerTogglesFastMode(t *testing.T) {
 	if !slices.Equal(configured, []bool{true, false}) {
 		t.Fatalf("configured=%v", configured)
 	}
-	if len(model.blocks) != 2 || model.blocks[0].kind != blockInfo || model.blocks[1].kind != blockInfo {
-		t.Fatalf("blocks = %+v", model.blocks)
+	if len(model.transcript.Entries) != 2 || model.transcript.Entries[0].Kind != session.EntryInfo || model.transcript.Entries[1].Kind != session.EntryInfo {
+		t.Fatalf("blocks = %+v", model.transcript.Entries)
 	}
 }
 

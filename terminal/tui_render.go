@@ -3,6 +3,8 @@ package terminal
 import (
 	"strconv"
 	"strings"
+
+	"github.com/eul-ai/eul/session"
 )
 
 const (
@@ -17,7 +19,7 @@ const (
 )
 
 type renderedConversationBlock struct {
-	block      conversationBlock
+	block      session.Entry
 	lines      []styledLine
 	plain      []string
 	separators []string

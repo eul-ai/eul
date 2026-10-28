@@ -14,11 +14,11 @@ func BenchmarkTUIAppendStream(b *testing.B) {
 			for b.Loop() {
 				model = newTUIModel(120, 40, Options{})
 				for range chunks {
-					model.appendStream(blockAssistant, "word ")
+					streamAssistantText(model, "word ")
 				}
 			}
 
-			if len(model.blocks) != 1 {
+			if len(model.transcript.Entries) != 1 {
 				b.Fatal("stream did not produce one block")
 			}
 		})

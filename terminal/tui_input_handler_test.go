@@ -6,6 +6,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/filesearch"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/terminal/keys"
 )
 
@@ -270,7 +271,7 @@ func TestReduceKeyActions(t *testing.T) {
 		{
 			name: "new session",
 			setup: func(t *testing.T, model *tuiModel) {
-				model.appendBlock(blockAssistant, "keep in current session")
+				model.appendEntry(session.EntryAssistant, "keep in current session")
 				if err := model.insertInput("/new"); err != nil {
 					t.Fatal(err)
 				}
@@ -278,8 +279,8 @@ func TestReduceKeyActions(t *testing.T) {
 			key:      keys.Event{Code: keys.Enter},
 			wantKind: tuiActionCommand, wantCommand: "/new",
 			check: func(t *testing.T, model *tuiModel) {
-				if len(model.history) != 1 || model.history[0] != "/new" || len(model.blocks) != 1 {
-					t.Fatalf("history=%q blocks=%+v", model.history, model.blocks)
+				if len(model.history) != 1 || model.history[0] != "/new" || len(model.transcript.Entries) != 1 {
+					t.Fatalf("history=%q blocks=%+v", model.history, model.transcript.Entries)
 				}
 			},
 		},
@@ -354,8 +355,8 @@ func TestReduceKeyActions(t *testing.T) {
 			wantKind: tuiActionSubmit,
 			wantText: " hello ",
 			check: func(t *testing.T, model *tuiModel) {
-				if model.running || len(model.history) != 0 || len(model.blocks) != 0 || model.inputText() != " hello " {
-					t.Fatalf("running=%v history=%q blocks=%+v input=%q", model.running, model.history, model.blocks, model.inputText())
+				if model.running || len(model.history) != 0 || len(model.transcript.Entries) != 0 || model.inputText() != " hello " {
+					t.Fatalf("running=%v history=%q blocks=%+v input=%q", model.running, model.history, model.transcript.Entries, model.inputText())
 				}
 			},
 		},
@@ -388,8 +389,8 @@ func TestReduceKeyActions(t *testing.T) {
 			wantCommand: "/skill:",
 			wantText:    "/skill:review check tests",
 			check: func(t *testing.T, model *tuiModel) {
-				if model.running || len(model.blocks) != 0 {
-					t.Fatalf("running=%v blocks=%+v", model.running, model.blocks)
+				if model.running || len(model.transcript.Entries) != 0 {
+					t.Fatalf("running=%v blocks=%+v", model.running, model.transcript.Entries)
 				}
 			},
 		},
@@ -402,8 +403,8 @@ func TestReduceKeyActions(t *testing.T) {
 			},
 			key: keys.Event{Code: keys.Enter},
 			check: func(t *testing.T, model *tuiModel) {
-				if len(model.history) != 1 || len(model.blocks) != 1 || model.blocks[0].kind != blockError || model.activity.kind != activityError {
-					t.Fatalf("history=%q blocks=%+v activity=%+v", model.history, model.blocks, model.activity)
+				if len(model.history) != 1 || len(model.transcript.Entries) != 1 || model.transcript.Entries[0].Kind != session.EntryError || model.activity.kind != activityError {
+					t.Fatalf("history=%q blocks=%+v activity=%+v", model.history, model.transcript.Entries, model.activity)
 				}
 			},
 		},
@@ -431,8 +432,8 @@ func TestReduceKeyActions(t *testing.T) {
 			wantKind: tuiActionSteer,
 			wantText: "steer",
 			check: func(t *testing.T, model *tuiModel) {
-				if len(model.input) != 0 || len(model.history) != 1 || len(model.blocks) != 0 {
-					t.Fatalf("input=%q history=%q blocks=%+v", model.inputText(), model.history, model.blocks)
+				if len(model.input) != 0 || len(model.history) != 1 || len(model.transcript.Entries) != 0 {
+					t.Fatalf("input=%q history=%q blocks=%+v", model.inputText(), model.history, model.transcript.Entries)
 				}
 			},
 		},

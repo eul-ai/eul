@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/terminal/keys"
 )
 
@@ -22,7 +23,7 @@ func TestHighlightCellsIgnoresClickableLinkEscapes(t *testing.T) {
 
 func TestMouseWheelScrollsConversationWithoutNavigatingHistory(t *testing.T) {
 	model := newTUIModel(24, 10, Options{})
-	model.appendBlock(blockAssistant, strings.Join([]string{
+	model.appendEntry(session.EntryAssistant, strings.Join([]string{
 		"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
 	}, "\n"))
 	model.history = []string{"old prompt"}
@@ -57,7 +58,7 @@ func TestMouseWheelScrollsConversationWithoutNavigatingHistory(t *testing.T) {
 
 func TestMouseDragSelectsAndCopiesRenderedText(t *testing.T) {
 	model := newTUIModel(20, 10, Options{})
-	model.appendBlock(blockAssistant, "alpha beta")
+	model.appendEntry(session.EntryAssistant, "alpha beta")
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +93,7 @@ func TestMouseDragSelectsAndCopiesRenderedText(t *testing.T) {
 
 func TestMouseDragCopiesMarkdownSource(t *testing.T) {
 	model := newTUIModel(40, 10, Options{})
-	model.appendBlock(blockAssistant, "Here is **some** text.\n\n- first **item**\n- second item")
+	model.appendEntry(session.EntryAssistant, "Here is **some** text.\n\n- first **item**\n- second item")
 	committed := buildTerminalFrame(model)
 
 	var output bytes.Buffer
@@ -137,7 +138,7 @@ func TestMouseDragCopiesRenderedTextForImageMessages(t *testing.T) {
 
 func TestMouseSelectionDoesNotHighlightConversationPadding(t *testing.T) {
 	model := newTUIModel(20, 10, Options{})
-	model.appendBlock(blockAssistant, "alpha")
+	model.appendEntry(session.EntryAssistant, "alpha")
 	committed := buildTerminalFrame(model)
 
 	var output bytes.Buffer
@@ -170,7 +171,7 @@ func TestMouseSelectionDoesNotHighlightConversationPadding(t *testing.T) {
 
 func TestMouseSelectionOmitsConversationPaddingAndWrappedNewlines(t *testing.T) {
 	model := newTUIModel(8, 10, Options{})
-	model.appendBlock(blockAssistant, "abcdefghij")
+	model.appendEntry(session.EntryAssistant, "abcdefghij")
 	frame := buildTerminalFrame(model)
 	bounds := selectionBounds{
 		start: selectionPoint{row: 1, column: 0, conversation: true},
@@ -184,7 +185,7 @@ func TestMouseSelectionOmitsConversationPaddingAndWrappedNewlines(t *testing.T) 
 
 func TestMouseSelectionPreservesSoftWrapWhitespace(t *testing.T) {
 	model := newTUIModel(8, 10, Options{})
-	model.appendBlock(blockAssistant, "abc  def")
+	model.appendEntry(session.EntryAssistant, "abc  def")
 	frame := buildTerminalFrame(model)
 	bounds := selectionBounds{
 		start: selectionPoint{row: 1, column: 0, conversation: true},
@@ -198,7 +199,7 @@ func TestMouseSelectionPreservesSoftWrapWhitespace(t *testing.T) {
 
 func TestMouseSelectionPreservesExplicitConversationNewlines(t *testing.T) {
 	model := newTUIModel(8, 10, Options{})
-	model.appendBlock(blockAssistant, "abc\ndef")
+	model.appendEntry(session.EntryAssistant, "abc\ndef")
 	frame := buildTerminalFrame(model)
 	bounds := selectionBounds{
 		start: selectionPoint{row: 1, column: 0, conversation: true},
@@ -212,7 +213,7 @@ func TestMouseSelectionPreservesExplicitConversationNewlines(t *testing.T) {
 
 func TestMouseClickDoesNotCopy(t *testing.T) {
 	model := newTUIModel(20, 10, Options{})
-	model.appendBlock(blockAssistant, "alpha")
+	model.appendEntry(session.EntryAssistant, "alpha")
 	committed := buildTerminalFrame(model)
 
 	var output bytes.Buffer

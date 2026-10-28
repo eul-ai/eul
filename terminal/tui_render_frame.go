@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/terminal/text"
 )
 
@@ -96,8 +97,8 @@ func (r *tuiRenderer) prepareConversation(model *tuiModel, conversationHeight, m
 }
 
 func (r *tuiRenderer) renderAllConversationBlocks(model *tuiModel) {
-	r.conversationBlocks = make([]renderedConversationBlock, len(model.blocks))
-	for index, block := range model.blocks {
+	r.conversationBlocks = make([]renderedConversationBlock, len(model.transcript.Entries))
+	for index, block := range model.transcript.Entries {
 		r.conversationBlocks[index] = renderConversationBlock(block, model.width)
 	}
 	r.conversationBlockStart = 0
@@ -105,25 +106,25 @@ func (r *tuiRenderer) renderAllConversationBlocks(model *tuiModel) {
 
 func (r *tuiRenderer) renderConversationTail(model *tuiModel, minimumRows int) {
 	r.conversationBlocks = nil
-	r.conversationBlockStart = len(model.blocks)
+	r.conversationBlockStart = len(model.transcript.Entries)
 	r.prependConversationBlocks(model, minimumRows, false)
 }
 
 func (r *tuiRenderer) updateConversationBlocks(model *tuiModel) {
-	if r.conversationBlockStart > len(model.blocks) {
+	if r.conversationBlockStart > len(model.transcript.Entries) {
 		clear(r.conversationBlocks)
 		r.conversationBlocks = nil
-		r.conversationBlockStart = len(model.blocks)
+		r.conversationBlockStart = len(model.transcript.Entries)
 	}
 
-	cachedCount := len(model.blocks) - r.conversationBlockStart
+	cachedCount := len(model.transcript.Entries) - r.conversationBlockStart
 	if len(r.conversationBlocks) > cachedCount {
 		clear(r.conversationBlocks[cachedCount:])
 		r.conversationBlocks = r.conversationBlocks[:cachedCount]
 	}
-	for blockIndex := r.conversationBlockStart; blockIndex < len(model.blocks); blockIndex++ {
+	for blockIndex := r.conversationBlockStart; blockIndex < len(model.transcript.Entries); blockIndex++ {
 		cacheIndex := blockIndex - r.conversationBlockStart
-		block := model.blocks[blockIndex]
+		block := model.transcript.Entries[blockIndex]
 		if cacheIndex == len(r.conversationBlocks) {
 			r.conversationBlocks = append(r.conversationBlocks, renderConversationBlock(block, model.width))
 			continue
@@ -140,7 +141,7 @@ func (r *tuiRenderer) prependConversationBlocks(model *tuiModel, minimumRows int
 	var reversed []renderedConversationBlock
 	for r.conversationBlockStart > 0 && (complete || rows < minimumRows) {
 		r.conversationBlockStart--
-		rendered := renderConversationBlock(model.blocks[r.conversationBlockStart], model.width)
+		rendered := renderConversationBlock(model.transcript.Entries[r.conversationBlockStart], model.width)
 		reversed = append(reversed, rendered)
 		rows += len(rendered.lines)
 		if oldBlockCount > 0 || len(reversed) > 1 {
@@ -222,7 +223,7 @@ func (r *tuiRenderer) flattenConversation(model *tuiModel) {
 		appendBlock(rendered)
 	}
 	for _, content := range pendingSteering {
-		appendBlock(renderConversationBlock(conversationBlock{kind: blockInfo, text: "Queued: " + displayContent(content) + " (alt+↑ to restore)"}, model.width))
+		appendBlock(renderConversationBlock(session.Entry{Kind: session.EntryInfo, Text: "Queued: " + displayContent(content) + " (alt+↑ to restore)"}, model.width))
 	}
 	for range conversationVerticalPadding {
 		appendBlank()
@@ -234,7 +235,7 @@ func (r *tuiRenderer) flattenConversation(model *tuiModel) {
 	r.conversationMarkdown = markdown
 }
 
-func renderConversationBlock(block conversationBlock, width int) renderedConversationBlock {
+func renderConversationBlock(block session.Entry, width int) renderedConversationBlock {
 	markdown, _ := markdownSource(block)
 	lines := conversationBlockLines(block, width)
 	plain := make([]string, len(lines))
@@ -246,13 +247,13 @@ func renderConversationBlock(block conversationBlock, width int) renderedConvers
 	return renderedConversationBlock{block: block, lines: lines, plain: plain, separators: separators, markdown: markdown}
 }
 
-func conversationBlocksEqual(left, right conversationBlock) bool {
-	return left.kind == right.kind &&
-		left.text == right.text &&
-		slices.Equal(left.content, right.content) &&
-		left.toolCallID == right.toolCallID &&
-		left.toolName == right.toolName &&
-		left.tool.Equal(right.tool)
+func conversationBlocksEqual(left, right session.Entry) bool {
+	return left.Kind == right.Kind &&
+		left.Text == right.Text &&
+		slices.Equal(left.Content, right.Content) &&
+		left.ToolCallID == right.ToolCallID &&
+		left.ToolName == right.ToolName &&
+		left.Tool.Equal(right.Tool)
 }
 
 func viewportTop(model *tuiModel, prepared renderPreparation) int {
