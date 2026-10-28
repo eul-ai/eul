@@ -66,22 +66,19 @@ func (w workspace) edit(ctx context.Context, args editArguments, updates agent.T
 	original := snapshot.data
 
 	oldBytes := []byte(*args.OldText)
-	matches := bytes.Count(original, oldBytes)
-	if matches == 0 {
+	newBytes := []byte(*args.NewText)
+	starts := matchStarts(original, oldBytes)
+	if len(starts) == 0 {
 		return agent.ToolResult{}, fmt.Errorf("old_text was not found in %s", w.display(requestedPath))
 	}
-	if matches > 1 && !args.All {
-		return agent.ToolResult{}, fmt.Errorf("old_text occurs %d times in %s; expected exactly once when all is false", matches, w.display(requestedPath))
+	if len(starts) > 1 && !args.All {
+		return agent.ToolResult{}, fmt.Errorf("old_text occurs %d times in %s; expected exactly once when all is false", len(starts), w.display(requestedPath))
 	}
 	if *args.OldText == *args.NewText {
 		return successResult(fmt.Sprintf("no changes needed in %s", escapeOutputName(w.display(requestedPath)))), nil
 	}
 
-	replacementCount := 1
-	if args.All {
-		replacementCount = -1
-	}
-	replacement := bytes.Replace(original, oldBytes, []byte(*args.NewText), replacementCount)
+	replacement := bytes.ReplaceAll(original, oldBytes, newBytes)
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
@@ -89,7 +86,19 @@ func (w workspace) edit(ctx context.Context, args editArguments, updates agent.T
 		return agent.ToolResult{}, err
 	}
 	presentation := editPresentation(args.Path)
-	presentation.Diff = buildFileDiff(original, replacement)
+	presentation.Diff = buildFileDiff(original, replacement, starts, len(oldBytes), len(newBytes))
 	updates.SetFinal(presentation)
 	return successResult(fmt.Sprintf("replaced text in %s", escapeOutputName(w.display(requestedPath)))), nil
+}
+
+func matchStarts(data, pattern []byte) []int {
+	var starts []int
+	for offset := 0; ; {
+		index := bytes.Index(data[offset:], pattern)
+		if index < 0 {
+			return starts
+		}
+		starts = append(starts, offset+index)
+		offset += index + len(pattern)
+	}
 }

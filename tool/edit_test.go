@@ -134,8 +134,14 @@ func TestEditPublishesDiffAfterSuccessfulCommit(t *testing.T) {
 	}
 }
 
+func editDiff(original, oldText, newText string) []agent.ToolDiffLine {
+	starts := matchStarts([]byte(original), []byte(oldText))
+	replacement := strings.ReplaceAll(original, oldText, newText)
+	return buildFileDiff([]byte(original), []byte(replacement), starts, len(oldText), len(newText))
+}
+
 func TestBuildFileDiffTracksOldAndNewLineNumbers(t *testing.T) {
-	diff := buildFileDiff([]byte("a\r\nb\r\nc\r\n"), []byte("a\r\nx\r\ny\r\nc\r\n"))
+	diff := editDiff("a\r\nb\r\nc\r\n", "b", "x\r\ny")
 	want := []agent.ToolDiffLine{
 		{Kind: agent.ToolDiffLineContext, OldLine: 1, NewLine: 1, Text: "a"},
 		{Kind: agent.ToolDiffLineRemoved, OldLine: 2, Text: "b"},
@@ -148,14 +154,27 @@ func TestBuildFileDiffTracksOldAndNewLineNumbers(t *testing.T) {
 	}
 }
 
-func TestBuildFileDiffPreservesInteriorContext(t *testing.T) {
-	diff := buildFileDiff([]byte("a\nkeep\nb"), []byte("x\nkeep\ny"))
+func TestBuildFileDiffShowsLinesJoinedByReplacement(t *testing.T) {
+	diff := editDiff("x\ny\nz\n", "x\n", "w")
+	want := []agent.ToolDiffLine{
+		{Kind: agent.ToolDiffLineRemoved, OldLine: 1, Text: "x"},
+		{Kind: agent.ToolDiffLineRemoved, OldLine: 2, Text: "y"},
+		{Kind: agent.ToolDiffLineAdded, NewLine: 1, Text: "wy"},
+		{Kind: agent.ToolDiffLineContext, OldLine: 3, NewLine: 2, Text: "z"},
+	}
+	if !slices.Equal(diff, want) {
+		t.Fatalf("diff = %+v, want %+v", diff, want)
+	}
+}
+
+func TestBuildFileDiffMergesNearbyReplacements(t *testing.T) {
+	diff := editDiff("a\nkeep\na", "a", "x")
 	want := []agent.ToolDiffLine{
 		{Kind: agent.ToolDiffLineRemoved, OldLine: 1, Text: "a"},
 		{Kind: agent.ToolDiffLineAdded, NewLine: 1, Text: "x"},
 		{Kind: agent.ToolDiffLineContext, OldLine: 2, NewLine: 2, Text: "keep"},
-		{Kind: agent.ToolDiffLineRemoved, OldLine: 3, Text: "b"},
-		{Kind: agent.ToolDiffLineAdded, NewLine: 3, Text: "y"},
+		{Kind: agent.ToolDiffLineRemoved, OldLine: 3, Text: "a"},
+		{Kind: agent.ToolDiffLineAdded, NewLine: 3, Text: "x"},
 	}
 	if !slices.Equal(diff, want) {
 		t.Fatalf("diff = %+v, want %+v", diff, want)
@@ -165,8 +184,7 @@ func TestBuildFileDiffPreservesInteriorContext(t *testing.T) {
 func TestBuildFileDiffSeparatesDistantHunks(t *testing.T) {
 	context := []string{"c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9", "c10"}
 	original := strings.Join(append(append([]string{"old one"}, context...), "old two"), "\n")
-	replacement := strings.Join(append(append([]string{"new one"}, context...), "new two"), "\n")
-	diff := buildFileDiff([]byte(original), []byte(replacement))
+	diff := editDiff(original, "old", "new")
 
 	wantTexts := []string{"old one", "new one", "c1", "c2", "c3", "c4", fileDiffHunkMarker, "c7", "c8", "c9", "c10", "old two", "new two"}
 	gotTexts := make([]string, len(diff))
@@ -180,23 +198,16 @@ func TestBuildFileDiffSeparatesDistantHunks(t *testing.T) {
 
 func TestBuildFileDiffBoundsPresentation(t *testing.T) {
 	for _, test := range []struct {
-		name        string
-		original    string
-		replacement string
+		name     string
+		original string
+		oldText  string
+		newText  string
 	}{
-		{
-			name:        "lines",
-			original:    strings.Repeat("old\n", defaultMaxLines+10),
-			replacement: strings.Repeat("new\n", defaultMaxLines+10),
-		},
-		{
-			name:        "bytes",
-			original:    strings.Repeat("界", defaultMaxBytes),
-			replacement: strings.Repeat("新", defaultMaxBytes),
-		},
+		{name: "lines", original: strings.Repeat("old\n", defaultMaxLines+10), oldText: "old", newText: "new"},
+		{name: "bytes", original: strings.Repeat("界", defaultMaxBytes), oldText: "界", newText: "新"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			diff := buildFileDiff([]byte(test.original), []byte(test.replacement))
+			diff := editDiff(test.original, test.oldText, test.newText)
 			if len(diff) > defaultMaxLines || diff[len(diff)-1].Kind != agent.ToolDiffLineOmitted {
 				t.Fatalf("bounded diff lines = %d, last = %+v", len(diff), diff[len(diff)-1])
 			}
