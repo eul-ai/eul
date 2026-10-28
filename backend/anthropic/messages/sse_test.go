@@ -47,7 +47,7 @@ func TestReadMessagesSSEStreamsAndPreservesBlocks(t *testing.T) {
 
 	var text, reasoning string
 	var snapshots []agent.ToolCallSnapshot
-	result, err := readMessagesSSE(fragmentedReader{reader: strings.NewReader(stream)}, 1<<20, agent.StreamObserver{
+	result, err := readMessagesSSE(fragmentedReader{reader: strings.NewReader(stream)}, agent.StreamObserver{
 		Text: func(delta string) error {
 			text += delta
 			return nil
@@ -90,7 +90,7 @@ func TestReadMessagesSSEAcceptsRefusal(t *testing.T) {
 		sseMessageDelta("refusal", nil),
 		sseMessageStop(),
 	)
-	result, err := readMessagesSSE(strings.NewReader(stream), 1024, agent.StreamObserver{})
+	result, err := readMessagesSSE(strings.NewReader(stream), agent.StreamObserver{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestReadMessagesSSEClassifiesContextWindowStop(t *testing.T) {
 		sseMessageDelta("model_context_window_exceeded", nil),
 		sseMessageStop(),
 	)
-	_, err := readMessagesSSE(strings.NewReader(stream), 1024, agent.StreamObserver{})
+	_, err := readMessagesSSE(strings.NewReader(stream), agent.StreamObserver{})
 	if !backendhttp.IsContextLimit(err) {
 		t.Fatalf("error = %v", err)
 	}
@@ -123,7 +123,7 @@ func TestReadMessagesSSEOrdersMultipleToolCalls(t *testing.T) {
 		sseMessageDelta("tool_use", nil),
 		sseMessageStop(),
 	)
-	result, err := readMessagesSSE(strings.NewReader(stream), 1<<20, agent.StreamObserver{})
+	result, err := readMessagesSSE(strings.NewReader(stream), agent.StreamObserver{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestReadMessagesSSERejectsMalformedToolInput(t *testing.T) {
 		sseMessageDelta("tool_use", nil),
 		sseMessageStop(),
 	)
-	if _, err := readMessagesSSE(strings.NewReader(stream), 1<<20, agent.StreamObserver{}); err == nil {
+	if _, err := readMessagesSSE(strings.NewReader(stream), agent.StreamObserver{}); err == nil {
 		t.Fatal("malformed tool input was accepted")
 	}
 }
@@ -154,7 +154,7 @@ func TestReadMessagesSSERetriesAfterDelivery(t *testing.T) {
 		sseContentBlockStart(t, 0, contentBlock{Type: "text"}),
 		sseContentBlockDelta(0, streamDelta{Type: "text_delta", Text: "partial"}),
 	)
-	_, err := readMessagesSSE(strings.NewReader(stream), 1<<20, agent.StreamObserver{Text: func(string) error { return nil }})
+	_, err := readMessagesSSE(strings.NewReader(stream), agent.StreamObserver{Text: func(string) error { return nil }})
 	if !errors.Is(err, backendhttp.ErrIncompleteStream) {
 		t.Fatalf("error = %v", err)
 	}

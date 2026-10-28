@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
-	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 const fuzzSSEMaximum = 16 * 1024
@@ -70,17 +69,6 @@ func FuzzResponsesSSE(f *testing.F) {
 		if !reflect.DeepEqual(chunkedResponse, wholeResponse) || !reflect.DeepEqual(chunkedCapture, wholeCapture) || errorString(chunkedErr) != errorString(wholeErr) {
 			t.Fatalf("chunk size %d changed SSE result:\nwhole:   response=%#v capture=%#v error=%q\nchunked: response=%#v capture=%#v error=%q", chunkSize, wholeResponse, wholeCapture, errorString(wholeErr), chunkedResponse, chunkedCapture, errorString(chunkedErr))
 		}
-
-		if len(stream) == 0 {
-			return
-		}
-		maximum := int64(len(stream) / 2)
-		_, err := backendhttp.ReadSSE(bytes.NewReader(stream), maximum, func([]byte) (bool, error) {
-			return false, nil
-		})
-		if err == nil {
-			t.Fatalf("stream of %d bytes with limit %d returned %v", len(stream), maximum, err)
-		}
 	})
 }
 
@@ -100,7 +88,7 @@ func decodeFuzzSSE(reader io.Reader) (createResponseEnvelope, fuzzSSECapture, er
 			return nil
 		},
 	}
-	result, err := readResponsesSSE(reader, fuzzSSEMaximum, observer)
+	result, err := readResponsesSSE(reader, observer)
 	return result.response, capture, err
 }
 

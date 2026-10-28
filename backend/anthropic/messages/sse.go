@@ -66,9 +66,9 @@ type streamDecoder struct {
 	stopped    bool
 }
 
-func readMessagesSSE(reader io.Reader, maximum int64, observer agent.StreamObserver) (streamResult, error) {
+func readMessagesSSE(reader io.Reader, observer agent.StreamObserver) (streamResult, error) {
 	decoder := streamDecoder{observer: backendhttp.NewObserver(observer), blocks: make(map[int]*blockAccumulator)}
-	done, err := backendhttp.ReadSSE(reader, maximum, decoder.handleData)
+	done, err := backendhttp.ReadSSE(reader, decoder.handleData)
 	if err != nil {
 		return streamResult{}, fmt.Errorf("read Anthropic Messages SSE: %w", err)
 	}

@@ -23,7 +23,7 @@ func TestResponsesSSEOrdersCompletedItemsByOutputIndex(t *testing.T) {
 		`data: {"type":"response.completed","response":{"status":"completed"}}`,
 	}, "\n\n") + "\n\n"
 
-	response, err := readResponsesSSE(strings.NewReader(body), 1<<20, agent.StreamObserver{})
+	response, err := readResponsesSSE(strings.NewReader(body), agent.StreamObserver{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestResponsesSSERetriesAfterDelivery(t *testing.T) {
 					return nil
 				},
 			}
-			_, err := readResponsesSSE(strings.NewReader(test.body), 1024, observer)
+			_, err := readResponsesSSE(strings.NewReader(test.body), observer)
 			if deliveries != 1 || !errors.Is(err, backendhttp.ErrIncompleteStream) {
 				t.Fatalf("deliveries=%d error=%v", deliveries, err)
 			}

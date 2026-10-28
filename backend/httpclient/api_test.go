@@ -137,7 +137,7 @@ func TestCompleteJSONSSEOwnsRequestLifecycle(t *testing.T) {
 		},
 	}
 
-	result, err := CompleteJSONSSE(context.Background(), config, map[string]string{"model": "test"}, "request", func(reader io.Reader, maximum int64) (string, error) {
+	result, err := CompleteJSONSSE(context.Background(), config, map[string]string{"model": "test"}, "request", func(reader io.Reader) (string, error) {
 		data, err := io.ReadAll(reader)
 		return string(data), err
 	})
@@ -166,7 +166,7 @@ func TestCompleteJSONSSECancelsIdleResponseOnly(t *testing.T) {
 	})}
 
 	received := 0
-	_, err := CompleteJSONSSE(context.Background(), JSONSSEConfig{HTTPClient: client, Endpoint: "https://example.test"}, struct{}{}, "request", func(reader io.Reader, _ int64) (struct{}, error) {
+	_, err := CompleteJSONSSE(context.Background(), JSONSSEConfig{HTTPClient: client, Endpoint: "https://example.test"}, struct{}{}, "request", func(reader io.Reader) (struct{}, error) {
 		data, err := io.ReadAll(reader)
 		received = len(data)
 		return struct{}{}, err

@@ -51,7 +51,7 @@ func CompleteJSONSSE[T any](
 	config JSONSSEConfig,
 	wireRequest any,
 	operation string,
-	read func(io.Reader, int64) (T, error),
+	read func(io.Reader) (T, error),
 ) (T, error) {
 	var zero T
 
@@ -90,7 +90,7 @@ func CompleteJSONSSE[T any](
 	defer response.Body.Close()
 
 	idle.Reset(idleTimeout)
-	result, err := read(idleReader{reader: response.Body, idle: idle}, maxResponseBytes)
+	result, err := read(idleReader{reader: response.Body, idle: idle})
 	switch {
 	case err == nil:
 		return result, nil
@@ -110,8 +110,8 @@ func CompleteJSONSSE[T any](
 	return zero, config.ErrorConfig.Wrapf(classified.cause, "%v", err)
 }
 
-func ReadSSE(reader io.Reader, maximum int64, handle func([]byte) (bool, error)) (bool, error) {
-	limited := &io.LimitedReader{R: reader, N: maximum + 1}
+func ReadSSE(reader io.Reader, handle func([]byte) (bool, error)) (bool, error) {
+	limited := &io.LimitedReader{R: reader, N: maxResponseBytes + 1}
 	lines := sseLineReader{reader: bufio.NewReader(limited)}
 	var dataLines [][]byte
 
@@ -133,7 +133,7 @@ func ReadSSE(reader io.Reader, maximum int64, handle func([]byte) (bool, error))
 			return false, err
 		}
 		if limited.N == 0 {
-			return false, fmt.Errorf("SSE response exceeds %d bytes", maximum)
+			return false, fmt.Errorf("SSE response exceeds %d bytes", maxResponseBytes)
 		}
 
 		switch {

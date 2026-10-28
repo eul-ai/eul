@@ -42,7 +42,7 @@ func TestReadCompletionSSEStreamsAndNormalizes(t *testing.T) {
 
 	var text, reasoning string
 	var snapshots []agent.ToolCallSnapshot
-	result, err := readCompletionSSE(fragmentedReader{reader: strings.NewReader(stream)}, 1<<20, agent.StreamObserver{
+	result, err := readCompletionSSE(fragmentedReader{reader: strings.NewReader(stream)}, agent.StreamObserver{
 		Text: func(delta string) error {
 			text += delta
 			return nil
@@ -79,7 +79,7 @@ func TestReadCompletionSSEStreamsAndNormalizes(t *testing.T) {
 func TestReadCompletionSSEStreamsRefusal(t *testing.T) {
 	stream := "data: {\"choices\":[{\"index\":0,\"delta\":{\"refusal\":\"cannot help\"},\"finish_reason\":\"content_filter\"}]}\n\ndata: [DONE]\n\n"
 	var delivered string
-	result, err := readCompletionSSE(strings.NewReader(stream), 1024, agent.StreamObserver{Text: func(delta string) error {
+	result, err := readCompletionSSE(strings.NewReader(stream), agent.StreamObserver{Text: func(delta string) error {
 		delivered += delta
 		return nil
 	}}, false)
@@ -102,7 +102,7 @@ func TestReadCompletionSSEAcceptsSplitToolMetadata(t *testing.T) {
 	}, "\n")
 
 	var snapshots []agent.ToolCallSnapshot
-	result, err := readCompletionSSE(strings.NewReader(stream), 1024, agent.StreamObserver{ToolCall: func(snapshot agent.ToolCallSnapshot) error {
+	result, err := readCompletionSSE(strings.NewReader(stream), agent.StreamObserver{ToolCall: func(snapshot agent.ToolCallSnapshot) error {
 		snapshots = append(snapshots, snapshot)
 		return nil
 	}}, false)
@@ -119,7 +119,7 @@ func TestReadCompletionSSEAcceptsSplitToolMetadata(t *testing.T) {
 
 func TestReadCompletionSSERejectsLegacyFunctionCallFinish(t *testing.T) {
 	stream := "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"function_call\"}]}\n\ndata: [DONE]\n\n"
-	if _, err := readCompletionSSE(strings.NewReader(stream), 1024, agent.StreamObserver{}, false); err == nil {
+	if _, err := readCompletionSSE(strings.NewReader(stream), agent.StreamObserver{}, false); err == nil {
 		t.Fatal("legacy function_call finish reason was accepted")
 	}
 }
@@ -135,7 +135,7 @@ func TestReadCompletionSSESerializesEmptyReasoningContentWhenRequested(t *testin
 		{name: "required", serialize: true, wantField: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			result, err := readCompletionSSE(strings.NewReader(stream), 1024, agent.StreamObserver{}, test.serialize)
+			result, err := readCompletionSSE(strings.NewReader(stream), agent.StreamObserver{}, test.serialize)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -152,7 +152,7 @@ func TestReadCompletionSSESerializesEmptyReasoningContentWhenRequested(t *testin
 }
 
 func TestReadCompletionSSERequiresFinishReason(t *testing.T) {
-	_, err := readCompletionSSE(strings.NewReader("data: {\"choices\":[]}\n\ndata: [DONE]\n\n"), 1024, agent.StreamObserver{}, false)
+	_, err := readCompletionSSE(strings.NewReader("data: {\"choices\":[]}\n\ndata: [DONE]\n\n"), agent.StreamObserver{}, false)
 	if !errors.Is(err, backendhttp.ErrIncompleteStream) {
 		t.Fatalf("error = %v", err)
 	}
@@ -163,7 +163,7 @@ func TestReadCompletionSSERequiresFinishReason(t *testing.T) {
 
 func TestReadCompletionSSERetriesAfterDelivery(t *testing.T) {
 	stream := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n"
-	_, err := readCompletionSSE(strings.NewReader(stream), 1024, agent.StreamObserver{Text: func(string) error { return nil }}, false)
+	_, err := readCompletionSSE(strings.NewReader(stream), agent.StreamObserver{Text: func(string) error { return nil }}, false)
 	if !errors.Is(err, backendhttp.ErrIncompleteStream) {
 		t.Fatalf("error = %v", err)
 	}

@@ -61,7 +61,7 @@ func TestNewJSONSSERequest(t *testing.T) {
 func TestReadSSE(t *testing.T) {
 	stream := "event: update\r\ndata: first\r\ndata: second\r\n\r\n: ping\r\ndata: final"
 	var events []string
-	done, err := ReadSSE(strings.NewReader(stream), int64(len(stream)), func(data []byte) (bool, error) {
+	done, err := ReadSSE(strings.NewReader(stream), func(data []byte) (bool, error) {
 		events = append(events, string(data))
 		return string(data) == "final", nil
 	})
@@ -69,7 +69,7 @@ func TestReadSSE(t *testing.T) {
 		t.Fatalf("done=%v events=%q error=%v", done, events, err)
 	}
 
-	done, err = ReadSSE(strings.NewReader("data: [DONE]\n\ndata: ignored\n\n"), 1024, func(data []byte) (bool, error) {
+	done, err = ReadSSE(strings.NewReader("data: [DONE]\n\ndata: ignored\n\n"), func(data []byte) (bool, error) {
 		return string(data) == "[DONE]", nil
 	})
 	if err != nil || !done {
@@ -77,7 +77,7 @@ func TestReadSSE(t *testing.T) {
 	}
 
 	var crEvents []string
-	done, err = ReadSSE(strings.NewReader("data: first\r\rdata: second\r\r"), 1024, func(data []byte) (bool, error) {
+	done, err = ReadSSE(strings.NewReader("data: first\r\rdata: second\r\r"), func(data []byte) (bool, error) {
 		crEvents = append(crEvents, string(data))
 		return len(crEvents) == 2, nil
 	})
@@ -86,14 +86,15 @@ func TestReadSSE(t *testing.T) {
 	}
 
 	callbackErr := errors.New("callback failed")
-	_, err = ReadSSE(strings.NewReader("data: value\n\n"), 1024, func([]byte) (bool, error) {
+	_, err = ReadSSE(strings.NewReader("data: value\n\n"), func([]byte) (bool, error) {
 		return false, callbackErr
 	})
 	if !errors.Is(err, callbackErr) {
 		t.Fatalf("callback error = %v", err)
 	}
 
-	_, err = ReadSSE(strings.NewReader(stream), int64(len(stream)-1), func([]byte) (bool, error) {
+	oversized := "data: " + strings.Repeat("x", int(maxResponseBytes)) + "\n\n"
+	_, err = ReadSSE(strings.NewReader(oversized), func([]byte) (bool, error) {
 		return false, nil
 	})
 	if err == nil {

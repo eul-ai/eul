@@ -98,8 +98,8 @@ func (client *Client) complete(ctx context.Context, wireRequest createResponseRe
 		},
 		wireRequest,
 		operation,
-		func(reader io.Reader, maximum int64) (responseStreamResult, error) {
-			return readResponsesSSE(reader, maximum, observer)
+		func(reader io.Reader) (responseStreamResult, error) {
+			return readResponsesSSE(reader, observer)
 		},
 	)
 }

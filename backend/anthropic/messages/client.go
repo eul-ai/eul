@@ -161,8 +161,8 @@ func (client *Client) complete(ctx context.Context, wireRequest createRequest, o
 		config,
 		wireRequest,
 		operation,
-		func(reader io.Reader, maximum int64) (streamResult, error) {
-			return readMessagesSSE(reader, maximum, observer)
+		func(reader io.Reader) (streamResult, error) {
+			return readMessagesSSE(reader, observer)
 		},
 	)
 }

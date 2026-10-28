@@ -62,13 +62,13 @@ type streamDecoder struct {
 	serializeReasoningContent bool
 }
 
-func readCompletionSSE(reader io.Reader, maximum int64, observer agent.StreamObserver, serializeReasoningContent bool) (streamResult, error) {
+func readCompletionSSE(reader io.Reader, observer agent.StreamObserver, serializeReasoningContent bool) (streamResult, error) {
 	decoder := streamDecoder{
 		observer:                  backendhttp.NewObserver(observer),
 		toolCalls:                 newToolCallAccumulator(),
 		serializeReasoningContent: serializeReasoningContent,
 	}
-	done, err := backendhttp.ReadSSE(reader, maximum, decoder.handleData)
+	done, err := backendhttp.ReadSSE(reader, decoder.handleData)
 	if err != nil {
 		return streamResult{}, fmt.Errorf("read Chat Completions SSE: %w", err)
 	}

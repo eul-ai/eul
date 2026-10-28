@@ -43,9 +43,9 @@ type responseStreamDecoder struct {
 	toolCalls    toolCallAccumulator
 }
 
-func readResponsesSSE(reader io.Reader, maximum int64, observer agent.StreamObserver) (responseStreamResult, error) {
+func readResponsesSSE(reader io.Reader, observer agent.StreamObserver) (responseStreamResult, error) {
 	decoder := responseStreamDecoder{observer: backendhttp.NewObserver(observer), toolCalls: newToolCallAccumulator()}
-	done, err := backendhttp.ReadSSE(reader, maximum, decoder.handleData)
+	done, err := backendhttp.ReadSSE(reader, decoder.handleData)
 	if err != nil {
 		return responseStreamResult{}, fmt.Errorf("read Responses SSE: %w", err)
 	}
