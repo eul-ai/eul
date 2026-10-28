@@ -37,7 +37,6 @@ type providerUsageMessage struct {
 }
 
 type Runner struct {
-	input     io.Reader
 	output    io.Writer
 	inputFD   int
 	outputFD  int
@@ -52,7 +51,7 @@ func NewRunner(input io.Reader, output io.Writer) (*Runner, error) {
 	inputFD, inputOK := descriptor(input)
 	outputFD, outputOK := descriptor(output)
 	if !inputOK || !outputOK || !isTerminal(inputFD) || !isTerminal(outputFD) {
-		return nil, ErrNotTerminal
+		return nil, errNotTerminal
 	}
 	if _, _, err := terminalSize(outputFD); err != nil {
 		return nil, fmt.Errorf("terminal: get size: %w", err)
@@ -68,7 +67,6 @@ func NewRunner(input io.Reader, output io.Writer) (*Runner, error) {
 	}
 
 	runner := &Runner{
-		input:    input,
 		output:   output,
 		inputFD:  inputFD,
 		outputFD: outputFD,
@@ -88,9 +86,7 @@ func (runner *Runner) Run(ctx context.Context, options Options) (RunOutcome, err
 	if err := setTerminalTitle(runner.output, options.Config.WorkingDirectory); err != nil {
 		return RunOutcome{}, err
 	}
-	options.Input = runner.input
-	options.Output = runner.output
-	return runTUIWithKeys(ctx, options, runner.outputFD, width, height, runner.keys, runner.stopped)
+	return runner.run(ctx, options, width, height)
 }
 
 func setTerminalTitle(output io.Writer, workingDirectory string) error {
@@ -117,18 +113,6 @@ func (runner *Runner) Close() error {
 	return runner.closeErr
 }
 
-func Run(ctx context.Context, options Options) (RunOutcome, error) {
-	runner, err := NewRunner(options.Input, options.Output)
-	if err != nil {
-		return RunOutcome{}, err
-	}
-	outcome, runErr := runner.Run(ctx, options)
-	if closeErr := runner.Close(); closeErr != nil {
-		return RunOutcome{}, closeErr
-	}
-	return outcome, runErr
-}
-
 func wrapRestoreError(err error) error {
 	if err == nil {
 		return nil
@@ -136,23 +120,7 @@ func wrapRestoreError(err error) error {
 	return fmt.Errorf("terminal: restore: %w", err)
 }
 
-func runTUI(ctx context.Context, options Options, outputFD, width, height int) (RunOutcome, error) {
-	keys := make(chan keyEvent, 64)
-	stopped := make(chan struct{})
-	defer close(stopped)
-	go readKeyEvents(options.Input, keys, stopped)
-	return runTUIWithKeys(ctx, options, outputFD, width, height, keys, stopped)
-}
-
-func runTUIWithKeys(
-	ctx context.Context,
-	options Options,
-	outputFD int,
-	width int,
-	height int,
-	keys <-chan keyEvent,
-	stopped <-chan struct{},
-) (RunOutcome, error) {
+func (runner *Runner) run(ctx context.Context, options Options, width, height int) (RunOutcome, error) {
 	model := newTUIModel(width, height, options)
 	fileSearch := filesearch.New(options.Config.WorkingDirectory)
 	defer fileSearch.Close()
@@ -202,20 +170,19 @@ func runTUIWithKeys(
 	}
 
 	controller := newTUIController(controllerOptions{
-		model:              model,
-		output:             options.Output,
-		outputFD:           outputFD,
-		engineMessages:     engineMessages,
-		stopped:            stopped,
-		fileSearch:         fileSearch,
-		usageRequests:      usageRequests,
-		clipboardImages:    clipboardImages,
-		operations:         options.Operations,
-		controls:           options.Controls,
-		stateChanges:       options.StateChanges,
-		sessions:           options.Sessions,
-		messageHistory:     options.MessageHistory,
-		readClipboardImage: options.Services.ReadClipboardImage,
+		model:           model,
+		output:          runner.output,
+		outputFD:        runner.outputFD,
+		engineMessages:  engineMessages,
+		stopped:         runner.stopped,
+		fileSearch:      fileSearch,
+		usageRequests:   usageRequests,
+		clipboardImages: clipboardImages,
+		operations:      options.Operations,
+		controls:        options.Controls,
+		stateChanges:    options.StateChanges,
+		sessions:        options.Sessions,
+		messageHistory:  options.MessageHistory,
 	})
 	defer controller.cancelClipboardRequests()
 	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventRender}); err != nil {
@@ -249,7 +216,7 @@ func runTUIWithKeys(
 			event = tuiEvent{kind: tuiEventInterrupt}
 		case <-resizes:
 			event = tuiEvent{kind: tuiEventResize}
-		case key := <-keys:
+		case key := <-runner.keys:
 			event = tuiEvent{kind: tuiEventKey, key: key}
 		case message := <-engineMessages:
 			event = tuiEvent{kind: tuiEventEngine, engine: message}

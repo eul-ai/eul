@@ -476,16 +476,6 @@ func editorContent(items []editorItem) []agent.ContentPart {
 	return content
 }
 
-func (m *tuiModel) takePrompt() (string, bool) {
-	prompt := m.inputText()
-	if strings.TrimSpace(prompt) == "" {
-		return "", false
-	}
-	m.rememberPrompt(prompt)
-	m.clearInput()
-	return prompt, true
-}
-
 func (m *tuiModel) rememberPrompt(prompt string) {
 	trimmed := strings.TrimSpace(prompt)
 	if trimmed == "" || len(m.history) > 0 && m.history[len(m.history)-1] == prompt {
@@ -544,14 +534,4 @@ func (m *tuiModel) removePendingImage(requestID uint64) bool {
 		return true
 	}
 	return false
-}
-
-func (m *tuiModel) attachImage(image agent.Image) error {
-	const immediateRequestID = ^uint64(0)
-	m.reserveImage(immediateRequestID)
-	if err := m.resolveImage(immediateRequestID, image); err != nil {
-		m.removePendingImage(immediateRequestID)
-		return err
-	}
-	return nil
 }

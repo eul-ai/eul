@@ -10,10 +10,6 @@ import (
 )
 
 func renderStatus(model *tuiModel, width int) (string, string) {
-	return renderStatusAt(model, width, time.Now())
-}
-
-func renderStatusAt(model *tuiModel, width int, now time.Time) (string, string) {
 	activity := activityText(model)
 	modelText := model.model + " (" + string(model.thinkingLevel) + ")"
 	if model.fastMode {
@@ -23,7 +19,7 @@ func renderStatusAt(model *tuiModel, width int, now time.Time) (string, string) 
 		modelText += " · session " + truncateCells(model.sessionID, 8, false)
 	}
 	contextLong, contextShort := contextText(model.contextTokens, model.contextWindow)
-	usageLong, usageShort := providerUsageText(model.providerUsage, now)
+	usageLong, usageShort := providerUsageText(model.providerUsage, time.Now())
 
 	candidates := []string{
 		modelText + " · " + contextLong,

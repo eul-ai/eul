@@ -17,7 +17,16 @@ func renderFrame(model *tuiModel) string {
 
 func renderModel(renderer *tuiRenderer, model *tuiModel) string {
 	normalizeViewport(model, renderer)
-	return renderer.render(model)
+	output, next := renderer.renderPending(model, false)
+	renderer.commit(next)
+	return output
+}
+
+func buildTerminalFrame(model *tuiModel) terminalFrame {
+	renderer := &tuiRenderer{}
+	prepared := renderer.prepare(model)
+	prepared.scrollTop = viewportTop(model, prepared)
+	return projectTerminalFrame(model, prepared)
 }
 
 func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {

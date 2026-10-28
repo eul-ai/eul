@@ -156,10 +156,6 @@ func (c *tuiController) compact(ctx context.Context, _ string) (bool, error) {
 }
 
 func (c *tuiController) toggleFastMode(context.Context, string) (bool, error) {
-	if !c.model.fastModeAvailable || c.controls.SetFastMode == nil {
-		setInputError(c.model, errors.New("fast mode is unavailable for this model"))
-		return false, nil
-	}
 	if err := c.controls.SetFastMode(!c.model.fastMode); err != nil {
 		setInputError(c.model, err)
 		return false, nil

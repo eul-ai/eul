@@ -11,7 +11,7 @@ import (
 )
 
 func TestRunningSubagentsRenderAboveInput(t *testing.T) {
-	started := time.Unix(100, 0)
+	started := time.Now().Add(-(time.Minute + 5*time.Second))
 	model := newTUIModel(140, 10, Options{})
 	model.subagentStatus = subagent.Status{Active: []subagent.JobStatus{
 		{
@@ -23,7 +23,7 @@ func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 		},
 	}}
 
-	lines := renderSubagentsAt(model, 2, started.Add(time.Minute+5*time.Second))
+	lines := renderSubagents(model, 2)
 	first := renderedLineText(lines[0], model.width)
 	second := renderedLineText(lines[1], model.width)
 	for _, want := range []string{"subagent-1", "inspect layout", string(subagent.StateRunning), "balanced", string(agent.ThinkingLow), "1m5s", "1.2k", "34"} {
@@ -48,7 +48,7 @@ func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 }
 
 func TestSubagentStatusesUseStateColorsAndFreezeCompletedElapsed(t *testing.T) {
-	started := time.Unix(100, 0)
+	started := time.Now().Add(-time.Minute)
 	finished := started.Add(5 * time.Second)
 	model := newTUIModel(80, 10, Options{})
 	model.subagentStatus.Active = []subagent.JobStatus{
@@ -60,7 +60,7 @@ func TestSubagentStatusesUseStateColorsAndFreezeCompletedElapsed(t *testing.T) {
 		{SubagentID: "failed", Status: subagent.StateFailed, Started: started, Finished: finished},
 	}
 
-	lines := renderSubagentsAt(model, 4, started.Add(time.Minute))
+	lines := renderSubagents(model, 4)
 	wantForegrounds := []inlineForeground{
 		inlineForegroundAccent,
 		inlineForegroundOrange,

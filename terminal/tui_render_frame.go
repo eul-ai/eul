@@ -259,13 +259,6 @@ func normalizeViewport(model *tuiModel, renderer *tuiRenderer) {
 	model.scrollTop = viewportTop(model, renderer.prepare(model))
 }
 
-func buildTerminalFrame(model *tuiModel) terminalFrame {
-	renderer := &tuiRenderer{}
-	prepared := renderer.prepare(model)
-	prepared.scrollTop = viewportTop(model, prepared)
-	return projectTerminalFrame(model, prepared)
-}
-
 func projectTerminalFrame(model *tuiModel, prepared renderPreparation) terminalFrame {
 	width := model.width
 	height := model.height

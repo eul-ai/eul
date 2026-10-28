@@ -460,7 +460,8 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 	assertCachedConversationMatchesUncached(t, renderer, model)
 
 	checkpoint := checkpointModel(model, nil)
-	model.clearConversation()
+	model.blocks = nil
+	model.conversationChanged()
 	assertCachedConversationMatchesUncached(t, renderer, model)
 	if len(renderer.conversationBlocks) != 0 {
 		t.Fatalf("cached blocks after clear = %d", len(renderer.conversationBlocks))
@@ -471,7 +472,8 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 
 func TestPendingSteeringRendersAndDeliversInTranscriptOrder(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
-	model.beginTurn("initial")
+	model.appendUserContent(textContent("initial"))
+	model.beginTurnOperation()
 	model.appendStream(blockAssistant, "answer")
 	model.steering.accepted = [][]agent.ContentPart{testTextContent("redirect")}
 	controller := tuiController{model: model}
@@ -522,7 +524,8 @@ func TestPendingImageSteeringRendersAndDelivers(t *testing.T) {
 
 func TestGoalContinuationHasDistinctTranscriptBlock(t *testing.T) {
 	model := newTUIModel(40, 8, Options{})
-	model.beginTurn("initial")
+	model.appendUserContent(textContent("initial"))
+	model.beginTurnOperation()
 	model.appendStream(blockAssistant, "first response")
 	model.steering.accepted = [][]agent.ContentPart{testTextContent("same text")}
 

@@ -8,7 +8,7 @@ import (
 
 func TestCheckpointPersistenceRoundTrip(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
-	model.beginTurn("first prompt")
+	model.appendUserContent(textContent("first prompt"))
 	model.appendBlock(blockAssistant, "first answer")
 	model.history = []string{"older prompt"}
 	if err := model.insertInput("draft"); err != nil {
@@ -49,7 +49,7 @@ func TestCheckpointPersistenceRoundTrip(t *testing.T) {
 
 func TestTranscriptDeltaAppendsOnlyNewSuffix(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
-	model.beginTurn("prompt")
+	model.appendUserContent(textContent("prompt"))
 	previous, _, err := SplitCheckpoint(checkpointModel(model, nil))
 	if err != nil {
 		t.Fatal(err)
@@ -65,16 +65,15 @@ func TestTranscriptDeltaAppendsOnlyNewSuffix(t *testing.T) {
 		t.Fatalf("delta = %+v, changed = %v", delta, changed)
 	}
 
-	applied, err := ApplyTranscriptDelta(previous, delta)
-	if err != nil {
+	if err := ApplyTranscriptDeltaInPlace(&previous, delta); err != nil {
 		t.Fatal(err)
 	}
-	assertTranscriptsEqual(t, applied, next)
+	assertTranscriptsEqual(t, previous, next)
 }
 
 func TestTranscriptDeltaReplacesChangedSuffix(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
-	model.beginTurn("prompt")
+	model.appendUserContent(textContent("prompt"))
 	model.appendBlock(blockAssistant, "first")
 	model.appendBlock(blockInfo, "tail")
 	previous, _, err := SplitCheckpoint(checkpointModel(model, nil))
@@ -100,54 +99,15 @@ func TestTranscriptDeltaReplacesChangedSuffix(t *testing.T) {
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	applied, err := ApplyTranscriptDelta(previous, decoded)
-	if err != nil {
+	if err := ApplyTranscriptDeltaInPlace(&previous, decoded); err != nil {
 		t.Fatal(err)
 	}
-	assertTranscriptsEqual(t, applied, next)
-}
-
-func TestTranscriptDeltaApplicationsDoNotAlias(t *testing.T) {
-	model := newTUIModel(80, 24, Options{})
-	model.beginTurn("prompt")
-	base, _, err := SplitCheckpoint(checkpointModel(model, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	model.appendBlock(blockAssistant, "first")
-	first, _, err := SplitCheckpoint(checkpointModel(model, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	firstDelta, changed := DiffTranscript(base, first)
-	if !changed {
-		t.Fatal("first transcript did not change")
-	}
-
-	model.blocks[len(model.blocks)-1].text = "second"
-	second, _, err := SplitCheckpoint(checkpointModel(model, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondDelta, changed := DiffTranscript(base, second)
-	if !changed {
-		t.Fatal("second transcript did not change")
-	}
-
-	firstApplied, err := ApplyTranscriptDelta(base, firstDelta)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ApplyTranscriptDelta(base, secondDelta); err != nil {
-		t.Fatal(err)
-	}
-	assertTranscriptsEqual(t, firstApplied, first)
+	assertTranscriptsEqual(t, previous, next)
 }
 
 func TestTranscriptDeltaTruncatesAndClears(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
-	model.beginTurn("prompt")
+	model.appendUserContent(textContent("prompt"))
 	model.appendBlock(blockAssistant, "answer")
 	previous, _, err := SplitCheckpoint(checkpointModel(model, nil))
 	if err != nil {
@@ -163,27 +123,25 @@ func TestTranscriptDeltaTruncatesAndClears(t *testing.T) {
 	if !changed || delta.replaceFrom != 1 || len(delta.blocks) != 0 {
 		t.Fatalf("truncate delta = %+v, changed = %v", delta, changed)
 	}
-	applied, err := ApplyTranscriptDelta(previous, delta)
-	if err != nil {
+	if err := ApplyTranscriptDeltaInPlace(&previous, delta); err != nil {
 		t.Fatal(err)
 	}
-	assertTranscriptsEqual(t, applied, truncated)
+	assertTranscriptsEqual(t, previous, truncated)
 
 	cleared := EmptyTranscript()
 	delta, changed = DiffTranscript(previous, cleared)
 	if !changed || delta.replaceFrom != 0 || len(delta.blocks) != 0 {
 		t.Fatalf("clear delta = %+v, changed = %v", delta, changed)
 	}
-	applied, err = ApplyTranscriptDelta(previous, delta)
-	if err != nil {
+	if err := ApplyTranscriptDeltaInPlace(&previous, delta); err != nil {
 		t.Fatal(err)
 	}
-	assertTranscriptsEqual(t, applied, cleared)
+	assertTranscriptsEqual(t, previous, cleared)
 }
 
 func TestTranscriptDeltaDetectsNoChange(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
-	model.beginTurn("prompt")
+	model.appendUserContent(textContent("prompt"))
 	transcript, _, err := SplitCheckpoint(checkpointModel(model, nil))
 	if err != nil {
 		t.Fatal(err)
@@ -207,7 +165,8 @@ func TestTranscriptDeltaRejectsMalformedData(t *testing.T) {
 		}
 	}
 
-	if _, err := ApplyTranscriptDelta(EmptyTranscript(), TranscriptDelta{replaceFrom: 1}); err == nil {
+	transcript := EmptyTranscript()
+	if err := ApplyTranscriptDeltaInPlace(&transcript, TranscriptDelta{replaceFrom: 1}); err == nil {
 		t.Fatal("out-of-range delta was accepted")
 	}
 }

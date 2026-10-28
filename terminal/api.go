@@ -19,7 +19,7 @@ const (
 
 var (
 	ErrInterrupted  = errors.New("terminal: interrupted")
-	ErrNotTerminal  = errors.New("terminal: interactive mode requires terminal input and output")
+	errNotTerminal  = errors.New("terminal: interactive mode requires terminal input and output")
 	errInputTooLong = errors.New("terminal: input is too long")
 	errInvalidInput = errors.New("terminal: input must be valid UTF-8 text without NUL")
 	errOutput       = errors.New("terminal: write output")
@@ -131,8 +131,7 @@ type UsageWindow struct {
 }
 
 type Services struct {
-	LoadUsage          func(context.Context) (ProviderUsage, error)
-	ReadClipboardImage func(context.Context) (agent.Image, error)
+	LoadUsage func(context.Context) (ProviderUsage, error)
 }
 
 type Options struct {

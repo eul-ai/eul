@@ -25,17 +25,6 @@ func conversationViewport(lines []styledLine, scrollTop, height int) []styledLin
 	return visible
 }
 
-func conversationLines(blocks []conversationBlock, width int) []styledLine {
-	var lines []styledLine
-	for index, block := range blocks {
-		lines = append(lines, conversationBlockLines(block, width)...)
-		if index < len(blocks)-1 {
-			lines = append(lines, styledLine{})
-		}
-	}
-	return lines
-}
-
 func wrapHardConversationText(text string, width int) []formattedLine {
 	wrapped := wrapText(text, width)
 	lines := make([]formattedLine, len(wrapped))

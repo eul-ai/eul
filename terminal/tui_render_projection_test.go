@@ -12,3 +12,14 @@ func modelConversationLines(model *tuiModel, width int) []styledLine {
 	result = append(result, make([]styledLine, conversationVerticalPadding)...)
 	return result
 }
+
+func conversationLines(blocks []conversationBlock, width int) []styledLine {
+	var lines []styledLine
+	for index, block := range blocks {
+		lines = append(lines, conversationBlockLines(block, width)...)
+		if index < len(blocks)-1 {
+			lines = append(lines, styledLine{})
+		}
+	}
+	return lines
+}

@@ -155,13 +155,10 @@ func optionsForEngine(engine fakeEngineAPI, options Options) Options {
 	return options
 }
 
-func TestRunRequiresTerminal(t *testing.T) {
+func TestNewRunnerRequiresTerminal(t *testing.T) {
 	var output bytes.Buffer
-	_, err := Run(context.Background(), optionsForEngine(&fakeEngine{}, Options{
-		Input: strings.NewReader("/exit\n"), Output: &output,
-	}))
-	if !errors.Is(err, ErrNotTerminal) {
-		t.Fatalf("Run() error = %v", err)
+	if _, err := NewRunner(strings.NewReader("/exit\n"), &output); !errors.Is(err, errNotTerminal) {
+		t.Fatalf("NewRunner() error = %v", err)
 	}
 }
 

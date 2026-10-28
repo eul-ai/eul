@@ -43,27 +43,22 @@ type tuiEvent struct {
 }
 
 type controllerOptions struct {
-	model              *tuiModel
-	output             io.Writer
-	outputFD           int
-	engineMessages     chan<- engineMessage
-	stopped            <-chan struct{}
-	fileSearch         *filesearch.Searcher
-	usageRequests      chan<- struct{}
-	clipboardImages    chan<- tuiEvent
-	operations         Operations
-	controls           Controls
-	stateChanges       StateChanges
-	sessions           Sessions
-	messageHistory     MessageHistory
-	readClipboardImage func(context.Context) (agent.Image, error)
+	model           *tuiModel
+	output          io.Writer
+	outputFD        int
+	engineMessages  chan<- engineMessage
+	stopped         <-chan struct{}
+	fileSearch      *filesearch.Searcher
+	usageRequests   chan<- struct{}
+	clipboardImages chan<- tuiEvent
+	operations      Operations
+	controls        Controls
+	stateChanges    StateChanges
+	sessions        Sessions
+	messageHistory  MessageHistory
 }
 
 func newTUIController(config controllerOptions) *tuiController {
-	readClipboardImage := config.readClipboardImage
-	if readClipboardImage == nil {
-		readClipboardImage = clipboard.ReadImage
-	}
 	return &tuiController{
 		model:              config.model,
 		renderer:           &tuiRenderer{},
@@ -78,7 +73,7 @@ func newTUIController(config controllerOptions) *tuiController {
 		stateChanges:       config.stateChanges,
 		sessions:           config.sessions,
 		messageHistory:     config.messageHistory,
-		readClipboardImage: readClipboardImage,
+		readClipboardImage: clipboard.ReadImage,
 		clipboardImages:    config.clipboardImages,
 		clipboardRequests:  make(map[uint64]context.CancelFunc),
 		dirty:              true,
@@ -213,14 +208,12 @@ func (c *tuiController) handleKey(ctx context.Context, key keyEvent) (bool, erro
 	if err := c.flushMessageHistory(); err != nil {
 		return false, err
 	}
-	if c.fileSearch != nil {
-		command := c.model.takeFileSearchCommand()
-		switch {
-		case command.request != nil:
-			c.fileSearch.Search(ctx, *command.request)
-		case command.cancel:
-			c.fileSearch.Cancel()
-		}
+	command := c.model.takeFileSearchCommand()
+	switch {
+	case command.request != nil:
+		c.fileSearch.Search(ctx, *command.request)
+	case command.cancel:
+		c.fileSearch.Cancel()
 	}
 	if exit {
 		if !c.model.running {

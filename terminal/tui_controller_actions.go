@@ -47,20 +47,12 @@ func (c *tuiController) runAction(ctx context.Context, action tuiAction) (bool, 
 	case tuiActionDequeue:
 		c.restoreQueuedInput()
 	case tuiActionSetThinking:
-		if c.controls.SetThinkingLevel == nil {
-			setInputError(c.model, errors.New("thinking level selection is unavailable"))
-			return false, nil
-		}
 		if err := c.controls.SetThinkingLevel(action.thinkingLevel); err != nil {
 			setInputError(c.model, err)
 			return false, nil
 		}
 		c.model.thinkingLevel = action.thinkingLevel
 	case tuiActionAttachImage:
-		if c.readClipboardImage == nil || c.clipboardImages == nil {
-			setInputError(c.model, errors.New("clipboard images are unavailable"))
-			return false, nil
-		}
 		if c.model.imageCount()+len(c.clipboardRequests) >= maxAttachedImages {
 			setInputError(c.model, errTooManyImages)
 			return false, nil
@@ -68,9 +60,6 @@ func (c *tuiController) runAction(ctx context.Context, action tuiAction) (bool, 
 		c.nextClipboardID++
 		requestID := c.nextClipboardID
 		readContext, cancel := context.WithCancel(ctx)
-		if c.clipboardRequests == nil {
-			c.clipboardRequests = make(map[uint64]context.CancelFunc)
-		}
 		c.clipboardRequests[requestID] = cancel
 		c.model.reserveImage(requestID)
 		go loadClipboardImage(readContext, requestID, c.readClipboardImage, c.clipboardImages, c.stopped)

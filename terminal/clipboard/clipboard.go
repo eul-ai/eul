@@ -29,16 +29,6 @@ func ReadImage(ctx context.Context) (agent.Image, error) {
 	return readImage(ctx)
 }
 
-func ValidateImage(image agent.Image) error {
-	if image.MediaType != "image/png" {
-		return errImageInvalid
-	}
-	if _, err := png.Decode(bytes.NewReader(image.Data)); err != nil {
-		return errImageInvalid
-	}
-	return nil
-}
-
 func readPNG(reader io.Reader) (agent.Image, error) {
 	data, err := io.ReadAll(io.LimitReader(reader, maxImageBytes+1))
 	if err != nil {
@@ -50,9 +40,8 @@ func readPNG(reader io.Reader) (agent.Image, error) {
 	case len(data) > maxImageBytes:
 		return agent.Image{}, errImageTooLarge
 	}
-	image := agent.Image{MediaType: "image/png", Data: data}
-	if err := ValidateImage(image); err != nil {
-		return agent.Image{}, err
+	if _, err := png.Decode(bytes.NewReader(data)); err != nil {
+		return agent.Image{}, errImageInvalid
 	}
-	return image, nil
+	return agent.Image{MediaType: "image/png", Data: data}, nil
 }

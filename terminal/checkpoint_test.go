@@ -17,7 +17,7 @@ import (
 
 func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	model := newTUIModel(80, 24, Options{MessageHistory: MessageHistory{Entries: []string{"global prompt"}}})
-	model.beginTurn("  First line of the prompt  \nsecond line")
+	model.appendUserContent(textContent("  First line of the prompt  \nsecond line"))
 	model.appendBlock(blockAssistant, "answer")
 	model.running = false
 	model.subagentStatus = subagent.Status{Running: 1, PendingCompletions: []subagent.Completion{{Status: subagent.StateComplete}}}
@@ -133,7 +133,7 @@ func TestTerminalCheckpointProjectsQueuedImagesOut(t *testing.T) {
 
 func TestTerminalCheckpointPreservesInlineImagePositions(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
-	model.beginTurnContent([]agent.ContentPart{
+	model.appendUserContent([]agent.ContentPart{
 		{Kind: agent.ContentPartText, Text: "before "},
 		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("png")}},
 		{Kind: agent.ContentPartText, Text: " after"},
@@ -168,7 +168,7 @@ func TestTerminalCheckpointSanitizesContentText(t *testing.T) {
 
 func TestImageOnlyCheckpointDescription(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
-	model.beginTurnContent([]agent.ContentPart{{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png"}}})
+	model.appendUserContent([]agent.ContentPart{{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png"}}})
 	if description := checkpointModel(model, nil).Description(); description == "" {
 		t.Fatal("image-only checkpoint has no description")
 	}

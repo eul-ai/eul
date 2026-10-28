@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/terminal/clipboard"
 )
 
 func (c *tuiController) handleClipboardImage(requestID uint64, image agent.Image, err error) (bool, error) {
@@ -15,9 +14,6 @@ func (c *tuiController) handleClipboardImage(requestID uint64, image agent.Image
 	cancel()
 	delete(c.clipboardRequests, requestID)
 
-	if err == nil {
-		err = clipboard.ValidateImage(image)
-	}
 	if err != nil {
 		if c.model.removePendingImage(requestID) {
 			setInputError(c.model, err)

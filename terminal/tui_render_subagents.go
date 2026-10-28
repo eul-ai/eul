@@ -45,10 +45,7 @@ func subagentRows(status subagent.Status) []subagentRow {
 }
 
 func renderSubagents(model *tuiModel, height int) []styledLine {
-	return renderSubagentsAt(model, height, time.Now())
-}
-
-func renderSubagentsAt(model *tuiModel, height int, now time.Time) []styledLine {
+	now := time.Now()
 	lines := make([]styledLine, 0, min(height, len(model.subagentStatus.Active)+len(model.subagentStatus.PendingCompletions)))
 	rows := subagentRows(model.subagentStatus)
 	lines = appendSubagentSection(lines, "active", rows[:len(model.subagentStatus.Active)], height, now)

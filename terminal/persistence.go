@@ -95,17 +95,6 @@ func DiffTranscript(previous, next Transcript) (TranscriptDelta, bool) {
 	}, true
 }
 
-func ApplyTranscriptDelta(previous Transcript, delta TranscriptDelta) (Transcript, error) {
-	if err := validateTranscriptDelta(previous, delta); err != nil {
-		return Transcript{}, err
-	}
-
-	blocks := make([]checkpointBlock, delta.replaceFrom, delta.replaceFrom+len(delta.blocks))
-	copy(blocks, previous.blocks[:delta.replaceFrom])
-	blocks = append(blocks, cloneCheckpointBlocks(delta.blocks)...)
-	return Transcript{blocks: blocks}, nil
-}
-
 func ApplyTranscriptDeltaInPlace(transcript *Transcript, delta TranscriptDelta) error {
 	if transcript == nil {
 		return errors.New("terminal: transcript is missing")

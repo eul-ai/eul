@@ -444,20 +444,6 @@ func (m *tuiModel) clearPermission() {
 	m.permission = permissionModel{}
 }
 
-func (m *tuiModel) clearConversation() {
-	m.blocks = nil
-	m.conversationChanged()
-	m.closeStream()
-	m.contextTokens = 0
-	m.clearPermission()
-	m.turnExecutedTool = false
-	m.scrollTop = 0
-	m.following = true
-	m.historyExpansionRequested = false
-	m.selection = textSelection{}
-	m.activity = activity{kind: activityReady}
-}
-
 func (m *tuiModel) finishPendingTools(outcome string) {
 	for index := range m.blocks {
 		if m.blocks[index].kind != blockToolPending {
@@ -467,15 +453,6 @@ func (m *tuiModel) finishPendingTools(outcome string) {
 		m.blocks[index].toolOutcome = outcome
 		m.conversationChanged()
 	}
-}
-
-func (m *tuiModel) beginTurn(prompt string) {
-	m.beginTurnContent([]agent.ContentPart{{Kind: agent.ContentPartText, Text: prompt}})
-}
-
-func (m *tuiModel) beginTurnContent(content []agent.ContentPart) {
-	m.appendUserContent(content)
-	m.beginTurnOperation()
 }
 
 func (m *tuiModel) appendUserContent(content []agent.ContentPart) {

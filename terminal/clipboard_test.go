@@ -34,3 +34,13 @@ func TestAttachImageEnforcesLimits(t *testing.T) {
 		t.Fatalf("image size error = %v", err)
 	}
 }
+
+func (m *tuiModel) attachImage(image agent.Image) error {
+	const requestID = ^uint64(0)
+	m.reserveImage(requestID)
+	if err := m.resolveImage(requestID, image); err != nil {
+		m.removePendingImage(requestID)
+		return err
+	}
+	return nil
+}

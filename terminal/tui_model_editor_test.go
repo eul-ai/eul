@@ -22,10 +22,11 @@ func TestTUIModelEditsAndNavigatesHistory(t *testing.T) {
 		t.Fatalf("input = %q", got)
 	}
 
-	prompt, ok := model.takePrompt()
-	if !ok || prompt != "a界" {
-		t.Fatalf("takePrompt() = %q, %v", prompt, ok)
+	content, ok := model.submittingContent()
+	if !ok || contentText(content) != "a界" {
+		t.Fatalf("submittingContent() = %+v, %v", content, ok)
 	}
+	model.finishSubmission(content)
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)
 	}
@@ -103,9 +104,9 @@ func TestTUIModelInsertsNewlineAndPreservesItInPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prompt, ok := model.takePrompt()
-	if !ok || prompt != "first\nsecond" {
-		t.Fatalf("takePrompt() = %q, %v", prompt, ok)
+	content, ok := model.submittingContent()
+	if !ok || contentText(content) != "first\nsecond" {
+		t.Fatalf("submittingContent() = %+v, %v", content, ok)
 	}
 }
 

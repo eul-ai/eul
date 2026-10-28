@@ -39,36 +39,13 @@ func TestTUIControllerFlushesMessageHistory(t *testing.T) {
 	}
 }
 
-func TestTUIControllerRejectsInvalidClipboardImage(t *testing.T) {
-	model := newTUIModel(80, 24, Options{})
-	clipboardImages := make(chan tuiEvent, 1)
-	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
-		readClipboardImage: func(context.Context) (agent.Image, error) {
-			return agent.Image{MediaType: "image/png", Data: []byte("png")}, nil
-		},
-		clipboardImages: clipboardImages,
-		stopped:         make(chan struct{}),
-	}
-
-	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlV}); err != nil {
-		t.Fatal(err)
-	}
-	event := <-clipboardImages
-	if _, err := controller.transition(context.Background(), event); err != nil {
-		t.Fatal(err)
-	}
-	if len(model.input) != 0 || model.activity.kind != activityError {
-		t.Fatalf("input = %+v, activity = %+v", model.input, model.activity)
-	}
-}
-
 func TestTUIControllerPastesClipboardImage(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	clipboardImages := make(chan tuiEvent, 1)
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
+		clipboardRequests: map[uint64]context.CancelFunc{},
 		readClipboardImage: func(context.Context) (agent.Image, error) {
 			return agent.Image{MediaType: "image/png", Data: validTestPNG(t)}, nil
 		},
@@ -107,6 +84,7 @@ func TestTUIControllerQueuesClipboardImageWhileRunning(t *testing.T) {
 	clipboardImages := make(chan tuiEvent, 1)
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
+		clipboardRequests: map[uint64]context.CancelFunc{},
 		readClipboardImage: func(context.Context) (agent.Image, error) {
 			return agent.Image{MediaType: "image/png", Data: validTestPNG(t)}, nil
 		},
@@ -280,6 +258,7 @@ func TestTUIControllerPreservesClipboardInsertionPoint(t *testing.T) {
 	}
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
+		clipboardRequests: map[uint64]context.CancelFunc{},
 		readClipboardImage: func(context.Context) (agent.Image, error) {
 			close(started)
 			<-release
@@ -314,6 +293,7 @@ func TestTUIControllerDiscardsClearedClipboardRead(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
+		clipboardRequests: map[uint64]context.CancelFunc{},
 		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
 			close(started)
 			<-ctx.Done()
@@ -343,6 +323,7 @@ func TestTUIControllerDeletingPendingImageCancelsRead(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
+		clipboardRequests: map[uint64]context.CancelFunc{},
 		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
 			close(started)
 			<-ctx.Done()
@@ -371,6 +352,7 @@ func TestTUIControllerDeleteCancelsPendingImage(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
+		clipboardRequests: map[uint64]context.CancelFunc{},
 		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
 			close(started)
 			<-ctx.Done()
@@ -406,6 +388,7 @@ func TestTUIControllerHistoryCancelsPendingImage(t *testing.T) {
 	}
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
+		clipboardRequests: map[uint64]context.CancelFunc{},
 		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
 			close(started)
 			<-ctx.Done()
@@ -449,7 +432,8 @@ func TestTUIControllerSubmittingCancelsPendingImage(t *testing.T) {
 	}}
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
-		engineMessages: make(chan engineMessage, 1),
+		engineMessages:    make(chan engineMessage, 1),
+		clipboardRequests: map[uint64]context.CancelFunc{},
 		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
 			close(started)
 			<-ctx.Done()
@@ -479,6 +463,7 @@ func TestTUIControllerExitCancelsClipboardRead(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
+		clipboardRequests: map[uint64]context.CancelFunc{},
 		readClipboardImage: func(ctx context.Context) (agent.Image, error) {
 			close(started)
 			<-ctx.Done()
@@ -506,6 +491,7 @@ func TestTUIControllerReadsClipboardImageWithoutBlocking(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
+		clipboardRequests: map[uint64]context.CancelFunc{},
 		readClipboardImage: func(context.Context) (agent.Image, error) {
 			close(started)
 			<-release
@@ -1311,7 +1297,8 @@ func TestMouseSelectionUsesCommittedFrame(t *testing.T) {
 	_ = renderModel(renderer, model)
 	committed := renderer.frame
 
-	model.clearConversation()
+	model.blocks = nil
+	model.conversationChanged()
 	model.appendBlock(blockAssistant, "new unseen text")
 	reduceMouse(model, mouseEvent{kind: mousePress, column: 1, row: 1}, committed)
 	action := reduceMouse(model, mouseEvent{kind: mouseRelease, column: 5, row: 1}, committed)

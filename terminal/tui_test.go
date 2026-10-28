@@ -36,9 +36,9 @@ func TestRunTUIParentCancellationWinsOverEOF(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var output bytes.Buffer
-	_, err := runTUI(ctx, optionsForEngine(&fakeEngine{}, Options{Input: strings.NewReader(""), Output: &output}), -1, 80, 24)
+	_, err := runTest(ctx, optionsForEngine(&fakeEngine{}, Options{Input: strings.NewReader(""), Output: &output}))
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("runTUI() error = %v", err)
+		t.Fatalf("runTest() error = %v", err)
 	}
 }
 
@@ -59,7 +59,7 @@ func TestRunTUIParentCancellationWinsAfterActiveEOF(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := runTUI(ctx, optionsForEngine(engine, Options{Input: reader, Output: &output}), -1, 80, 24)
+		_, err := runTest(ctx, optionsForEngine(engine, Options{Input: reader, Output: &output}))
 		done <- err
 	}()
 	if _, err := io.WriteString(writer, "wait\r"); err != nil {
@@ -76,10 +76,10 @@ func TestRunTUIParentCancellationWinsAfterActiveEOF(t *testing.T) {
 	select {
 	case err := <-done:
 		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("runTUI() error = %v", err)
+			t.Fatalf("runTest() error = %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("runTUI() did not return")
+		t.Fatal("runTest() did not return")
 	}
 }
 
@@ -91,9 +91,9 @@ func TestRunTUIRendersSubagentUpdatesWhileIdle(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := runTUI(context.Background(), optionsForEngine(&fakeEngine{}, Options{
+		_, err := runTest(context.Background(), optionsForEngine(&fakeEngine{}, Options{
 			Input: reader, Output: output, Events: Events{SubagentUpdates: updates},
-		}), -1, 80, 24)
+		}))
 		done <- err
 	}()
 
@@ -117,7 +117,7 @@ func TestRunTUIRendersSubagentUpdatesWhileIdle(t *testing.T) {
 			t.Fatal(err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("runTUI did not stop")
+		t.Fatal("runTest did not stop")
 	}
 }
 
@@ -137,7 +137,7 @@ func TestRunTUILoadsProviderUsageAtStartupAndAfterTurn(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := runTUI(context.Background(), optionsForEngine(&fakeEngine{}, options), -1, 80, 24)
+		_, err := runTest(context.Background(), optionsForEngine(&fakeEngine{}, options))
 		done <- err
 	}()
 
@@ -168,7 +168,7 @@ func TestRunTUILoadsProviderUsageAtStartupAndAfterTurn(t *testing.T) {
 			t.Fatal(err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("runTUI did not stop")
+		t.Fatal("runTest did not stop")
 	}
 }
 
@@ -188,7 +188,7 @@ func TestRunTUIWaitsForProviderUsageCleanup(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := runTUI(context.Background(), optionsForEngine(&fakeEngine{}, Options{
+		_, err := runTest(context.Background(), optionsForEngine(&fakeEngine{}, Options{
 			Input:  reader,
 			Output: io.Discard,
 			Services: Services{LoadUsage: func(ctx context.Context) (ProviderUsage, error) {
@@ -198,7 +198,7 @@ func TestRunTUIWaitsForProviderUsageCleanup(t *testing.T) {
 				<-release
 				return ProviderUsage{}, ctx.Err()
 			}},
-		}), -1, 80, 24)
+		}))
 		done <- err
 	}()
 
@@ -217,7 +217,7 @@ func TestRunTUIWaitsForProviderUsageCleanup(t *testing.T) {
 	}
 	select {
 	case err := <-done:
-		t.Fatalf("runTUI returned before usage cleanup: %v", err)
+		t.Fatalf("runTest returned before usage cleanup: %v", err)
 	case <-time.After(50 * time.Millisecond):
 	}
 	close(release)
@@ -227,7 +227,7 @@ func TestRunTUIWaitsForProviderUsageCleanup(t *testing.T) {
 			t.Fatal(err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("runTUI did not return after usage cleanup")
+		t.Fatal("runTest did not return after usage cleanup")
 	}
 }
 
@@ -306,11 +306,11 @@ func TestLoadProviderUsageCancelsActiveRequest(t *testing.T) {
 func TestRunTUIReturnsInputReadFailure(t *testing.T) {
 	readErr := errors.New("read failed")
 	var output bytes.Buffer
-	_, err := runTUI(context.Background(), optionsForEngine(&fakeEngine{}, Options{
+	_, err := runTest(context.Background(), optionsForEngine(&fakeEngine{}, Options{
 		Input: terminalErrorReader{err: readErr}, Output: &output,
-	}), -1, 80, 24)
+	}))
 	if !errors.Is(err, readErr) {
-		t.Fatalf("runTUI() error = %v", err)
+		t.Fatalf("runTest() error = %v", err)
 	}
 }
 
@@ -415,6 +415,13 @@ func TestHandleKeyCancelsIncompleteToolTurnWithoutResettingConversation(t *testi
 			t.Fatal("canceled turn did not complete")
 		}
 	}
+}
+
+func runTest(ctx context.Context, options Options) (RunOutcome, error) {
+	runner := &Runner{output: options.Output, outputFD: -1, keys: make(chan keyEvent, 64), stopped: make(chan struct{})}
+	defer close(runner.stopped)
+	go readKeyEvents(options.Input, runner.keys, runner.stopped)
+	return runner.run(ctx, options, 80, 24)
 }
 
 type signalingWriter struct {
@@ -563,7 +570,7 @@ func TestRunTUISubmitsInitialPrompt(t *testing.T) {
 	var output bytes.Buffer
 	options := optionsForEngine(engine, Options{Input: strings.NewReader(""), Output: &output})
 	options.Config.InitialPrompt = "investigate the store"
-	if _, err := runTUI(context.Background(), options, -1, 80, 24); err != nil {
+	if _, err := runTest(context.Background(), options); err != nil {
 		t.Fatal(err)
 	}
 

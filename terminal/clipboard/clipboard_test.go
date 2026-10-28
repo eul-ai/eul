@@ -7,8 +7,6 @@ import (
 	"image/color"
 	"image/png"
 	"testing"
-
-	"github.com/eul-ai/eul/agent"
 )
 
 func testPNG(t *testing.T) []byte {
@@ -30,12 +28,6 @@ func TestReadPNG(t *testing.T) {
 	}
 	if image.MediaType != "image/png" || !bytes.Equal(image.Data, data) {
 		t.Fatalf("image = %+v", image)
-	}
-}
-
-func TestValidateImageRejectsMediaTypeMismatch(t *testing.T) {
-	if err := ValidateImage(agent.Image{MediaType: "image/jpeg", Data: testPNG(t)}); !errors.Is(err, errImageInvalid) {
-		t.Fatalf("error = %v", err)
 	}
 }
 

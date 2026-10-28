@@ -35,12 +35,6 @@ type tuiRenderer struct {
 	conversationPrepared   bool
 }
 
-func (r *tuiRenderer) render(model *tuiModel) string {
-	output, next := r.renderPending(model, false)
-	r.commit(next)
-	return output
-}
-
 func (r *tuiRenderer) renderPending(model *tuiModel, forceRedraw bool) (string, terminalFrame) {
 	prepared := r.prepare(model)
 	next := projectTerminalFrame(model, prepared)
