@@ -30,21 +30,19 @@ func TestDriverRequiresAPIKey(t *testing.T) {
 }
 
 func TestThinkingMetadataUsesCatalogEfforts(t *testing.T) {
-	levels, defaultLevel := thinkingMetadata(modelReasoning{
+	levels := thinkingLevels(modelReasoning{
 		SupportedEfforts: []string{"high", "low", "unsupported"},
-		DefaultEffort:    "low",
 	})
-	if !slices.Equal(levels, []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh}) || defaultLevel != agent.ThinkingLow {
-		t.Fatalf("levels = %v, default = %q", levels, defaultLevel)
+	if !slices.Equal(levels, []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh}) {
+		t.Fatalf("levels = %v", levels)
 	}
 
-	levels, defaultLevel = thinkingMetadata(modelReasoning{
+	levels = thinkingLevels(modelReasoning{
 		Mandatory:        true,
 		SupportedEfforts: []string{"high", "medium", "low"},
-		DefaultEffort:    "medium",
 	})
-	if !slices.Equal(levels, []agent.ThinkingLevel{agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh}) || defaultLevel != agent.ThinkingMedium {
-		t.Fatalf("mandatory levels = %v, default = %q", levels, defaultLevel)
+	if !slices.Equal(levels, []agent.ThinkingLevel{agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh}) {
+		t.Fatalf("mandatory levels = %v", levels)
 	}
 }
 
@@ -118,9 +116,6 @@ func TestRuntimeChecksCredentialsInitializesModelsAndCreatesProvider(t *testing.
 	reasoning := configured.ModelMetadata("vendor/reasoning")
 	if reasoning.ContextWindow != 128000 || !slices.Equal(reasoning.ThinkingLevels, []agent.ThinkingLevel{agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh}) || reasoning.FastMode {
 		t.Fatalf("reasoning metadata = %+v", reasoning)
-	}
-	if configured.modelMetadata("vendor/reasoning").defaultThinkingLevel != agent.ThinkingMedium {
-		t.Fatalf("default thinking level = %q", configured.modelMetadata("vendor/reasoning").defaultThinkingLevel)
 	}
 	plain := configured.ModelMetadata("vendor/plain")
 	if plain.ContextWindow != 32000 || !slices.Equal(plain.ThinkingLevels, []agent.ThinkingLevel{agent.ThinkingOff}) {

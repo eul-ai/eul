@@ -21,9 +21,9 @@ const (
 	bytesPerToken       = 4
 )
 
-func Prepare(request agent.Request, instructions string) (agent.Request, bool) {
+func Prepare(request agent.Request) (agent.Request, bool) {
 	continueTask := len(request.Inputs) != 0
-	request.Instructions = instructions
+	request.Instructions = Instructions
 	request.Tools = nil
 	request.Inputs = append(append([]agent.Input(nil), request.Inputs...), agent.NewTextInput(summaryRequest))
 	return request, continueTask

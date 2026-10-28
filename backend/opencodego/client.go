@@ -15,7 +15,7 @@ type protocolClient interface {
 	Generate(context.Context, agent.Request, agent.StreamObserver) (agent.Response, error)
 	RetryGeneration(error, int) (time.Duration, bool)
 	ShouldCompactState(agent.Request) bool
-	SemanticCompact(context.Context, agent.Request, string) (agent.CompactResponse, error)
+	SemanticCompact(context.Context, agent.Request) (agent.CompactResponse, error)
 	IsContextLimitError(error) bool
 }
 
@@ -90,7 +90,7 @@ func (provider *provider) Compact(ctx context.Context, request agent.Request) (a
 	if err != nil {
 		return agent.CompactResponse{}, err
 	}
-	response, err := selected.SemanticCompact(ctx, request, compaction.Instructions)
+	response, err := selected.SemanticCompact(ctx, request)
 	if err != nil {
 		return agent.CompactResponse{}, &routedError{client: selected, cause: err}
 	}

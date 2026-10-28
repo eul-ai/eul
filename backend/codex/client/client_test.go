@@ -23,7 +23,7 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 	const token = "oauth-access-token"
 	const accountID = "account-123"
 	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost || request.URL.Path != "/codex/responses" {
+		if request.Method != http.MethodPost || request.URL.Path != "/backend-api/codex/responses" {
 			t.Errorf("request = %s %s", request.Method, request.URL.Path)
 		}
 		for header, want := range map[string]string{
@@ -86,10 +86,10 @@ func TestCodexClientUsesOAuthEndpointHeadersShapeAndSSE(t *testing.T) {
 	defer server.Close()
 
 	sourceCalls := 0
-	client, err := New(TokenSourceFunc(func(context.Context) (Credential, error) {
+	client, err := newClient(TokenSourceFunc(func(context.Context) (Credential, error) {
 		sourceCalls++
 		return Credential{AccessToken: token, AccountID: accountID}, nil
-	}), Options{BaseURL: server.URL, HTTPClient: server.Client()})
+	}), server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,14 +135,14 @@ func TestCodexSourceIsResolvedPerRequest(t *testing.T) {
 	})
 
 	sourceCalls := 0
-	client, err := New(TokenSourceFunc(func(context.Context) (Credential, error) {
+	client, err := newClient(TokenSourceFunc(func(context.Context) (Credential, error) {
 		sourceCalls++
 		return Credential{AccessToken: []string{"first", "second"}[sourceCalls-1], AccountID: "account"}, nil
-	}), Options{BaseURL: "https://example.com", HTTPClient: &http.Client{Transport: transport}})
+	}), &http.Client{Transport: transport})
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := agent.Request{Model: ModelGPT56Sol, Inputs: []agent.Input{agent.NewTextInput("hello")}}
+	request := agent.Request{Model: ModelGPT56Sol, ThinkingLevel: agent.ThinkingMedium, Inputs: []agent.Input{agent.NewTextInput("hello")}}
 	if _, err := client.Generate(context.Background(), request, agent.StreamObserver{}); err != nil {
 		t.Fatal(err)
 	}
@@ -162,11 +162,11 @@ func TestCodexDefaultEndpoint(t *testing.T) {
 		body := "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
 		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
-	client, err := New(testTokenSource("token"), Options{HTTPClient: &http.Client{Transport: transport}})
+	client, err := newClient(testTokenSource("token"), &http.Client{Transport: transport})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Generate(context.Background(), agent.Request{}, agent.StreamObserver{}); err != nil {
+	if _, err := client.Generate(context.Background(), agent.Request{Model: ModelGPT56Sol, ThinkingLevel: agent.ThinkingMedium}, agent.StreamObserver{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -175,11 +175,11 @@ func TestTokenSourceErrorsPropagateWithoutRequest(t *testing.T) {
 	sourceErr := errors.New("refresh unavailable")
 	client, err := New(TokenSourceFunc(func(context.Context) (Credential, error) {
 		return Credential{}, sourceErr
-	}), Options{})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Generate(context.Background(), agent.Request{Model: ModelGPT56Sol}, agent.StreamObserver{})
+	_, err = client.Generate(context.Background(), agent.Request{Model: ModelGPT56Sol, ThinkingLevel: agent.ThinkingMedium}, agent.StreamObserver{})
 	if err == nil || !errors.Is(err, sourceErr) {
 		t.Fatalf("Generate() error = %v", err)
 	}

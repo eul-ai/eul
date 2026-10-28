@@ -59,8 +59,7 @@ func TestAPIErrorConfigDecodesResponseAndRetryPolicy(t *testing.T) {
 
 	formatted := false
 	config := APIErrorConfig{
-		Prefix:  "provider",
-		Maximum: 1024,
+		Prefix: "provider",
 		FormatDetail: func(detail APIError) string {
 			formatted = true
 			return FormatAPIError(detail)
@@ -92,11 +91,8 @@ func TestCompleteJSONSSEOwnsRequestLifecycle(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Body: body}, nil
 	})}
 	config := JSONSSEConfig{
-		HTTPClient:       client,
-		Endpoint:         "https://example.test/responses",
-		ErrorConfig:      APIErrorConfig{Maximum: 1024},
-		MaxRequestBytes:  1024,
-		MaxResponseBytes: 1024,
+		HTTPClient: client,
+		Endpoint:   "https://example.test/responses",
 		PrepareRequest: func(_ context.Context, request *http.Request) error {
 			request.Header.Set("Authorization", "Bearer token")
 			return nil
@@ -106,16 +102,9 @@ func TestCompleteJSONSSEOwnsRequestLifecycle(t *testing.T) {
 	result, err := CompleteJSONSSE(context.Background(), config, map[string]string{"model": "test"}, "request", func(reader io.Reader, maximum int64) (string, error) {
 		data, err := io.ReadAll(reader)
 		return string(data), err
-	}, IsObserverError)
+	})
 	if err != nil || result != "stream" || requests != 1 || !body.closed {
 		t.Fatalf("result=%q requests=%d closed=%t err=%v", result, requests, body.closed, err)
-	}
-
-	config.MaxRequestBytes = 1
-	if _, err := CompleteJSONSSE(context.Background(), config, map[string]string{"model": "test"}, "request", func(io.Reader, int64) (string, error) {
-		return "", nil
-	}, nil); err == nil || requests != 1 {
-		t.Fatalf("oversized request error=%v requests=%d", err, requests)
 	}
 }
 

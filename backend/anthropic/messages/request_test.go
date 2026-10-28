@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend/continuation"
 )
 
 func TestBuildRequestEncodesAnthropicInputs(t *testing.T) {
@@ -25,7 +24,7 @@ func TestBuildRequestEncodesAnthropicInputs(t *testing.T) {
 			Description: "Read a file",
 			Parameters:  agent.JSONSchema{Type: "object"},
 		}},
-	}, continuation.DefaultMaximumBytes, continuation.GenerationStateBytes(continuation.DefaultMaximumBytes, 0))
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,18 +114,5 @@ func TestConfigureRequestValidatesThinkingBudget(t *testing.T) {
 				t.Fatalf("configureRequest() error = %v", err)
 			}
 		})
-	}
-}
-
-func TestShouldCompactOversizedState(t *testing.T) {
-	content, _ := json.Marshal([]contentBlock{{Type: "text", Text: strings.Repeat("x", 200)}})
-	large, _ := json.Marshal(wireMessage{Role: "assistant", Content: content})
-	state, err := continuation.Encode(continuation.DefaultMaximumBytes, []json.RawMessage{large})
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := &Client{maxStateBytes: 128, stateOutputHeadroom: 32}
-	if !client.ShouldCompactState(agent.Request{State: state, Inputs: []agent.Input{agent.NewTextInput("next")}}) {
-		t.Fatal("oversized state did not trigger compaction")
 	}
 }

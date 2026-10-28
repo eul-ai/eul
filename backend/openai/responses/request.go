@@ -45,14 +45,14 @@ func (client *Client) buildGenerationWireRequest(request agent.Request) (request
 	if err != nil {
 		return requestBuild{}, err
 	}
-	if _, err := continuation.Encode(client.generationStateBytes(), build.history, build.newItems); err != nil {
+	if _, err := continuation.Encode(continuation.GenerationBytes, build.history, build.newItems); err != nil {
 		return requestBuild{}, err
 	}
 	return build, nil
 }
 
 func (client *Client) buildWireRequest(request agent.Request) (requestBuild, error) {
-	history, err := continuation.Decode(request.State, client.maxStateBytes)
+	history, err := continuation.Decode(request.State, continuation.MaximumBytes)
 	if err != nil {
 		return requestBuild{}, err
 	}

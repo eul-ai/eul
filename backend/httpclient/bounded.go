@@ -45,8 +45,8 @@ func ReadBoundedText(reader io.Reader, maximum int64) (string, bool, error) {
 	return strings.TrimSpace(strings.ToValidUTF8(string(data), "�")), truncated, nil
 }
 
-func ReadHTTPStatusError(response *http.Response, maximum int64) error {
-	detail, truncated, err := ReadBoundedText(response.Body, maximum)
+func ReadHTTPStatusError(response *http.Response) error {
+	detail, truncated, err := ReadBoundedText(response.Body, maxErrorBytes)
 	switch {
 	case err != nil:
 		detail = "read error response: " + err.Error()
@@ -55,15 +55,15 @@ func ReadHTTPStatusError(response *http.Response, maximum int64) error {
 	case truncated:
 		detail += " [truncated]"
 	}
-	return errors.New(FormatErrorMessage("", maximum, "HTTP %s: %s", response.Status, detail))
+	return errors.New(FormatErrorMessage("", "HTTP %s: %s", response.Status, detail))
 }
 
-func FormatErrorMessage(prefix string, maximum int64, format string, arguments ...any) string {
+func FormatErrorMessage(prefix string, format string, arguments ...any) string {
 	message := strings.ToValidUTF8(fmt.Sprintf(format, arguments...), "�")
 	if prefix != "" {
 		message = prefix + ": " + message
 	}
-	return TruncateUTF8(message, int(maximum))
+	return TruncateUTF8(message, int(maxErrorBytes))
 }
 
 func TruncateUTF8(text string, maximum int) string {

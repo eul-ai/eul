@@ -155,11 +155,11 @@ func TestSemanticCompactStoresValidAnthropicExchange(t *testing.T) {
 		Model:  "model",
 		Inputs: []agent.Input{agent.NewTextInput("pending")},
 		Tools:  []agent.ToolDefinition{{Name: "read", Parameters: agent.JSONSchema{Type: "object"}}},
-	}, "summarize")
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	messages, err := continuation.Decode(compacted.State, continuation.DefaultMaximumBytes)
+	messages, err := continuation.Decode(compacted.State, continuation.MaximumBytes)
 	if err != nil {
 		t.Fatal(err)
 	}

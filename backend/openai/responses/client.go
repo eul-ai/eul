@@ -31,11 +31,6 @@ type Options struct {
 	ErrorPrefix               string
 	PrepareRequest            PrepareRequestFunc
 	RequestOptions            RequestOptionsFunc
-	MaxRequestBytes           int64
-	MaxResponseBytes          int64
-	MaxErrorBytes             int64
-	MaxStateBytes             int
-	StateOutputHeadroom       int
 	EncodeInboxAsAgentMessage bool
 }
 
@@ -45,10 +40,6 @@ type Client struct {
 	errorConfig               backendhttp.APIErrorConfig
 	prepareRequest            PrepareRequestFunc
 	requestOptions            RequestOptionsFunc
-	maxRequestBytes           int64
-	maxResponseBytes          int64
-	maxStateBytes             int
-	stateOutputHeadroom       int
 	encodeInboxAsAgentMessage bool
 }
 
@@ -57,35 +48,17 @@ func New(options Options) (*Client, error) {
 		return nil, errors.New("responses: endpoint is required")
 	}
 
-	limits := (backendhttp.GenerationLimits{
-		RequestBytes:  options.MaxRequestBytes,
-		ResponseBytes: options.MaxResponseBytes,
-		ErrorBytes:    options.MaxErrorBytes,
-	}).WithDefaults()
-	maxStateBytes := options.MaxStateBytes
-	if maxStateBytes <= 0 {
-		maxStateBytes = continuation.DefaultMaximumBytes
-	}
 	return &Client{
 		httpClient: backendhttp.CloneNoRedirects(options.HTTPClient, backendhttp.DefaultGenerationHTTPTimeout),
 		endpoint:   options.Endpoint,
 		errorConfig: backendhttp.APIErrorConfig{
 			Prefix:       strings.TrimSpace(options.ErrorPrefix),
-			Maximum:      limits.ErrorBytes,
 			FormatDetail: formatHTTPErrorDetail,
 		},
 		prepareRequest:            options.PrepareRequest,
 		requestOptions:            options.RequestOptions,
-		maxRequestBytes:           limits.RequestBytes,
-		maxResponseBytes:          limits.ResponseBytes,
-		maxStateBytes:             maxStateBytes,
-		stateOutputHeadroom:       options.StateOutputHeadroom,
 		encodeInboxAsAgentMessage: options.EncodeInboxAsAgentMessage,
 	}, nil
-}
-
-func (client *Client) generationStateBytes() int {
-	return continuation.GenerationStateBytes(client.maxStateBytes, client.stateOutputHeadroom)
 }
 
 func (client *Client) ShouldCompactState(request agent.Request) bool {
@@ -122,7 +95,7 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 		return agent.Response{}, client.wrapf(err, "%v", err)
 	}
 
-	state, err := continuation.Encode(client.maxStateBytes, build.history, build.newItems, stream.response.Output)
+	state, err := continuation.Encode(continuation.MaximumBytes, build.history, build.newItems, stream.response.Output)
 	if err != nil {
 		return agent.Response{}, client.errorf("%v", err)
 	}
@@ -144,12 +117,12 @@ func (client *Client) complete(
 	operation string,
 	readError responseReadErrorFunc,
 ) (responseStreamResult, error) {
-	requestBody, oversized, err := backendhttp.MarshalBoundedJSON(wireRequest, client.maxRequestBytes)
+	requestBody, oversized, err := backendhttp.MarshalBoundedJSON(wireRequest, backendhttp.MaxRequestBytes)
 	if err != nil {
 		return responseStreamResult{}, client.errorf("encode %s: %v", operation, err)
 	}
 	if oversized {
-		return responseStreamResult{}, client.errorf("%s exceeds %d bytes", operation, client.maxRequestBytes)
+		return responseStreamResult{}, client.errorf("%s exceeds %d bytes", operation, backendhttp.MaxRequestBytes)
 	}
 
 	httpResponse, err := client.post(ctx, requestBody, operation)
@@ -158,7 +131,7 @@ func (client *Client) complete(
 	}
 	defer httpResponse.Body.Close()
 
-	result, err := readResponsesSSE(httpResponse.Body, client.maxResponseBytes, observer)
+	result, err := readResponsesSSE(httpResponse.Body, backendhttp.MaxResponseBytes, observer)
 	if err != nil {
 		return responseStreamResult{}, readError(ctx, err, operation)
 	}

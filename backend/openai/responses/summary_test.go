@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend/compaction"
 	"github.com/eul-ai/eul/backend/continuation"
 )
 
@@ -17,7 +18,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 		if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
 			t.Fatal(err)
 		}
-		if wire.Instructions != "summarize" || len(wire.Tools) != 0 || wire.ToolChoice != "" || wire.ParallelToolCalls || len(wire.Input) != 3 {
+		if wire.Instructions != compaction.Instructions || len(wire.Tools) != 0 || wire.ToolChoice != "" || wire.ParallelToolCalls || len(wire.Input) != 3 {
 			t.Errorf("summary request = %+v", wire)
 		}
 		if !strings.Contains(string(wire.Input[0]), "old answer") || !strings.Contains(string(wire.Input[1]), "pending request") {
@@ -40,7 +41,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 	defer server.Close()
 
 	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
-	state, err := continuation.Encode(continuation.DefaultMaximumBytes, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
+	state, err := continuation.Encode(continuation.MaximumBytes, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +53,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 		State:         state,
 		Inputs:        []agent.Input{agent.NewTextInput("pending request")},
 		Tools:         []agent.ToolDefinition{strictTestTool("read")},
-	}, "summarize")
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +61,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 		t.Fatalf("usage = %+v", compacted.Usage)
 	}
 
-	items, err := continuation.Decode(compacted.State, continuation.DefaultMaximumBytes)
+	items, err := continuation.Decode(compacted.State, continuation.MaximumBytes)
 	if err != nil || len(items) != 2 {
 		t.Fatalf("summary state items = %d, error = %v", len(items), err)
 	}
@@ -91,7 +92,7 @@ func TestManualSemanticCompactionPreservesTurnBoundary(t *testing.T) {
 	defer server.Close()
 
 	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
-	state, err := continuation.Encode(continuation.DefaultMaximumBytes, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
+	state, err := continuation.Encode(continuation.MaximumBytes, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +100,7 @@ func TestManualSemanticCompactionPreservesTurnBoundary(t *testing.T) {
 		Model:         "test-model",
 		ThinkingLevel: agent.ThinkingOff,
 		State:         state,
-	}, "summarize")
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,50 +121,5 @@ func TestManualSemanticCompactionPreservesTurnBoundary(t *testing.T) {
 	}
 	if err := json.Unmarshal(continued.wire.Input[1], &userMessage); err != nil || userMessage.Role != "user" {
 		t.Fatalf("user message = %s, error = %v", continued.wire.Input[1], err)
-	}
-}
-
-func TestSemanticCompactAcceptsStateThatCannotReserveGenerationOutput(t *testing.T) {
-	calls := 0
-	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		calls++
-		var wire createResponseRequest
-		if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
-			t.Fatal(err)
-		}
-		var trigger inputMessage
-		if len(wire.Input) == 0 {
-			t.Error("summary request has no input")
-		} else if err := json.Unmarshal(wire.Input[len(wire.Input)-1], &trigger); err != nil || trigger.Role != "user" {
-			t.Errorf("summary request did not end with a user turn: %s", wire.Input)
-		}
-		writeJSON(t, writer, map[string]any{
-			"status": "completed",
-			"output": []any{map[string]any{
-				"type": "message", "role": "assistant",
-				"content": []any{map[string]any{"type": "output_text", "text": "brief"}},
-			}},
-		})
-	}))
-	defer server.Close()
-
-	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
-	client.maxStateBytes = 600
-	client.stateOutputHeadroom = 250
-	state, err := continuation.Encode(client.maxStateBytes, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"` + strings.Repeat("x", 300) + `"}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := agent.Request{Model: "test-model", ThinkingLevel: agent.ThinkingOff, State: state}
-
-	if _, err := client.Generate(context.Background(), request, agent.StreamObserver{}); err == nil || calls != 0 {
-		t.Fatalf("Generate() error = %v, calls = %d", err, calls)
-	}
-	compacted, err := client.SemanticCompact(context.Background(), request, "summarize")
-	if err != nil || calls != 1 {
-		t.Fatalf("SemanticCompact() response = %+v, error = %v, calls = %d", compacted, err, calls)
-	}
-	if len(compacted.State) >= len(state) {
-		t.Fatalf("compacted state = %d bytes, original = %d", len(compacted.State), len(state))
 	}
 }

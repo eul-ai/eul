@@ -9,16 +9,9 @@ import (
 	"github.com/eul-ai/eul/backend/openai/responses"
 )
 
-type Options struct {
-	HTTPClient       *http.Client
-	BaseURL          string
-	ReasoningSummary ReasoningSummary
-}
-
 type Client struct {
-	requests         *requestClient
-	responses        *responses.Client
-	reasoningSummary ReasoningSummary
+	requests  *requestClient
+	responses *responses.Client
 }
 
 var (
@@ -28,21 +21,17 @@ var (
 	_ agent.CompactionErrorPolicy = (*Client)(nil)
 )
 
-func New(source TokenSource, options Options) (*Client, error) {
-	reasoningSummary, err := ParseReasoningSummary(string(options.ReasoningSummary))
-	if err != nil {
-		return nil, err
-	}
-	requests, err := newRequestClient(source, options.HTTPClient)
-	if err != nil {
-		return nil, err
-	}
-	baseURL, _, err := normalizeBaseURL(options.BaseURL)
+func New(source TokenSource) (*Client, error) {
+	return newClient(source, nil)
+}
+
+func newClient(source TokenSource, httpClient *http.Client) (*Client, error) {
+	requests, err := newRequestClient(source, httpClient)
 	if err != nil {
 		return nil, err
 	}
 
-	client := &Client{requests: requests, reasoningSummary: reasoningSummary}
+	client := &Client{requests: requests}
 	client.responses, err = responses.New(responses.Options{
 		HTTPClient:                requests.httpClient,
 		Endpoint:                  baseURL + "/codex/responses",
@@ -74,7 +63,7 @@ func (c *Client) ShouldCompactAfterError(_ agent.Request, err error) bool {
 }
 
 func (c *Client) responsesRequestOptions(request agent.Request) (responses.RequestOptions, error) {
-	reasoning, err := responseReasoningFor(request.Model, request.ThinkingLevel, c.reasoningSummary)
+	reasoning, err := responseReasoningFor(request.Model, request.ThinkingLevel)
 	if err != nil {
 		return responses.RequestOptions{}, err
 	}

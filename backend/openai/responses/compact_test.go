@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
@@ -92,7 +91,7 @@ func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
 	defer server.Close()
 
 	client := newTestClient(t, token, server.URL, Options{HTTPClient: server.Client()})
-	state, err := continuation.Encode(continuation.DefaultMaximumBytes, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
+	state, err := continuation.Encode(continuation.MaximumBytes, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +109,7 @@ func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
 	if compacted.Usage != (agent.Usage{InputTokens: 100, OutputTokens: 20, TotalTokens: 120}) {
 		t.Fatalf("compact usage = %+v", compacted.Usage)
 	}
-	items, err := continuation.Decode(compacted.State, continuation.DefaultMaximumBytes)
+	items, err := continuation.Decode(compacted.State, continuation.MaximumBytes)
 	if err != nil || len(items) != 2 {
 		t.Fatalf("compact state items = %d, error = %v", len(items), err)
 	}
@@ -160,43 +159,6 @@ func TestClientCompactBoundsCancellationAndOptionalUsage(t *testing.T) {
 		response, err := client.Compact(context.Background(), baseRequest())
 		if err != nil || response.Usage != (agent.Usage{}) {
 			t.Fatalf("Compact() response = %+v, error = %v", response, err)
-		}
-	})
-
-	t.Run("response bound", func(t *testing.T) {
-		server := compactResponseServer(t, http.StatusOK, strings.Repeat("x", 101))
-		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
-		client.maxResponseBytes = 100
-		_, err := client.Compact(context.Background(), baseRequest())
-		if err == nil {
-			t.Fatalf("Compact() error = %v", err)
-		}
-	})
-
-	t.Run("request bound", func(t *testing.T) {
-		var calls atomic.Int32
-		server := newTestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
-		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
-		client.maxRequestBytes = 100
-		request := baseRequest()
-		request.Inputs[0].Content[0].Text = strings.Repeat("x", 200)
-		_, err := client.Compact(context.Background(), request)
-		if err == nil || calls.Load() != 0 {
-			t.Fatalf("Compact() error = %v, HTTP calls = %d", err, calls.Load())
-		}
-	})
-
-	t.Run("state bound", func(t *testing.T) {
-		server := compactResponseServer(t, http.StatusOK, `{"output":[{"type":"compaction","encrypted_content":"`+strings.Repeat("x", 200)+`"}]}`)
-		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
-		client.maxStateBytes = 100
-		client.stateOutputHeadroom = 1
-		_, err := client.Compact(context.Background(), baseRequest())
-		if err == nil {
-			t.Fatalf("Compact() error = %v", err)
 		}
 	})
 

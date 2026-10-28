@@ -24,14 +24,6 @@ type modelMetadata struct {
 	fastMode       bool
 }
 
-var standardThinkingLevelMap = agent.ThinkingLevelMap{
-	agent.ThinkingOff:     "none",
-	agent.ThinkingMinimal: "minimal",
-	agent.ThinkingLow:     "low",
-	agent.ThinkingMedium:  "medium",
-	agent.ThinkingHigh:    "high",
-}
-
 var extendedThinkingLevelMap = agent.ThinkingLevelMap{
 	agent.ThinkingOff:    "none",
 	agent.ThinkingLow:    "low",
@@ -54,10 +46,7 @@ type ModelMetadata struct {
 }
 
 func MetadataFor(model string) ModelMetadata {
-	metadata, ok := models[model]
-	if !ok {
-		return ModelMetadata{ThinkingLevels: standardThinkingLevelMap.SupportedLevels()}
-	}
+	metadata := models[model]
 	return ModelMetadata{
 		ContextWindow:  metadata.contextWindow,
 		ThinkingLevels: metadata.thinkingLevels.SupportedLevels(),
@@ -65,50 +54,15 @@ func MetadataFor(model string) ModelMetadata {
 	}
 }
 
-func thinkingLevelMap(model string) agent.ThinkingLevelMap {
-	if metadata, ok := models[model]; ok {
-		return metadata.thinkingLevels
-	}
-	return standardThinkingLevelMap
-}
-
-type ReasoningSummary string
-
-const (
-	ReasoningSummaryAuto     ReasoningSummary = "auto"
-	ReasoningSummaryConcise  ReasoningSummary = "concise"
-	ReasoningSummaryDetailed ReasoningSummary = "detailed"
-	ReasoningSummaryNone     ReasoningSummary = "none"
-)
-
-func ParseReasoningSummary(value string) (ReasoningSummary, error) {
-	if value == "" {
-		return ReasoningSummaryAuto, nil
-	}
-	summary := ReasoningSummary(value)
-	switch summary {
-	case ReasoningSummaryAuto, ReasoningSummaryConcise, ReasoningSummaryDetailed, ReasoningSummaryNone:
-		return summary, nil
-	default:
-		return "", fmt.Errorf("reasoning summary must be one of auto, concise, detailed, or none")
-	}
-}
-
-func responseReasoningFor(model string, level agent.ThinkingLevel, summary ReasoningSummary) (*responseReasoning, error) {
-	if summary == "" {
-		summary = ReasoningSummaryAuto
-	}
-	if level == "" {
-		level = agent.DefaultThinkingLevel
-	}
-	effort, ok := thinkingLevelMap(model)[level]
+func responseReasoningFor(model string, level agent.ThinkingLevel) (*responseReasoning, error) {
+	effort, ok := models[model].thinkingLevels[level]
 	if !ok {
 		return nil, fmt.Errorf("thinking level %q is not supported by model %q", level, model)
 	}
 
 	reasoning := &responseReasoning{Effort: effort}
-	if level != agent.ThinkingOff && summary != ReasoningSummaryNone {
-		reasoning.Summary = string(summary)
+	if level != agent.ThinkingOff {
+		reasoning.Summary = "auto"
 	}
 	return reasoning, nil
 }

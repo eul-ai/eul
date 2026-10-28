@@ -17,10 +17,9 @@ import (
 const minimumThinkingBudgetTokens = 1024
 
 type RequestOptions struct {
-	MaxTokens    int
-	Thinking     *Thinking
-	OutputConfig *OutputConfig
-	ToolChoice   *ToolChoice
+	MaxTokens  int
+	Thinking   *Thinking
+	ToolChoice *ToolChoice
 }
 
 type RequestOptionsFunc func(agent.Request) (RequestOptions, error)
@@ -28,30 +27,21 @@ type RequestOptionsFunc func(agent.Request) (RequestOptions, error)
 type PrepareRequestFunc func(context.Context, *http.Request) error
 
 type Options struct {
-	HTTPClient          *http.Client
-	Endpoint            string
-	ErrorPrefix         string
-	PrepareRequest      PrepareRequestFunc
-	RequestOptions      RequestOptionsFunc
-	PromptCaching       bool
-	MaxRequestBytes     int64
-	MaxResponseBytes    int64
-	MaxErrorBytes       int64
-	MaxStateBytes       int
-	StateOutputHeadroom int
+	HTTPClient     *http.Client
+	Endpoint       string
+	ErrorPrefix    string
+	PrepareRequest PrepareRequestFunc
+	RequestOptions RequestOptionsFunc
+	PromptCaching  bool
 }
 
 type Client struct {
-	httpClient          *http.Client
-	endpoint            string
-	errorConfig         backendhttp.APIErrorConfig
-	prepareRequest      PrepareRequestFunc
-	requestOptions      RequestOptionsFunc
-	promptCaching       bool
-	maxRequestBytes     int64
-	maxResponseBytes    int64
-	maxStateBytes       int
-	stateOutputHeadroom int
+	httpClient     *http.Client
+	endpoint       string
+	errorConfig    backendhttp.APIErrorConfig
+	prepareRequest PrepareRequestFunc
+	requestOptions RequestOptionsFunc
+	promptCaching  bool
 }
 
 func New(options Options) (*Client, error) {
@@ -60,48 +50,30 @@ func New(options Options) (*Client, error) {
 		return nil, errors.New("anthropic messages: endpoint is required")
 	}
 
-	limits := (backendhttp.GenerationLimits{
-		RequestBytes:  options.MaxRequestBytes,
-		ResponseBytes: options.MaxResponseBytes,
-		ErrorBytes:    options.MaxErrorBytes,
-	}).WithDefaults()
-	maxStateBytes := options.MaxStateBytes
-	if maxStateBytes <= 0 {
-		maxStateBytes = continuation.DefaultMaximumBytes
-	}
 	return &Client{
 		httpClient: backendhttp.CloneNoRedirects(options.HTTPClient, backendhttp.DefaultGenerationHTTPTimeout),
 		endpoint:   endpoint,
 		errorConfig: backendhttp.APIErrorConfig{
 			Prefix:          strings.TrimSpace(options.ErrorPrefix),
-			Maximum:         limits.ErrorBytes,
 			ParseRetryAfter: parseRetryAfterHeaders,
 		},
-		prepareRequest:      options.PrepareRequest,
-		requestOptions:      options.RequestOptions,
-		promptCaching:       options.PromptCaching,
-		maxRequestBytes:     limits.RequestBytes,
-		maxResponseBytes:    limits.ResponseBytes,
-		maxStateBytes:       maxStateBytes,
-		stateOutputHeadroom: options.StateOutputHeadroom,
+		prepareRequest: options.PrepareRequest,
+		requestOptions: options.RequestOptions,
+		promptCaching:  options.PromptCaching,
 	}, nil
-}
-
-func (client *Client) generationStateBytes() int {
-	return continuation.GenerationStateBytes(client.maxStateBytes, client.stateOutputHeadroom)
 }
 
 func (client *Client) ShouldCompactState(request agent.Request) bool {
 	if len(request.State) == 0 {
 		return false
 	}
-	if _, err := buildGenerationRequest(request, client.maxStateBytes, client.generationStateBytes()); err == nil {
+	if _, err := buildGenerationRequest(request); err == nil {
 		return false
 	}
 
 	withoutState := request
 	withoutState.State = nil
-	_, err := buildGenerationRequest(withoutState, client.maxStateBytes, client.generationStateBytes())
+	_, err := buildGenerationRequest(withoutState)
 	return err == nil
 }
 
@@ -110,7 +82,7 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 		return agent.Response{}, err
 	}
 
-	build, err := buildGenerationRequest(request, client.maxStateBytes, client.generationStateBytes())
+	build, err := buildGenerationRequest(request)
 	if err != nil {
 		return agent.Response{}, client.errorf("build request: %v", err)
 	}
@@ -124,7 +96,7 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 	}
 
 	output := []json.RawMessage{result.assistant}
-	state, err := continuation.Encode(client.maxStateBytes, build.history, build.newMessages, output)
+	state, err := continuation.Encode(continuation.MaximumBytes, build.history, build.newMessages, output)
 	if err != nil {
 		return agent.Response{}, client.errorf("%v", err)
 	}
@@ -137,13 +109,13 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 	}, nil
 }
 
-func (client *Client) SemanticCompact(ctx context.Context, request agent.Request, instructions string) (agent.CompactResponse, error) {
+func (client *Client) SemanticCompact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.CompactResponse{}, err
 	}
 
-	request, continueAfterCompaction := compaction.Prepare(request, instructions)
-	build, err := buildWireRequest(request, client.maxStateBytes)
+	request, continueAfterCompaction := compaction.Prepare(request)
+	build, err := buildWireRequest(request)
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("build summary request: %v", err)
 	}
@@ -178,7 +150,7 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 		}
 		messages = append(messages, continuation)
 	}
-	state, err := continuation.Encode(client.generationStateBytes(), messages)
+	state, err := continuation.Encode(continuation.GenerationBytes, messages)
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("encode summary state: %v", err)
 	}
@@ -195,11 +167,9 @@ func (client *Client) complete(ctx context.Context, wireRequest createRequest, o
 	}
 
 	config := backendhttp.JSONSSEConfig{
-		HTTPClient:       client.httpClient,
-		Endpoint:         client.endpoint,
-		ErrorConfig:      client.errorConfig,
-		MaxRequestBytes:  client.maxRequestBytes,
-		MaxResponseBytes: client.maxResponseBytes,
+		HTTPClient:  client.httpClient,
+		Endpoint:    client.endpoint,
+		ErrorConfig: client.errorConfig,
 	}
 	if client.prepareRequest != nil {
 		config.PrepareRequest = func(ctx context.Context, request *http.Request) error {
@@ -217,7 +187,6 @@ func (client *Client) complete(ctx context.Context, wireRequest createRequest, o
 		func(reader io.Reader, maximum int64) (streamResult, error) {
 			return readMessagesSSE(reader, maximum, observer)
 		},
-		backendhttp.IsObserverError,
 	)
 }
 
@@ -247,10 +216,6 @@ func (client *Client) configureRequest(request agent.Request, wireRequest *creat
 	if options.Thinking != nil {
 		thinking := *options.Thinking
 		wireRequest.Thinking = &thinking
-	}
-	if options.OutputConfig != nil {
-		output := *options.OutputConfig
-		wireRequest.OutputConfig = &output
 	}
 	if len(wireRequest.Tools) != 0 && options.ToolChoice != nil {
 		choice := *options.ToolChoice

@@ -41,15 +41,15 @@ func TestCodexClientCompactsAndReplaysSharedState(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestClient(t, "token", server.URL, Options{HTTPClient: server.Client()})
+	client := newTestClient(t, "token", server.Client())
 	compacted, err := client.Compact(context.Background(), agent.Request{
-		Model: ModelGPT56Sol, Inputs: []agent.Input{agent.NewTextInput("compact me")},
+		Model: ModelGPT56Sol, ThinkingLevel: agent.ThinkingMedium, Inputs: []agent.Input{agent.NewTextInput("compact me")},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	response, err := client.Generate(context.Background(), agent.Request{
-		Model: ModelGPT56Sol, State: compacted.State, Inputs: []agent.Input{agent.NewTextInput("continue")},
+		Model: ModelGPT56Sol, ThinkingLevel: agent.ThinkingMedium, State: compacted.State, Inputs: []agent.Input{agent.NewTextInput("continue")},
 	}, agent.StreamObserver{})
 	if err != nil || response.Text != "done" || calls != 2 {
 		t.Fatalf("response=%+v error=%v calls=%d", response, err, calls)

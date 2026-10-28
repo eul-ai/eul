@@ -154,7 +154,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	if len(first.ToolCalls) != 2 || first.ToolCalls[0].ID != "call_read" || first.ToolCalls[0].Name != "read" || string(first.ToolCalls[0].Arguments) != `{"path":"file.go"}` || first.ToolCalls[1].ID != "call_bash" {
 		t.Fatalf("first tool calls = %+v", first.ToolCalls)
 	}
-	firstState, err := continuation.Decode(first.State, continuation.DefaultMaximumBytes)
+	firstState, err := continuation.Decode(first.State, continuation.MaximumBytes)
 	if err != nil || len(firstState) != 6 {
 		t.Fatalf("first state items = %d, error = %v", len(firstState), err)
 	}
@@ -190,48 +190,6 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	}
 	if third.Text != "Next answer." || requestNumber.Load() != 3 {
 		t.Fatalf("third response = %+v, requests = %d", third, requestNumber.Load())
-	}
-}
-
-func TestClientRejectsOversizedBodiesAndRequests(t *testing.T) {
-	t.Run("response", func(t *testing.T) {
-		server := responseServer(t, http.StatusOK, strings.Repeat("x", 101))
-		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
-		client.maxResponseBytes = 100
-		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
-		if err == nil {
-			t.Fatalf("Generate() error = %v", err)
-		}
-	})
-	t.Run("request", func(t *testing.T) {
-		var calls atomic.Int32
-		server := newTestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
-		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
-		client.maxRequestBytes = 100
-		request := baseRequest()
-		request.Inputs[0].Content[0].Text = strings.Repeat("x", 200)
-		_, err := generate(client, context.Background(), request, nil, nil, nil)
-		if err == nil || calls.Load() != 0 {
-			t.Fatalf("Generate() error = %v, HTTP calls = %d", err, calls.Load())
-		}
-	})
-}
-
-func TestClientRejectsOversizedReturnedStateBeforeTextSink(t *testing.T) {
-	server := responseServer(t, http.StatusOK, `{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"answer"}],"unknown":"`+strings.Repeat("x", 200)+`"}]}`)
-	defer server.Close()
-	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
-	client.maxStateBytes = 100
-	client.stateOutputHeadroom = 1
-	sinkCalled := false
-	_, err := generate(client, context.Background(), baseRequest(), func(string) error {
-		sinkCalled = true
-		return nil
-	}, nil, nil)
-	if err == nil || sinkCalled {
-		t.Fatalf("Generate() error = %v, sink called = %v", err, sinkCalled)
 	}
 }
 
@@ -357,11 +315,6 @@ func TestClientValidatesRequestsBeforePreparingRequest(t *testing.T) {
 	}
 	if _, err := client.Compact(context.Background(), invalidState); err == nil {
 		t.Fatal("Compact() accepted invalid state")
-	}
-
-	client.maxRequestBytes = 1
-	if _, err := client.Generate(context.Background(), baseRequest(), agent.StreamObserver{}); err == nil {
-		t.Fatal("Generate() accepted oversized request")
 	}
 	if prepareCalls.Load() != 0 {
 		t.Fatalf("prepare request calls = %d", prepareCalls.Load())

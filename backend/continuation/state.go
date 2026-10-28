@@ -8,10 +8,9 @@ import (
 )
 
 const (
-	DefaultMaximumBytes   = 16 * 1024 * 1024
-	envelopeBytes         = len(`{"version":1,"items":[]}`)
-	defaultOutputHeadroom = 1024 * 1024
-	version               = 1
+	MaximumBytes    = 16 * 1024 * 1024
+	GenerationBytes = MaximumBytes - 1024*1024
+	version         = 1
 )
 
 type state struct {
@@ -81,12 +80,4 @@ func validateObject(value json.RawMessage) error {
 		return errors.New("must be a JSON object")
 	}
 	return nil
-}
-
-func GenerationStateBytes(maximum, outputHeadroom int) int {
-	if outputHeadroom <= 0 {
-		outputHeadroom = min(defaultOutputHeadroom, maximum/4)
-	}
-	outputHeadroom = min(outputHeadroom, max(0, maximum-envelopeBytes))
-	return max(0, maximum-outputHeadroom)
 }

@@ -21,12 +21,10 @@ func NewJSONSSERequest(ctx context.Context, endpoint string, body []byte) (*http
 }
 
 type JSONSSEConfig struct {
-	HTTPClient       *http.Client
-	Endpoint         string
-	ErrorConfig      APIErrorConfig
-	PrepareRequest   func(context.Context, *http.Request) error
-	MaxRequestBytes  int64
-	MaxResponseBytes int64
+	HTTPClient     *http.Client
+	Endpoint       string
+	ErrorConfig    APIErrorConfig
+	PrepareRequest func(context.Context, *http.Request) error
 }
 
 func CompleteJSONSSE[T any](
@@ -35,16 +33,15 @@ func CompleteJSONSSE[T any](
 	wireRequest any,
 	operation string,
 	read func(io.Reader, int64) (T, error),
-	nonRetryableReadError func(error) bool,
 ) (T, error) {
 	var zero T
 
-	body, oversized, err := MarshalBoundedJSON(wireRequest, config.MaxRequestBytes)
+	body, oversized, err := MarshalBoundedJSON(wireRequest, MaxRequestBytes)
 	if err != nil {
 		return zero, config.ErrorConfig.Errorf("encode %s: %v", operation, err)
 	}
 	if oversized {
-		return zero, config.ErrorConfig.Errorf("%s exceeds %d bytes", operation, config.MaxRequestBytes)
+		return zero, config.ErrorConfig.Errorf("%s exceeds %d bytes", operation, MaxRequestBytes)
 	}
 
 	request, err := NewJSONSSERequest(ctx, config.Endpoint, body)
@@ -66,11 +63,11 @@ func CompleteJSONSSE[T any](
 	}
 	defer response.Body.Close()
 
-	result, err := read(response.Body, config.MaxResponseBytes)
+	result, err := read(response.Body, MaxResponseBytes)
 	if err == nil {
 		return result, nil
 	}
-	if nonRetryableReadError != nil && nonRetryableReadError(err) {
+	if IsObserverError(err) {
 		return zero, config.ErrorConfig.Wrapf(err, "%v", err)
 	}
 

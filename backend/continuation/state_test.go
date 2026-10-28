@@ -24,15 +24,3 @@ func TestStateRoundTripAndValidation(t *testing.T) {
 		t.Fatal("oversized state was accepted")
 	}
 }
-
-func TestGenerationStateBytes(t *testing.T) {
-	if got := GenerationStateBytes(1000, 0); got != 750 {
-		t.Fatalf("default generation bytes = %d", got)
-	}
-	if got := GenerationStateBytes(1000, 200); got != 800 {
-		t.Fatalf("configured generation bytes = %d", got)
-	}
-	if got := GenerationStateBytes(1000, 2000); got != envelopeBytes {
-		t.Fatalf("bounded generation bytes = %d, want %d", got, envelopeBytes)
-	}
-}

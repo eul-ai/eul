@@ -204,7 +204,7 @@ func (client *Client) Compact(ctx context.Context, request agent.Request) (agent
 	if err := validateCompactOutput(stream.response.Output); err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
-	state, err := continuation.Encode(client.generationStateBytes(), compactedStateItems(build.input, stream.response.Output))
+	state, err := continuation.Encode(continuation.GenerationBytes, compactedStateItems(build.input, stream.response.Output))
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
@@ -212,12 +212,12 @@ func (client *Client) Compact(ctx context.Context, request agent.Request) (agent
 	return agent.CompactResponse{State: state, Usage: usage}, nil
 }
 
-func (client *Client) SemanticCompact(ctx context.Context, request agent.Request, instructions string) (agent.CompactResponse, error) {
+func (client *Client) SemanticCompact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.CompactResponse{}, err
 	}
 
-	request, continueAfterCompaction := compaction.Prepare(request, instructions)
+	request, continueAfterCompaction := compaction.Prepare(request)
 	build, err := client.buildSummaryRequest(request)
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
@@ -237,7 +237,7 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
 
-	state, err := continuation.Encode(client.generationStateBytes(), semanticCompactionStateItems(summary, continueAfterCompaction))
+	state, err := continuation.Encode(continuation.GenerationBytes, semanticCompactionStateItems(summary, continueAfterCompaction))
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("encode summary state: %v", err)
 	}

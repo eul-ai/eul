@@ -76,15 +76,15 @@ func (configured *runtime) doGET(request *http.Request) ([]byte, error) {
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, backendhttp.ReadHTTPStatusError(response, backendhttp.DefaultErrorResponseBytes)
+		return nil, backendhttp.ReadHTTPStatusError(response)
 	}
 
-	body, truncated, err := backendhttp.ReadBounded(response.Body, backendhttp.DefaultResponseBytes)
+	body, truncated, err := backendhttp.ReadBounded(response.Body, backendhttp.MaxResponseBytes)
 	if err != nil {
 		return nil, err
 	}
 	if truncated {
-		return nil, fmt.Errorf("response exceeds %d bytes", backendhttp.DefaultResponseBytes)
+		return nil, fmt.Errorf("response exceeds %d bytes", backendhttp.MaxResponseBytes)
 	}
 	return body, nil
 }

@@ -11,7 +11,7 @@ import (
 
 func TestBuildRequestEncodesInputsToolsAndState(t *testing.T) {
 	stateMessage := json.RawMessage(`{"role":"assistant","content":"earlier"}`)
-	state, err := continuation.Encode(continuation.DefaultMaximumBytes, []json.RawMessage{stateMessage})
+	state, err := continuation.Encode(continuation.MaximumBytes, []json.RawMessage{stateMessage})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestBuildRequestEncodesInputsToolsAndState(t *testing.T) {
 			Description: "Read a file",
 			Parameters:  agent.JSONSchema{Type: "object"},
 		}},
-	}, continuation.DefaultMaximumBytes, continuation.GenerationStateBytes(continuation.DefaultMaximumBytes, 0))
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,17 +72,5 @@ func TestEncodeUserContentConcatenatesTextOnlyParts(t *testing.T) {
 	})
 	if content != "onetwo" {
 		t.Fatalf("content = %#v", content)
-	}
-}
-
-func TestShouldCompactOversizedState(t *testing.T) {
-	large, _ := json.Marshal(message{Role: "assistant", Content: strings.Repeat("x", 200)})
-	state, err := continuation.Encode(continuation.DefaultMaximumBytes, []json.RawMessage{large})
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := &Client{maxStateBytes: 128, stateOutputHeadroom: 32}
-	if !client.ShouldCompactState(agent.Request{State: state, Inputs: []agent.Input{agent.NewTextInput("next")}}) {
-		t.Fatal("oversized state did not trigger compaction")
 	}
 }

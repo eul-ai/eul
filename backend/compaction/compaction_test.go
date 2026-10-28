@@ -40,8 +40,8 @@ func TestPrepareAndValidateSummary(t *testing.T) {
 		Inputs:       []agent.Input{agent.NewTextInput("pending")},
 		Tools:        []agent.ToolDefinition{{Name: "read"}},
 	}
-	prepared, continueTask := Prepare(original, "summarize")
-	if !continueTask || prepared.Instructions != "summarize" || len(prepared.Tools) != 0 || len(prepared.Inputs) != 2 {
+	prepared, continueTask := Prepare(original)
+	if !continueTask || prepared.Instructions != Instructions || len(prepared.Tools) != 0 || len(prepared.Inputs) != 2 {
 		t.Fatalf("prepared request = %+v, continue = %v", prepared, continueTask)
 	}
 	if original.Instructions != "original" || len(original.Inputs) != 1 || len(original.Tools) != 1 {

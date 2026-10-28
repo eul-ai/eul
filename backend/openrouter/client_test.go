@@ -3,7 +3,6 @@ package openrouter
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"testing"
@@ -15,9 +14,8 @@ import (
 func testMetadata(reasoning bool, contextWindow int64) func(string) modelMetadata {
 	return func(string) modelMetadata {
 		metadata := modelMetadata{
-			contextWindow:        contextWindow,
-			thinkingLevels:       []agent.ThinkingLevel{agent.ThinkingOff},
-			defaultThinkingLevel: agent.ThinkingOff,
+			contextWindow:  contextWindow,
+			thinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff},
 		}
 		if reasoning {
 			metadata.reasoning = true
@@ -29,7 +27,6 @@ func testMetadata(reasoning bool, contextWindow int64) func(string) modelMetadat
 				agent.ThinkingHigh,
 				agent.ThinkingXHigh,
 			}
-			metadata.defaultThinkingLevel = agent.ThinkingMedium
 		}
 		return metadata
 	}
@@ -100,18 +97,16 @@ func TestRequestOptionsRespectModelReasoningMetadata(t *testing.T) {
 		return testMetadata(false, 0)(model)
 	})
 
-	defaults, err := options(agent.Request{Model: "vendor/reasoning"})
-	if err != nil || defaults.Reasoning == nil || defaults.Reasoning.Effort != "medium" {
-		t.Fatalf("default reasoning options = %+v, %v", defaults, err)
+	medium, err := options(agent.Request{Model: "vendor/reasoning", ThinkingLevel: agent.ThinkingMedium})
+	if err != nil || medium.Reasoning == nil || medium.Reasoning.Effort != "medium" {
+		t.Fatalf("medium reasoning options = %+v, %v", medium, err)
 	}
 	_, err = options(agent.Request{Model: "vendor/reasoning", ThinkingLevel: agent.ThinkingMax})
-	var unsupported *unsupportedThinkingLevelError
-	if !errors.As(err, &unsupported) || unsupported.level != agent.ThinkingMax || unsupported.model != "vendor/reasoning" {
+	if err == nil {
 		t.Fatalf("max thinking error = %v", err)
 	}
 	_, err = options(agent.Request{Model: "vendor/plain", ThinkingLevel: agent.ThinkingMedium})
-	unsupported = nil
-	if !errors.As(err, &unsupported) || unsupported.level != agent.ThinkingMedium || unsupported.model != "vendor/plain" {
+	if err == nil {
 		t.Fatalf("plain model thinking error = %v", err)
 	}
 	off, err := options(agent.Request{Model: "vendor/plain", ThinkingLevel: agent.ThinkingOff})

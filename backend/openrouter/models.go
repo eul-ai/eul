@@ -1,6 +1,7 @@
 package openrouter
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/eul-ai/eul/agent"
@@ -20,14 +21,12 @@ type modelDescription struct {
 type modelReasoning struct {
 	Mandatory        bool     `json:"mandatory"`
 	SupportedEfforts []string `json:"supported_efforts"`
-	DefaultEffort    string   `json:"default_effort"`
 }
 
 type modelMetadata struct {
-	contextWindow        int64
-	reasoning            bool
-	thinkingLevels       []agent.ThinkingLevel
-	defaultThinkingLevel agent.ThinkingLevel
+	contextWindow  int64
+	reasoning      bool
+	thinkingLevels []agent.ThinkingLevel
 }
 
 func buildModels(catalog modelCatalog) map[string]modelMetadata {
@@ -45,12 +44,10 @@ func buildModelMetadata(description modelDescription) (modelMetadata, bool) {
 	if strings.TrimSpace(description.ID) == "" || description.ContextLength < 0 {
 		return modelMetadata{}, false
 	}
-	thinkingLevels, defaultThinkingLevel := thinkingMetadata(description.Reasoning)
 	return modelMetadata{
-		contextWindow:        description.ContextLength,
-		reasoning:            len(description.Reasoning.SupportedEfforts) > 0,
-		thinkingLevels:       thinkingLevels,
-		defaultThinkingLevel: defaultThinkingLevel,
+		contextWindow:  description.ContextLength,
+		reasoning:      len(description.Reasoning.SupportedEfforts) > 0,
+		thinkingLevels: thinkingLevels(description.Reasoning),
 	}, true
 }
 
@@ -62,23 +59,11 @@ func (metadata modelMetadata) backendMetadata() backend.ModelMetadata {
 	return backend.ModelMetadata{ContextWindow: metadata.contextWindow, ThinkingLevels: levels}
 }
 
-func (metadata modelMetadata) resolveThinkingLevel(level agent.ThinkingLevel) (agent.ThinkingLevel, bool) {
-	if level == "" {
-		level = metadata.defaultThinkingLevel
-		if level == "" && !metadata.reasoning {
-			level = agent.ThinkingOff
-		}
-	}
-
+func (metadata modelMetadata) supportsThinkingLevel(level agent.ThinkingLevel) bool {
 	if !metadata.reasoning && level == agent.ThinkingOff {
-		return level, true
+		return true
 	}
-	for _, candidate := range metadata.thinkingLevels {
-		if candidate == level {
-			return level, true
-		}
-	}
-	return level, false
+	return slices.Contains(metadata.thinkingLevels, level)
 }
 
 func (metadata modelMetadata) effortForResolvedLevel(level agent.ThinkingLevel) string {
@@ -88,7 +73,7 @@ func (metadata modelMetadata) effortForResolvedLevel(level agent.ThinkingLevel) 
 	return string(level)
 }
 
-func thinkingMetadata(reasoning modelReasoning) ([]agent.ThinkingLevel, agent.ThinkingLevel) {
+func thinkingLevels(reasoning modelReasoning) []agent.ThinkingLevel {
 	supported := make(map[agent.ThinkingLevel]bool, len(reasoning.SupportedEfforts)+1)
 	if !reasoning.Mandatory {
 		supported[agent.ThinkingOff] = true
@@ -105,12 +90,7 @@ func thinkingMetadata(reasoning modelReasoning) ([]agent.ThinkingLevel, agent.Th
 			levels = append(levels, level)
 		}
 	}
-
-	defaultLevel, ok := thinkingLevelForEffort(reasoning.DefaultEffort)
-	if !ok && !reasoning.Mandatory {
-		defaultLevel = agent.ThinkingOff
-	}
-	return levels, defaultLevel
+	return levels
 }
 
 func thinkingLevelForEffort(effort string) (agent.ThinkingLevel, bool) {

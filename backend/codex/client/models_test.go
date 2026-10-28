@@ -3,40 +3,14 @@ package client
 import (
 	"encoding/json"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend/openai/responses"
 )
 
-func TestClientReasoningSummaryAndModelMetadata(t *testing.T) {
-	client, err := New(testTokenSource("token"), Options{ReasoningSummary: ReasoningSummaryDetailed})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if client.reasoningSummary != ReasoningSummaryDetailed {
-		t.Fatalf("reasoning summary = %q", client.reasoningSummary)
-	}
-	defaultClient, err := New(testTokenSource("token"), Options{})
-	if err != nil || defaultClient.reasoningSummary != ReasoningSummaryAuto {
-		t.Fatalf("default reasoning summary = %q, err = %v", defaultClient.reasoningSummary, err)
-	}
-	unknown := MetadataFor("unknown")
-	if unknown.ContextWindow != 0 || unknown.FastMode || !slices.Equal(unknown.ThinkingLevels, []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingMinimal, agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh}) {
-		t.Fatal("unknown model metadata is invalid")
-	}
-	if !MetadataFor(ModelGPT56Sol).FastMode {
-		t.Fatalf("%s does not support fast mode", ModelGPT56Sol)
-	}
-
-	if _, err := New(testTokenSource("token"), Options{ReasoningSummary: ReasoningSummary("verbose")}); err == nil {
-		t.Fatal("invalid reasoning summary option was accepted")
-	}
-}
-
 func TestNewRejectsNilTokenSource(t *testing.T) {
-	client, err := New(nil, Options{})
+	client, err := New(nil)
 	if client != nil || err == nil {
 		t.Fatalf("client = %v, error = %v", client, err)
 	}
@@ -48,6 +22,9 @@ func TestModelMetadata(t *testing.T) {
 	}
 	if got := MetadataFor("unknown").ContextWindow; got != 0 {
 		t.Fatalf("unknown context window = %d", got)
+	}
+	if !MetadataFor(ModelGPT56Sol).FastMode {
+		t.Fatalf("%s does not support fast mode", ModelGPT56Sol)
 	}
 }
 
@@ -64,21 +41,10 @@ func TestThinkingLevelMappings(t *testing.T) {
 		if got := MetadataFor(model).ThinkingLevels; !slices.Equal(got, gpt56Levels) {
 			t.Fatalf("%s levels = %v, want %v", model, got, gpt56Levels)
 		}
-		if _, err := responseReasoningFor(model, agent.ThinkingMinimal, ReasoningSummaryAuto); err == nil {
+		if _, err := responseReasoningFor(model, agent.ThinkingMinimal); err == nil {
 			t.Fatalf("%s accepts minimal thinking", model)
 		}
 	}
-	standardLevels := []agent.ThinkingLevel{
-		agent.ThinkingOff,
-		agent.ThinkingMinimal,
-		agent.ThinkingLow,
-		agent.ThinkingMedium,
-		agent.ThinkingHigh,
-	}
-	if got := MetadataFor("unknown").ThinkingLevels; !slices.Equal(got, standardLevels) {
-		t.Fatalf("unknown model levels = %v, want %v", got, standardLevels)
-	}
-
 	for _, test := range []struct {
 		level       agent.ThinkingLevel
 		wantEffort  string
@@ -91,7 +57,7 @@ func TestThinkingLevelMappings(t *testing.T) {
 		{level: agent.ThinkingXHigh, wantEffort: "xhigh", wantSummary: "auto"},
 		{level: agent.ThinkingMax, wantEffort: "max", wantSummary: "auto"},
 	} {
-		reasoning, err := responseReasoningFor(ModelGPT56Sol, test.level, ReasoningSummaryAuto)
+		reasoning, err := responseReasoningFor(ModelGPT56Sol, test.level)
 		if err != nil {
 			t.Fatalf("responseReasoningFor(%q) error = %v", test.level, err)
 		}
@@ -100,72 +66,13 @@ func TestThinkingLevelMappings(t *testing.T) {
 		}
 	}
 
-	unknown, err := responseReasoningFor("unknown", agent.ThinkingHigh, ReasoningSummaryAuto)
-	if err != nil || unknown.Effort != "high" {
-		t.Fatalf("unknown model high reasoning = %+v, %v", unknown, err)
-	}
-
-	off, err := responseReasoningFor(ModelGPT56Sol, agent.ThinkingOff, ReasoningSummaryDetailed)
+	off, err := responseReasoningFor(ModelGPT56Sol, agent.ThinkingOff)
 	if err != nil {
 		t.Fatal(err)
 	}
 	encoded, err := json.Marshal(off)
 	if err != nil || string(encoded) != `{"effort":"none"}` {
 		t.Fatalf("off reasoning = %s, %v", encoded, err)
-	}
-
-	for _, test := range []struct {
-		value ReasoningSummary
-		want  string
-	}{
-		{value: ReasoningSummaryAuto, want: "auto"},
-		{value: ReasoningSummaryConcise, want: "concise"},
-		{value: ReasoningSummaryDetailed, want: "detailed"},
-		{value: ReasoningSummaryNone},
-	} {
-		reasoning, err := responseReasoningFor(ModelGPT56Sol, agent.ThinkingHigh, test.value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if reasoning.Summary != test.want {
-			t.Fatalf("summary %q = %q, want %q", test.value, reasoning.Summary, test.want)
-		}
-	}
-}
-
-func TestParseReasoningSummary(t *testing.T) {
-	for _, value := range []string{"", "auto", "concise", "detailed", "none"} {
-		if _, err := ParseReasoningSummary(value); err != nil {
-			t.Fatalf("ParseReasoningSummary(%q): %v", value, err)
-		}
-	}
-	if _, err := ParseReasoningSummary("verbose"); err == nil {
-		t.Fatal("invalid reasoning summary was accepted")
-	}
-}
-
-func TestClientShouldCompactForContinuationStateHeadroom(t *testing.T) {
-	responsesClient, err := responses.New(responses.Options{
-		Endpoint:            "https://example.com/responses",
-		MaxStateBytes:       160,
-		StateOutputHeadroom: 50,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := &Client{responses: responsesClient}
-	state, err := json.Marshal(map[string]any{"version": 1, "items": []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"` + strings.Repeat("x", 35) + `"}`)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := agent.Request{State: state, Inputs: []agent.Input{agent.NewTextInput(strings.Repeat("y", 25))}}
-
-	if !client.ShouldCompact(request, agent.Usage{}) {
-		t.Fatal("near-limit state did not trigger compaction")
-	}
-	request.State = nil
-	if client.ShouldCompact(request, agent.Usage{}) {
-		t.Fatal("fresh input triggered compaction without state")
 	}
 }
 

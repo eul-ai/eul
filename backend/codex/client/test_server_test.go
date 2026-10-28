@@ -25,10 +25,9 @@ func testTokenSource(token string) TokenSource {
 	})
 }
 
-func newTestClient(t *testing.T, token, baseURL string, options Options) *Client {
+func newTestClient(t *testing.T, token string, httpClient *http.Client) *Client {
 	t.Helper()
-	options.BaseURL = baseURL
-	client, err := New(testTokenSource(token), options)
+	client, err := newClient(testTokenSource(token), httpClient)
 	if err != nil {
 		t.Fatal(err)
 	}

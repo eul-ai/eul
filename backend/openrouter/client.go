@@ -51,7 +51,7 @@ func (c *client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
 }
 
 func (c *client) Compact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {
-	return c.responses.SemanticCompact(ctx, request, compaction.Instructions)
+	return c.responses.SemanticCompact(ctx, request)
 }
 
 func (c *client) ShouldCompactAfterError(_ agent.Request, err error) bool {
@@ -79,25 +79,15 @@ func setCommonHeaders(request *http.Request) {
 func requestOptions(metadataFor func(string) modelMetadata) responses.RequestOptionsFunc {
 	return func(request agent.Request) (responses.RequestOptions, error) {
 		metadata := metadataFor(request.Model)
-		level, supported := metadata.resolveThinkingLevel(request.ThinkingLevel)
-		if !supported {
-			return responses.RequestOptions{}, &unsupportedThinkingLevelError{level: level, model: request.Model}
+		if !metadata.supportsThinkingLevel(request.ThinkingLevel) {
+			return responses.RequestOptions{}, fmt.Errorf("thinking level %q is not supported by model %q", request.ThinkingLevel, request.Model)
 		}
 
 		options := responses.RequestOptions{SessionID: request.SessionID, ToolChoice: "auto", ParallelToolCalls: true}
 		if metadata.reasoning {
-			options.Reasoning = &responses.Reasoning{Effort: metadata.effortForResolvedLevel(level)}
+			options.Reasoning = &responses.Reasoning{Effort: metadata.effortForResolvedLevel(request.ThinkingLevel)}
 			options.Include = []string{"reasoning.encrypted_content"}
 		}
 		return options, nil
 	}
-}
-
-type unsupportedThinkingLevelError struct {
-	level agent.ThinkingLevel
-	model string
-}
-
-func (err *unsupportedThinkingLevelError) Error() string {
-	return fmt.Sprintf("thinking level %q is not supported by model %q", err.level, err.model)
 }

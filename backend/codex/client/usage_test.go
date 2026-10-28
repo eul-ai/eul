@@ -15,7 +15,7 @@ import (
 func TestUsageClientGetsSubscriptionWindows(t *testing.T) {
 	const token = "secret-test-token"
 	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet || request.URL.Path != "/api/codex/usage" {
+		if request.Method != http.MethodGet || request.URL.Path != "/backend-api/wham/usage" {
 			t.Errorf("request = %s %s", request.Method, request.URL.Path)
 		}
 		if request.Header.Get("Authorization") != "Bearer "+token || request.Header.Get("ChatGPT-Account-Id") != "account" || request.Header.Get("Accept") != "application/json" {
@@ -92,29 +92,9 @@ func TestUsageClientHandlesOptionalAndInvalidWindows(t *testing.T) {
 	}
 }
 
-func TestUsageClientEndpointFollowsBaseURLStyle(t *testing.T) {
-	chatGPT, err := NewUsage(testTokenSource("token"), UsageOptions{BaseURL: "https://chatgpt.com/backend-api/"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	codexAPI, err := NewUsage(testTokenSource("token"), UsageOptions{BaseURL: "https://example.com/"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	hostCollision, err := NewUsage(testTokenSource("token"), UsageOptions{BaseURL: "https://backend-api.example.com/"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if chatGPT.usageEndpoint != "https://chatgpt.com/backend-api/wham/usage" ||
-		codexAPI.usageEndpoint != "https://example.com/api/codex/usage" ||
-		hostCollision.usageEndpoint != "https://backend-api.example.com/api/codex/usage" {
-		t.Fatalf("usage endpoints = %q, %q, %q", chatGPT.usageEndpoint, codexAPI.usageEndpoint, hostCollision.usageEndpoint)
-	}
-}
-
 func newTestUsageClient(t *testing.T, token string, server *testhttp.Server) *UsageClient {
 	t.Helper()
-	client, err := NewUsage(testTokenSource(token), UsageOptions{HTTPClient: server.Client(), BaseURL: server.URL})
+	client, err := newUsage(testTokenSource(token), server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}

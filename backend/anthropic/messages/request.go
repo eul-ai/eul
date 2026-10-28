@@ -13,19 +13,19 @@ type requestBuild struct {
 	newMessages []json.RawMessage
 }
 
-func buildGenerationRequest(request agent.Request, maxStateBytes, generationStateBytes int) (requestBuild, error) {
-	build, err := buildWireRequest(request, maxStateBytes)
+func buildGenerationRequest(request agent.Request) (requestBuild, error) {
+	build, err := buildWireRequest(request)
 	if err != nil {
 		return requestBuild{}, err
 	}
-	if _, err := continuation.Encode(generationStateBytes, build.history, build.newMessages); err != nil {
+	if _, err := continuation.Encode(continuation.GenerationBytes, build.history, build.newMessages); err != nil {
 		return requestBuild{}, err
 	}
 	return build, nil
 }
 
-func buildWireRequest(request agent.Request, maxStateBytes int) (requestBuild, error) {
-	history, err := continuation.Decode(request.State, maxStateBytes)
+func buildWireRequest(request agent.Request) (requestBuild, error) {
+	history, err := continuation.Decode(request.State, continuation.MaximumBytes)
 	if err != nil {
 		return requestBuild{}, err
 	}

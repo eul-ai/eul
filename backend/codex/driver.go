@@ -67,7 +67,7 @@ func (driver *Driver) Open(options backend.Options) (backend.Runtime, error) {
 		return nil, err
 	}
 	source := oauthTokenSource{manager: manager}
-	usage, err := client.NewUsage(source, client.UsageOptions{})
+	usage, err := client.NewUsage(source)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +102,7 @@ func (configured *runtime) CheckCredentials(ctx context.Context) error {
 }
 
 func (configured *runtime) NewProvider() (agent.Provider, error) {
-	return client.New(configured.tokenSource, client.Options{})
+	return client.New(configured.tokenSource)
 }
 
 func (configured *runtime) ModelMetadata(model string) backend.ModelMetadata {

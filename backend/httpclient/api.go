@@ -88,7 +88,6 @@ func IsRetryableAPIError(detail APIError) bool {
 
 type APIErrorConfig struct {
 	Prefix          string
-	Maximum         int64
 	ParseRetryAfter func(http.Header, time.Time) time.Duration
 	FormatDetail    func(APIError) string
 }
@@ -142,7 +141,7 @@ func (config APIErrorConfig) Do(ctx context.Context, client *http.Client, reques
 }
 
 func (config APIErrorConfig) decodeAPIResponseError(response *http.Response) error {
-	body, truncated, err := ReadBounded(response.Body, config.Maximum)
+	body, truncated, err := ReadBounded(response.Body, maxErrorBytes)
 	if err != nil {
 		return config.responseError(response, err, APIError{}, "HTTP %s; read error response: %v", response.Status, err)
 	}
@@ -202,7 +201,7 @@ func (config APIErrorConfig) RetryableWrapf(cause error, format string, argument
 }
 
 func (config APIErrorConfig) message(format string, arguments ...any) string {
-	return FormatErrorMessage(config.Prefix, config.Maximum, format, arguments...)
+	return FormatErrorMessage(config.Prefix, format, arguments...)
 }
 
 func IsRetryableOperation(err error) bool {

@@ -7,5 +7,5 @@ import (
 )
 
 func responseError(response *http.Response) error {
-	return backendhttp.ReadHTTPStatusError(response, backendhttp.DefaultErrorResponseBytes)
+	return backendhttp.ReadHTTPStatusError(response)
 }

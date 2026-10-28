@@ -3,15 +3,12 @@ package client
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
-	"net/url"
-	"strings"
 
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
-const defaultBaseURL = "https://chatgpt.com/backend-api"
+const baseURL = "https://chatgpt.com/backend-api"
 
 type Credential struct {
 	AccessToken string
@@ -23,9 +20,8 @@ type TokenSource interface {
 }
 
 type requestClient struct {
-	tokenSource   TokenSource
-	httpClient    *http.Client
-	maxErrorBytes int64
+	tokenSource TokenSource
+	httpClient  *http.Client
 }
 
 func newRequestClient(source TokenSource, httpClient *http.Client) (*requestClient, error) {
@@ -33,22 +29,9 @@ func newRequestClient(source TokenSource, httpClient *http.Client) (*requestClie
 		return nil, errors.New("openai: token source is required")
 	}
 	return &requestClient{
-		tokenSource:   source,
-		httpClient:    backendhttp.CloneNoRedirects(httpClient, backendhttp.DefaultGenerationHTTPTimeout),
-		maxErrorBytes: backendhttp.DefaultErrorResponseBytes,
+		tokenSource: source,
+		httpClient:  backendhttp.CloneNoRedirects(httpClient, backendhttp.DefaultGenerationHTTPTimeout),
 	}, nil
-}
-
-func normalizeBaseURL(value string) (string, *url.URL, error) {
-	if value == "" {
-		value = defaultBaseURL
-	}
-	value = strings.TrimRight(value, "/")
-	parsed, err := url.Parse(value)
-	if err != nil {
-		return "", nil, fmt.Errorf("openai: parse base URL: %w", err)
-	}
-	return value, parsed, nil
 }
 
 func (client *requestClient) authenticate(ctx context.Context, request *http.Request) error {
@@ -100,7 +83,7 @@ func (client *requestClient) wrapf(cause error, format string, arguments ...any)
 }
 
 func (client *requestClient) errorMessage(format string, arguments ...any) string {
-	return backendhttp.FormatErrorMessage("openai", client.maxErrorBytes, format, arguments...)
+	return backendhttp.FormatErrorMessage("openai", format, arguments...)
 }
 
 type wrappedError struct {

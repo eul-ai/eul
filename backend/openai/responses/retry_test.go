@@ -18,16 +18,15 @@ import (
 
 func TestClientBoundsHTTPErrors(t *testing.T) {
 	const key = "top-secret-key"
-	server := responseServer(t, http.StatusBadRequest, strings.Repeat(key+" ", 100))
+	server := responseServer(t, http.StatusBadRequest, strings.Repeat(key+" ", 10_000))
 	defer server.Close()
 	client := newTestClient(t, key, server.URL, Options{HTTPClient: server.Client()})
-	client.errorConfig.Maximum = 160
 	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	if err == nil {
 		t.Fatal("Generate() succeeded")
 	}
 	var responseErr *backendhttp.APIResponseError
-	if !errors.As(err, &responseErr) || responseErr.StatusCode() != http.StatusBadRequest || len(err.Error()) > 160 {
+	if !errors.As(err, &responseErr) || responseErr.StatusCode() != http.StatusBadRequest || len(err.Error()) > 64*1024 {
 		t.Fatalf("bounded error = %q (%d bytes)", err, len(err.Error()))
 	}
 }

@@ -10,15 +10,14 @@ import (
 )
 
 type createRequest struct {
-	Model        string            `json:"model"`
-	System       []systemBlock     `json:"system,omitempty"`
-	Messages     []json.RawMessage `json:"messages"`
-	Tools        []toolDefinition  `json:"tools,omitempty"`
-	ToolChoice   *ToolChoice       `json:"tool_choice,omitempty"`
-	MaxTokens    int               `json:"max_tokens"`
-	Stream       bool              `json:"stream"`
-	Thinking     *Thinking         `json:"thinking,omitempty"`
-	OutputConfig *OutputConfig     `json:"output_config,omitempty"`
+	Model      string            `json:"model"`
+	System     []systemBlock     `json:"system,omitempty"`
+	Messages   []json.RawMessage `json:"messages"`
+	Tools      []toolDefinition  `json:"tools,omitempty"`
+	ToolChoice *ToolChoice       `json:"tool_choice,omitempty"`
+	MaxTokens  int               `json:"max_tokens"`
+	Stream     bool              `json:"stream"`
+	Thinking   *Thinking         `json:"thinking,omitempty"`
 }
 
 type systemBlock struct {
@@ -64,19 +63,12 @@ type cacheControl struct {
 }
 
 type ToolChoice struct {
-	Type                   string `json:"type"`
-	Name                   string `json:"name,omitempty"`
-	DisableParallelToolUse bool   `json:"disable_parallel_tool_use,omitempty"`
+	Type string `json:"type"`
 }
 
 type Thinking struct {
 	Type         string `json:"type"`
 	BudgetTokens int    `json:"budget_tokens,omitempty"`
-	Display      string `json:"display,omitempty"`
-}
-
-type OutputConfig struct {
-	Effort string `json:"effort,omitempty"`
 }
 
 type contentBlock struct {
