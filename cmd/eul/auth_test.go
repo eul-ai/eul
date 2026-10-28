@@ -10,7 +10,7 @@ import (
 
 func TestBackendAuthenticationIsOptional(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(t.TempDir(), &stdout, &stderr, nil)
+	runtime := testRuntime(t, t.TempDir(), &stdout, &stderr)
 	runtime.backends = backend.Registry{{ID: "provider-only", Name: "Provider Only"}}
 	for _, command := range []string{"login", "logout"} {
 		stdout.Reset()
@@ -34,7 +34,7 @@ func TestRunLoginAndLogoutCommands(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			runtime := testRuntime(cwd, &stdout, &stderr, nil)
+			runtime := testRuntime(t, cwd, &stdout, &stderr)
 			authenticator := testAuthenticator(t, runtime)
 
 			code := run(test.arguments, runtime)
@@ -45,7 +45,7 @@ func TestRunLoginAndLogoutCommands(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(cwd, &stdout, &stderr, nil)
+	runtime := testRuntime(t, cwd, &stdout, &stderr)
 	authenticator := testAuthenticator(t, runtime)
 	if code := run([]string{"logout"}, runtime); code != exitSuccess || authenticator.logoutCalls != 1 {
 		t.Fatalf("code=%d calls=%d stdout=%q stderr=%q", code, authenticator.logoutCalls, stdout.String(), stderr.String())

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 
@@ -12,62 +11,51 @@ import (
 	"github.com/eul-ai/eul/terminal"
 )
 
-type runnerFactory func(io.Reader, io.Writer) (sessionRunner, io.Closer, error)
-
 type launcher struct {
-	env       environment
-	home      string
-	store     *sessionStore
-	history   *messageHistoryStore
-	noSandbox bool
-	runtimes  map[string]*backend.Runtime
+	backends   backend.Registry
+	interrupts <-chan os.Signal
+	home       string
+	store      *sessionStore
+	history    *messageHistoryStore
+	noSandbox  bool
+	runtimes   map[string]*backend.Runtime
 }
 
-func newLauncher(home string, env environment, noSandbox bool) *launcher {
+func newLauncher(home string, backends backend.Registry, noSandbox bool, interrupts <-chan os.Signal) *launcher {
 	return &launcher{
-		env:       env,
-		home:      home,
-		store:     newSessionStore(home),
-		history:   newMessageHistoryStore(home),
-		noSandbox: noSandbox,
-		runtimes:  make(map[string]*backend.Runtime),
+		backends:   backends,
+		interrupts: interrupts,
+		home:       home,
+		store:      newSessionStore(home),
+		history:    newMessageHistoryStore(home),
+		noSandbox:  noSandbox,
+		runtimes:   make(map[string]*backend.Runtime),
 	}
 }
 
 func Run(ctx context.Context, options Options, dependencies Dependencies) error {
-	return run(ctx, options, dependencies, func(input io.Reader, output io.Writer) (sessionRunner, io.Closer, error) {
-		runner, err := terminal.NewRunner(input, output)
-		return runner, runner, err
-	})
-}
-
-func run(ctx context.Context, options Options, dependencies Dependencies, newRunner runnerFactory) error {
-	env := environment{
-		stdin:       dependencies.Input,
-		stdout:      dependencies.Output,
-		getwd:       dependencies.Getwd,
-		userHomeDir: dependencies.UserHomeDir,
-		interrupts:  dependencies.Interrupts,
-		backends:    dependencies.Backends,
-		newToolset:  buildToolset,
-	}
-	launcher := newLauncher(dependencies.Home, env, options.NoSandbox)
+	launcher := newLauncher(dependencies.Home, dependencies.Backends, options.NoSandbox, dependencies.Interrupts)
 	session, err := launcher.launch(ctx, options)
 	if err != nil {
 		return err
 	}
 
-	runner, runnerCloser, err := newRunner(env.stdin, env.stdout)
+	runner, err := terminal.NewRunner(dependencies.Input, dependencies.Output)
 	if err != nil {
 		return session.finish(err)
 	}
-	runErr := runSessions(ctx, runner, session, launcher)
-	return errors.Join(runErr, runnerCloser.Close())
+	runErr := runSessions(ctx, runner.Run, session, launcher)
+	return errors.Join(runErr, runner.Close())
 }
 
-func runSessions(ctx context.Context, runner sessionRunner, session *agentSession, launcher *launcher) error {
+func runSessions(
+	ctx context.Context,
+	run func(context.Context, terminal.Options) (terminal.RunOutcome, error),
+	session *agentSession,
+	launcher *launcher,
+) error {
 	for {
-		outcome, err := session.run(ctx, runner)
+		outcome, err := session.run(ctx, run)
 		if err != nil {
 			return err
 		}
@@ -106,7 +94,7 @@ func (launcher *launcher) start(ctx context.Context, settings sessionSettings, p
 }
 
 func (launcher *launcher) resume(ctx context.Context, cwd, id, prompt string) (*agentSession, error) {
-	cwd, err := resolveCWD(cwd, launcher.env.getwd)
+	cwd, err := resolveCWD(cwd)
 	if err != nil {
 		return nil, err
 	}
@@ -123,11 +111,11 @@ func (launcher *launcher) resume(ctx context.Context, cwd, id, prompt string) (*
 }
 
 func (launcher *launcher) open(ctx context.Context, settings sessionSettings, handle *sessionHandle, prompt string) (*agentSession, error) {
-	selected, err := launcher.env.backends.Lookup(settings.provider)
+	selected, err := launcher.backends.Lookup(settings.provider)
 	if err != nil {
 		return nil, err
 	}
-	config, err := resolveConfig(settings, selected, launcher.env)
+	config, err := resolveConfig(settings, selected)
 	if err != nil {
 		return nil, err
 	}

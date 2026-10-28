@@ -11,7 +11,6 @@ import (
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/subagent"
-	"github.com/eul-ai/eul/tool"
 )
 
 func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
@@ -24,9 +23,6 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 		}
 		return agent.Response{Text: "second answer", State: []byte("next-state")}, nil
 	})))
-	launcher.env.newToolset = func(string, toolAccess, tool.NetworkAuthorizer, ...agent.Tool) []agent.Tool {
-		return nil
-	}
 
 	first := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd})
 	if _, err := first.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "first prompt"}}, func(agent.Event) error { return nil }); err != nil {
@@ -72,19 +68,20 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 
 func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 	cwd := t.TempDir()
-	var tools []agent.Tool
-	launcher := testLauncher(t, cwd, testBackendRuntime(providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
+	release := make(chan struct{})
+	caller := &toolCaller{child: func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
+		<-release
 		return agent.Response{Text: "result for " + request.Inputs[0].PlainText()}, nil
-	})))
-	launcher.env.newToolset = captureTools(&tools, additionalTools)
-	session := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd})
+	}}
+	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), sessionSettings{models: backend.Models{Main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd})
 	defer session.finish(nil)
 	if err := session.terminalOptions.StateChanges.Notify(sessionStoreTestTerminalCheckpoint(t, "prompt"), false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := executeTool(tools, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect"}]}`); err != nil {
+	if _, err := caller.call(session, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect"}]}`); err != nil {
 		t.Fatal(err)
 	}
+	close(release)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for {
@@ -108,15 +105,14 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 
 func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testing.T) {
 	cwd := t.TempDir()
-	var tools []agent.Tool
-	launcher := testLauncher(t, cwd, testBackendRuntime(providerFunction(func(ctx context.Context, _ agent.Request, _ agent.TextSink) (agent.Response, error) {
+	caller := &toolCaller{child: func(ctx context.Context, _ agent.Request, _ agent.TextSink) (agent.Response, error) {
 		<-ctx.Done()
 		return agent.Response{}, ctx.Err()
-	})))
-	launcher.env.newToolset = captureTools(&tools, additionalTools)
+	}}
+	launcher := testLauncher(t, cwd, caller.runtime())
 
 	first := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd})
-	if _, err := executeTool(tools, "launch_subagents", `{"tasks":[{"description":"running","prompt":"running"}]}`); err != nil {
+	if _, err := caller.call(first, "launch_subagents", `{"tasks":[{"description":"running","prompt":"running"}]}`); err != nil {
 		t.Fatal(err)
 	}
 	terminalCheckpoint := sessionStoreTestTerminalCheckpoint(t, "active prompt")
@@ -163,7 +159,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	alternateRuntime := testBackendRuntime(emptyProvider())
 	alternateRuntime.Catalog = testCatalog("selected-model", "selected-fast-model", "selected-balanced-model")
 	launcher := testLauncher(t, cwd, testBackendRuntime(emptyProvider()))
-	launcher.env.backends = append(launcher.env.backends, testBackend("alternate", alternateRuntime))
+	launcher.backends = append(launcher.backends, testBackend("alternate", alternateRuntime))
 	models := backend.Models{Main: "selected-model", Fast: "selected-fast-model", Balanced: "selected-balanced-model"}
 
 	session, err := launcher.launch(context.Background(), Options{Provider: "alternate", Models: models, ThinkingLevel: agent.ThinkingHigh})

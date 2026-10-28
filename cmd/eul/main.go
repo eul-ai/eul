@@ -25,16 +25,12 @@ const (
 )
 
 type appRuntime struct {
-	stdin         io.Reader
-	stdout        io.Writer
-	stderr        io.Writer
-	getenv        func(string) string
-	getwd         func() (string, error)
-	userHomeDir   func() (string, error)
-	userConfigDir func() (string, error)
-	interrupts    <-chan os.Signal
-	backends      backend.Registry
-	openURL       func(string) error
+	stdin      io.Reader
+	stdout     io.Writer
+	stderr     io.Writer
+	interrupts <-chan os.Signal
+	backends   backend.Registry
+	openURL    func(string) error
 }
 
 func main() {
@@ -42,16 +38,12 @@ func main() {
 	signal.Notify(interrupts, os.Interrupt)
 
 	code := run(os.Args[1:], appRuntime{
-		stdin:         os.Stdin,
-		stdout:        os.Stdout,
-		stderr:        os.Stderr,
-		getenv:        os.Getenv,
-		getwd:         os.Getwd,
-		userHomeDir:   os.UserHomeDir,
-		userConfigDir: os.UserConfigDir,
-		interrupts:    interrupts,
-		backends:      backend.Registry{codex.New(), opencodego.New(), openrouter.New()},
-		openURL:       openBrowser,
+		stdin:      os.Stdin,
+		stdout:     os.Stdout,
+		stderr:     os.Stderr,
+		interrupts: interrupts,
+		backends:   backend.Registry{codex.New(), opencodego.New(), openrouter.New()},
+		openURL:    openBrowser,
 	})
 
 	signal.Stop(interrupts)
@@ -89,20 +81,18 @@ func runSession(arguments []string, runtime appRuntime) int {
 		return exitUsage
 	}
 
-	home, err := resolveEULHome(runtime)
+	home, err := resolveEULHome()
 	if err != nil {
 		writeCLIError(runtime.stderr, "%v", err)
 		return exitFailure
 	}
 	ctx := context.Background()
 	runErr := app.Run(ctx, parsed, app.Dependencies{
-		Input:       runtime.stdin,
-		Output:      runtime.stdout,
-		Home:        home,
-		Getwd:       runtime.getwd,
-		UserHomeDir: runtime.userHomeDir,
-		Interrupts:  runtime.interrupts,
-		Backends:    runtime.backends,
+		Input:      runtime.stdin,
+		Output:     runtime.stdout,
+		Home:       home,
+		Interrupts: runtime.interrupts,
+		Backends:   runtime.backends,
 	})
 	return finishRun(runErr, runtime.stderr)
 }

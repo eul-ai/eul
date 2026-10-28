@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
@@ -19,7 +18,6 @@ func BenchmarkSessionStoreStateOnlySave(b *testing.B) {
 	for _, blockCount := range []int{100, 1000} {
 		b.Run(fmt.Sprintf("blocks-%d", blockCount), func(b *testing.B) {
 			store := newSessionStore(b.TempDir())
-			store.now = func() time.Time { return time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC) }
 			checkpoint := sessionStoreBenchmarkTerminalCheckpoint(b, blockCount)
 			agentCheckpoint := sessionStoreTestAgentCheckpoint(b)
 			handle, err := store.Create(
@@ -62,7 +60,6 @@ func BenchmarkSessionStoreAppendOneBlock(b *testing.B) {
 				b.StopTimer()
 				home := filepath.Join(root, fmt.Sprintf("iteration-%d", index))
 				store := newSessionStore(home)
-				store.now = func() time.Time { return time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC) }
 				handle, err := store.Create(
 					"test",
 					filepath.Join(home, "workspace"),
@@ -132,7 +129,6 @@ func BenchmarkSessionStoreReplay(b *testing.B) {
 	for _, blockCount := range []int{100, 1000} {
 		b.Run(fmt.Sprintf("blocks-%d", blockCount), func(b *testing.B) {
 			store := newSessionStore(b.TempDir())
-			store.now = func() time.Time { return time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC) }
 			checkpoint := sessionStoreBenchmarkTerminalCheckpoint(b, blockCount)
 			agentCheckpoint := sessionStoreTestAgentCheckpoint(b)
 			handle, err := store.Create(

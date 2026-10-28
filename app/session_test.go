@@ -106,20 +106,13 @@ func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 	childStarted := make(chan struct{})
 	releaseChild := make(chan struct{})
-	var parentRequest agent.Request
-	backendRuntime := testBackendRuntime(providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
-		if len(request.Inputs) == 1 && request.Inputs[0].PlainText() == "child prompt" {
-			close(childStarted)
-			<-releaseChild
-			return agent.Response{Text: "child result"}, nil
-		}
-		parentRequest = request
-		return agent.Response{Text: "done"}, nil
-	}))
-	var tools []agent.Tool
-	launcher := testLauncher(t, t.TempDir(), backendRuntime)
-	launcher.env.newToolset = captureTools(&tools, buildToolset)
-	session := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, cwd: t.TempDir()})
+	caller := &toolCaller{child: func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+		close(childStarted)
+		<-releaseChild
+		return agent.Response{Text: "child result"}, nil
+	}}
+	cwd := t.TempDir()
+	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), sessionSettings{models: backend.Models{Main: "model"}, cwd: cwd})
 	defer func() {
 		close(releaseChild)
 		if err := session.finish(nil); err != nil {
@@ -127,7 +120,7 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 		}
 	}()
 
-	result, err := executeTool(tools, "launch_subagents", `{"tasks":[{"description":"inspect scheduler","prompt":"child prompt"}]}`)
+	result, err := caller.call(session, "launch_subagents", `{"tasks":[{"description":"inspect scheduler","prompt":"child prompt"}]}`)
 	if err != nil || result.IsError {
 		t.Fatalf("launch result = %+v, error = %v", result, err)
 	}
@@ -144,8 +137,8 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 	if _, err := session.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "inspect parent"}}, func(agent.Event) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(parentRequest.Instructions, status.Active[0].ID) || !strings.Contains(parentRequest.Instructions, status.Active[0].Description) {
-		t.Fatalf("instructions omit active subagent data: %q", parentRequest.Instructions)
+	if !strings.Contains(caller.request.Instructions, status.Active[0].ID) || !strings.Contains(caller.request.Instructions, status.Active[0].Description) {
+		t.Fatalf("instructions omit active subagent data: %q", caller.request.Instructions)
 	}
 }
 
@@ -162,30 +155,27 @@ func TestNewAgentSessionRejectsUnsupportedFastMode(t *testing.T) {
 }
 
 func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
-	backendRuntime := &backend.Runtime{
-		Provider: providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-			return agent.Response{Text: "done"}, nil
-		}),
-		Catalog: map[string]backend.ModelMetadata{
-			"main":     {ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingHigh}},
-			"fast":     {ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff}},
-			"balanced": {ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingHigh}},
-		},
+	caller := &toolCaller{child: func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+		return agent.Response{Text: "done"}, nil
+	}}
+	backendRuntime := caller.runtime()
+	backendRuntime.Catalog = map[string]backend.ModelMetadata{
+		"main":     {ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingHigh}},
+		"fast":     {ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff}},
+		"balanced": {ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingHigh}},
 	}
-	var tools []agent.Tool
-	launcher := testLauncher(t, t.TempDir(), backendRuntime)
-	launcher.env.newToolset = captureTools(&tools, additionalTools)
-	session := startTestSession(t, launcher, sessionSettings{
+	cwd := t.TempDir()
+	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), sessionSettings{
 		models:        backend.Models{Main: "main", Fast: "fast", Balanced: "balanced"},
 		thinkingLevel: agent.ThinkingHigh,
-		cwd:           t.TempDir(),
+		cwd:           cwd,
 	})
 
-	result, err := executeTool(tools, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"fast","thinking_level":"high"}]}`)
+	result, err := caller.call(session, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"fast","thinking_level":"high"}]}`)
 	if err != nil || !result.IsError {
 		t.Fatalf("fast result = %+v, error = %v", result, err)
 	}
-	result, err = executeTool(tools, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"balanced","thinking_level":"high"}]}`)
+	result, err = caller.call(session, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"balanced","thinking_level":"high"}]}`)
 	if err != nil || result.IsError {
 		t.Fatalf("balanced result = %+v, error = %v", result, err)
 	}
@@ -196,25 +186,22 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 
 func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 	requests := make(chan agent.Request, 2)
-	backendRuntime := &backend.Runtime{
-		Provider: providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
-			requests <- request
-			return agent.Response{Text: "done"}, nil
-		}),
-		Catalog: testCatalog("main", "fast", "balanced"),
-	}
-	var tools []agent.Tool
-	launcher := testLauncher(t, t.TempDir(), backendRuntime)
-	launcher.env.newToolset = captureTools(&tools, additionalTools)
-	session := startTestSession(t, launcher, sessionSettings{
+	caller := &toolCaller{child: func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
+		requests <- request
+		return agent.Response{Text: "done"}, nil
+	}}
+	backendRuntime := caller.runtime()
+	backendRuntime.Catalog = testCatalog("main", "fast", "balanced")
+	cwd := t.TempDir()
+	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), sessionSettings{
 		models:        backend.Models{Main: "main", Fast: "fast", Balanced: "balanced"},
 		thinkingLevel: agent.ThinkingHigh,
-		cwd:           t.TempDir(),
+		cwd:           cwd,
 	})
 	defer session.finish(nil)
 
 	launch := func() agent.Request {
-		result, err := executeTool(tools, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect"}]}`)
+		result, err := caller.call(session, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect"}]}`)
 		if err != nil || result.IsError {
 			t.Fatalf("launch result = %+v, error = %v", result, err)
 		}
@@ -241,17 +228,12 @@ func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 }
 
 func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
-	var tools []agent.Tool
-	backendRuntime := testBackendRuntime(providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-		return agent.Response{}, nil
-	}))
+	caller := &toolCaller{}
 	cwd := t.TempDir()
-	launcher := testLauncher(t, cwd, backendRuntime)
-	launcher.env.newToolset = captureTools(&tools, buildToolset)
-	session := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, cwd: cwd})
+	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), sessionSettings{models: backend.Models{Main: "model"}, cwd: cwd})
 	defer session.finish(nil)
 
-	result, err := executeTool(tools, "update_goal", `{"status":"complete"}`)
+	result, err := caller.call(session, "update_goal", `{"status":"complete"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +244,7 @@ func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err = executeTool(tools, "update_goal", `{"status":"complete"}`)
+	result, err = caller.call(session, "update_goal", `{"status":"complete"}`)
 	if err != nil {
 		t.Fatal(err)
 	}

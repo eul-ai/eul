@@ -34,7 +34,7 @@ func runLogin(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "login failed: %v", err)
 		return exitFailure
 	}
-	home, err := resolveEULHome(runtime)
+	home, err := resolveEULHome()
 	if err != nil {
 		writeCLIError(runtime.stderr, "login failed: %v", err)
 		return exitFailure
@@ -97,7 +97,7 @@ func runLogout(arguments []string, runtime appRuntime) int {
 		writeCLIError(runtime.stderr, "logout failed: %v", err)
 		return exitFailure
 	}
-	home, err := resolveEULHome(runtime)
+	home, err := resolveEULHome()
 	if err != nil {
 		writeCLIError(runtime.stderr, "logout failed: %v", err)
 		return exitFailure

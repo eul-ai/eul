@@ -22,7 +22,6 @@ func modelForProfile(models backend.Models, profile subagent.Profile) string {
 
 type childRunner struct {
 	provider         agent.Provider
-	newToolset       toolsetFactory
 	authorizeNetwork tool.NetworkAuthorizer
 	config           resolvedConfig
 	models           map[subagent.Profile]backend.ModelMetadata
@@ -30,7 +29,7 @@ type childRunner struct {
 }
 
 func (runner childRunner) run(ctx context.Context, task subagent.Task, progress func(agent.Usage)) (string, error) {
-	tools := runner.newToolset(runner.config.cwd, subagentToolAccess, runner.authorizeNetwork)
+	tools := buildToolset(runner.config.cwd, subagentToolAccess, runner.authorizeNetwork)
 	_, fastMode := runner.settings.Snapshot()
 	fastMode = fastMode && runner.models[task.ModelProfile].FastMode
 	child := agent.New(runner.provider, tools, childEngineOptions(runner.config, task.ModelProfile, task.ThinkingLevel, fastMode))

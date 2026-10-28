@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
@@ -11,10 +12,6 @@ import (
 	"github.com/eul-ai/eul/terminal"
 	"github.com/eul-ai/eul/tool"
 )
-
-type sessionRunner interface {
-	Run(context.Context, terminal.Options) (terminal.RunOutcome, error)
-}
 
 type agentSession struct {
 	config          sessionSettings
@@ -27,20 +24,14 @@ type agentSession struct {
 
 func newSessionTools(
 	config resolvedConfig,
-	env environment,
 	provider agent.Provider,
 	metadata map[subagent.Profile]backend.ModelMetadata,
 	settings *agent.Settings,
 	authorizeNetwork tool.NetworkAuthorizer,
 	goal *agent.Goal,
 ) ([]agent.Tool, *subagent.Manager) {
-	newToolset := env.newToolset
-	if newToolset == nil {
-		newToolset = buildToolset
-	}
 	runner := childRunner{
 		provider:         provider,
-		newToolset:       newToolset,
 		authorizeNetwork: authorizeNetwork,
 		config:           config,
 		models:           metadata,
@@ -51,7 +42,7 @@ func newSessionTools(
 	for profile, model := range metadata {
 		thinkingLevels[profile] = model.ThinkingLevels
 	}
-	tools := newToolset(
+	tools := buildToolset(
 		config.cwd,
 		fullToolAccess,
 		authorizeNetwork,
@@ -77,9 +68,9 @@ func resolveModelMetadata(runtime *backend.Runtime, models backend.Models) (map[
 
 func newAgentSessionComponents(
 	config resolvedConfig,
-	env environment,
 	runtime *backend.Runtime,
 	noSandbox bool,
+	interrupts <-chan os.Signal,
 ) (*agentSession, terminalOptionsBuilder, error) {
 	metadata, err := resolveModelMetadata(runtime, config.models)
 	if err != nil {
@@ -94,7 +85,7 @@ func newAgentSessionComponents(
 	settings := agent.NewSettings(main.ClampThinkingLevel(config.thinkingLevel), config.fastMode)
 
 	goal := &agent.Goal{}
-	tools, subagents := newSessionTools(config, env, runtime.Provider, metadata, settings, authorizeNetwork, goal)
+	tools, subagents := newSessionTools(config, runtime.Provider, metadata, settings, authorizeNetwork, goal)
 	options := engineOptions(config, config.models.Main, settings)
 	options.Checkpointing = true
 	options.Inbox = tool.NewSubagentInbox(subagents)
@@ -108,7 +99,7 @@ func newAgentSessionComponents(
 	}
 	terminalOptions := terminalOptionsBuilder{
 		config:             config,
-		runtime:            env,
+		interrupts:         interrupts,
 		metadata:           main,
 		warnings:           warnings,
 		loadUsage:          runtime.Usage,
@@ -127,8 +118,8 @@ func (session *agentSession) settings() sessionSettings {
 	return settings
 }
 
-func (session *agentSession) run(ctx context.Context, runner sessionRunner) (terminal.RunOutcome, error) {
-	outcome, runErr := runner.Run(ctx, session.terminalOptions)
+func (session *agentSession) run(ctx context.Context, run func(context.Context, terminal.Options) (terminal.RunOutcome, error)) (terminal.RunOutcome, error) {
+	outcome, runErr := run(ctx, session.terminalOptions)
 	return outcome, session.finish(runErr)
 }
 

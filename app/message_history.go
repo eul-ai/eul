@@ -19,7 +19,6 @@ const maxMessageHistoryEntryBytes = 2*1024*1024 + 1024
 
 type messageHistoryStore struct {
 	path string
-	now  func() time.Time
 }
 
 type messageHistoryEntry struct {
@@ -29,7 +28,7 @@ type messageHistoryEntry struct {
 }
 
 func newMessageHistoryStore(home string) *messageHistoryStore {
-	return &messageHistoryStore{path: filepath.Join(home, "history.jsonl"), now: time.Now}
+	return &messageHistoryStore{path: filepath.Join(home, "history.jsonl")}
 }
 
 func (store *messageHistoryStore) Load(excludedSessionID string) (entries []string, err error) {
@@ -66,7 +65,7 @@ func (store *messageHistoryStore) Load(excludedSessionID string) (entries []stri
 }
 
 func (store *messageHistoryStore) Append(sessionID, text string) (err error) {
-	entry := messageHistoryEntry{SessionID: sessionID, Timestamp: store.now().Unix(), Text: text}
+	entry := messageHistoryEntry{SessionID: sessionID, Timestamp: time.Now().Unix(), Text: text}
 	if err := entry.validate(); err != nil {
 		return err
 	}

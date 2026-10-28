@@ -25,23 +25,11 @@ type Options struct {
 }
 
 type Dependencies struct {
-	Input       io.Reader
-	Output      io.Writer
-	Home        string
-	Getwd       func() (string, error)
-	UserHomeDir func() (string, error)
-	Interrupts  <-chan os.Signal
-	Backends    backend.Registry
-}
-
-type environment struct {
-	stdin       io.Reader
-	stdout      io.Writer
-	getwd       func() (string, error)
-	userHomeDir func() (string, error)
-	interrupts  <-chan os.Signal
-	backends    backend.Registry
-	newToolset  toolsetFactory
+	Input      io.Reader
+	Output     io.Writer
+	Home       string
+	Interrupts <-chan os.Signal
+	Backends   backend.Registry
 }
 
 type sessionSettings struct {
@@ -59,14 +47,14 @@ type resolvedConfig struct {
 	warnings            []string
 }
 
-func resolveConfig(settings sessionSettings, selected backend.Backend, env environment) (resolvedConfig, error) {
+func resolveConfig(settings sessionSettings, selected backend.Backend) (resolvedConfig, error) {
 	settings.provider = selected.ID
 	settings.models = settings.models.WithDefaults(selected.Models)
 	if settings.models.Main == "" {
 		return resolvedConfig{}, errors.New("main model is required; use --model")
 	}
 
-	cwd, err := resolveCWD(settings.cwd, env.getwd)
+	cwd, err := resolveCWD(settings.cwd)
 	if err != nil {
 		return resolvedConfig{}, err
 	}
@@ -76,7 +64,7 @@ func resolveConfig(settings sessionSettings, selected backend.Backend, env envir
 		return resolvedConfig{}, err
 	}
 	skillDirectories := []string{filepath.Join(cwd, ".agents", "skills")}
-	if home := resolveUserHome(env.userHomeDir); home != "" {
+	if home := resolveUserHome(); home != "" {
 		skillDirectories = append(skillDirectories, filepath.Join(home, ".agents", "skills"))
 	}
 	skills, warnings := skill.Load(skillDirectories...)
@@ -89,32 +77,20 @@ func resolveConfig(settings sessionSettings, selected backend.Backend, env envir
 	}, nil
 }
 
-func resolveUserHome(userHomeDir func() (string, error)) string {
-	if userHomeDir == nil {
-		userHomeDir = os.UserHomeDir
-	}
-	home, err := userHomeDir()
+func resolveUserHome() string {
+	home, err := os.UserHomeDir()
 	if err != nil || !filepath.IsAbs(home) {
 		return ""
 	}
 	return filepath.Clean(home)
 }
 
-func resolveCWD(value string, getwd func() (string, error)) (string, error) {
+func resolveCWD(value string) (string, error) {
 	candidate := value
-	if candidate == "" || !filepath.IsAbs(candidate) {
-		if getwd == nil {
-			getwd = os.Getwd
-		}
-		base, err := getwd()
+	if !filepath.IsAbs(candidate) {
+		base, err := os.Getwd()
 		if err != nil {
 			return "", fmt.Errorf("get working directory: %w", err)
-		}
-		if !filepath.IsAbs(base) {
-			base, err = filepath.Abs(base)
-			if err != nil {
-				return "", fmt.Errorf("resolve working directory: %w", err)
-			}
 		}
 		candidate = filepath.Join(base, candidate)
 	}

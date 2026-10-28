@@ -132,8 +132,6 @@ type Services struct {
 }
 
 type Options struct {
-	Input          io.Reader
-	Output         io.Writer
 	Config         Config
 	Operations     Operations
 	Controls       Controls

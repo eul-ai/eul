@@ -6,7 +6,6 @@ import (
 	"slices"
 	"sync"
 	"testing"
-	"time"
 )
 
 func TestMessageHistoryStoreLoadsOtherSessions(t *testing.T) {
@@ -16,7 +15,6 @@ func TestMessageHistoryStoreLoadsOtherSessions(t *testing.T) {
 	)
 
 	store := newMessageHistoryStore(t.TempDir())
-	store.now = func() time.Time { return time.Unix(123, 0) }
 	for _, entry := range []struct {
 		sessionID string
 		text      string
@@ -49,7 +47,6 @@ func TestMessageHistoryStoreLoadsOtherSessions(t *testing.T) {
 
 func TestMessageHistoryStoreSerializesConcurrentAppends(t *testing.T) {
 	store := newMessageHistoryStore(t.TempDir())
-	store.now = func() time.Time { return time.Unix(123, 0) }
 
 	const count = 16
 	var wait sync.WaitGroup

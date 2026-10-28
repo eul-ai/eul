@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"os"
 	"slices"
 	"strings"
 
@@ -14,7 +15,7 @@ import (
 
 type terminalOptionsBuilder struct {
 	config             resolvedConfig
-	runtime            environment
+	interrupts         <-chan os.Signal
 	metadata           backend.ModelMetadata
 	warnings           []string
 	loadUsage          func(context.Context) (backend.AccountUsage, error)
@@ -52,8 +53,6 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 	thinkingLevel, _ := source.settings.Snapshot()
 	callbacks := &terminalCallbacks{engine: source.engine, checkpoints: source.checkpoints, skills: source.config.skills}
 	return terminal.Options{
-		Input:      source.runtime.stdin,
-		Output:     source.runtime.stdout,
 		Operations: callbacks.operations(),
 		Controls: terminal.Controls{
 			Steer:            source.engine.Steer,
@@ -86,7 +85,7 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 			InitialPrompt:      source.initialPrompt,
 		},
 		Events: terminal.Events{
-			Interrupts:         source.runtime.interrupts,
+			Interrupts:         source.interrupts,
 			Subagents:          source.subagents,
 			PermissionRequests: source.permissionRequests,
 		},

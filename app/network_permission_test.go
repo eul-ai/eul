@@ -15,26 +15,27 @@ import (
 	"github.com/eul-ai/eul/terminal"
 )
 
+type toolOutcome struct {
+	result agent.Input
+	err    error
+}
+
+func callToolAsync(caller *toolCaller, session *agentSession, name, arguments string) <-chan toolOutcome {
+	done := make(chan toolOutcome, 1)
+	go func() {
+		result, err := caller.call(session, name, arguments)
+		done <- toolOutcome{result: result, err: err}
+	}()
+	return done
+}
+
 func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
-	backendRuntime := testBackendRuntime(providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-		return agent.Response{}, nil
-	}))
-	var tools []agent.Tool
-	launcher := testLauncher(t, t.TempDir(), backendRuntime)
-	launcher.env.newToolset = captureTools(&tools, buildToolset)
-	session := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, cwd: t.TempDir()})
+	caller := &toolCaller{}
+	cwd := t.TempDir()
+	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), sessionSettings{models: backend.Models{Main: "model"}, cwd: cwd})
 	defer session.finish(nil)
 
-	type outcome struct {
-		result agent.ToolResult
-		err    error
-	}
-	done := make(chan outcome, 1)
-	go func() {
-		result, err := executeTool(tools, "bash", `{"command":"printf approved","timeout":null,"network":true}`)
-		done <- outcome{result: result, err: err}
-	}()
-
+	done := callToolAsync(caller, session, "bash", `{"command":"printf approved","timeout":null,"network":true}`)
 	select {
 	case request := <-session.terminalOptions.Events.PermissionRequests:
 		if request.Subject != "bash" || request.Detail != "printf approved" {
@@ -46,7 +47,7 @@ func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
 	}
 	select {
 	case completed := <-done:
-		if completed.err != nil || completed.result.IsError || !strings.Contains(completed.result.Output, "approved") {
+		if completed.err != nil || completed.result.IsError || !strings.Contains(completed.result.PlainText(), "approved") {
 			t.Fatalf("result = %+v, error = %v", completed.result, completed.err)
 		}
 	case <-time.After(time.Second):
@@ -55,14 +56,12 @@ func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
 }
 
 func TestAgentSessionRoutesSubagentNetworkApprovalToTerminal(t *testing.T) {
-	backendRuntime := testBackendRuntime(networkBashChildProvider("child approved", nil))
-	var tools []agent.Tool
-	launcher := testLauncher(t, t.TempDir(), backendRuntime)
-	launcher.env.newToolset = captureTools(&tools, buildToolset)
-	session := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, cwd: t.TempDir()})
+	caller := &toolCaller{child: networkBashChildProvider("child approved", nil)}
+	cwd := t.TempDir()
+	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), sessionSettings{models: backend.Models{Main: "model"}, cwd: cwd})
 	defer session.finish(nil)
 
-	result, err := executeTool(tools, "launch_subagents", `{"tasks":[{"description":"inspect network","prompt":"inspect network"}]}`)
+	result, err := caller.call(session, "launch_subagents", `{"tasks":[{"description":"inspect network","prompt":"inspect network"}]}`)
 	if err != nil || result.IsError {
 		t.Fatalf("launch result = %+v, error = %v", result, err)
 	}
@@ -94,23 +93,12 @@ func TestAgentSessionRoutesSubagentNetworkApprovalToTerminal(t *testing.T) {
 
 func TestAgentSessionSharesNetworkSessionApprovalWithSubagents(t *testing.T) {
 	childCompleted := make(chan struct{})
-	backendRuntime := testBackendRuntime(networkBashChildProvider("child approved", childCompleted))
-	var tools []agent.Tool
-	launcher := testLauncher(t, t.TempDir(), backendRuntime)
-	launcher.env.newToolset = captureTools(&tools, buildToolset)
-	session := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, cwd: t.TempDir()})
+	caller := &toolCaller{child: networkBashChildProvider("child approved", childCompleted)}
+	cwd := t.TempDir()
+	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), sessionSettings{models: backend.Models{Main: "model"}, cwd: cwd})
 	defer session.finish(nil)
 
-	type outcome struct {
-		result agent.ToolResult
-		err    error
-	}
-	parentDone := make(chan outcome, 1)
-	go func() {
-		result, err := executeTool(tools, "bash", `{"command":"printf parent","timeout":null,"network":true}`)
-		parentDone <- outcome{result: result, err: err}
-	}()
-
+	parentDone := callToolAsync(caller, session, "bash", `{"command":"printf parent","timeout":null,"network":true}`)
 	select {
 	case request := <-session.terminalOptions.Events.PermissionRequests:
 		request.Response <- terminal.PermissionAllowSession
@@ -126,7 +114,7 @@ func TestAgentSessionSharesNetworkSessionApprovalWithSubagents(t *testing.T) {
 		t.Fatal("parent Bash did not finish")
 	}
 
-	result, err := executeTool(tools, "launch_subagents", `{"tasks":[{"description":"inspect network","prompt":"inspect network"}]}`)
+	result, err := caller.call(session, "launch_subagents", `{"tasks":[{"description":"inspect network","prompt":"inspect network"}]}`)
 	if err != nil || result.IsError {
 		t.Fatalf("launch result = %+v, error = %v", result, err)
 	}

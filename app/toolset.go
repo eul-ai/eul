@@ -12,8 +12,6 @@ const (
 	subagentToolAccess
 )
 
-type toolsetFactory func(string, toolAccess, tool.NetworkAuthorizer, ...agent.Tool) []agent.Tool
-
 func buildToolset(
 	cwd string,
 	access toolAccess,

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,7 +12,6 @@ import (
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
-	"github.com/eul-ai/eul/tool"
 )
 
 type providerFunction func(context.Context, agent.Request, agent.TextSink) (agent.Response, error)
@@ -63,24 +62,12 @@ func testBackend(id string, runtime *backend.Runtime) backend.Backend {
 	}
 }
 
-type discardToolUpdates struct{}
-
-func (discardToolUpdates) Update(agent.ToolPresentation) error { return nil }
-
-func testEnvironment(t *testing.T, cwd string, backends ...backend.Backend) environment {
-	t.Helper()
-	userHome := t.TempDir()
-	return environment{
-		getwd:       func() (string, error) { return cwd, nil },
-		userHomeDir: func() (string, error) { return userHome, nil },
-		backends:    backends,
-		newToolset:  buildToolset,
-	}
-}
-
+// testLauncher runs in cwd with an empty user home.
 func testLauncher(t *testing.T, cwd string, runtime *backend.Runtime) *launcher {
 	t.Helper()
-	return newLauncher(t.TempDir(), testEnvironment(t, cwd, testBackend("test", runtime)), false)
+	t.Chdir(cwd)
+	t.Setenv("HOME", t.TempDir())
+	return newLauncher(t.TempDir(), backend.Registry{testBackend("test", runtime)}, false, nil)
 }
 
 func startTestSession(t *testing.T, launcher *launcher, settings sessionSettings) *agentSession {
@@ -137,25 +124,40 @@ func waitForSubagentCompletions(t *testing.T, manager *subagent.Manager, count i
 	t.Fatalf("pending completions = %d, want %d", len(manager.Snapshot().PendingCompletions), count)
 }
 
-func executeTool(tools []agent.Tool, name, arguments string) (agent.ToolResult, error) {
-	for _, current := range tools {
-		if current.Definition().Name == name {
-			return current.Execute(context.Background(), json.RawMessage(arguments), discardToolUpdates{})
-		}
-	}
-	return agent.ToolResult{}, fmt.Errorf("unknown tool %q", name)
+// toolCaller is a provider for driving session tools. A main agent prompt of the
+// form "call <tool> <arguments>" calls that tool, and the turn ends after its
+// result. Subagent requests go to child.
+type toolCaller struct {
+	child   providerFunction
+	request agent.Request
+	result  agent.Input
 }
 
-func captureTools(captured *[]agent.Tool, newToolset toolsetFactory) toolsetFactory {
-	return func(cwd string, access toolAccess, authorizeNetwork tool.NetworkAuthorizer, additional ...agent.Tool) []agent.Tool {
-		tools := newToolset(cwd, access, authorizeNetwork, additional...)
-		if access == fullToolAccess {
-			*captured = tools
-		}
-		return tools
+func (caller *toolCaller) generate(ctx context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
+	if strings.Contains(request.Instructions, childAgentInstructions) {
+		return caller.child(ctx, request, sink)
 	}
+
+	caller.request = request
+	for _, input := range request.Inputs {
+		if input.Kind == agent.InputToolResult {
+			caller.result = input
+			return agent.Response{Text: "done"}, nil
+		}
+		call, ok := strings.CutPrefix(input.PlainText(), "call ")
+		if input.Kind == agent.InputUser && ok {
+			name, arguments, _ := strings.Cut(call, " ")
+			return agent.Response{ToolCalls: []agent.ToolCall{{ID: "call", Name: name, Arguments: json.RawMessage(arguments)}}}, nil
+		}
+	}
+	return agent.Response{Text: "done"}, nil
 }
 
-func additionalTools(_ string, _ toolAccess, _ tool.NetworkAuthorizer, additional ...agent.Tool) []agent.Tool {
-	return additional
+func (caller *toolCaller) runtime() *backend.Runtime {
+	return testBackendRuntime(providerFunction(caller.generate))
+}
+
+func (caller *toolCaller) call(session *agentSession, name, arguments string) (agent.Input, error) {
+	_, err := session.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "call " + name + " " + arguments}}, func(agent.Event) error { return nil })
+	return caller.result, err
 }

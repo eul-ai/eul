@@ -37,7 +37,7 @@ func TestRunTUIParentCancellationWinsOverEOF(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var output bytes.Buffer
-	_, err := runTest(ctx, optionsForEngine(&fakeEngine{}, Options{Input: strings.NewReader(""), Output: &output}))
+	_, err := runTest(ctx, strings.NewReader(""), &output, optionsForEngine(&fakeEngine{}, Options{}))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("runTest() error = %v", err)
 	}
@@ -60,7 +60,7 @@ func TestRunTUIParentCancellationWinsAfterActiveEOF(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := runTest(ctx, optionsForEngine(engine, Options{Input: reader, Output: &output}))
+		_, err := runTest(ctx, reader, &output, optionsForEngine(engine, Options{}))
 		done <- err
 	}()
 	if _, err := io.WriteString(writer, "wait\r"); err != nil {
@@ -96,8 +96,8 @@ func TestRunTUIRendersSubagentUpdatesWhileIdle(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := runTest(context.Background(), optionsForEngine(&fakeEngine{}, Options{
-			Input: reader, Output: output, Events: Events{Subagents: manager},
+		_, err := runTest(context.Background(), reader, output, optionsForEngine(&fakeEngine{}, Options{
+			Events: Events{Subagents: manager},
 		}))
 		done <- err
 	}()
@@ -129,8 +129,6 @@ func TestRunTUILoadsProviderUsageAtStartupAndAfterTurn(t *testing.T) {
 	calls := make(chan struct{}, 3)
 	output := newSignalingWriter("usage 25%")
 	options := Options{
-		Input:  reader,
-		Output: output,
 		Services: Services{LoadUsage: func(context.Context) (ProviderUsage, error) {
 			calls <- struct{}{}
 			return ProviderUsage{Windows: []UsageWindow{{Duration: 5 * time.Hour, UsedPercent: 25}}}, nil
@@ -139,7 +137,7 @@ func TestRunTUILoadsProviderUsageAtStartupAndAfterTurn(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := runTest(context.Background(), optionsForEngine(&fakeEngine{}, options))
+		_, err := runTest(context.Background(), reader, output, optionsForEngine(&fakeEngine{}, options))
 		done <- err
 	}()
 
@@ -190,9 +188,7 @@ func TestRunTUIWaitsForProviderUsageCleanup(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := runTest(context.Background(), optionsForEngine(&fakeEngine{}, Options{
-			Input:  reader,
-			Output: io.Discard,
+		_, err := runTest(context.Background(), reader, io.Discard, optionsForEngine(&fakeEngine{}, Options{
 			Services: Services{LoadUsage: func(ctx context.Context) (ProviderUsage, error) {
 				close(started)
 				<-ctx.Done()
@@ -236,9 +232,7 @@ func TestRunTUIWaitsForProviderUsageCleanup(t *testing.T) {
 func TestRunTUIReturnsInputReadFailure(t *testing.T) {
 	readErr := errors.New("read failed")
 	var output bytes.Buffer
-	_, err := runTest(context.Background(), optionsForEngine(&fakeEngine{}, Options{
-		Input: terminalErrorReader{err: readErr}, Output: &output,
-	}))
+	_, err := runTest(context.Background(), terminalErrorReader{err: readErr}, &output, optionsForEngine(&fakeEngine{}, Options{}))
 	if !errors.Is(err, readErr) {
 		t.Fatalf("runTest() error = %v", err)
 	}
@@ -347,10 +341,10 @@ func TestHandleKeyCancelsIncompleteToolTurnWithoutResettingConversation(t *testi
 	}
 }
 
-func runTest(ctx context.Context, options Options) (RunOutcome, error) {
-	runner := &Runner{output: options.Output, outputFD: -1, keys: make(chan keys.Event, 64), stopped: make(chan struct{})}
+func runTest(ctx context.Context, input io.Reader, output io.Writer, options Options) (RunOutcome, error) {
+	runner := &Runner{output: output, outputFD: -1, keys: make(chan keys.Event, 64), stopped: make(chan struct{})}
 	defer close(runner.stopped)
-	go keys.Read(options.Input, runner.keys, runner.stopped)
+	go keys.Read(input, runner.keys, runner.stopped)
 	return runner.run(ctx, options, 80, 24)
 }
 
@@ -498,9 +492,9 @@ func TestRunTUISubmitsInitialPrompt(t *testing.T) {
 	}}
 
 	var output bytes.Buffer
-	options := optionsForEngine(engine, Options{Input: strings.NewReader(""), Output: &output})
+	options := optionsForEngine(engine, Options{})
 	options.Config.InitialPrompt = "investigate the store"
-	if _, err := runTest(context.Background(), options); err != nil {
+	if _, err := runTest(context.Background(), strings.NewReader(""), &output, options); err != nil {
 		t.Fatal(err)
 	}
 

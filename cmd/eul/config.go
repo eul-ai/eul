@@ -98,19 +98,15 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (app.Options, e
 	}, nil
 }
 
-func resolveEULHome(runtime appRuntime) (string, error) {
-	if configured := runtime.getenv("EUL_HOME"); configured != "" {
+func resolveEULHome() (string, error) {
+	if configured := os.Getenv("EUL_HOME"); configured != "" {
 		if !filepath.IsAbs(configured) {
 			return "", errors.New("EUL_HOME must be an absolute path")
 		}
 		return filepath.Clean(configured), nil
 	}
 
-	userConfigDir := runtime.userConfigDir
-	if userConfigDir == nil {
-		userConfigDir = os.UserConfigDir
-	}
-	config, err := userConfigDir()
+	config, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve user config directory: %w", err)
 	}

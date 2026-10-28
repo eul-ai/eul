@@ -37,7 +37,6 @@ var errSessionInUse = errors.New("session is already in use")
 
 type sessionStore struct {
 	root string
-	now  func() time.Time
 }
 
 type sessionHandle struct {
@@ -54,7 +53,7 @@ type sessionHandle struct {
 }
 
 func newSessionStore(home string) *sessionStore {
-	return &sessionStore{root: filepath.Join(home, "sessions"), now: time.Now}
+	return &sessionStore{root: filepath.Join(home, "sessions")}
 }
 
 func (store *sessionStore) Create(
@@ -93,7 +92,7 @@ func (store *sessionStore) Create(
 		return nil, err
 	}
 
-	now := store.now().UTC()
+	now := time.Now().UTC()
 	record := sessionRecord{
 		sessionMetadata: sessionMetadata{
 			Version:          sessionStateVersion,
@@ -330,7 +329,7 @@ func (handle *sessionHandle) Save(
 	}
 
 	next := handle.record
-	next.UpdatedAt = handle.store.now().UTC()
+	next.UpdatedAt = time.Now().UTC()
 	next.Status = sessionIdle
 	if active {
 		next.Status = sessionActive

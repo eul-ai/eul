@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,7 +72,7 @@ func TestRunConfigurationAndUsageErrors(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			runtime := testRuntime(cwd, &stdout, &stderr, nil)
+			runtime := testRuntime(t, cwd, &stdout, &stderr)
 			if test.missingAuth {
 				runtime.backends[0].Open = func(context.Context, string) (*backend.Runtime, error) {
 					return nil, errors.New("not logged in; run 'eul login'")
@@ -97,7 +96,7 @@ func TestRunRejectsInvalidWorkingDirectories(t *testing.T) {
 
 	for _, path := range []string{"missing", "file"} {
 		var stdout, stderr bytes.Buffer
-		runtime := testRuntime(cwd, &stdout, &stderr, nil)
+		runtime := testRuntime(t, cwd, &stdout, &stderr)
 		code := run([]string{"--cwd", path}, runtime)
 		if code != exitFailure {
 			t.Fatalf("path=%q code=%d stderr=%q", path, code, stderr.String())
@@ -105,8 +104,12 @@ func TestRunRejectsInvalidWorkingDirectories(t *testing.T) {
 	}
 }
 
-func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[string]string) appRuntime {
-	values := maps.Clone(environment)
+// testRuntime runs in cwd with Eul and user homes in temporary directories.
+func testRuntime(t *testing.T, cwd string, stdout, stderr *bytes.Buffer) appRuntime {
+	t.Helper()
+	t.Chdir(cwd)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("EUL_HOME", t.TempDir())
 	backendRuntime := &backend.Runtime{Catalog: map[string]backend.ModelMetadata{
 		"gpt-5.6-sol":   {ThinkingLevels: agent.ThinkingLevels()},
 		"gpt-5.6-luna":  {ThinkingLevels: agent.ThinkingLevels()},
@@ -124,15 +127,11 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[strin
 	}
 
 	return appRuntime{
-		stdin:         strings.NewReader("/exit\n"),
-		stdout:        stdout,
-		stderr:        stderr,
-		getenv:        func(key string) string { return values[key] },
-		getwd:         func() (string, error) { return cwd, nil },
-		userHomeDir:   func() (string, error) { return filepath.Join(cwd, ".test-home"), nil },
-		userConfigDir: func() (string, error) { return filepath.Join(cwd, ".test-config"), nil },
-		backends:      backend.Registry{selected},
-		openURL:       func(string) error { return nil },
+		stdin:    strings.NewReader("/exit\n"),
+		stdout:   stdout,
+		stderr:   stderr,
+		backends: backend.Registry{selected},
+		openURL:  func(string) error { return nil },
 	}
 }
 

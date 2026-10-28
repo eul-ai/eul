@@ -1,7 +1,6 @@
 package app
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,10 +11,10 @@ import (
 )
 
 func TestResolveConfigLoadsDefaultAndExplicitModels(t *testing.T) {
-	env := testEnvironment(t, t.TempDir())
+	t.Chdir(t.TempDir())
 	selected := testBackend("test", nil)
 
-	defaults, err := resolveConfig(sessionSettings{}, selected, env)
+	defaults, err := resolveConfig(sessionSettings{}, selected)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +24,7 @@ func TestResolveConfigLoadsDefaultAndExplicitModels(t *testing.T) {
 
 	explicit, err := resolveConfig(sessionSettings{
 		models: backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"},
-	}, selected, env)
+	}, selected)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +32,7 @@ func TestResolveConfigLoadsDefaultAndExplicitModels(t *testing.T) {
 		t.Fatalf("config = %+v", explicit)
 	}
 
-	fastMode, err := resolveConfig(sessionSettings{fastMode: true}, selected, env)
+	fastMode, err := resolveConfig(sessionSettings{fastMode: true}, selected)
 	if err != nil || !fastMode.fastMode {
 		t.Fatalf("fast mode config = %+v, error = %v", fastMode, err)
 	}
@@ -41,7 +40,7 @@ func TestResolveConfigLoadsDefaultAndExplicitModels(t *testing.T) {
 
 func TestResolveConfigRequiresMainModel(t *testing.T) {
 	selected := backend.Backend{ID: "test"}
-	if _, err := resolveConfig(sessionSettings{models: backend.Models{Fast: "fast-model"}}, selected, testEnvironment(t, t.TempDir())); err == nil {
+	if _, err := resolveConfig(sessionSettings{models: backend.Models{Fast: "fast-model"}}, selected); err == nil {
 		t.Fatal("missing main model was accepted")
 	}
 }
@@ -65,9 +64,9 @@ func TestResolveConfigLoadsOnlyGenericSkillLocations(t *testing.T) {
 	writeConfigTestSkill(t, filepath.Join(root, ".agents", "skills", "parent", "SKILL.md"), "parent", "parent")
 	writeConfigTestSkill(t, filepath.Join(cwd, ".pi", "skills", "pi", "SKILL.md"), "pi", "pi")
 
-	env := testEnvironment(t, root)
-	env.userHomeDir = func() (string, error) { return home, nil }
-	config, err := resolveConfig(sessionSettings{cwd: "project"}, testBackend("test", nil), env)
+	t.Chdir(root)
+	t.Setenv("HOME", home)
+	config, err := resolveConfig(sessionSettings{cwd: "project"}, testBackend("test", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,10 +82,10 @@ func TestResolveConfigSkipsGlobalSkillsWhenHomeIsUnavailable(t *testing.T) {
 	cwd := t.TempDir()
 	writeConfigTestSkill(t, filepath.Join(cwd, ".agents", "skills", "review", "SKILL.md"), "review", "project")
 
-	env := testEnvironment(t, cwd)
-	env.userHomeDir = func() (string, error) { return "", errors.New("home unavailable") }
+	t.Chdir(cwd)
+	t.Setenv("HOME", "")
 
-	config, err := resolveConfig(sessionSettings{}, testBackend("test", nil), env)
+	config, err := resolveConfig(sessionSettings{}, testBackend("test", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +99,7 @@ func TestResolveCWDDefaultsGetwd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := resolveCWD("", nil)
+	got, err := resolveCWD("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,11 +117,12 @@ func TestResolveConfigLoadsProjectAndResolvesWorkingDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cwd, "AGENTS.md"), []byte("Project rules."), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	t.Chdir(root)
 	config, err := resolveConfig(sessionSettings{
 		models:        backend.Models{Main: "gpt-5.6-sol"},
 		thinkingLevel: agent.ThinkingMax,
 		cwd:           "project",
-	}, testBackend("test", nil), testEnvironment(t, root))
+	}, testBackend("test", nil))
 	if err != nil {
 		t.Fatal(err)
 	}

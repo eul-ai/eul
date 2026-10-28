@@ -3,9 +3,7 @@ package app
 import (
 	"context"
 	"errors"
-	"io"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
@@ -26,19 +24,6 @@ func (runner *scriptedSessionRunner) Run(ctx context.Context, options terminal.O
 		return terminal.RunOutcome{}, errors.New("unexpected session run")
 	}
 	return runner.steps[index](ctx, options)
-}
-
-type runFailureRunner struct {
-	runErr   error
-	closeErr error
-}
-
-func (runner *runFailureRunner) Run(context.Context, terminal.Options) (terminal.RunOutcome, error) {
-	return terminal.RunOutcome{}, runner.runErr
-}
-
-func (runner *runFailureRunner) Close() error {
-	return runner.closeErr
 }
 
 func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
@@ -89,7 +74,7 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 		},
 	}}
 
-	if err := runSessions(ctx, runner, initialSession, launcher); err != nil {
+	if err := runSessions(ctx, runner.Run, initialSession, launcher); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.options) != 2 || opened != 1 {
@@ -152,7 +137,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 		},
 	}}
 
-	if err := runSessions(ctx, runner, initialSession, launcher); err != nil {
+	if err := runSessions(ctx, runner.Run, initialSession, launcher); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.options) != 2 || opened != 1 {
@@ -185,7 +170,7 @@ func TestRunSessionsExitClosesSession(t *testing.T) {
 		},
 	}}
 
-	if err := runSessions(ctx, runner, initialSession, launcher); err != nil {
+	if err := runSessions(ctx, runner.Run, initialSession, launcher); err != nil {
 		t.Fatal(err)
 	}
 	if !initialSession.persistence.handle.closed {
@@ -222,7 +207,7 @@ func TestRunSessionsKeepsNoSandboxAcrossResumeAndNewSession(t *testing.T) {
 			return terminal.RunOutcome{Action: terminal.RunExit}, nil
 		},
 	}}
-	if err := runSessions(ctx, runner, initialSession, launcher); err != nil {
+	if err := runSessions(ctx, runner.Run, initialSession, launcher); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.options) != 3 {
@@ -247,26 +232,16 @@ func TestLaunchResumeKeepsPrompt(t *testing.T) {
 	}
 }
 
-func TestRunPreservesSessionAndRunnerCleanupFailures(t *testing.T) {
+func TestRunSessionsFinishesSessionAfterRunFailure(t *testing.T) {
 	runFailure := errors.New("run failed")
-	runnerCleanupFailure := errors.New("runner cleanup failed")
-	runner := &runFailureRunner{runErr: runFailure, closeErr: runnerCleanupFailure}
-
 	cwd := t.TempDir()
-	home := t.TempDir()
-	backends := backend.Registry{testBackend("test", testBackendRuntime(emptyProvider()))}
-	err := run(context.Background(), Options{Provider: "test", WorkingDirectory: cwd}, Dependencies{
-		Input:       strings.NewReader(""),
-		Output:      io.Discard,
-		Home:        home,
-		Getwd:       func() (string, error) { return cwd, nil },
-		UserHomeDir: func() (string, error) { return t.TempDir(), nil },
-		Backends:    backends,
-	}, func(io.Reader, io.Writer) (sessionRunner, io.Closer, error) {
-		return runner, runner, nil
-	})
-	if !errors.Is(err, runFailure) || !errors.Is(err, runnerCleanupFailure) {
-		t.Fatalf("run error = %v, want run and runner cleanup failures", err)
+	session := startTestSession(t, testLauncher(t, cwd, testBackendRuntime(emptyProvider())), sessionSettings{cwd: cwd, thinkingLevel: agent.ThinkingHigh})
+
+	err := runSessions(context.Background(), func(context.Context, terminal.Options) (terminal.RunOutcome, error) {
+		return terminal.RunOutcome{}, runFailure
+	}, session, nil)
+	if !errors.Is(err, runFailure) || !session.persistence.handle.closed {
+		t.Fatalf("run error = %v, session closed = %v", err, session.persistence.handle.closed)
 	}
 }
 
@@ -277,7 +252,9 @@ func newLifecycleLauncher(t *testing.T, cwd string, runtime *backend.Runtime, op
 		*opened++
 		return runtime, nil
 	}
-	return newLauncher(t.TempDir(), testEnvironment(t, cwd, selected), false)
+	launcher := testLauncher(t, cwd, runtime)
+	launcher.backends = backend.Registry{selected}
+	return launcher
 }
 
 func createTargetSession(t *testing.T, store *sessionStore, cwd string, terminalCheckpoint terminal.Checkpoint) string {
@@ -300,8 +277,3 @@ func createTargetSession(t *testing.T, store *sessionStore, cwd string, terminal
 	}
 	return target.record.ID
 }
-
-var (
-	_ sessionRunner = (*terminal.Runner)(nil)
-	_ sessionRunner = (*scriptedSessionRunner)(nil)
-)
