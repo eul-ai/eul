@@ -1,4 +1,4 @@
-package app
+package session
 
 import (
 	"fmt"
@@ -8,13 +8,13 @@ import (
 	"testing"
 )
 
-func TestMessageHistoryStoreLoadsOwnSessionLast(t *testing.T) {
+func TestHistoryLoadsOwnSessionLast(t *testing.T) {
 	const (
 		firstSession  = "11111111111111111111111111111111"
 		secondSession = "22222222222222222222222222222222"
 	)
 
-	store := newMessageHistoryStore(t.TempDir())
+	history := NewHistory(t.TempDir())
 	for _, entry := range []struct {
 		sessionID string
 		text      string
@@ -25,12 +25,12 @@ func TestMessageHistoryStoreLoadsOwnSessionLast(t *testing.T) {
 		{sessionID: firstSession, text: "third prompt"},
 		{sessionID: firstSession, text: "/goal ship it"},
 	} {
-		if err := store.Append(entry.sessionID, entry.text); err != nil {
+		if err := history.Append(entry.sessionID, entry.text); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	entries, err := store.Load(firstSession)
+	entries, err := history.Load(firstSession)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestMessageHistoryStoreLoadsOwnSessionLast(t *testing.T) {
 		t.Fatalf("entries = %q", entries)
 	}
 
-	info, err := os.Stat(store.path)
+	info, err := os.Stat(history.path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,14 +47,14 @@ func TestMessageHistoryStoreLoadsOwnSessionLast(t *testing.T) {
 	}
 }
 
-func TestMessageHistoryStoreSkipsUndecodableLines(t *testing.T) {
-	store := newMessageHistoryStore(t.TempDir())
+func TestHistorySkipsUndecodableLines(t *testing.T) {
+	history := NewHistory(t.TempDir())
 	body := "not json\n" + `{"session_id":"other","text":"kept"}` + "\n{\"text\":"
-	if err := os.WriteFile(store.path, []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(history.path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	entries, err := store.Load("session")
+	entries, err := history.Load("session")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,8 +63,8 @@ func TestMessageHistoryStoreSkipsUndecodableLines(t *testing.T) {
 	}
 }
 
-func TestMessageHistoryStoreSerializesConcurrentAppends(t *testing.T) {
-	store := newMessageHistoryStore(t.TempDir())
+func TestHistorySerializesConcurrentAppends(t *testing.T) {
+	history := NewHistory(t.TempDir())
 
 	const count = 16
 	var wait sync.WaitGroup
@@ -74,7 +74,7 @@ func TestMessageHistoryStoreSerializesConcurrentAppends(t *testing.T) {
 		go func() {
 			defer wait.Done()
 			sessionID := fmt.Sprintf("%032x", index+1)
-			errors <- store.Append(sessionID, fmt.Sprintf("prompt %02d", index))
+			errors <- history.Append(sessionID, fmt.Sprintf("prompt %02d", index))
 		}()
 	}
 	wait.Wait()
@@ -85,7 +85,7 @@ func TestMessageHistoryStoreSerializesConcurrentAppends(t *testing.T) {
 		}
 	}
 
-	entries, err := store.Load("")
+	entries, err := history.Load("")
 	if err != nil {
 		t.Fatal(err)
 	}

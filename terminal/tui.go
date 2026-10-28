@@ -11,6 +11,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/filesearch"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/terminal/keys"
 )
 
@@ -25,9 +26,14 @@ const (
 
 type engineMessage struct {
 	event    *agent.Event
-	snapshot chan Checkpoint
+	snapshot chan conversationSnapshot
 	err      error
 	done     bool
+}
+
+type conversationSnapshot struct {
+	transcript []session.Entry
+	draft      session.Draft
 }
 
 type providerUsageMessage struct {
@@ -297,23 +303,23 @@ func (stream tuiEventStream) Emit(event agent.Event) error {
 	}
 }
 
-func (stream tuiEventStream) Snapshot() (Checkpoint, error) {
-	response := make(chan Checkpoint, 1)
+func (stream tuiEventStream) Snapshot() ([]session.Entry, session.Draft, error) {
+	response := make(chan conversationSnapshot, 1)
 	select {
 	case stream.messages <- engineMessage{snapshot: response}:
 	case <-stream.ctx.Done():
-		return Checkpoint{}, stream.ctx.Err()
+		return nil, session.Draft{}, stream.ctx.Err()
 	case <-stream.stopped:
-		return Checkpoint{}, context.Canceled
+		return nil, session.Draft{}, context.Canceled
 	}
 
 	select {
-	case checkpoint := <-response:
-		return checkpoint, nil
+	case snapshot := <-response:
+		return snapshot.transcript, snapshot.draft, nil
 	case <-stream.ctx.Done():
-		return Checkpoint{}, stream.ctx.Err()
+		return nil, session.Draft{}, stream.ctx.Err()
 	case <-stream.stopped:
-		return Checkpoint{}, context.Canceled
+		return nil, session.Draft{}, context.Canceled
 	}
 }
 

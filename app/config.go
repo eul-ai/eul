@@ -11,6 +11,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/skill"
 )
 
@@ -40,6 +41,26 @@ type sessionSettings struct {
 	thinkingLevel agent.ThinkingLevel
 	fastMode      bool
 	cwd           string
+}
+
+func (settings sessionSettings) stored() session.Settings {
+	return session.Settings{
+		Provider:         settings.provider,
+		WorkingDirectory: settings.cwd,
+		Models:           session.Models(settings.models),
+		ThinkingLevel:    settings.thinkingLevel,
+		FastMode:         settings.fastMode,
+	}
+}
+
+func storedSessionSettings(settings session.Settings) sessionSettings {
+	return sessionSettings{
+		provider:      settings.Provider,
+		models:        backend.Models(settings.Models),
+		thinkingLevel: settings.ThinkingLevel,
+		fastMode:      settings.FastMode,
+		cwd:           settings.WorkingDirectory,
+	}
 }
 
 type resolvedConfig struct {

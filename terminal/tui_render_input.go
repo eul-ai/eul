@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/eul-ai/eul/filesearch"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/terminal/text"
 )
 
@@ -412,13 +413,13 @@ func renderResumePicker(model *tuiModel, height int) []styledLine {
 		return []styledLine{{text: "  no saved sessions", style: lineStyle{foreground: currentTheme.muted}}}
 	}
 
-	return renderPickerRows(model.resumePicker.pickerList, height, func(session SessionSummary, _ int) styledLine {
-		detail := session.ID + " · " + session.UpdatedAt.Local().Format("Jan 2 15:04")
-		if session.Active {
+	return renderPickerRows(model.resumePicker.pickerList, height, func(summary session.Summary, _ int) styledLine {
+		detail := summary.ID + " · " + summary.UpdatedAt.Local().Format("Jan 2 15:04")
+		if summary.Active {
 			detail += " · interrupted"
 		}
 		return styledLine{
-			text:      resumeSummaryLabel(session),
+			text:      resumeSummaryLabel(summary),
 			rightText: detail,
 			style:     lineStyle{foreground: currentTheme.muted},
 		}

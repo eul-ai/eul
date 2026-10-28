@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -80,20 +81,24 @@ func startTestSession(t *testing.T, launcher *launcher, settings sessionSettings
 	return session
 }
 
-func testTerminalCheckpoint(prompt string) terminal.Checkpoint {
-	return terminal.Checkpoint{Entries: []session.Entry{{Kind: session.EntryUser, Text: prompt}}}
+func savePrompt(t *testing.T, options terminal.Options, prompt string, active bool) {
+	t.Helper()
+	if err := options.StateChanges.Notify([]session.Entry{{Kind: session.EntryUser, Text: prompt}}, session.Draft{}, active); err != nil {
+		t.Fatal(err)
+	}
 }
 
-func createStoredSession(t *testing.T, store *sessionStore, settings sessionSettings, prompt string) *sessionHandle {
+func sessionClosed(options terminal.Options) bool {
+	return options.StateChanges.Notify(nil, session.Draft{}, false) != nil
+}
+
+func sessionDirectory(t *testing.T, launcher *launcher, id string) string {
 	t.Helper()
-	handle, err := store.Create(settings)
-	if err != nil {
-		t.Fatal(err)
+	paths, err := filepath.Glob(filepath.Join(launcher.home, "sessions", "*", id))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("session %s directories = %v, error = %v", id, paths, err)
 	}
-	if err := handle.Save(agent.Checkpoint{}, subagent.Checkpoint{}, testTerminalCheckpoint(prompt), false, settings.thinkingLevel, settings.fastMode); err != nil {
-		t.Fatal(err)
-	}
-	return handle
+	return paths[0]
 }
 
 func waitForSubagentCompletions(t *testing.T, manager *subagent.Manager, count int) {

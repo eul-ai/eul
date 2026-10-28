@@ -461,14 +461,15 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 	}
 	assertCachedConversationMatchesUncached(t, renderer, model)
 
-	checkpoint := checkpointModel(model, nil)
+	entries := model.transcript.Entries
 	model.transcript.Entries = nil
 	model.conversationChanged()
 	assertCachedConversationMatchesUncached(t, renderer, model)
 	if len(renderer.conversationBlocks) != 0 {
 		t.Fatalf("cached blocks after clear = %d", len(renderer.conversationBlocks))
 	}
-	restoreModelCheckpoint(model, checkpoint)
+	model.transcript.Entries = entries
+	model.conversationChanged()
 	assertCachedConversationMatchesUncached(t, renderer, model)
 }
 

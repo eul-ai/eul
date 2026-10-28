@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"slices"
 
 	"github.com/eul-ai/eul/agent"
 )
@@ -142,5 +143,5 @@ func (c *tuiController) saveCurrentCheckpoint(active bool) error {
 	if c.stateChanges.Notify == nil {
 		return nil
 	}
-	return c.stateChanges.Notify(checkpointModel(c.model, c.model.pendingSteering()), active)
+	return c.stateChanges.Notify(slices.Clone(c.model.transcript.Entries), c.model.draft(), active)
 }

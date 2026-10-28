@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/skill"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal/keys"
@@ -24,7 +25,7 @@ var (
 
 type EventStream interface {
 	Emit(agent.Event) error
-	Snapshot() (Checkpoint, error)
+	Snapshot() ([]session.Entry, session.Draft, error)
 }
 
 type Operations struct {
@@ -40,13 +41,6 @@ type Controls struct {
 	ClearGoal        func()
 	SetThinkingLevel func(agent.ThinkingLevel) error
 	SetFastMode      func(bool)
-}
-
-type SessionSummary struct {
-	ID          string
-	Description string
-	UpdatedAt   time.Time
-	Active      bool
 }
 
 type RunAction uint8
@@ -91,18 +85,19 @@ type Config struct {
 	ContextTokens      int64
 	Skills             []skill.Skill
 	Warnings           []string
-	InitialCheckpoint  *Checkpoint
+	Transcript         []session.Entry
+	Draft              session.Draft
 	SessionID          string
 	PreviousTurnActive bool
 	InitialPrompt      string
 }
 
 type Sessions struct {
-	List func(context.Context) ([]SessionSummary, error)
+	List func(context.Context) ([]session.Summary, error)
 }
 
 type StateChanges struct {
-	Notify func(Checkpoint, bool) error
+	Notify func([]session.Entry, session.Draft, bool) error
 }
 
 type MessageHistory struct {

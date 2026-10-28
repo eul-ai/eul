@@ -200,9 +200,8 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 			activity:                   activity{kind: activityReady},
 		},
 	}
-	if options.Config.InitialCheckpoint != nil {
-		restoreModelCheckpoint(model, *options.Config.InitialCheckpoint)
-	}
+	model.transcript = session.RestoreTranscript(options.Config.Transcript)
+	model.restoreDraft(options.Config.Draft)
 	if options.Config.PreviousTurnActive {
 		model.appendEntry(session.EntryInfo, "Previous session ended during an active turn; tool side effects may remain")
 	}

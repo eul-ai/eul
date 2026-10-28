@@ -1,4 +1,4 @@
-package app
+package session
 
 import (
 	"encoding/json"
@@ -9,26 +9,23 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/subagent"
-	"github.com/eul-ai/eul/terminal"
 )
 
-func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
+func TestStorePartitionsListsAndResolvesSessions(t *testing.T) {
 	home := t.TempDir()
 	cwd := filepath.Join(t.TempDir(), "project")
 	if err := os.Mkdir(cwd, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	store := newSessionStore(home)
-	models := backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"}
+	store := NewStore(home)
+	models := Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"}
 
-	first := createStoredSession(t, store, sessionSettings{provider: "test", cwd: cwd, models: models, thinkingLevel: agent.ThinkingHigh, fastMode: true}, "first prompt\nmore")
+	first := createStoredSession(t, store, Settings{Provider: "test", WorkingDirectory: cwd, Models: models, ThinkingLevel: agent.ThinkingHigh, FastMode: true}, "first prompt\nmore")
 	firstID := first.record.ID
 	if first.record.Provider != "test" || first.record.Models.Fast != "fast-model" || first.record.Models.Balanced != "balanced-model" || !first.record.FastMode {
 		t.Fatalf("provider and models = %+v", first.record)
 	}
-	if err := first.Save(first.record.Agent, first.record.Subagent, first.record.Terminal, true, agent.ThinkingHigh, false); err != nil {
+	if err := first.save(first.record.state, true, agent.ThinkingHigh, false); err != nil {
 		t.Fatal(err)
 	}
 	if first.record.FastMode {
@@ -38,7 +35,7 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	second := createStoredSession(t, store, sessionSettings{provider: "test", cwd: cwd, models: models, thinkingLevel: agent.ThinkingMedium}, "second prompt")
+	second := createStoredSession(t, store, Settings{Provider: "test", WorkingDirectory: cwd, Models: models, ThinkingLevel: agent.ThinkingMedium}, "second prompt")
 	secondID := second.record.ID
 	if err := second.Close(); err != nil {
 		t.Fatal(err)
@@ -65,7 +62,7 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 	if directoryInfo.Mode().Perm() != 0o700 {
 		t.Fatalf("session directory permissions = %o", directoryInfo.Mode().Perm())
 	}
-	for _, name := range []string{sessionMetadataFileName, sessionStateFileName, sessionLockFileName} {
+	for _, name := range []string{metadataFileName, stateFileName, lockFileName} {
 		fileInfo, err := os.Stat(filepath.Join(sessionDirectory, name))
 		if err != nil {
 			t.Fatal(err)
@@ -97,7 +94,7 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 	if mostRecent.record.ID != secondID {
 		t.Fatalf("most recent ID = %q", mostRecent.record.ID)
 	}
-	if _, err := store.Open(cwd, secondID); !errors.Is(err, errSessionInUse) {
+	if _, err := store.Open(cwd, secondID); !errors.Is(err, errInUse) {
 		t.Fatalf("lock contention error = %v", err)
 	}
 	if err := mostRecent.Close(); err != nil {
@@ -117,9 +114,9 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 	}
 }
 
-func TestSessionMetadataStoresModelsAsJSONObject(t *testing.T) {
-	models := backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"}
-	encoded, err := json.Marshal(sessionMetadata{Models: models})
+func TestMetadataStoresModelsAsJSONObject(t *testing.T) {
+	models := Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"}
+	encoded, err := json.Marshal(metadata{Settings: Settings{Models: models}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,8 +133,8 @@ func TestSessionMetadataStoresModelsAsJSONObject(t *testing.T) {
 	}
 }
 
-func TestSessionStoreIgnoresLegacySessionFiles(t *testing.T) {
-	store := newSessionStore(t.TempDir())
+func TestStoreIgnoresLegacySessionFiles(t *testing.T) {
+	store := NewStore(t.TempDir())
 	cwd := t.TempDir()
 	workspace := store.workspaceDirectory(cwd)
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
@@ -160,8 +157,8 @@ func TestSessionStoreIgnoresLegacySessionFiles(t *testing.T) {
 	}
 }
 
-func TestSessionStoreIgnoresAbandonedEmptyDirectory(t *testing.T) {
-	store := newSessionStore(t.TempDir())
+func TestStoreIgnoresAbandonedEmptyDirectory(t *testing.T) {
+	store := NewStore(t.TempDir())
 	cwd := t.TempDir()
 	workspace := store.workspaceDirectory(cwd)
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
@@ -184,21 +181,21 @@ func TestSessionStoreIgnoresAbandonedEmptyDirectory(t *testing.T) {
 	}
 }
 
-func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
-	store := newSessionStore(t.TempDir())
+func TestStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
+	store := NewStore(t.TempDir())
 	cwd := t.TempDir()
-	handle, err := store.Create(sessionSettings{provider: "test", cwd: cwd, models: backend.Models{Main: "model"}, thinkingLevel: agent.ThinkingMedium})
+	handle, err := store.Create(Settings{Provider: "test", WorkingDirectory: cwd, Models: Models{Main: "model"}, ThinkingLevel: agent.ThinkingMedium})
 	if err != nil {
 		t.Fatal(err)
 	}
-	lockPath := filepath.Join(handle.path, sessionLockFileName)
+	lockPath := filepath.Join(handle.path, lockFileName)
 	if _, err := os.Stat(lockPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := handle.Save(agent.Checkpoint{}, subagent.Checkpoint{}, terminal.Checkpoint{}, false, agent.ThinkingMedium, false); err != nil {
+	if err := handle.save(state{}, false, agent.ThinkingMedium, false); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{sessionMetadataFileName, sessionStateFileName} {
+	for _, name := range []string{metadataFileName, stateFileName} {
 		if _, err := os.Stat(filepath.Join(handle.path, name)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("empty session %s error = %v", name, err)
 		}
@@ -221,11 +218,11 @@ func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 	}
 }
 
-func TestSessionStoreListsMetadataWithoutDecodingCheckpoints(t *testing.T) {
-	store := newSessionStore(t.TempDir())
+func TestStoreListsMetadataWithoutDecodingCheckpoints(t *testing.T) {
+	store := NewStore(t.TempDir())
 	cwd := t.TempDir()
-	handle := createStoredSession(t, store, sessionSettings{provider: "test", cwd: cwd, models: backend.Models{Main: "model"}}, "prompt")
-	path := filepath.Join(handle.path, sessionStateFileName)
+	handle := createStoredSession(t, store, Settings{Provider: "test", WorkingDirectory: cwd, Models: Models{Main: "model"}}, "prompt")
+	path := filepath.Join(handle.path, stateFileName)
 	id := handle.record.ID
 	if err := handle.Close(); err != nil {
 		t.Fatal(err)
@@ -246,12 +243,12 @@ func TestSessionStoreListsMetadataWithoutDecodingCheckpoints(t *testing.T) {
 	}
 }
 
-func TestSessionStoreSkipsCorruptSessions(t *testing.T) {
+func TestStoreSkipsCorruptSessions(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
-	store := newSessionStore(home)
-	handle := createStoredSession(t, store, sessionSettings{provider: "test", cwd: cwd, models: backend.Models{Main: "model"}}, "prompt")
-	path := filepath.Join(handle.path, sessionMetadataFileName)
+	store := NewStore(home)
+	handle := createStoredSession(t, store, Settings{Provider: "test", WorkingDirectory: cwd, Models: Models{Main: "model"}}, "prompt")
+	path := filepath.Join(handle.path, metadataFileName)
 	id := handle.record.ID
 	if err := handle.Close(); err != nil {
 		t.Fatal(err)
@@ -267,7 +264,7 @@ func TestSessionStoreSkipsCorruptSessions(t *testing.T) {
 		t.Fatalf("most recent corrupt-only error = %v", err)
 	}
 
-	valid := createStoredSession(t, store, sessionSettings{provider: "test", cwd: cwd, models: backend.Models{Main: "model"}}, "valid prompt")
+	valid := createStoredSession(t, store, Settings{Provider: "test", WorkingDirectory: cwd, Models: Models{Main: "model"}}, "valid prompt")
 	validID := valid.record.ID
 	if err := valid.Close(); err != nil {
 		t.Fatal(err)
@@ -290,4 +287,17 @@ func TestSessionStoreSkipsCorruptSessions(t *testing.T) {
 	if err := mostRecent.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func createStoredSession(t *testing.T, store *Store, settings Settings, prompt string) *Handle {
+	t.Helper()
+	handle, err := store.Create(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := state{Transcript: []Entry{{Kind: EntryUser, Text: prompt}}}
+	if err := handle.save(next, false, settings.ThinkingLevel, settings.FastMode); err != nil {
+		t.Fatal(err)
+	}
+	return handle
 }

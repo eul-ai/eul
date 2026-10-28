@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -27,11 +29,8 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	if _, err := first.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "first prompt"}}, func(agent.Event) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	terminalCheckpoint := testTerminalCheckpoint("first prompt")
-	if err := first.terminalOptions.StateChanges.Notify(terminalCheckpoint, false); err != nil {
-		t.Fatal(err)
-	}
-	sessionID := first.saver.handle.record.ID
+	savePrompt(t, first.terminalOptions, "first prompt", false)
+	sessionID := first.terminalOptions.Config.SessionID
 	if err := first.finish(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -40,8 +39,8 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.terminalOptions.Config.InitialCheckpoint == nil || session.Description(second.terminalOptions.Config.InitialCheckpoint.Entries) != "first prompt" {
-		t.Fatalf("terminal checkpoint = %+v", second.terminalOptions.Config.InitialCheckpoint)
+	if description := session.Description(second.terminalOptions.Config.Transcript); description != "first prompt" {
+		t.Fatalf("restored transcript = %+v", second.terminalOptions.Config.Transcript)
 	}
 	if second.terminalOptions.Config.ContextTokens != 42 {
 		t.Fatalf("context tokens = %d", second.terminalOptions.Config.ContextTokens)
@@ -72,23 +71,19 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 		<-release
 		return agent.Response{Text: "result for " + request.Inputs[0].PlainText()}, nil
 	}}
-	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), sessionSettings{models: backend.Models{Main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd})
-	defer session.finish(nil)
-	if err := session.terminalOptions.StateChanges.Notify(testTerminalCheckpoint("prompt"), false); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := caller.call(session, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect"}]}`); err != nil {
+	launcher := testLauncher(t, cwd, caller.runtime())
+	idle := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd})
+	defer idle.finish(nil)
+	savePrompt(t, idle.terminalOptions, "prompt", false)
+	if _, err := caller.call(idle, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect"}]}`); err != nil {
 		t.Fatal(err)
 	}
 	close(release)
 
+	statePath := filepath.Join(sessionDirectory(t, launcher, idle.terminalOptions.Config.SessionID), "state.json")
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		record, err := readSessionRecord(session.saver.handle.path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		encoded, err := json.Marshal(record.Subagent)
+		encoded, err := os.ReadFile(statePath)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -114,15 +109,24 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 	if _, err := caller.call(first, "launch_subagents", `{"tasks":[{"description":"running","prompt":"running"}]}`); err != nil {
 		t.Fatal(err)
 	}
-	terminalCheckpoint := testTerminalCheckpoint("active prompt")
-	if err := first.terminalOptions.StateChanges.Notify(terminalCheckpoint, true); err != nil {
+	savePrompt(t, first.terminalOptions, "active prompt", true)
+	sessionID := first.terminalOptions.Config.SessionID
+	directory := sessionDirectory(t, launcher, sessionID)
+	crashed := make(map[string][]byte)
+	for _, name := range []string{"meta.json", "state.json"} {
+		content, err := os.ReadFile(filepath.Join(directory, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		crashed[name] = content
+	}
+	if err := first.finish(nil); err != nil {
 		t.Fatal(err)
 	}
-	sessionID := first.saver.handle.record.ID
-	first.saver.stop()
-	first.subagents.Close()
-	if err := first.saver.handle.Close(); err != nil {
-		t.Fatal(err)
+	for name, content := range crashed {
+		if err := os.WriteFile(filepath.Join(directory, name), content, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	second, err := launcher.resume(context.Background(), cwd, sessionID, "")
@@ -141,10 +145,10 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	if reopened.record.Status != sessionIdle {
-		t.Fatalf("restored status = %q", reopened.record.Status)
+	if reopened.Record().Active {
+		t.Fatal("restored session is still active")
 	}
-	encoded, err := json.Marshal(reopened.record.Subagent)
+	encoded, err := json.Marshal(reopened.Record().Subagent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,18 +165,16 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	launcher.backends = append(launcher.backends, testBackend("alternate", alternateRuntime))
 	models := backend.Models{Main: "selected-model", Fast: "selected-fast-model", Balanced: "selected-balanced-model"}
 
-	session, err := launcher.launch(context.Background(), Options{Provider: "alternate", Models: models, ThinkingLevel: agent.ThinkingHigh})
+	selected, err := launcher.launch(context.Background(), Options{Provider: "alternate", Models: models, ThinkingLevel: agent.ThinkingHigh})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session.config.provider != "alternate" {
-		t.Fatalf("provider = %q", session.config.provider)
+	if selected.config.provider != "alternate" {
+		t.Fatalf("provider = %q", selected.config.provider)
 	}
-	if err := session.terminalOptions.StateChanges.Notify(testTerminalCheckpoint("saved prompt"), false); err != nil {
-		t.Fatal(err)
-	}
-	sessionID := session.saver.handle.record.ID
-	if err := session.finish(nil); err != nil {
+	savePrompt(t, selected.terminalOptions, "saved prompt", false)
+	sessionID := selected.terminalOptions.Config.SessionID
+	if err := selected.finish(nil); err != nil {
 		t.Fatal(err)
 	}
 

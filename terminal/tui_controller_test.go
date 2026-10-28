@@ -533,7 +533,7 @@ func TestTUIControllerKeepsDraftWhenActiveCheckpointFails(t *testing.T) {
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		stateChanges: StateChanges{Notify: func(Checkpoint, bool) error { return checkpointErr }},
+		stateChanges: StateChanges{Notify: func([]session.Entry, session.Draft, bool) error { return checkpointErr }},
 	}
 
 	action, err := reduceKey(model, keys.Event{Code: keys.Enter})
@@ -558,9 +558,9 @@ func TestTUIControllerActiveCheckpointOmitsUncommittedSubmission(t *testing.T) {
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		stateChanges: StateChanges{Notify: func(terminalCheckpoint Checkpoint, active bool) error {
-			if !active || len(terminalCheckpoint.Entries) != 0 {
-				t.Fatalf("active=%v terminal=%+v", active, terminalCheckpoint)
+		stateChanges: StateChanges{Notify: func(transcript []session.Entry, _ session.Draft, active bool) error {
+			if !active || len(transcript) != 0 {
+				t.Fatalf("active=%v transcript=%+v", active, transcript)
 			}
 			return errors.New("stop before launch")
 		}},
@@ -588,9 +588,9 @@ func TestTUIControllerSubmitsClipboardImageAfterCheckpoint(t *testing.T) {
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: messages, stopped: make(chan struct{}),
-		stateChanges: StateChanges{Notify: func(checkpoint Checkpoint, active bool) error {
-			if !active || len(checkpoint.Entries) != 0 {
-				t.Fatalf("active=%v checkpoint=%+v", active, checkpoint)
+		stateChanges: StateChanges{Notify: func(transcript []session.Entry, _ session.Draft, active bool) error {
+			if !active || len(transcript) != 0 {
+				t.Fatalf("active=%v transcript=%+v", active, transcript)
 			}
 			events <- "checkpoint"
 			return nil
@@ -629,7 +629,7 @@ func TestTUIControllerEOFWhileRunningDefersCheckpoint(t *testing.T) {
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 		turnCancel: func() { canceled = true },
-		stateChanges: StateChanges{Notify: func(Checkpoint, bool) error {
+		stateChanges: StateChanges{Notify: func([]session.Entry, session.Draft, bool) error {
 			saveCalls++
 			return nil
 		}},
@@ -717,7 +717,7 @@ func TestTUIControllerStartsOperationsAfterActiveCheckpoint(t *testing.T) {
 			controller := tuiController{
 				model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 				engineMessages: messages, stopped: stopped,
-				stateChanges: StateChanges{Notify: func(_ Checkpoint, active bool) error {
+				stateChanges: StateChanges{Notify: func(_ []session.Entry, _ session.Draft, active bool) error {
 					if !active || !model.running || model.activity.kind != test.activity {
 						t.Fatalf("checkpoint active=%v running=%v activity=%+v", active, model.running, model.activity)
 					}
@@ -822,7 +822,7 @@ func TestTUIControllerDoesNotLaunchAfterActiveCheckpointFailure(t *testing.T) {
 			controller := tuiController{
 				model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 				engineMessages: make(chan engineMessage, 2), stopped: make(chan struct{}),
-				stateChanges: StateChanges{Notify: func(Checkpoint, bool) error { return checkpointErr }},
+				stateChanges: StateChanges{Notify: func([]session.Entry, session.Draft, bool) error { return checkpointErr }},
 			}
 			if test.prepare != nil {
 				test.prepare(&controller)
@@ -1004,7 +1004,7 @@ func TestTUIControllerShowsHelpAndGoalWhileRunning(t *testing.T) {
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
-		stateChanges: StateChanges{Notify: func(Checkpoint, bool) error {
+		stateChanges: StateChanges{Notify: func([]session.Entry, session.Draft, bool) error {
 			checkpointCalls++
 			return nil
 		}},
@@ -1580,7 +1580,7 @@ func TestTUIControllerTogglesFastModeWhileRunning(t *testing.T) {
 		controls: Controls{SetFastMode: func(enabled bool) {
 			configured = enabled
 		}},
-		stateChanges: StateChanges{Notify: func(Checkpoint, bool) error {
+		stateChanges: StateChanges{Notify: func([]session.Entry, session.Draft, bool) error {
 			t.Fatal("checkpoint saved while running")
 			return nil
 		}},
@@ -1606,7 +1606,7 @@ func TestTUIControllerAppliesThinkingLevelWhileRunning(t *testing.T) {
 			configured = level
 			return nil
 		}},
-		stateChanges: StateChanges{Notify: func(Checkpoint, bool) error {
+		stateChanges: StateChanges{Notify: func([]session.Entry, session.Draft, bool) error {
 			checkpointCalls++
 			return nil
 		}},

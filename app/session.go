@@ -8,6 +8,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
 	"github.com/eul-ai/eul/tool"
@@ -19,7 +20,45 @@ type agentSession struct {
 	subagents       *subagent.Manager
 	terminalOptions terminal.Options
 	agentSettings   *agent.Settings
-	saver           *sessionSaver
+	saver           *session.Saver
+}
+
+func newStoredAgentSession(
+	launcher *launcher,
+	config resolvedConfig,
+	runtime *backend.Runtime,
+	handle *session.Handle,
+	prompt string,
+) (*agentSession, error) {
+	record := handle.Record()
+	historyEntries, err := launcher.history.Load(record.ID)
+	if err != nil {
+		return nil, fmt.Errorf("load message history: %w", err)
+	}
+	stored, options, err := newAgentSessionComponents(config, runtime, record, launcher.noSandbox, launcher.interrupts)
+	if err != nil {
+		return nil, err
+	}
+
+	stored.saver = session.NewSaver(handle, stored.engine, stored.subagents, stored.agentSettings)
+	options.saver = stored.saver
+	options.messageHistory = terminal.MessageHistory{
+		Entries: historyEntries,
+		Append: func(entry string) error {
+			return launcher.history.Append(record.ID, entry)
+		},
+	}
+	options.transcript = record.Transcript
+	options.draft = record.Draft
+	options.previousTurnActive = record.Active
+	options.contextTokens = record.Agent.ContextUsage.TotalTokens
+	options.initialPrompt = prompt
+	options.sessionID = record.ID
+	options.sessions.List = func(context.Context) ([]session.Summary, error) {
+		return launcher.store.List(record.WorkingDirectory)
+	}
+	stored.terminalOptions = options.options()
+	return stored, nil
 }
 
 func newSessionTools(
@@ -70,7 +109,7 @@ func resolveModelMetadata(runtime *backend.Runtime, models backend.Models) (map[
 func newAgentSessionComponents(
 	config resolvedConfig,
 	runtime *backend.Runtime,
-	record sessionRecord,
+	record session.Record,
 	noSandbox bool,
 	interrupts <-chan os.Signal,
 ) (*agentSession, terminalOptionsBuilder, error) {
@@ -130,5 +169,5 @@ func (session *agentSession) run(ctx context.Context, run func(context.Context, 
 
 func (session *agentSession) finish(runErr error) error {
 	session.subagents.Close()
-	return errors.Join(runErr, session.saver.close())
+	return errors.Join(runErr, session.saver.Close())
 }

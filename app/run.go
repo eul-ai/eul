@@ -8,6 +8,7 @@ import (
 	"os/signal"
 
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/terminal"
 )
 
@@ -15,8 +16,8 @@ type launcher struct {
 	backends   backend.Registry
 	interrupts <-chan os.Signal
 	home       string
-	store      *sessionStore
-	history    *messageHistoryStore
+	store      *session.Store
+	history    *session.History
 	noSandbox  bool
 	runtimes   map[string]*backend.Runtime
 }
@@ -26,8 +27,8 @@ func newLauncher(home string, backends backend.Registry, noSandbox bool, interru
 		backends:   backends,
 		interrupts: interrupts,
 		home:       home,
-		store:      newSessionStore(home),
-		history:    newMessageHistoryStore(home),
+		store:      session.NewStore(home),
+		history:    session.NewHistory(home),
 		noSandbox:  noSandbox,
 		runtimes:   make(map[string]*backend.Runtime),
 	}
@@ -103,14 +104,14 @@ func (launcher *launcher) resume(ctx context.Context, cwd, id, prompt string) (*
 		return nil, err
 	}
 
-	session, err := launcher.open(ctx, handle.Record().settings(), handle, prompt)
+	resumed, err := launcher.open(ctx, storedSessionSettings(handle.Record().Settings), handle, prompt)
 	if err != nil {
 		return nil, errors.Join(err, handle.Close())
 	}
-	return session, nil
+	return resumed, nil
 }
 
-func (launcher *launcher) open(ctx context.Context, settings sessionSettings, handle *sessionHandle, prompt string) (*agentSession, error) {
+func (launcher *launcher) open(ctx context.Context, settings sessionSettings, handle *session.Handle, prompt string) (*agentSession, error) {
 	selected, err := launcher.backends.Lookup(settings.provider)
 	if err != nil {
 		return nil, err
@@ -125,17 +126,17 @@ func (launcher *launcher) open(ctx context.Context, settings sessionSettings, ha
 		return nil, err
 	}
 	if handle == nil {
-		handle, err = launcher.store.Create(config.sessionSettings)
+		handle, err = launcher.store.Create(config.sessionSettings.stored())
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	session, err := newStoredAgentSession(launcher, config, runtime, handle, prompt)
+	opened, err := newStoredAgentSession(launcher, config, runtime, handle, prompt)
 	if err != nil {
 		return nil, errors.Join(err, handle.Close())
 	}
-	return session, nil
+	return opened, nil
 }
 
 func (launcher *launcher) runtime(ctx context.Context, selected backend.Backend) (*backend.Runtime, error) {

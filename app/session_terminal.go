@@ -8,6 +8,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/skill"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
@@ -23,10 +24,11 @@ type terminalOptionsBuilder struct {
 	engine             *agent.Engine
 	settings           *agent.Settings
 	goal               *agent.Goal
-	saver              *sessionSaver
+	saver              *session.Saver
 	sessions           terminal.Sessions
 	messageHistory     terminal.MessageHistory
-	initialCheckpoint  *terminal.Checkpoint
+	transcript         []session.Entry
+	draft              session.Draft
 	contextTokens      int64
 	initialPrompt      string
 	sessionID          string
@@ -64,7 +66,7 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 			SetFastMode:      source.settings.SetFastMode,
 		},
 		Sessions:       source.sessions,
-		StateChanges:   terminal.StateChanges{Notify: source.saver.saveTerminal},
+		StateChanges:   terminal.StateChanges{Notify: source.saver.SaveView},
 		MessageHistory: source.messageHistory,
 		Config: terminal.Config{
 			Model:              source.config.models.Main,
@@ -77,7 +79,8 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 			ContextTokens:      source.contextTokens,
 			Skills:             source.config.skills,
 			Warnings:           source.config.warnings,
-			InitialCheckpoint:  source.initialCheckpoint,
+			Transcript:         source.transcript,
+			Draft:              source.draft,
 			SessionID:          source.sessionID,
 			PreviousTurnActive: source.previousTurnActive,
 			InitialPrompt:      source.initialPrompt,
@@ -93,7 +96,7 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 
 type terminalCallbacks struct {
 	engine *agent.Engine
-	saver  *sessionSaver
+	saver  *session.Saver
 	skills []skill.Skill
 }
 
@@ -139,10 +142,10 @@ func (callbacks *terminalCallbacks) sink(stream terminal.EventStream) agent.Even
 			return stream.Emit(event)
 		}
 
-		terminalCheckpoint, err := stream.Snapshot()
+		transcript, draft, err := stream.Snapshot()
 		if err != nil {
 			return err
 		}
-		return callbacks.saver.saveTurn(*event.Checkpoint, terminalCheckpoint)
+		return callbacks.saver.SaveTurn(*event.Checkpoint, transcript, draft)
 	}
 }

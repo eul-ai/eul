@@ -53,7 +53,7 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 			return terminal.RunOutcome{Action: terminal.RunNewSession}, nil
 		},
 		func(_ context.Context, options terminal.Options) (terminal.RunOutcome, error) {
-			if !initialSession.saver.handle.closed {
+			if !sessionClosed(initialSession.terminalOptions) {
 				t.Fatal("old session was not closed before the new session started")
 			}
 			if options.Config.SessionID == "" || options.Config.SessionID == initialID {
@@ -65,9 +65,7 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 			if options.Config.Model != "main-model" || options.Config.ThinkingLevel != agent.ThinkingLow || !options.Config.FastMode {
 				t.Fatalf("new options = model %q, thinking %q, fast %v", options.Config.Model, options.Config.ThinkingLevel, options.Config.FastMode)
 			}
-			if err := options.StateChanges.Notify(testTerminalCheckpoint("new session prompt"), false); err != nil {
-				t.Fatal(err)
-			}
+			savePrompt(t, options, "new session prompt", false)
 			return terminal.RunOutcome{Action: terminal.RunExit}, nil
 		},
 	}}
@@ -78,15 +76,15 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 	if len(runner.options) != 2 || opened != 1 {
 		t.Fatalf("runner calls = %d, backend opens = %d", len(runner.options), opened)
 	}
-	if err := runner.options[1].StateChanges.Notify(terminal.Checkpoint{}, false); err == nil {
-		t.Fatalf("save after new session cleanup = %v", err)
+	if !sessionClosed(runner.options[1]) {
+		t.Fatal("new session was not closed")
 	}
 	newRecord, err := launcher.store.Open(cwd, runner.options[1].Config.SessionID)
 	if err != nil {
 		t.Fatalf("open new session record: %v", err)
 	}
-	if newRecord.record.Models.Main != "main-model" || newRecord.record.Models.Fast != "fast-model" || newRecord.record.Models.Balanced != "balanced-model" || newRecord.record.ThinkingLevel != agent.ThinkingLow || !newRecord.record.FastMode {
-		t.Fatalf("new session record = %+v", newRecord.record)
+	if record := newRecord.Record(); record.Models.Main != "main-model" || record.Models.Fast != "fast-model" || record.Models.Balanced != "balanced-model" || record.ThinkingLevel != agent.ThinkingLow || !record.FastMode {
+		t.Fatalf("new session record = %+v", record)
 	}
 	if err := newRecord.Close(); err != nil {
 		t.Fatal(err)
@@ -101,7 +99,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 	backendRuntime.Catalog = testCatalog("initial-main", "initial-fast", "initial-balanced", "resume-main", "resume-fast", "resume-balanced")
 	opened := 0
 	launcher := newLifecycleLauncher(t, initialCWD, backendRuntime, &opened)
-	targetID := createTargetSession(t, launcher.store, targetCWD, "resume target prompt")
+	targetID := createTargetSession(t, launcher, targetCWD, "resume target prompt")
 
 	initialSession := startTestSession(t, launcher, sessionSettings{
 		models:        backend.Models{Main: "initial-main", Fast: "initial-fast", Balanced: "initial-balanced"},
@@ -118,7 +116,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 			return terminal.RunOutcome{Action: terminal.RunResumeSession, SessionID: targetID}, nil
 		},
 		func(_ context.Context, options terminal.Options) (terminal.RunOutcome, error) {
-			if !initialSession.saver.handle.closed {
+			if !sessionClosed(initialSession.terminalOptions) {
 				t.Fatal("old session was not closed before the resumed session started")
 			}
 			if options.Config.SessionID != targetID {
@@ -127,8 +125,8 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 			if options.Config.Model != "resume-main" || options.Config.ThinkingLevel != agent.ThinkingMedium || !options.Config.FastMode || options.Config.WorkingDirectory != targetCWD {
 				t.Fatalf("resumed options = model %q, thinking %q, fast %v, cwd %q", options.Config.Model, options.Config.ThinkingLevel, options.Config.FastMode, options.Config.WorkingDirectory)
 			}
-			if options.Config.InitialCheckpoint == nil || session.Description(options.Config.InitialCheckpoint.Entries) != "resume target prompt" {
-				t.Fatalf("resumed checkpoint = %#v", options.Config.InitialCheckpoint)
+			if description := session.Description(options.Config.Transcript); description != "resume target prompt" {
+				t.Fatalf("resumed transcript = %#v", options.Config.Transcript)
 			}
 			return terminal.RunOutcome{Action: terminal.RunExit}, nil
 		},
@@ -140,16 +138,16 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 	if len(runner.options) != 2 || opened != 1 {
 		t.Fatalf("runner calls = %d, backend opens = %d", len(runner.options), opened)
 	}
-	if err := runner.options[1].StateChanges.Notify(testTerminalCheckpoint("resume target prompt"), false); err == nil {
-		t.Fatalf("save after resumed session cleanup = %v", err)
+	if !sessionClosed(runner.options[1]) {
+		t.Fatal("resumed session was not closed")
 	}
 
 	reopened, err := launcher.store.Open(targetCWD, targetID)
 	if err != nil {
 		t.Fatalf("reopen resumed record: %v", err)
 	}
-	if reopened.record.ID != targetID || reopened.record.Models.Main != "resume-main" || reopened.record.Models.Fast != "resume-fast" || reopened.record.Models.Balanced != "resume-balanced" || reopened.record.ThinkingLevel != agent.ThinkingMedium || !reopened.record.FastMode {
-		t.Fatalf("resumed record = %+v", reopened.record)
+	if record := reopened.Record(); record.ID != targetID || record.Models.Main != "resume-main" || record.Models.Fast != "resume-fast" || record.Models.Balanced != "resume-balanced" || record.ThinkingLevel != agent.ThinkingMedium || !record.FastMode {
+		t.Fatalf("resumed record = %+v", record)
 	}
 	if err := reopened.Close(); err != nil {
 		t.Fatal(err)
@@ -170,7 +168,7 @@ func TestRunSessionsExitClosesSession(t *testing.T) {
 	if err := runSessions(ctx, runner.Run, initialSession, launcher); err != nil {
 		t.Fatal(err)
 	}
-	if !initialSession.saver.handle.closed {
+	if !sessionClosed(initialSession.terminalOptions) {
 		t.Fatal("session was not closed")
 	}
 }
@@ -182,7 +180,7 @@ func TestRunSessionsKeepsNoSandboxAcrossResumeAndNewSession(t *testing.T) {
 	backendRuntime.Catalog = testCatalog("gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra", "resume-main", "resume-fast", "resume-balanced")
 	launcher := testLauncher(t, cwd, backendRuntime)
 	launcher.noSandbox = true
-	targetID := createTargetSession(t, launcher.store, cwd, "resume target prompt")
+	targetID := createTargetSession(t, launcher, cwd, "resume target prompt")
 	initialSession := startTestSession(t, launcher, sessionSettings{cwd: cwd, thinkingLevel: agent.ThinkingHigh})
 
 	unsandboxed := func(options terminal.Options) {
@@ -217,7 +215,7 @@ func TestLaunchResumeKeepsPrompt(t *testing.T) {
 	backendRuntime := testBackendRuntime(emptyProvider())
 	backendRuntime.Catalog = testCatalog("resume-main", "resume-fast", "resume-balanced")
 	launcher := testLauncher(t, cwd, backendRuntime)
-	targetID := createTargetSession(t, launcher.store, cwd, "resume target prompt")
+	targetID := createTargetSession(t, launcher, cwd, "resume target prompt")
 
 	session, err := launcher.launch(context.Background(), Options{Resume: true, SessionID: targetID, Prompt: "continue"})
 	if err != nil {
@@ -232,13 +230,13 @@ func TestLaunchResumeKeepsPrompt(t *testing.T) {
 func TestRunSessionsFinishesSessionAfterRunFailure(t *testing.T) {
 	runFailure := errors.New("run failed")
 	cwd := t.TempDir()
-	session := startTestSession(t, testLauncher(t, cwd, testBackendRuntime(emptyProvider())), sessionSettings{cwd: cwd, thinkingLevel: agent.ThinkingHigh})
+	failing := startTestSession(t, testLauncher(t, cwd, testBackendRuntime(emptyProvider())), sessionSettings{cwd: cwd, thinkingLevel: agent.ThinkingHigh})
 
 	err := runSessions(context.Background(), func(context.Context, terminal.Options) (terminal.RunOutcome, error) {
 		return terminal.RunOutcome{}, runFailure
-	}, session, nil)
-	if !errors.Is(err, runFailure) || !session.saver.handle.closed {
-		t.Fatalf("run error = %v, session closed = %v", err, session.saver.handle.closed)
+	}, failing, nil)
+	if closed := sessionClosed(failing.terminalOptions); !errors.Is(err, runFailure) || !closed {
+		t.Fatalf("run error = %v, session closed = %v", err, closed)
 	}
 }
 
@@ -254,17 +252,18 @@ func newLifecycleLauncher(t *testing.T, cwd string, runtime *backend.Runtime, op
 	return launcher
 }
 
-func createTargetSession(t *testing.T, store *sessionStore, cwd string, prompt string) string {
+func createTargetSession(t *testing.T, launcher *launcher, cwd string, prompt string) string {
 	t.Helper()
-	target := createStoredSession(t, store, sessionSettings{
+	target := startTestSession(t, launcher, sessionSettings{
 		provider:      "test",
 		cwd:           cwd,
 		models:        backend.Models{Main: "resume-main", Fast: "resume-fast", Balanced: "resume-balanced"},
 		thinkingLevel: agent.ThinkingMedium,
 		fastMode:      true,
-	}, prompt)
-	if err := target.Close(); err != nil {
+	})
+	savePrompt(t, target.terminalOptions, prompt, false)
+	if err := target.finish(nil); err != nil {
 		t.Fatal(err)
 	}
-	return target.record.ID
+	return target.terminalOptions.Config.SessionID
 }

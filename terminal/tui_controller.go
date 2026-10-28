@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 
 	"github.com/eul-ai/eul/agent"
@@ -254,7 +255,7 @@ func (c *tuiController) flushMessageHistory() error {
 
 func (c *tuiController) handleEngineMessage(ctx context.Context, message engineMessage) (bool, error) {
 	if message.snapshot != nil {
-		message.snapshot <- checkpointModel(c.model, c.model.pendingSteering())
+		message.snapshot <- conversationSnapshot{transcript: slices.Clone(c.model.transcript.Entries), draft: c.model.draft()}
 		return false, nil
 	}
 	if !message.done {
