@@ -124,9 +124,6 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 	if result.Text != "done" {
 		t.Fatalf("result text = %q, want %q", result.Text, "done")
 	}
-	if result.Usage != (Usage{InputTokens: 18, OutputTokens: 5, TotalTokens: 23}) {
-		t.Fatalf("usage = %+v", result.Usage)
-	}
 	wantKinds := []EventKind{EventAssistantReasoning, EventAssistantText, EventContextUsage, EventToolStart, EventToolExecute, EventToolEnd, EventAssistantText, EventContextUsage}
 	if got := eventKinds(events); !slices.Equal(got, wantKinds) {
 		t.Fatalf("event kinds = %v, want %v", got, wantKinds)

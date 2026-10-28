@@ -147,13 +147,3 @@ func (e *Engine) checkpointLocked() Checkpoint {
 		Goal:          storedGoal,
 	}}
 }
-
-func (e *Engine) commitCheckpoint(current conversationState, sink EventSink) error {
-	current.checkpoint(e)
-	if !e.checkpointing {
-		return nil
-	}
-
-	checkpoint := e.checkpointLocked()
-	return sink(Event{Kind: EventCheckpoint, Checkpoint: &checkpoint})
-}

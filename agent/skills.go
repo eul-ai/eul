@@ -3,6 +3,7 @@ package agent
 import (
 	"html"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -96,4 +97,30 @@ func expandSkillCommand(text string, skills []skill.Skill) (string, error) {
 		expanded.WriteString(arguments)
 	}
 	return expanded.String(), nil
+}
+
+func (e *Engine) expandSkillContent(content []ContentPart) ([]ContentPart, error) {
+	content = slices.Clone(content)
+	firstText := -1
+	for index, part := range content {
+		switch {
+		case part.Kind == ContentPartImage:
+			return content, nil
+		case part.Kind == ContentPartText && strings.TrimSpace(part.Text) != "":
+			firstText = index
+		}
+		if firstText >= 0 {
+			break
+		}
+	}
+	if firstText < 0 || !strings.HasPrefix(strings.TrimSpace(content[firstText].Text), "/skill:") {
+		return content, nil
+	}
+
+	expanded, err := expandSkillCommand(content[firstText].Text, e.skills)
+	if err != nil {
+		return nil, err
+	}
+	content[firstText].Text = expanded
+	return content, nil
 }

@@ -23,8 +23,7 @@ type Options struct {
 }
 
 type RunResult struct {
-	Text  string
-	Usage Usage
+	Text string
 }
 
 type Engine struct {
@@ -82,24 +81,10 @@ func (e *Engine) Run(ctx context.Context, content []ContentPart, sink EventSink)
 	e.continuations.beginRun()
 	defer e.continuations.endRun()
 
-	current := e.conversation
-	current.inputs = append(slices.Clip(current.inputs), NewUserInput(content...))
-	return (&engineTurn{
-		engine:  e,
-		ctx:     ctx,
-		sink:    sink,
-		current: current,
-	}).run()
-}
-
-type conversationState struct {
-	state  []byte
-	usage  Usage
-	inputs []Input
-}
-
-func (current conversationState) checkpoint(engine *Engine) {
-	engine.conversation = current
+	t := &turn{engine: e, ctx: ctx, sink: sink, current: e.conversation}
+	t.current.inputs = append(slices.Clip(t.current.inputs), NewUserInput(content...))
+	defer func() { e.conversation = t.current }()
+	return t.run()
 }
 
 func (e *Engine) Compact(ctx context.Context, sink EventSink) error {
@@ -112,19 +97,13 @@ func (e *Engine) Compact(ctx context.Context, sink EventSink) error {
 		return err
 	}
 
-	compactor, canCompact := e.provider.(Compactor)
-	if !canCompact {
-		return errors.New("agent: context compaction is unavailable")
-	}
-
-	current := e.conversation
-	if len(current.state) == 0 && len(current.inputs) == 0 {
+	if len(e.conversation.state) == 0 && len(e.conversation.inputs) == 0 {
 		return errors.New("agent: no context to compact")
 	}
 
-	_, current, _, err := e.compactRequest(ctx, sink, compactor, e.request(current), current)
-	current.checkpoint(e)
-	return err
+	t := &turn{engine: e, ctx: ctx, sink: sink, current: e.conversation}
+	defer func() { e.conversation = t.current }()
+	return t.compact()
 }
 
 func (e *Engine) SetSessionID(sessionID string) {
@@ -156,25 +135,4 @@ func (e *Engine) ClearGoal() {
 
 func (e *Engine) CompleteGoal() error {
 	return e.continuations.completeGoal()
-}
-
-func deliverContinuation(current *conversationState, next pendingContinuation, sink EventSink) error {
-	current.inputs = append(current.inputs, NewUserInput(next.content...))
-	event := Event{Kind: EventSteering, Content: next.content}
-	if next.kind == continuationGoal {
-		event.Kind = EventGoalContinuation
-		event.Text = NewUserInput(next.content...).PlainText()
-		event.Content = nil
-	}
-	if err := sink(event); err != nil {
-		current.inputs = current.inputs[:len(current.inputs)-1]
-		return err
-	}
-	return nil
-}
-
-func addUsage(total *Usage, usage Usage) {
-	total.InputTokens += usage.InputTokens
-	total.OutputTokens += usage.OutputTokens
-	total.TotalTokens += usage.TotalTokens
 }

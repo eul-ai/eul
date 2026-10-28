@@ -9,39 +9,56 @@ type toolCompletion struct {
 	err    error
 }
 
-func (e *Engine) executeToolRound(ctx context.Context, calls []ToolCall, toolEvents *toolEventTracker) ([]Input, error) {
-	if err := ctx.Err(); err != nil {
-		_ = toolEvents.closeRemaining(err)
+func (t *turn) executeTools(calls []ToolCall) error {
+	inputs, err := t.executeToolRound(calls)
+	t.current.inputs = inputs
+	if err != nil {
+		return err
+	}
+	if err := t.commit(); err != nil {
+		return err
+	}
+
+	next, ok := t.engine.continuations.next(continuationAfterToolBatch)
+	if !ok {
+		return nil
+	}
+	return t.deliver(next)
+}
+
+func (t *turn) executeToolRound(calls []ToolCall) ([]Input, error) {
+	if err := t.ctx.Err(); err != nil {
+		_ = t.tools.closeRemaining(err)
 		return unexecutedToolInputs(calls, err), err
 	}
 
 	for _, call := range calls {
-		if err := ctx.Err(); err != nil {
-			_ = toolEvents.closeRemaining(err)
+		if err := t.ctx.Err(); err != nil {
+			_ = t.tools.closeRemaining(err)
 			return unexecutedToolInputs(calls, err), err
 		}
-		if err := toolEvents.beginExecution(call); err != nil {
-			_ = toolEvents.closeRemaining(err)
+		if err := t.tools.beginExecution(call); err != nil {
+			_ = t.tools.closeRemaining(err)
 			return unexecutedToolInputs(calls, err), err
 		}
 	}
 
-	if err := ctx.Err(); err != nil {
-		_ = toolEvents.closeRemaining(err)
+	if err := t.ctx.Err(); err != nil {
+		_ = t.tools.closeRemaining(err)
 		return unexecutedToolInputs(calls, err), err
 	}
 
-	roundCtx, cancel := context.WithCancel(ctx)
+	roundCtx, cancel := context.WithCancel(t.ctx)
 	defer cancel()
-	steering := e.continuations.beginToolRound()
-	defer e.continuations.endToolRound(steering)
+	steering := t.engine.continuations.beginToolRound()
+	defer t.engine.continuations.endToolRound(steering)
 
 	completions := make(chan toolCompletion, len(calls))
 	for index, call := range calls {
 		go func() {
 			toolCtx := context.WithValue(roundCtx, steeringSignalKey{}, steering)
-			result, err := e.executeTool(toolCtx, call, toolEvents.update(call))
-			if updateErr := toolEvents.updateError(call); updateErr != nil {
+			result, err := executeTool(toolCtx, t.engine.tools, call, t.tools.update(call))
+			if updateErr := t.tools.updateError(call); updateErr != nil {
 				result = failedToolResult(call, result, updateErr)
 				err = updateErr
 			}
@@ -62,7 +79,7 @@ func (e *Engine) executeToolRound(ctx context.Context, calls []ToolCall, toolEve
 			roundErr = completion.err
 			cancel()
 		}
-		if err := toolEvents.end(completion.call, completion.result); err != nil && roundErr == nil {
+		if err := t.tools.end(completion.call, completion.result); err != nil && roundErr == nil {
 			roundErr = err
 			cancel()
 		}
@@ -72,7 +89,7 @@ func (e *Engine) executeToolRound(ctx context.Context, calls []ToolCall, toolEve
 	for index, result := range results {
 		inputs[index] = NewToolResultInput(result)
 	}
-	if err := ctx.Err(); err != nil {
+	if err := t.ctx.Err(); err != nil {
 		return inputs, err
 	}
 	return inputs, roundErr
@@ -101,8 +118,8 @@ func failedToolResult(call ToolCall, result ToolResult, cause error) ToolResult 
 	return result
 }
 
-func (e *Engine) executeTool(ctx context.Context, call ToolCall, updates ToolUpdateSink) (ToolResult, error) {
-	result, err := e.tools.Execute(ctx, call, updates)
+func executeTool(ctx context.Context, tools Toolbox, call ToolCall, updates ToolUpdateSink) (ToolResult, error) {
+	result, err := tools.Execute(ctx, call, updates)
 	result.CallID = call.ID
 	result.Tool = call.Name
 	if err != nil {
