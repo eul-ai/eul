@@ -160,8 +160,8 @@ func TestEngineEventSinkFailuresPreserveResponseContinuation(t *testing.T) {
 			stream: func(sink ToolCallSink) error {
 				return sink(ToolCallSnapshot{ID: "one", Name: "write", RawArguments: `{"content":"partial"}`})
 			},
-			toolbox: &fakeToolbox{presentation: func(snapshot ToolCallSnapshot) ToolPresentation {
-				return ToolPresentation{Title: "write", Lines: []string{snapshot.RawArguments}}
+			toolbox: &fakeToolbox{presentation: func(_, rawArguments string) ToolPresentation {
+				return ToolPresentation{Title: "write", Lines: []string{rawArguments}}
 			}},
 			wantPending: []Input{synthetic("one", "write")},
 		},
@@ -209,6 +209,7 @@ func TestEngineEventSinkFailuresPreserveResponseContinuation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			providerCalls := 0
 			executed := 0
+			test.toolbox.definitions = toolDefinitions("read", "write")
 			if test.toolbox.execute != nil {
 				execute := test.toolbox.execute
 				test.toolbox.execute = func(ctx context.Context, call ToolCall) (ToolResult, error) {
@@ -285,7 +286,7 @@ func TestEngineCancellationAfterCompletedToolRoundPreservesResult(t *testing.T) 
 		return Response{Text: "recovered", State: []byte("recovered")}, nil
 	})
 	toolExecutions := 0
-	toolbox := &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
+	toolbox := &fakeToolbox{definitions: toolDefinitions("write"), execute: func(context.Context, ToolCall) (ToolResult, error) {
 		toolExecutions++
 		return ToolResult{Output: "changed"}, nil
 	}}
@@ -389,7 +390,7 @@ func TestEngineCompactsToolContinuation(t *testing.T) {
 			return CompactResponse{State: []byte("compact tool state")}, nil
 		},
 	}
-	toolbox := &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
+	toolbox := &fakeToolbox{definitions: toolDefinitions("read"), execute: func(context.Context, ToolCall) (ToolResult, error) {
 		return ToolResult{Output: "contents"}, nil
 	}}
 	engine := newTestEngine(t, provider, toolbox, Options{})
@@ -455,7 +456,7 @@ func TestEngineCompactsToolContinuationAfterGenerationError(t *testing.T) {
 			}, nil
 		},
 	}
-	toolbox := &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
+	toolbox := &fakeToolbox{definitions: toolDefinitions("read"), execute: func(context.Context, ToolCall) (ToolResult, error) {
 		return ToolResult{Output: "large tool output"}, nil
 	}}
 	var events []Event
@@ -568,7 +569,7 @@ func TestEngineCompactionFailureAfterToolPreservesContinuation(t *testing.T) {
 			return CompactResponse{}, compactError
 		},
 	}
-	toolbox := &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
+	toolbox := &fakeToolbox{definitions: toolDefinitions("write"), execute: func(context.Context, ToolCall) (ToolResult, error) {
 		return ToolResult{Output: "changed file"}, nil
 	}}
 	engine := newTestEngine(t, provider, toolbox, Options{})

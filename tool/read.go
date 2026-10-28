@@ -31,7 +31,7 @@ type readArguments struct {
 	Limit  *int   `json:"limit"`
 }
 
-func NewRead(cwd string) Tool {
+func NewRead(cwd string) agent.Tool {
 	return spec[readArguments]{
 		definition: readToolDefinition,
 		present:    presentRead,

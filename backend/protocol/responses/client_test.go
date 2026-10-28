@@ -449,17 +449,6 @@ func assertInputItem(t *testing.T, items []json.RawMessage, index int, fields ma
 	}
 }
 
-type emptyToolbox struct{}
-
-func (emptyToolbox) Definitions() []agent.ToolDefinition { return nil }
-func (emptyToolbox) Presentation(agent.ToolCallSnapshot) agent.ToolPresentation {
-	return agent.ToolPresentation{}
-}
-
-func (emptyToolbox) Execute(context.Context, agent.ToolCall, agent.ToolUpdateSink) (agent.ToolResult, error) {
-	return agent.ToolResult{}, errors.New("unexpected tool call")
-}
-
 type errorReadCloser struct {
 	err error
 }

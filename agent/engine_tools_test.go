@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func TestEngineUsesFallbackPresentationForExecutionOnlyToolbox(t *testing.T) {
+func TestEngineUsesToolNameAsDefaultPresentationTitle(t *testing.T) {
 	provider := &scriptedProvider{t: t, steps: []providerStep{
 		func(context.Context, Request, TextSink) (Response, error) {
 			return Response{ToolCalls: []ToolCall{{ID: "call", Name: "read"}}}, nil
@@ -22,8 +22,8 @@ func TestEngineUsesFallbackPresentationForExecutionOnlyToolbox(t *testing.T) {
 			return Response{Text: "done"}, nil
 		},
 	}}
-	toolbox := &executionOnlyToolbox{
-		definitions: []ToolDefinition{{Name: "read"}},
+	toolbox := &fakeToolbox{
+		definitions: toolDefinitions("read"),
 		execute: func(context.Context, ToolCall) (ToolResult, error) {
 			return ToolResult{Output: "contents"}, nil
 		},
@@ -99,7 +99,7 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 			{Name: "write", Description: "opaque-write-description"},
 		},
 		execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
-			if call.ID != "call-1" || call.Name != "read" || string(call.Arguments) != `{"path":"README.md"}` {
+			if call.Name != "read" || string(call.Arguments) != `{"path":"README.md"}` {
 				t.Fatalf("unexpected tool call: %+v", call)
 			}
 			return ToolResult{Output: "file contents"}, nil
@@ -193,7 +193,7 @@ func TestEngineUsesFinalPresentationOnlyOnToolEnd(t *testing.T) {
 		Title: "edit", Arguments: "demo.go",
 		Diff: []ToolDiffLine{{Kind: ToolDiffLineAdded, NewLine: 1, Text: "new"}},
 	}
-	toolbox := &fakeToolbox{executeWithUpdates: func(_ context.Context, _ ToolCall, updates ToolUpdateSink) (ToolResult, error) {
+	toolbox := &fakeToolbox{definitions: toolDefinitions("edit"), executeWithUpdates: func(_ context.Context, _ ToolCall, updates ToolUpdateSink) (ToolResult, error) {
 		updates.SetFinal(final)
 		if err := updates.Update(ToolPresentation{Title: "edit", Lines: []string{"late update"}}); err != nil {
 			t.Fatalf("late update error = %v", err)
@@ -252,9 +252,9 @@ func TestEngineStreamsToolPresentationBeforeGenerationAndExecutionFinish(t *test
 	})
 	toolbox := &fakeToolbox{
 		definitions: []ToolDefinition{{Name: "write"}},
-		presentation: func(snapshot ToolCallSnapshot) ToolPresentation {
+		presentation: func(_, rawArguments string) ToolPresentation {
 			content := "hel"
-			if snapshot.Complete {
+			if json.Valid([]byte(rawArguments)) {
 				content = "hello"
 			}
 			return ToolPresentation{Title: "write demo.go", Lines: []string{content}}
@@ -313,19 +313,19 @@ func TestEngineSerializesConcurrentToolSnapshots(t *testing.T) {
 			{ID: "two", Name: "write", Arguments: json.RawMessage(`{"path":"two.txt"}`)},
 		}}, nil
 	})
-	toolbox := &fakeToolbox{executeWithUpdates: func(_ context.Context, call ToolCall, updates ToolUpdateSink) (ToolResult, error) {
+	toolbox := &fakeToolbox{definitions: toolDefinitions("write"), executeWithUpdates: func(_ context.Context, call ToolCall, updates ToolUpdateSink) (ToolResult, error) {
 		var wait sync.WaitGroup
 		for _, line := range []string{"first", "second"} {
 			wait.Add(1)
 			go func() {
 				defer wait.Done()
-				if err := updates.Update(ToolPresentation{Title: "write " + call.ID, Lines: []string{line}}); err != nil {
-					t.Errorf("update %s: %v", call.ID, err)
+				if err := updates.Update(ToolPresentation{Title: "write " + string(call.Arguments), Lines: []string{line}}); err != nil {
+					t.Errorf("update %s: %v", call.Arguments, err)
 				}
 			}()
 		}
 		wait.Wait()
-		return ToolResult{Output: call.ID}, nil
+		return ToolResult{Output: string(call.Arguments)}, nil
 	}}
 	var events []Event
 	engine := newTestEngine(t, provider, toolbox, Options{Model: "test-model"})
@@ -397,13 +397,13 @@ func TestEngineExecutesMultipleCallsConcurrentlyAndReturnsResultsInProviderOrder
 	started := make(chan string, 2)
 	finished := make(chan string, 2)
 	releases := map[string]chan struct{}{
-		"call-a": make(chan struct{}),
-		"call-b": make(chan struct{}),
+		"first":  make(chan struct{}),
+		"second": make(chan struct{}),
 	}
-	toolbox := &fakeToolbox{execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
-		started <- call.ID
-		<-releases[call.ID]
-		finished <- call.ID
+	toolbox := &fakeToolbox{definitions: toolDefinitions("first", "second"), execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
+		started <- call.Name
+		<-releases[call.Name]
+		finished <- call.Name
 		return ToolResult{Output: call.Name + " result"}, nil
 	}}
 
@@ -421,21 +421,21 @@ func TestEngineExecutesMultipleCallsConcurrentlyAndReturnsResultsInProviderOrder
 	seen := make(map[string]bool, 2)
 	for len(seen) < 2 {
 		select {
-		case callID := <-started:
-			seen[callID] = true
+		case name := <-started:
+			seen[name] = true
 		case <-time.After(2 * time.Second):
-			close(releases["call-a"])
-			close(releases["call-b"])
+			close(releases["first"])
+			close(releases["second"])
 			<-done
 			t.Fatal("tool calls did not execute concurrently")
 		}
 	}
 
-	close(releases["call-a"])
-	if callID := <-finished; callID != "call-a" {
-		t.Fatalf("first completed call = %q", callID)
+	close(releases["first"])
+	if name := <-finished; name != "first" {
+		t.Fatalf("first completed call = %q", name)
 	}
-	close(releases["call-b"])
+	close(releases["second"])
 	if err := <-done; err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -491,9 +491,9 @@ func TestEngineCancelsParallelCallsOnUpdateFailureAndPreservesResults(t *testing
 	failUpdate := make(chan struct{})
 	finishSuccess := make(chan struct{})
 	waitCanceled := make(chan struct{})
-	toolbox := &fakeToolbox{executeWithUpdates: func(ctx context.Context, call ToolCall, updates ToolUpdateSink) (ToolResult, error) {
-		started <- call.ID
-		switch call.ID {
+	toolbox := &fakeToolbox{definitions: toolDefinitions("update", "wait", "done"), executeWithUpdates: func(ctx context.Context, call ToolCall, updates ToolUpdateSink) (ToolResult, error) {
+		started <- call.Name
+		switch call.Name {
 		case "update":
 			<-failUpdate
 			err := updates.Update(ToolPresentation{Title: "update", Lines: []string{"changed"}})
@@ -506,7 +506,7 @@ func TestEngineCancelsParallelCallsOnUpdateFailureAndPreservesResults(t *testing
 			<-finishSuccess
 			return ToolResult{Output: "completed"}, nil
 		default:
-			return ToolResult{}, fmt.Errorf("unexpected call %q", call.ID)
+			return ToolResult{}, fmt.Errorf("unexpected call %q", call.Name)
 		}
 	}}
 
@@ -567,11 +567,7 @@ func TestEngineReturnsUnknownToolsToProvider(t *testing.T) {
 			return Response{Text: "recovered", State: []byte("done")}, nil
 		},
 	}}
-	toolbox := &fakeToolbox{execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
-		return ToolResult{}, fmt.Errorf("unknown tool %q", call.Name)
-	}}
-
-	engine := newTestEngine(t, provider, toolbox, Options{})
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
 	result, err := engine.Run(context.Background(), textParts("recover"), discardEvents)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -604,7 +600,7 @@ func TestEngineDoesNotLimitToolRounds(t *testing.T) {
 
 	toolExecutions := 0
 	provider := &scriptedProvider{t: t, steps: steps}
-	toolbox := &fakeToolbox{execute: func(_ context.Context, _ ToolCall) (ToolResult, error) {
+	toolbox := &fakeToolbox{definitions: toolDefinitions("tool"), execute: func(_ context.Context, _ ToolCall) (ToolResult, error) {
 		toolExecutions++
 		return ToolResult{Output: "ok"}, nil
 	}}
@@ -633,7 +629,7 @@ func TestEngineHonorsCancellationDuringToolExecution(t *testing.T) {
 			return Response{Text: "recovered", State: []byte("recovered")}, nil
 		},
 	}}
-	toolbox := &fakeToolbox{execute: func(ctx context.Context, _ ToolCall) (ToolResult, error) {
+	toolbox := &fakeToolbox{definitions: toolDefinitions("wait"), execute: func(ctx context.Context, _ ToolCall) (ToolResult, error) {
 		once.Do(func() { close(toolStarted) })
 		<-ctx.Done()
 		return ToolResult{}, ctx.Err()
@@ -694,7 +690,7 @@ func TestEngineTreatsToolLocalDeadlineAsRecoverable(t *testing.T) {
 			return Response{Text: "recovered", State: []byte("done")}, nil
 		},
 	}}
-	toolbox := &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
+	toolbox := &fakeToolbox{definitions: toolDefinitions("bash"), execute: func(context.Context, ToolCall) (ToolResult, error) {
 		return ToolResult{}, context.DeadlineExceeded
 	}}
 	engine := newTestEngine(t, provider, toolbox, Options{})

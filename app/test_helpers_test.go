@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -190,4 +191,13 @@ func waitForSubagentCompletions(t *testing.T, manager *subagent.Manager, count i
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("pending completions = %d, want %d", len(manager.Snapshot().PendingCompletions), count)
+}
+
+func executeTool(tools []agent.Tool, name, arguments string) (agent.ToolResult, error) {
+	for _, current := range tools {
+		if current.Definition().Name == name {
+			return current.Execute(context.Background(), json.RawMessage(arguments), discardToolUpdates{})
+		}
+	}
+	return agent.ToolResult{}, fmt.Errorf("unknown tool %q", name)
 }

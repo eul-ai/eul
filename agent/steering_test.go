@@ -6,24 +6,17 @@ import (
 	"testing"
 )
 
-type steeringWaitToolbox struct {
-	fakeToolbox
-	started chan struct{}
-}
-
-func (toolbox *steeringWaitToolbox) Execute(ctx context.Context, call ToolCall, _ ToolUpdateSink) (ToolResult, error) {
-	close(toolbox.started)
-	select {
-	case <-ctx.Done():
-		return ToolResult{}, ctx.Err()
-	case <-SteeringSignal(ctx):
-		return ToolResult{CallID: call.ID, Tool: call.Name, Output: "wait interrupted"}, nil
-	}
-}
-
 func TestSteeringSignalInterruptsToolWaitAndDeliversContinuation(t *testing.T) {
-	toolbox := &steeringWaitToolbox{started: make(chan struct{})}
-	toolbox.definitions = []ToolDefinition{{Name: "wait"}}
+	started := make(chan struct{})
+	toolbox := &fakeToolbox{definitions: toolDefinitions("wait"), execute: func(ctx context.Context, _ ToolCall) (ToolResult, error) {
+		close(started)
+		select {
+		case <-ctx.Done():
+			return ToolResult{}, ctx.Err()
+		case <-SteeringSignal(ctx):
+			return ToolResult{Output: "wait interrupted"}, nil
+		}
+	}}
 
 	calls := 0
 	provider := streamingProviderFunc(func(_ context.Context, request Request, _ TextSink, _ TextSink, _ ToolCallSink) (Response, error) {
@@ -47,7 +40,7 @@ func TestSteeringSignalInterruptsToolWaitAndDeliversContinuation(t *testing.T) {
 		_, err := engine.Run(context.Background(), textParts("start"), discardEvents)
 		done <- err
 	}()
-	<-toolbox.started
+	<-started
 	if !engine.Steer(textParts("redirect")) {
 		t.Fatal("active engine rejected steering")
 	}

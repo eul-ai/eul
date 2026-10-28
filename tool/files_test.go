@@ -32,7 +32,7 @@ func TestCoreToolDefinitionsUseStrictSchemas(t *testing.T) {
 	bashTool := NewBash(cwd, nil)
 
 	tests := []struct {
-		tool       Tool
+		tool       agent.Tool
 		required   []string
 		properties map[string][]string
 	}{
@@ -141,7 +141,7 @@ func TestFilesystemToolsHonorPreCanceledContext(t *testing.T) {
 	cancel()
 
 	calls := []struct {
-		tool Tool
+		tool agent.Tool
 		args string
 	}{
 		{readTool, `{"path":"missing"}`},
@@ -159,28 +159,7 @@ func TestFilesystemToolsHonorPreCanceledContext(t *testing.T) {
 	}
 }
 
-func TestCoreToolsRegisterInDeterministicOrder(t *testing.T) {
-	cwd := t.TempDir()
-	readTool := NewRead(cwd)
-	writeTool := NewWrite(cwd)
-	editTool := NewEdit(cwd)
-	bashTool := NewBash(cwd, nil)
-
-	registry, err := NewRegistry([]Tool{readTool, writeTool, editTool, bashTool})
-	if err != nil {
-		t.Fatal(err)
-	}
-	definitions := registry.Definitions()
-	names := make([]string, len(definitions))
-	for i, definition := range definitions {
-		names[i] = definition.Name
-	}
-	if !slices.Equal(names, []string{"bash", "edit", "read", "write"}) {
-		t.Fatalf("definition names = %v", names)
-	}
-}
-
-func executeJSON(t *testing.T, current Tool, arguments any) agent.ToolResult {
+func executeJSON(t *testing.T, current agent.Tool, arguments any) agent.ToolResult {
 	t.Helper()
 	encoded, err := json.Marshal(arguments)
 	if err != nil {

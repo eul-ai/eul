@@ -143,7 +143,7 @@ func TestEngineCheckpointEventsMarkResumableBoundaries(t *testing.T) {
 			return Response{Text: "done", State: []byte("done"), Usage: Usage{TotalTokens: 12}}, nil
 		},
 	}}
-	engine := newTestEngine(t, provider, &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
+	engine := newTestEngine(t, provider, &fakeToolbox{definitions: toolDefinitions("read"), execute: func(context.Context, ToolCall) (ToolResult, error) {
 		return ToolResult{Output: "contents"}, nil
 	}}, Options{Checkpointing: true})
 

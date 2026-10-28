@@ -44,9 +44,9 @@ func TestEngineRetriesGenerationBeforeObservableEvents(t *testing.T) {
 	}
 
 	executions := 0
-	toolbox := &fakeToolbox{execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
+	toolbox := &fakeToolbox{definitions: toolDefinitions("write"), execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
 		executions++
-		if call.ID != "completed" {
+		if string(call.Arguments) != `{"path":"new.txt"}` {
 			t.Fatalf("unexpected call: %+v", call)
 		}
 		return ToolResult{Output: "written"}, nil

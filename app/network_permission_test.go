@@ -33,11 +33,7 @@ func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		result, err := session.tools.Execute(context.Background(), agent.ToolCall{
-			ID:        "bash-network",
-			Name:      "bash",
-			Arguments: json.RawMessage(`{"command":"printf approved","timeout":null,"network":true}`),
-		}, discardToolUpdates{})
+		result, err := executeTool(session.tools, "bash", `{"command":"printf approved","timeout":null,"network":true}`)
 		done <- outcome{result: result, err: err}
 	}()
 
@@ -76,11 +72,7 @@ func TestAgentSessionRoutesSubagentNetworkApprovalToTerminal(t *testing.T) {
 	}
 	defer session.finish(nil)
 
-	result, err := session.tools.Execute(context.Background(), agent.ToolCall{
-		ID:        "launch",
-		Name:      "launch_subagents",
-		Arguments: json.RawMessage(`{"tasks":[{"description":"inspect network","prompt":"inspect network"}]}`),
-	}, discardToolUpdates{})
+	result, err := executeTool(session.tools, "launch_subagents", `{"tasks":[{"description":"inspect network","prompt":"inspect network"}]}`)
 	if err != nil || result.IsError {
 		t.Fatalf("launch result = %+v, error = %v", result, err)
 	}
@@ -133,11 +125,7 @@ func TestAgentSessionSharesNetworkSessionApprovalWithSubagents(t *testing.T) {
 	}
 	parentDone := make(chan outcome, 1)
 	go func() {
-		result, err := session.tools.Execute(context.Background(), agent.ToolCall{
-			ID:        "parent-bash",
-			Name:      "bash",
-			Arguments: json.RawMessage(`{"command":"printf parent","timeout":null,"network":true}`),
-		}, discardToolUpdates{})
+		result, err := executeTool(session.tools, "bash", `{"command":"printf parent","timeout":null,"network":true}`)
 		parentDone <- outcome{result: result, err: err}
 	}()
 
@@ -156,11 +144,7 @@ func TestAgentSessionSharesNetworkSessionApprovalWithSubagents(t *testing.T) {
 		t.Fatal("parent Bash did not finish")
 	}
 
-	result, err := session.tools.Execute(context.Background(), agent.ToolCall{
-		ID:        "launch",
-		Name:      "launch_subagents",
-		Arguments: json.RawMessage(`{"tasks":[{"description":"inspect network","prompt":"inspect network"}]}`),
-	}, discardToolUpdates{})
+	result, err := executeTool(session.tools, "launch_subagents", `{"tasks":[{"description":"inspect network","prompt":"inspect network"}]}`)
 	if err != nil || result.IsError {
 		t.Fatalf("launch result = %+v, error = %v", result, err)
 	}

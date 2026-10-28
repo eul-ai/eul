@@ -1,8 +1,7 @@
 package app
 
 import (
-	"errors"
-
+	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/tool"
 )
 
@@ -13,31 +12,18 @@ const (
 	subagentToolAccess
 )
 
-type toolsetFactory func(string, toolAccess, bool, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error)
+type toolsetFactory func(string, toolAccess, bool, tool.NetworkAuthorizer, ...agent.Tool) []agent.Tool
 
 func buildToolset(
 	cwd string,
 	access toolAccess,
 	_ bool,
 	authorizeNetwork tool.NetworkAuthorizer,
-	additional ...tool.Tool,
-) (*tool.Registry, error) {
-	bash := tool.NewBash(cwd, authorizeNetwork)
-
-	var tools []tool.Tool
-	switch access {
-	case fullToolAccess:
-		tools = []tool.Tool{
-			tool.NewRead(cwd),
-			tool.NewWrite(cwd),
-			tool.NewEdit(cwd),
-			bash,
-		}
-	case subagentToolAccess:
-		tools = []tool.Tool{tool.NewRead(cwd), bash}
-	default:
-		return nil, errors.New("unknown tool access")
+	additional ...agent.Tool,
+) []agent.Tool {
+	tools := []agent.Tool{tool.NewRead(cwd), tool.NewBash(cwd, authorizeNetwork)}
+	if access == fullToolAccess {
+		tools = append(tools, tool.NewWrite(cwd), tool.NewEdit(cwd))
 	}
-
-	return tool.NewRegistry(append(tools, additional...))
+	return append(tools, additional...)
 }

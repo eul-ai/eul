@@ -17,7 +17,7 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-func newTestBash(cwd string) Tool {
+func newTestBash(cwd string) agent.Tool {
 	return NewBash(cwd, func(context.Context, string) (bool, error) {
 		return true, nil
 	})

@@ -116,7 +116,7 @@ func TestClientRetriesTransientGenerationThroughEngine(t *testing.T) {
 		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"recovered\"}]}]}}\n\n")
 	}))
 	client := newTestClient(t, "key", Options{HTTPClient: server})
-	engine := agent.New(client, emptyToolbox{}, agent.Options{Model: "test-model"})
+	engine := agent.New(client, nil, agent.Options{Model: "test-model"})
 
 	var retries []agent.Event
 	result, err := engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "hello"}}, func(event agent.Event) error {
@@ -146,7 +146,7 @@ func TestClientRetriesInterruptedStreamAfterToolCallDelivery(t *testing.T) {
 	})
 
 	client := newTestClient(t, "key", Options{HTTPClient: server})
-	engine := agent.New(client, emptyToolbox{}, agent.Options{Model: "test-model"})
+	engine := agent.New(client, nil, agent.Options{Model: "test-model"})
 
 	result, err := engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "hello"}}, func(agent.Event) error { return nil })
 	if err != nil || result.Text != "recovered" || calls.Load() != 2 {

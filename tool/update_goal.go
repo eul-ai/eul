@@ -21,7 +21,7 @@ type updateGoalArguments struct {
 	Status string `json:"status"`
 }
 
-func NewUpdateGoal(complete func() error) Tool {
+func NewUpdateGoal(complete func() error) agent.Tool {
 	return spec[updateGoalArguments]{
 		definition: updateGoalToolDefinition,
 		present: func(args updateGoalArguments) agent.ToolPresentation {

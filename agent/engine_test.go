@@ -2,10 +2,10 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
-	"slices"
 	"testing"
 	"time"
 )
@@ -97,44 +97,53 @@ func (p *retryingCompactingProvider) Compact(ctx context.Context, request Reques
 
 type fakeToolbox struct {
 	definitions        []ToolDefinition
-	presentation       func(ToolCallSnapshot) ToolPresentation
+	presentation       func(name, rawArguments string) ToolPresentation
 	execute            func(context.Context, ToolCall) (ToolResult, error)
 	executeWithUpdates func(context.Context, ToolCall, ToolUpdateSink) (ToolResult, error)
 }
 
-func (t *fakeToolbox) Definitions() []ToolDefinition {
-	return slices.Clone(t.definitions)
-}
-
-func (t *fakeToolbox) Presentation(snapshot ToolCallSnapshot) ToolPresentation {
-	if t.presentation != nil {
-		return t.presentation(snapshot)
+func (toolbox *fakeToolbox) tools() []Tool {
+	tools := make([]Tool, len(toolbox.definitions))
+	for index, definition := range toolbox.definitions {
+		tools[index] = fakeTool{toolbox: toolbox, definition: definition}
 	}
-	return ToolPresentation{Title: snapshot.Name}
+	return tools
 }
 
-func (t *fakeToolbox) Execute(ctx context.Context, call ToolCall, updates ToolUpdateSink) (ToolResult, error) {
-	if t.executeWithUpdates != nil {
-		return t.executeWithUpdates(ctx, call, updates)
+type fakeTool struct {
+	toolbox    *fakeToolbox
+	definition ToolDefinition
+}
+
+func (tool fakeTool) Definition() ToolDefinition {
+	return tool.definition
+}
+
+func (tool fakeTool) Presentation(rawArguments string) ToolPresentation {
+	if tool.toolbox.presentation == nil {
+		return ToolPresentation{}
 	}
-	if t.execute == nil {
-		return ToolResult{}, fmt.Errorf("unknown tool %q", call.Name)
+	return tool.toolbox.presentation(tool.definition.Name, rawArguments)
+}
+
+func (tool fakeTool) Execute(ctx context.Context, arguments json.RawMessage, updates ToolUpdateSink) (ToolResult, error) {
+	call := ToolCall{Name: tool.definition.Name, Arguments: arguments}
+	switch {
+	case tool.toolbox.executeWithUpdates != nil:
+		return tool.toolbox.executeWithUpdates(ctx, call, updates)
+	case tool.toolbox.execute != nil:
+		return tool.toolbox.execute(ctx, call)
+	default:
+		return ToolResult{}, fmt.Errorf("unexpected tool %q", call.Name)
 	}
-
-	return t.execute(ctx, call)
 }
 
-type executionOnlyToolbox struct {
-	definitions []ToolDefinition
-	execute     func(context.Context, ToolCall) (ToolResult, error)
-}
-
-func (toolbox *executionOnlyToolbox) Definitions() []ToolDefinition {
-	return slices.Clone(toolbox.definitions)
-}
-
-func (toolbox *executionOnlyToolbox) Execute(ctx context.Context, call ToolCall, _ ToolUpdateSink) (ToolResult, error) {
-	return toolbox.execute(ctx, call)
+func toolDefinitions(names ...string) []ToolDefinition {
+	definitions := make([]ToolDefinition, len(names))
+	for index, name := range names {
+		definitions[index] = ToolDefinition{Name: name}
+	}
+	return definitions
 }
 
 func TestEngineClearsQueuedSteeringAfterFailure(t *testing.T) {
@@ -372,9 +381,9 @@ func TestEnginePreservesTextOnlyContent(t *testing.T) {
 	}
 }
 
-func newTestEngine(t *testing.T, provider Provider, toolbox Toolbox, options Options) *Engine {
+func newTestEngine(t *testing.T, provider Provider, toolbox *fakeToolbox, options Options) *Engine {
 	t.Helper()
-	return New(provider, toolbox, options)
+	return New(provider, toolbox.tools(), options)
 }
 
 func discardEvents(Event) error { return nil }

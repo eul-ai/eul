@@ -160,12 +160,11 @@ type ToolResult struct {
 	IsError bool
 }
 
-type Toolbox interface {
-	Definitions() []ToolDefinition
-	// Execute may be called concurrently for calls from the same provider response.
-	Execute(ctx context.Context, call ToolCall, updates ToolUpdateSink) (ToolResult, error)
-}
-
-type ToolPresenter interface {
-	Presentation(ToolCallSnapshot) ToolPresentation
+// Tool is a tool the model can call. Execute may be called concurrently for
+// calls from the same provider response. An error from Execute is reported to
+// the model as an error result, unless ctx is done, which ends the turn.
+type Tool interface {
+	Definition() ToolDefinition
+	Presentation(rawArguments string) ToolPresentation
+	Execute(ctx context.Context, arguments json.RawMessage, updates ToolUpdateSink) (ToolResult, error)
 }

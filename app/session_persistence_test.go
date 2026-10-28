@@ -23,8 +23,8 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	runtime := environment{
 		stdin:  strings.NewReader(""),
 		stdout: io.Discard,
-		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error) {
-			return tool.NewRegistry(nil)
+		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...agent.Tool) []agent.Tool {
+			return nil
 		},
 	}
 	newBackendRuntime := func() *fakeBackendRuntime {
@@ -97,8 +97,8 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 	runtime := environment{
 		stdin:  strings.NewReader(""),
 		stdout: io.Discard,
-		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error) {
-			return tool.NewRegistry(nil)
+		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...agent.Tool) []agent.Tool {
+			return nil
 		},
 	}
 	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
@@ -148,8 +148,8 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 	runtime := environment{
 		stdin:  strings.NewReader(""),
 		stdout: io.Discard,
-		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error) {
-			return tool.NewRegistry(nil)
+		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...agent.Tool) []agent.Tool {
+			return nil
 		},
 	}
 	newBackendRuntime := func() *fakeBackendRuntime {

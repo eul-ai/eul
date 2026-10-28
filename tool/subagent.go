@@ -126,7 +126,7 @@ type subagentLauncher struct {
 	settings       *agent.Settings
 }
 
-func NewLaunchSubagents(manager *subagent.Manager, thinkingLevels map[subagent.Profile][]agent.ThinkingLevel, settings *agent.Settings) Tool {
+func NewLaunchSubagents(manager *subagent.Manager, thinkingLevels map[subagent.Profile][]agent.ThinkingLevel, settings *agent.Settings) agent.Tool {
 	launcher := subagentLauncher{manager: manager, thinkingLevels: thinkingLevels, settings: settings}
 	return launchTool{spec[launchArguments]{
 		definition: launchDefinition(thinkingLevels),
@@ -197,7 +197,7 @@ func launchPresentation(count int, message string) agent.ToolPresentation {
 	}
 }
 
-func NewWaitForSubagent(manager *subagent.Manager) Tool {
+func NewWaitForSubagent(manager *subagent.Manager) agent.Tool {
 	return spec[waitArguments]{
 		definition: waitDefinition,
 		present: func(args waitArguments) agent.ToolPresentation {
@@ -245,7 +245,7 @@ func waitResultMessage(outcome subagent.WaitOutcome) string {
 	}
 }
 
-func NewCancelSubagents(manager *subagent.Manager) Tool {
+func NewCancelSubagents(manager *subagent.Manager) agent.Tool {
 	return spec[cancelArguments]{
 		definition: cancelDefinition,
 		present: func(args cancelArguments) agent.ToolPresentation {

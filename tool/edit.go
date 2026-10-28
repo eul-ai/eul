@@ -29,7 +29,7 @@ type editArguments struct {
 	All     bool    `json:"all"`
 }
 
-func NewEdit(cwd string) Tool {
+func NewEdit(cwd string) agent.Tool {
 	return spec[editArguments]{
 		definition: editToolDefinition,
 		present: func(args editArguments) agent.ToolPresentation {

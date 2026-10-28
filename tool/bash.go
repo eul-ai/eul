@@ -49,7 +49,7 @@ type bashArguments struct {
 }
 
 // NewBash returns an unsandboxed Bash tool when authorizeNetwork is nil.
-func NewBash(cwd string, authorizeNetwork NetworkAuthorizer) Tool {
+func NewBash(cwd string, authorizeNetwork NetworkAuthorizer) agent.Tool {
 	bash := bashTool{workspace: newWorkspace(cwd), authorizeNetwork: authorizeNetwork}
 	return spec[bashArguments]{
 		definition: bashToolDefinition,

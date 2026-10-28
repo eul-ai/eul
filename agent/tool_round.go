@@ -1,6 +1,9 @@
 package agent
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 type toolCompletion struct {
 	index  int
@@ -94,7 +97,12 @@ func (t *turn) beginToolRound(calls []ToolCall) error {
 }
 
 func (t *turn) executeTool(ctx context.Context, call ToolCall) (ToolResult, error) {
-	result, err := t.engine.tools.Execute(ctx, call, t.tools.update(call))
+	tool, ok := t.engine.tools[call.Name]
+	if !ok {
+		return ToolResult{CallID: call.ID, Tool: call.Name, Output: fmt.Sprintf("unknown tool %q", call.Name), IsError: true}, nil
+	}
+
+	result, err := tool.Execute(ctx, call.Arguments, t.tools.update(call))
 	switch {
 	case err == nil:
 	case ctx.Err() != nil:

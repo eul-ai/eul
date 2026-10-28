@@ -38,13 +38,10 @@ func (runner childRunner) run(ctx context.Context, task subagent.Task, progress 
 		return "", fmt.Errorf("configure subagent provider: %w", err)
 	}
 
-	registry, err := runner.newToolset(runner.config.cwd, subagentToolAccess, runner.config.noSandbox, runner.authorizeNetwork)
-	if err != nil {
-		return "", fmt.Errorf("configure subagent tools: %w", err)
-	}
+	tools := runner.newToolset(runner.config.cwd, subagentToolAccess, runner.config.noSandbox, runner.authorizeNetwork)
 	_, fastMode := runner.settings.Snapshot()
 	fastMode = fastMode && runner.models[task.ModelProfile].FastMode
-	child := agent.New(provider, registry, childEngineOptions(runner.config, task.ModelProfile, task.ThinkingLevel, fastMode))
+	child := agent.New(provider, tools, childEngineOptions(runner.config, task.ModelProfile, task.ThinkingLevel, fastMode))
 
 	var usage agent.Usage
 	result, err := child.Run(ctx, []agent.ContentPart{{Kind: agent.ContentPartText, Text: task.Prompt}}, func(event agent.Event) error {

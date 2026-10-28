@@ -132,16 +132,16 @@ func TestEngineDeliversSteeringAfterCompleteToolBatch(t *testing.T) {
 			assertUserInput(t, request, "start")
 			return Response{
 				ToolCalls: []ToolCall{
-					{ID: "one", Name: "tool", Arguments: json.RawMessage(`{}`)},
-					{ID: "two", Name: "tool", Arguments: json.RawMessage(`{}`)},
+					{ID: "one", Name: "first", Arguments: json.RawMessage(`{}`)},
+					{ID: "two", Name: "second", Arguments: json.RawMessage(`{}`)},
 				},
 				State: []byte("tools"),
 			}, nil
 		},
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
 			want := []Input{
-				{Kind: InputToolResult, CallID: "one", Tool: "tool", Text: "result one"},
-				{Kind: InputToolResult, CallID: "two", Tool: "tool", Text: "result two"},
+				{Kind: InputToolResult, CallID: "one", Tool: "first", Text: "result first"},
+				{Kind: InputToolResult, CallID: "two", Tool: "second", Text: "result second"},
 				NewTextInput("redirect"),
 			}
 			if string(request.State) != "tools" || !reflect.DeepEqual(request.Inputs, want) {
@@ -152,11 +152,11 @@ func TestEngineDeliversSteeringAfterCompleteToolBatch(t *testing.T) {
 	}}
 	executions := make(chan struct{}, 2)
 	var startedOnce sync.Once
-	toolbox := &fakeToolbox{execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
+	toolbox := &fakeToolbox{definitions: toolDefinitions("first", "second"), execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
 		executions <- struct{}{}
 		startedOnce.Do(func() { close(toolStarted) })
 		<-releaseTool
-		return ToolResult{Output: "result " + call.ID}, nil
+		return ToolResult{Output: "result " + call.Name}, nil
 	}}
 	engine := newTestEngine(t, provider, toolbox, Options{})
 	var events []Event
@@ -265,7 +265,7 @@ func TestEnginePreservesToolResultsWhenSteeringDeliveryEventFails(t *testing.T) 
 			return Response{Text: "recovered", State: []byte("recovered")}, nil
 		},
 	}}
-	engine := newTestEngine(t, provider, &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
+	engine := newTestEngine(t, provider, &fakeToolbox{definitions: toolDefinitions("tool"), execute: func(context.Context, ToolCall) (ToolResult, error) {
 		return ToolResult{Output: "result"}, nil
 	}}, Options{})
 	queued := false

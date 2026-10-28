@@ -18,7 +18,7 @@ type sessionRunner interface {
 
 type agentSession struct {
 	engine          *agent.Engine
-	tools           *tool.Registry
+	tools           []agent.Tool
 	subagents       *subagent.Manager
 	backendRuntime  backend.Runtime
 	terminalOptions terminal.Options
@@ -34,7 +34,7 @@ func newSessionTools(
 	settings *agent.Settings,
 	authorizeNetwork tool.NetworkAuthorizer,
 	completeGoal func() error,
-) (*tool.Registry, *subagent.Manager, error) {
+) ([]agent.Tool, *subagent.Manager) {
 	newToolset := env.newToolset
 	if newToolset == nil {
 		newToolset = buildToolset
@@ -52,7 +52,7 @@ func newSessionTools(
 	for profile, model := range metadata.subagent {
 		thinkingLevels[profile] = model.ThinkingLevels
 	}
-	registry, err := newToolset(
+	tools := newToolset(
 		config.cwd,
 		fullToolAccess,
 		config.noSandbox,
@@ -62,11 +62,7 @@ func newSessionTools(
 		tool.NewCancelSubagents(manager),
 		tool.NewUpdateGoal(completeGoal),
 	)
-	if err != nil {
-		manager.Close()
-		return nil, nil, fmt.Errorf("configure tools: %w", err)
-	}
-	return registry, manager, nil
+	return tools, manager
 }
 
 func newAgentSession(config resolvedConfig, env environment, backendRuntime backend.Runtime) (*agentSession, error) {
@@ -128,19 +124,16 @@ func newAgentSessionComponents(
 	settings := agent.NewSettings(metadata.thinkingLevel, config.fastMode)
 
 	var engine *agent.Engine
-	registry, subagents, err := newSessionTools(config, env, backendRuntime, metadata, settings, authorizeNetwork, func() error {
+	tools, subagents := newSessionTools(config, env, backendRuntime, metadata, settings, authorizeNetwork, func() error {
 		if engine == nil {
 			return errors.New("goal completion is unavailable")
 		}
 		return engine.CompleteGoal()
 	})
-	if err != nil {
-		return nil, terminalOptionsBuilder{}, errors.Join(err, closeBackendRuntime(backendRuntime))
-	}
-	engine = agent.New(provider, registry, engineOptions(config, config.models.main, settings, checkpointing, tool.NewSubagentInbox(subagents)))
+	engine = agent.New(provider, tools, engineOptions(config, config.models.main, settings, checkpointing, tool.NewSubagentInbox(subagents)))
 	session := &agentSession{
 		engine:         engine,
-		tools:          registry,
+		tools:          tools,
 		subagents:      subagents,
 		backendRuntime: backendRuntime,
 		settings:       settings,

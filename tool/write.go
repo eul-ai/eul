@@ -31,7 +31,7 @@ type writeArguments struct {
 	Content *string `json:"content"`
 }
 
-func NewWrite(cwd string) Tool {
+func NewWrite(cwd string) agent.Tool {
 	return spec[writeArguments]{
 		definition: writeToolDefinition,
 		present:    presentWrite,

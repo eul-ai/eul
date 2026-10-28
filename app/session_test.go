@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -182,9 +181,7 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 		}
 	}()
 
-	result, err := session.tools.Execute(context.Background(), agent.ToolCall{
-		ID: "launch", Name: "launch_subagents", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect scheduler","prompt":"child prompt"}]}`),
-	}, nil)
+	result, err := executeTool(session.tools, "launch_subagents", `{"tasks":[{"description":"inspect scheduler","prompt":"child prompt"}]}`)
 	if err != nil || result.IsError {
 		t.Fatalf("launch result = %+v, error = %v", result, err)
 	}
@@ -241,8 +238,8 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 		},
 		metadata: provider.metadataFor,
 	}
-	runtime := environment{newToolset: func(_ string, _ toolAccess, _ bool, _ tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
-		return tool.NewRegistry(additional)
+	runtime := environment{newToolset: func(_ string, _ toolAccess, _ bool, _ tool.NetworkAuthorizer, additional ...agent.Tool) []agent.Tool {
+		return additional
 	}}
 	session, err := newAgentSession(resolvedConfig{
 		models:        modelSet{main: "main", fast: "fast", balanced: "balanced"},
@@ -256,15 +253,11 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 		t.Fatalf("metadata requests = %v", provider.requested)
 	}
 
-	result, err := session.tools.Execute(context.Background(), agent.ToolCall{
-		ID: "fast", Name: "launch_subagents", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"fast","thinking_level":"high"}]}`),
-	}, nil)
+	result, err := executeTool(session.tools, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"fast","thinking_level":"high"}]}`)
 	if err != nil || !result.IsError {
 		t.Fatalf("fast result = %+v, error = %v", result, err)
 	}
-	result, err = session.tools.Execute(context.Background(), agent.ToolCall{
-		ID: "balanced", Name: "launch_subagents", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"balanced","thinking_level":"high"}]}`),
-	}, nil)
+	result, err = executeTool(session.tools, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"balanced","thinking_level":"high"}]}`)
 	if err != nil || result.IsError {
 		t.Fatalf("balanced result = %+v, error = %v", result, err)
 	}
@@ -295,8 +288,8 @@ func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 		},
 		metadata: provider.metadataFor,
 	}
-	runtime := environment{newToolset: func(_ string, _ toolAccess, _ bool, _ tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
-		return tool.NewRegistry(additional)
+	runtime := environment{newToolset: func(_ string, _ toolAccess, _ bool, _ tool.NetworkAuthorizer, additional ...agent.Tool) []agent.Tool {
+		return additional
 	}}
 	session, err := newAgentSession(resolvedConfig{
 		models:        modelSet{main: "main", fast: "fast", balanced: "balanced"},
@@ -308,10 +301,8 @@ func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 	}
 	defer session.finish(nil)
 
-	launch := func(id string) agent.Request {
-		result, err := session.tools.Execute(context.Background(), agent.ToolCall{
-			ID: id, Name: "launch_subagents", Arguments: json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`),
-		}, nil)
+	launch := func() agent.Request {
+		result, err := executeTool(session.tools, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect"}]}`)
 		if err != nil || result.IsError {
 			t.Fatalf("launch result = %+v, error = %v", result, err)
 		}
@@ -324,14 +315,14 @@ func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 		}
 	}
 
-	request := launch("high")
+	request := launch()
 	if request.Model != "main" || request.ThinkingLevel != agent.ThinkingHigh {
 		t.Fatalf("high request = %+v", request)
 	}
 	if err := session.settings.SetThinkingLevel(agent.ThinkingMinimal); err != nil {
 		t.Fatal(err)
 	}
-	request = launch("minimal")
+	request = launch()
 	if request.Model != "main" || request.ThinkingLevel != agent.ThinkingMinimal {
 		t.Fatalf("minimal request = %+v", request)
 	}
@@ -351,9 +342,7 @@ func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 	}
 	defer session.finish(nil)
 
-	result, err := session.tools.Execute(context.Background(), agent.ToolCall{
-		ID: "inactive", Name: "update_goal", Arguments: json.RawMessage(`{"status":"complete"}`),
-	}, nil)
+	result, err := executeTool(session.tools, "update_goal", `{"status":"complete"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,36 +353,12 @@ func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err = session.tools.Execute(context.Background(), agent.ToolCall{
-		ID: "complete", Name: "update_goal", Arguments: json.RawMessage(`{"status":"complete"}`),
-	}, nil)
+	result, err = executeTool(session.tools, "update_goal", `{"status":"complete"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	goal, ok := session.engine.Goal()
 	if result.IsError || !ok || !goal.Complete {
 		t.Fatalf("result=%+v goal=%+v exists=%v", result, goal, ok)
-	}
-}
-
-func TestNewAgentSessionReportsToolsetConfigurationFailure(t *testing.T) {
-	configureErr := errors.New("toolset failed")
-	runtime := environment{
-		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...tool.Tool) (*tool.Registry, error) {
-			return nil, configureErr
-		},
-	}
-
-	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
-			return agent.Response{}, nil
-		}), nil
-	}}
-	_, err := newAgentSession(resolvedConfig{models: modelSet{main: "model", fast: "model", balanced: "model"}, cwd: t.TempDir()}, runtime, backendRuntime)
-	if !errors.Is(err, configureErr) {
-		t.Fatalf("newAgentSession error = %v", err)
-	}
-	if backendRuntime.closeCalls != 1 {
-		t.Fatalf("backend close calls = %d, want 1", backendRuntime.closeCalls)
 	}
 }

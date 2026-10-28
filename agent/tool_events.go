@@ -4,7 +4,7 @@ import "sync"
 
 type toolEventTracker struct {
 	mu            sync.Mutex
-	tools         Toolbox
+	tools         map[string]Tool
 	sink          EventSink
 	streamed      map[string]streamedTool
 	order         []string
@@ -32,7 +32,7 @@ func (sink *trackedToolUpdateSink) SetFinal(presentation ToolPresentation) {
 	sink.tracker.setFinal(sink.call, presentation)
 }
 
-func newToolEventTracker(tools Toolbox, sink EventSink) *toolEventTracker {
+func newToolEventTracker(tools map[string]Tool, sink EventSink) *toolEventTracker {
 	return &toolEventTracker{
 		tools:      tools,
 		sink:       sink,
@@ -67,11 +67,11 @@ func (tracker *toolEventTracker) emitLocked(event Event) error {
 }
 
 func (tracker *toolEventTracker) presentation(snapshot ToolCallSnapshot) ToolPresentation {
-	presenter, ok := tracker.tools.(ToolPresenter)
+	tool, ok := tracker.tools[snapshot.Name]
 	if !ok {
 		return ToolPresentation{Title: snapshot.Name}
 	}
-	presentation := presenter.Presentation(snapshot)
+	presentation := tool.Presentation(snapshot.RawArguments)
 	if presentation.Title == "" {
 		presentation.Title = snapshot.Name
 	}

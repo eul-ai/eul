@@ -173,7 +173,7 @@ func TestEngineDoesNotInjectGoalAfterToolBatch(t *testing.T) {
 			return Response{Text: "done"}, nil
 		},
 	}}
-	engine = newTestEngine(t, provider, &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
+	engine = newTestEngine(t, provider, &fakeToolbox{definitions: toolDefinitions("tool"), execute: func(context.Context, ToolCall) (ToolResult, error) {
 		return ToolResult{Output: "tool result"}, nil
 	}}, Options{})
 	if err := engine.SetGoal("keep going"); err != nil {
@@ -215,11 +215,11 @@ func TestEngineClearGoalDuringToolBatchFinishesResultsAndStopsContinuation(t *te
 	}}
 	executions := make(chan struct{}, 2)
 	var startedOnce sync.Once
-	engine := newTestEngine(t, provider, &fakeToolbox{execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
+	engine := newTestEngine(t, provider, &fakeToolbox{definitions: toolDefinitions("tool"), execute: func(context.Context, ToolCall) (ToolResult, error) {
 		executions <- struct{}{}
 		startedOnce.Do(func() { close(toolStarted) })
 		<-releaseTool
-		return ToolResult{Output: "result " + call.ID}, nil
+		return ToolResult{Output: "result"}, nil
 	}}, Options{})
 	if err := engine.SetGoal("keep going"); err != nil {
 		t.Fatal(err)
@@ -262,7 +262,7 @@ func TestEngineCompletionToolStopsGoalContinuation(t *testing.T) {
 			return Response{Text: "complete"}, nil
 		},
 	}}
-	toolbox := &fakeToolbox{execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
+	toolbox := &fakeToolbox{definitions: toolDefinitions("update_goal"), execute: func(_ context.Context, call ToolCall) (ToolResult, error) {
 		if call.Name != "update_goal" {
 			t.Fatalf("tool = %q", call.Name)
 		}

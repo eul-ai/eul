@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 )
 
@@ -24,7 +25,7 @@ type RunResult struct {
 type Engine struct {
 	mu            sync.Mutex
 	provider      Provider
-	tools         Toolbox
+	tools         map[string]Tool
 	definitions   []ToolDefinition
 	sessionID     string
 	model         string
@@ -36,16 +37,26 @@ type Engine struct {
 	inbox         Inbox
 }
 
-func New(provider Provider, tools Toolbox, options Options) *Engine {
+func New(provider Provider, tools []Tool, options Options) *Engine {
 	settings := options.Settings
 	if settings == nil {
 		settings = NewSettings(DefaultThinkingLevel, false)
 	}
 
+	byName := make(map[string]Tool, len(tools))
+	definitions := make([]ToolDefinition, len(tools))
+	for index, tool := range tools {
+		definitions[index] = tool.Definition()
+		byName[definitions[index].Name] = tool
+	}
+	slices.SortFunc(definitions, func(left, right ToolDefinition) int {
+		return strings.Compare(left.Name, right.Name)
+	})
+
 	return &Engine{
 		provider:      provider,
-		tools:         tools,
-		definitions:   tools.Definitions(),
+		tools:         byName,
+		definitions:   definitions,
 		model:         options.Model,
 		settings:      settings,
 		instructions:  options.Instructions,

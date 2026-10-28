@@ -62,7 +62,7 @@ func TestEngineDeliversAndAcknowledgesInbox(t *testing.T) {
 		}
 		return Response{Text: "answer", State: []byte("state")}, nil
 	})
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox})
+	engine := New(provider, nil, Options{Model: "model", Inbox: inbox})
 
 	result, err := engine.Run(context.Background(), textParts("start"), discardEvents)
 	if err != nil || result.Text != "answer" {
@@ -78,7 +78,7 @@ func TestEngineAcknowledgesInboxOnlyAfterCheckpointSucceeds(t *testing.T) {
 	provider := inboxProvider(func(context.Context, Request, StreamObserver) (Response, error) {
 		return Response{Text: "answer", State: []byte("delivered")}, nil
 	})
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox, Checkpointing: true})
+	engine := New(provider, nil, Options{Model: "model", Inbox: inbox, Checkpointing: true})
 	persistErr := errors.New("persist failed")
 
 	_, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
@@ -97,7 +97,7 @@ func TestEngineLeavesInboxPendingAfterGenerationFailure(t *testing.T) {
 	provider := inboxProvider(func(context.Context, Request, StreamObserver) (Response, error) {
 		return Response{}, errors.New("failed")
 	})
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox})
+	engine := New(provider, nil, Options{Model: "model", Inbox: inbox})
 
 	if _, err := engine.Run(context.Background(), textParts("start"), discardEvents); err == nil {
 		t.Fatal("generation succeeded")
@@ -143,7 +143,7 @@ func TestEngineAutomaticallyCompactsOrdinaryStateBeforeDeliveringInbox(t *testin
 			return CompactResponse{State: []byte("compacted")}, nil
 		},
 	}
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox})
+	engine := New(provider, nil, Options{Model: "model", Inbox: inbox})
 	engine.conversation.state = []byte("full")
 
 	result, err := engine.Run(context.Background(), textParts("start"), discardEvents)
@@ -192,7 +192,7 @@ func TestEngineReattachesInboxAfterErrorCompaction(t *testing.T) {
 			return CompactResponse{State: []byte("compacted")}, nil
 		},
 	}
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox})
+	engine := New(provider, nil, Options{Model: "model", Inbox: inbox})
 	engine.conversation.state = []byte("full")
 
 	result, err := engine.Run(context.Background(), textParts("start"), discardEvents)
@@ -224,7 +224,7 @@ func TestEngineCompletionAfterSettlementRemainsForNextUserTurn(t *testing.T) {
 		}
 		return Response{Text: "answer", State: []byte("state")}, nil
 	})
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox})
+	engine := New(provider, nil, Options{Model: "model", Inbox: inbox})
 
 	if _, err := engine.Run(context.Background(), textParts("first"), discardEvents); err != nil {
 		t.Fatal(err)
@@ -273,7 +273,7 @@ func TestEngineSettlementDeliversCompletionThatRacesFinalAnswer(t *testing.T) {
 			return Response{}, nil
 		}
 	})
-	engine := New(provider, &fakeToolbox{}, Options{Model: "model", Inbox: inbox})
+	engine := New(provider, nil, Options{Model: "model", Inbox: inbox})
 
 	result, err := engine.Run(context.Background(), textParts("start"), discardEvents)
 	if err != nil || result.Text != "final" || calls != 2 {

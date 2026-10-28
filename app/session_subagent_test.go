@@ -266,12 +266,9 @@ func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) 
 	defer manager.Close()
 
 	thinkingLevels := map[subagent.Profile][]agent.ThinkingLevel{subagent.ProfileMain: agent.ThinkingLevels()}
-	registry, err := tool.NewRegistry([]tool.Tool{
+	tools := []agent.Tool{
 		tool.NewLaunchSubagents(manager, thinkingLevels, agent.NewSettings(agent.ThinkingMedium, false)),
 		tool.NewWaitForSubagent(manager),
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 	calls := 0
 	provider := steeringWaitProvider(func(_ context.Context, request agent.Request) (agent.Response, error) {
@@ -298,7 +295,7 @@ func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) 
 			return agent.Response{}, fmt.Errorf("unexpected provider call %d", calls)
 		}
 	})
-	engine := agent.New(provider, registry, agent.Options{Model: "model", Inbox: tool.NewSubagentInbox(manager)})
+	engine := agent.New(provider, tools, agent.Options{Model: "model", Inbox: tool.NewSubagentInbox(manager)})
 
 	waitStarted := make(chan struct{})
 	done := make(chan error, 1)
