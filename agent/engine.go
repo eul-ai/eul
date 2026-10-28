@@ -67,8 +67,8 @@ func (e *Engine) Run(ctx context.Context, content []ContentPart, sink EventSink)
 		return RunResult{}, err
 	}
 
-	e.continuations.beginRun()
-	defer e.continuations.endRun()
+	e.continuations.setRunning(true)
+	defer e.continuations.setRunning(false)
 
 	t := &turn{engine: e, ctx: ctx, sink: sink, current: e.conversation}
 	t.current.inputs = append(slices.Clip(t.current.inputs), NewUserInput(content...))

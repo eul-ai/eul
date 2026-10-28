@@ -19,7 +19,7 @@ func (t *turn) executeTools(calls []ToolCall) error {
 		return err
 	}
 
-	next, ok := t.engine.continuations.next(continuationAfterToolBatch)
+	next, ok := t.engine.continuations.nextAfterTools()
 	if !ok {
 		return nil
 	}

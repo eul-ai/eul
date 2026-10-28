@@ -214,7 +214,7 @@ func (t *turn) accept(response Response) (bool, error) {
 			return false, err
 		}
 	}
-	if next, ok := t.engine.continuations.next(continuationBeforeSettle); ok {
+	if next, ok := t.engine.continuations.nextBeforeSettle(); ok {
 		return false, t.deliver(next)
 	}
 	return t.engine.inbox == nil || t.engine.inbox.InboxEmpty(), nil
@@ -237,7 +237,7 @@ func (t *turn) acknowledgeInbox(calls []ToolCall) error {
 func (t *turn) deliver(next pendingContinuation) error {
 	event := Event{Kind: EventSteering, Content: next.content}
 	if next.kind == continuationGoal {
-		event = Event{Kind: EventGoalContinuation, Text: NewUserInput(next.content...).PlainText()}
+		event = Event{Kind: EventGoalContinuation}
 	}
 	if err := t.sink(event); err != nil {
 		return err

@@ -21,13 +21,6 @@ func SteeringSignal(ctx context.Context) <-chan struct{} {
 	return signal
 }
 
-type continuationPoint uint8
-
-const (
-	continuationAfterToolBatch continuationPoint = iota
-	continuationBeforeSettle
-)
-
 type continuationKind uint8
 
 const (
@@ -53,22 +46,13 @@ type continuationArbiter struct {
 	goal              *GoalState
 }
 
-func (arbiter *continuationArbiter) beginRun() {
+func (arbiter *continuationArbiter) setRunning(running bool) {
 	arbiter.mu.Lock()
 	defer arbiter.mu.Unlock()
 
 	arbiter.steering = nil
 	arbiter.toolRoundSteering = nil
-	arbiter.acceptingSteering = true
-}
-
-func (arbiter *continuationArbiter) endRun() {
-	arbiter.mu.Lock()
-	defer arbiter.mu.Unlock()
-
-	arbiter.steering = nil
-	arbiter.toolRoundSteering = nil
-	arbiter.acceptingSteering = false
+	arbiter.acceptingSteering = running
 }
 
 func (arbiter *continuationArbiter) steer(content []ContentPart) bool {
@@ -151,14 +135,7 @@ func (arbiter *continuationArbiter) restoreGoal(goal *GoalState) {
 	arbiter.mu.Lock()
 	defer arbiter.mu.Unlock()
 
-	arbiter.steering = nil
-	arbiter.toolRoundSteering = nil
-	arbiter.acceptingSteering = false
-	arbiter.goal = nil
-	if goal != nil {
-		restored := *goal
-		arbiter.goal = &restored
-	}
+	arbiter.goal = goal
 }
 
 func (arbiter *continuationArbiter) completeGoal() error {
@@ -176,18 +153,21 @@ func (arbiter *continuationArbiter) completeGoal() error {
 	}
 }
 
-func (arbiter *continuationArbiter) next(point continuationPoint) (pendingContinuation, bool) {
+func (arbiter *continuationArbiter) nextAfterTools() (pendingContinuation, bool) {
 	arbiter.mu.Lock()
 	defer arbiter.mu.Unlock()
 
-	if len(arbiter.steering) > 0 {
-		content := arbiter.steering[0]
-		arbiter.steering[0] = nil
-		arbiter.steering = arbiter.steering[1:]
-		return pendingContinuation{kind: continuationSteering, content: content}, true
-	}
+	return arbiter.nextSteeringLocked()
+}
 
-	if point == continuationBeforeSettle && arbiter.goal != nil && !arbiter.goal.Complete {
+func (arbiter *continuationArbiter) nextBeforeSettle() (pendingContinuation, bool) {
+	arbiter.mu.Lock()
+	defer arbiter.mu.Unlock()
+
+	if next, ok := arbiter.nextSteeringLocked(); ok {
+		return next, true
+	}
+	if arbiter.goal != nil && !arbiter.goal.Complete {
 		return pendingContinuation{
 			kind: continuationGoal,
 			content: []ContentPart{{
@@ -196,9 +176,17 @@ func (arbiter *continuationArbiter) next(point continuationPoint) (pendingContin
 			}},
 		}, true
 	}
-
-	if point == continuationBeforeSettle {
-		arbiter.acceptingSteering = false
-	}
+	arbiter.acceptingSteering = false
 	return pendingContinuation{}, false
+}
+
+func (arbiter *continuationArbiter) nextSteeringLocked() (pendingContinuation, bool) {
+	if len(arbiter.steering) == 0 {
+		return pendingContinuation{}, false
+	}
+
+	content := arbiter.steering[0]
+	arbiter.steering[0] = nil
+	arbiter.steering = arbiter.steering[1:]
+	return pendingContinuation{kind: continuationSteering, content: content}, true
 }
