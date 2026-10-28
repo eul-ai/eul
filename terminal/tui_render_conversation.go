@@ -226,10 +226,14 @@ func isToolBlock(kind blockKind) bool {
 func markdownSource(block conversationBlock) (string, bool) {
 	switch block.kind {
 	case blockUser:
-		if len(block.content) == 0 {
+		switch {
+		case len(block.content) == 0:
 			return block.text, true
+		case contentHasImage(block.content):
+			return "", false
+		default:
+			return contentText(block.content), true
 		}
-		return contentText(block.content), !contentHasImage(block.content)
 	case blockAssistant:
 		return block.text, true
 	case blockReasoning:

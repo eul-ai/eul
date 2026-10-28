@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/terminal/keys"
 )
 
@@ -105,6 +106,30 @@ func TestMouseDragCopiesMarkdownSource(t *testing.T) {
 	}
 
 	encoded := base64.StdEncoding.EncodeToString([]byte("**some** text.\n\n- first"))
+	if got, want := output.String(), "\x1b]52;c;"+encoded+"\x07"; got != want {
+		t.Fatalf("clipboard output = %q, want %q", got, want)
+	}
+}
+
+func TestMouseDragCopiesRenderedTextForImageMessages(t *testing.T) {
+	model := newTUIModel(40, 10, Options{})
+	model.appendUserContent([]agent.ContentPart{
+		{Kind: agent.ContentPartText, Text: "see **this** "},
+		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png"}},
+	})
+	committed := buildTerminalFrame(model)
+
+	var output bytes.Buffer
+	for _, event := range []keys.Mouse{
+		{Kind: keys.MousePress, Column: 0, Row: 1},
+		{Kind: keys.MouseRelease, Column: 39, Row: 1},
+	} {
+		if exit, err := handleModelMouse(model, &output, committed, event); err != nil || exit {
+			t.Fatalf("handle mouse %+v: exit=%t err=%v", event, exit, err)
+		}
+	}
+
+	encoded := base64.StdEncoding.EncodeToString([]byte("see this " + imageAttachmentLabel))
 	if got, want := output.String(), "\x1b]52;c;"+encoded+"\x07"; got != want {
 		t.Fatalf("clipboard output = %q, want %q", got, want)
 	}
