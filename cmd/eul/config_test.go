@@ -13,8 +13,7 @@ import (
 )
 
 func TestParseAgentArguments(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(t, t.TempDir(), &stdout, &stderr)
+	var stderr bytes.Buffer
 
 	got, err := parseAgentArguments([]string{
 		"--provider", "test",
@@ -26,7 +25,7 @@ func TestParseAgentArguments(t *testing.T) {
 		"--cwd", "project",
 		"--no-sandbox",
 		"--prompt", "investigate the store",
-	}, runtime)
+	}, &stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,10 +44,9 @@ func TestParseAgentArguments(t *testing.T) {
 }
 
 func TestParseAgentArgumentsDefaults(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(t, t.TempDir(), &stdout, &stderr)
+	var stderr bytes.Buffer
 
-	got, err := parseAgentArguments(nil, runtime)
+	got, err := parseAgentArguments(nil, &stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,10 +56,9 @@ func TestParseAgentArgumentsDefaults(t *testing.T) {
 }
 
 func TestParseAgentArgumentsParsesResumeSelection(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(t, t.TempDir(), &stdout, &stderr)
+	var stderr bytes.Buffer
 
-	mostRecent, err := parseAgentArguments([]string{"--resume"}, runtime)
+	mostRecent, err := parseAgentArguments([]string{"--resume"}, &stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +66,7 @@ func TestParseAgentArgumentsParsesResumeSelection(t *testing.T) {
 		t.Fatalf("most recent arguments = %+v", mostRecent)
 	}
 
-	explicit, err := parseAgentArguments([]string{"--resume=0123456789abcdef0123456789abcdef"}, runtime)
+	explicit, err := parseAgentArguments([]string{"--resume=0123456789abcdef0123456789abcdef"}, &stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,25 +75,23 @@ func TestParseAgentArgumentsParsesResumeSelection(t *testing.T) {
 	}
 
 	for _, arguments := range [][]string{{"--resume", "--model", "other"}, {"--resume", "--fast"}} {
-		if _, err := parseAgentArguments(arguments, runtime); err == nil {
+		if _, err := parseAgentArguments(arguments, &stderr); err == nil {
 			t.Fatalf("arguments %v conflict error = %v", arguments, err)
 		}
 	}
 }
 
 func TestParseAgentArgumentsRejectsPrompts(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(t, t.TempDir(), &stdout, &stderr)
+	var stderr bytes.Buffer
 
-	if _, err := parseAgentArguments([]string{"prompt"}, runtime); err == nil {
+	if _, err := parseAgentArguments([]string{"prompt"}, &stderr); err == nil {
 		t.Fatalf("error = %v", err)
 	}
 }
 
 func TestParseAgentArgumentsReturnsFlagHelp(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(t, t.TempDir(), &stdout, &stderr)
-	if _, err := parseAgentArguments([]string{"--help"}, runtime); !errors.Is(err, flag.ErrHelp) {
+	var stderr bytes.Buffer
+	if _, err := parseAgentArguments([]string{"--help"}, &stderr); !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("error = %v, want flag.ErrHelp", err)
 	}
 }

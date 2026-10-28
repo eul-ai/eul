@@ -69,15 +69,11 @@ func run(arguments []string, runtime appRuntime) int {
 }
 
 func runSession(arguments []string, runtime appRuntime) int {
-	parsed, err := parseAgentArguments(arguments, runtime)
-	if err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return exitSuccess
-		}
-		var reported reportedFlagError
-		if !errors.As(err, &reported) {
-			writeCLIError(runtime.stderr, "%v", err)
-		}
+	parsed, err := parseAgentArguments(arguments, runtime.stderr)
+	switch {
+	case errors.Is(err, flag.ErrHelp):
+		return exitSuccess
+	case err != nil:
 		return exitUsage
 	}
 

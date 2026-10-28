@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -11,14 +12,6 @@ import (
 	"github.com/eul-ai/eul/app"
 	"github.com/eul-ai/eul/backend"
 )
-
-type reportedFlagError struct {
-	error
-}
-
-func (err reportedFlagError) Unwrap() error {
-	return err.error
-}
 
 type resumeValue struct {
 	enabled   bool
@@ -48,9 +41,10 @@ func (*resumeValue) IsBoolFlag() bool {
 	return true
 }
 
-func parseAgentArguments(arguments []string, runtime appRuntime) (app.Options, error) {
+// parseAgentArguments reports its errors to stderr.
+func parseAgentArguments(arguments []string, stderr io.Writer) (app.Options, error) {
 	flags := flag.NewFlagSet("eul", flag.ContinueOnError)
-	flags.SetOutput(runtime.stderr)
+	flags.SetOutput(stderr)
 	provider := flags.String("provider", "", "provider backend")
 	model := flags.String("model", "", "main agent model, also used by main-profile subagents (defaults to the provider configuration)")
 	fastModel := flags.String("fast-model", "", "fast subagent model (defaults to the provider configuration)")
@@ -64,25 +58,21 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (app.Options, e
 	flags.Var(resume, "resume", "resume the most recent session or a session selected with --resume=<id>")
 
 	if err := flags.Parse(arguments); err != nil {
-		return app.Options{}, reportedFlagError{error: err}
-	}
-	if flags.NArg() != 0 {
-		return app.Options{}, errors.New("usage error: eul accepts no prompt arguments")
+		return app.Options{}, err
 	}
 
 	explicit := make(map[string]bool)
 	flags.Visit(func(current *flag.Flag) { explicit[current.Name] = true })
-	if resume.enabled && (explicit["provider"] || explicit["model"] || explicit["fast-model"] || explicit["balanced-model"] || explicit["thinking"] || explicit["fast"] || explicit["cwd"]) {
-		return app.Options{}, errors.New("usage error: --resume cannot be combined with --provider, --model, --fast-model, --balanced-model, --thinking, --fast, or --cwd")
+	thinkingLevel, err := agent.ParseThinkingLevel(*thinking)
+	switch {
+	case flags.NArg() != 0:
+		err = errors.New("usage error: eul accepts no prompt arguments")
+	case resume.enabled && (explicit["provider"] || explicit["model"] || explicit["fast-model"] || explicit["balanced-model"] || explicit["thinking"] || explicit["fast"] || explicit["cwd"]):
+		err = errors.New("usage error: --resume cannot be combined with --provider, --model, --fast-model, --balanced-model, --thinking, --fast, or --cwd")
 	}
-
-	thinkingLevel := agent.DefaultThinkingLevel
-	if !resume.enabled {
-		var err error
-		thinkingLevel, err = agent.ParseThinkingLevel(*thinking)
-		if err != nil {
-			return app.Options{}, err
-		}
+	if err != nil {
+		writeCLIError(stderr, "%v", err)
+		return app.Options{}, err
 	}
 
 	return app.Options{

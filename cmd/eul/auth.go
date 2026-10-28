@@ -7,135 +7,92 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
+	"strings"
 
 	"github.com/eul-ai/eul/backend"
 )
 
+type authAction func(context.Context, backend.Backend, backend.Authenticator) error
+
 func runLogin(arguments []string, runtime appRuntime) int {
 	flags := flag.NewFlagSet("eul login", flag.ContinueOnError)
-	flags.SetOutput(runtime.stderr)
-	providerID := flags.String("provider", "", "backend")
 	device := flags.Bool("device-auth", false, "use device authorization for headless environments")
-
-	if err := flags.Parse(arguments); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return exitSuccess
-		}
-		return exitUsage
-	}
-	if flags.NArg() != 0 {
-		writeCLIError(runtime.stderr, "usage error: eul login accepts no arguments")
-		return exitUsage
-	}
-
-	selected, err := runtime.backends.Lookup(*providerID)
-	if err != nil {
-		writeCLIError(runtime.stderr, "login failed: %v", err)
-		return exitFailure
-	}
-	home, err := resolveEULHome()
-	if err != nil {
-		writeCLIError(runtime.stderr, "login failed: %v", err)
-		return exitFailure
-	}
-	if selected.Auth == nil {
-		writeCLIError(runtime.stderr, "login failed: backend %q does not support login", selected.ID)
-		return exitFailure
-	}
-	authenticator := selected.Auth(home)
-
-	ctx, cancel := contextWithInterrupt(runtime.interrupts)
-	defer cancel()
-	if *device {
-		err = authenticator.LoginDevice(ctx, func(code backend.DeviceCode) error {
-			fmt.Fprintf(runtime.stderr, "Open %s and enter code: %s\n", code.VerificationURL, code.UserCode)
-			return nil
-		})
-	} else {
-		err = authenticator.LoginBrowser(ctx, func(url string) error {
-			fmt.Fprintf(runtime.stderr, "Open this URL to sign in with %s:\n%s\n", selected.Name, url)
-			if runtime.openURL != nil {
-				if err := runtime.openURL(url); err == nil {
-					return nil
+	return withAuthenticator(flags, arguments, runtime, func(ctx context.Context, selected backend.Backend, authenticator backend.Authenticator) error {
+		var err error
+		switch {
+		case *device:
+			err = authenticator.LoginDevice(ctx, func(code backend.DeviceCode) error {
+				fmt.Fprintf(runtime.stderr, "Open %s and enter code: %s\n", code.VerificationURL, code.UserCode)
+				return nil
+			})
+		default:
+			err = authenticator.LoginBrowser(ctx, func(url string) error {
+				fmt.Fprintf(runtime.stderr, "Open this URL to sign in with %s:\n%s\n", selected.Name, url)
+				if runtime.openURL(url) != nil {
+					fmt.Fprintln(runtime.stderr, "Browser could not be opened automatically; open the URL manually.")
 				}
-			}
-			fmt.Fprintln(runtime.stderr, "Browser could not be opened automatically; open the URL manually.")
-			return nil
-		})
-	}
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return exitInterrupted
+				return nil
+			})
 		}
-		writeCLIError(runtime.stderr, "login failed: %v", err)
-		return exitFailure
-	}
+		if err != nil {
+			return err
+		}
 
-	fmt.Fprintf(runtime.stdout, "Logged in with %s.\n", selected.Name)
-	return exitSuccess
+		fmt.Fprintf(runtime.stdout, "Logged in with %s.\n", selected.Name)
+		return nil
+	})
 }
 
 func runLogout(arguments []string, runtime appRuntime) int {
 	flags := flag.NewFlagSet("eul logout", flag.ContinueOnError)
+	return withAuthenticator(flags, arguments, runtime, func(ctx context.Context, _ backend.Backend, authenticator backend.Authenticator) error {
+		if err := authenticator.Logout(ctx); err != nil {
+			return err
+		}
+
+		fmt.Fprintln(runtime.stdout, "Logged out.")
+		return nil
+	})
+}
+
+func withAuthenticator(flags *flag.FlagSet, arguments []string, runtime appRuntime, action authAction) int {
 	flags.SetOutput(runtime.stderr)
 	providerID := flags.String("provider", "", "backend")
-
-	if err := flags.Parse(arguments); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return exitSuccess
-		}
+	switch err := flags.Parse(arguments); {
+	case errors.Is(err, flag.ErrHelp):
+		return exitSuccess
+	case err != nil:
+		return exitUsage
+	case flags.NArg() != 0:
+		writeCLIError(runtime.stderr, "usage error: %s accepts no arguments", flags.Name())
 		return exitUsage
 	}
-	if flags.NArg() != 0 {
-		writeCLIError(runtime.stderr, "usage error: eul logout accepts no arguments")
-		return exitUsage
-	}
 
-	selected, err := runtime.backends.Lookup(*providerID)
-	if err != nil {
-		writeCLIError(runtime.stderr, "logout failed: %v", err)
-		return exitFailure
+	command := strings.TrimPrefix(flags.Name(), "eul ")
+	if err := authenticate(command, *providerID, runtime.backends, action); err != nil {
+		return finishRun(fmt.Errorf("%s failed: %w", command, err), runtime.stderr)
 	}
-	home, err := resolveEULHome()
-	if err != nil {
-		writeCLIError(runtime.stderr, "logout failed: %v", err)
-		return exitFailure
-	}
-	if selected.Auth == nil {
-		writeCLIError(runtime.stderr, "logout failed: backend %q does not support logout", selected.ID)
-		return exitFailure
-	}
-
-	ctx, cancel := contextWithInterrupt(runtime.interrupts)
-	defer cancel()
-	if err := selected.Auth(home).Logout(ctx); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return exitInterrupted
-		}
-		writeCLIError(runtime.stderr, "logout failed: %v", err)
-		return exitFailure
-	}
-
-	fmt.Fprintln(runtime.stdout, "Logged out.")
 	return exitSuccess
 }
 
-func contextWithInterrupt(interrupts <-chan os.Signal) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(context.Background())
+func authenticate(command, providerID string, backends backend.Registry, action authAction) error {
+	selected, err := backends.Lookup(providerID)
+	if err != nil {
+		return err
+	}
+	if selected.Auth == nil {
+		return fmt.Errorf("backend %q does not support %s", selected.ID, command)
+	}
+	home, err := resolveEULHome()
+	if err != nil {
+		return err
+	}
 
-	go func() {
-		select {
-		case <-ctx.Done():
-		case _, ok := <-interrupts:
-			if !ok {
-				return
-			}
-			cancel()
-		}
-	}()
-
-	return ctx, cancel
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	return action(ctx, selected, selected.Auth(home))
 }
 
 func openBrowser(url string) error {
