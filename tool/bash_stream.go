@@ -41,11 +41,6 @@ func (c *tailCapture) Write(data []byte) (int, error) {
 	defer c.mu.Unlock()
 
 	originalLength := len(data)
-	if c.maxBytes <= 0 {
-		c.truncated = c.truncated || originalLength > 0
-		return originalLength, nil
-	}
-
 	if len(data) > c.maxBytes {
 		c.data = append(c.data[:0], data[len(data)-c.maxBytes:]...)
 		c.truncated = true

@@ -117,7 +117,7 @@ func (b bashTool) run(ctx context.Context, args bashArguments, updates agent.Too
 	if captureTruncated {
 		notice = "earlier command output truncated"
 	}
-	result := agent.ToolResult{Output: boundTail(text, notice), IsError: isError}
+	result := agent.ToolResult{Output: bound(text, notice, true), IsError: isError}
 	setFinalBashPresentation(updates, args.Command, output, strings.Trim(status, "[]"), time.Since(started), timeout)
 	return result, parentErr
 }

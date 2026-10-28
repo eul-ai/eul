@@ -351,7 +351,7 @@ func (builder *fileDiffBuilder) append(line agent.ToolDiffLine) bool {
 
 	remainingBytes := bodyBytes - builder.bytes
 	if len(builder.lines) < defaultMaxLines-1 && remainingBytes > 0 {
-		line.Text, _ = truncateLine(line.Text, remainingBytes)
+		line.Text = prefixBytes(line.Text, remainingBytes)
 		builder.lines = append(builder.lines, line)
 	}
 	builder.lines = append(builder.lines, agent.ToolDiffLine{Kind: agent.ToolDiffLineOmitted, Text: fileDiffTruncationMarker})

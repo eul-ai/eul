@@ -77,10 +77,10 @@ func writePreview(content string) ([]string, bool) {
 		if available <= 0 {
 			break
 		}
-		bounded, truncated := truncateLine(line, available)
+		bounded := prefixBytes(line, available)
 		lines = append(lines, bounded)
 		usedBytes += separatorBytes + len(bounded)
-		if truncated {
+		if len(bounded) < len(line) {
 			partialLine = true
 			break
 		}

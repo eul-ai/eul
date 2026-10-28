@@ -7,8 +7,14 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/eul-ai/eul/agent"
+)
+
+const (
+	defaultMaxLines = 2_000
+	defaultMaxBytes = 50 * 1024
 )
 
 type workspace struct {
@@ -58,53 +64,68 @@ func nullable(schemaType string, description string) agent.JSONSchema {
 
 func errorResult(toolName string, err error) agent.ToolResult {
 	return agent.ToolResult{
-		Output:  boundHead(fmt.Sprintf("%s: %v", toolName, err), ""),
+		Output:  bound(fmt.Sprintf("%s: %v", toolName, err), "", false),
 		IsError: true,
 	}
 }
 
 func successResult(output string) agent.ToolResult {
-	return agent.ToolResult{Output: boundHead(output, "")}
+	return agent.ToolResult{Output: bound(output, "", false)}
 }
 
-func boundHead(text, notice string) string {
-	bounded := truncateHead(text, defaultMaxLines, defaultMaxBytes)
-	if notice == "" && !bounded.truncated {
+// bound limits text to defaultMaxLines and defaultMaxBytes, keeping its head or
+// tail. A nonempty notice, or any truncation, adds a bracketed marker line.
+func bound(text, notice string, keepTail bool) string {
+	lines := strings.SplitAfter(text, "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if notice == "" && len(lines) <= defaultMaxLines && len(text) <= defaultMaxBytes {
 		return text
 	}
+
 	if notice == "" {
 		notice = "output truncated"
+		if keepTail {
+			notice = "earlier output truncated"
+		}
 	}
 	marker := "[" + notice + "]\n"
-	if len(marker) >= defaultMaxBytes {
-		marker, _ = truncateLine(marker, defaultMaxBytes)
-		return marker
+	if keepTail {
+		lines = lines[max(0, len(lines)-defaultMaxLines+1):]
+		return marker + suffixBytes(strings.Join(lines, ""), defaultMaxBytes-len(marker))
 	}
 
-	body := truncateHead(text, defaultMaxLines-1, defaultMaxBytes-len(marker)-1).text
-	separator := ""
+	lines = lines[:min(len(lines), defaultMaxLines-1)]
+	body := prefixBytes(strings.Join(lines, ""), defaultMaxBytes-len(marker)-1)
 	if body != "" && !strings.HasSuffix(body, "\n") {
-		separator = "\n"
+		body += "\n"
 	}
-	return body + separator + marker
+	return body + marker
 }
 
-func boundTail(text, notice string) string {
-	bounded := truncateTail(text, defaultMaxLines, defaultMaxBytes)
-	if notice == "" && !bounded.truncated {
+func prefixBytes(text string, maxBytes int) string {
+	if len(text) <= maxBytes {
 		return text
 	}
-	if notice == "" {
-		notice = "earlier output truncated"
+
+	end := maxBytes
+	for end > 0 && !utf8.RuneStart(text[end]) {
+		end--
 	}
-	marker := "[" + notice + "]\n"
-	if len(marker) >= defaultMaxBytes {
-		marker, _ = truncateLine(marker, defaultMaxBytes)
-		return marker
+	return text[:end]
+}
+
+func suffixBytes(text string, maxBytes int) string {
+	if len(text) <= maxBytes {
+		return text
 	}
 
-	body := truncateTail(text, defaultMaxLines-1, defaultMaxBytes-len(marker)).text
-	return marker + body
+	start := len(text) - maxBytes
+	for start < len(text) && !utf8.RuneStart(text[start]) {
+		start++
+	}
+	return text[start:]
 }
 
 func escapeOutputName(name string) string {

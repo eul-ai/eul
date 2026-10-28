@@ -200,7 +200,7 @@ func scanReadRange(ctx context.Context, source io.Reader, offset, limit int) (st
 
 func formatReadByteTruncation(text string, lineEnds []int, offset, lineNumber int) string {
 	if len(lineEnds) == 0 {
-		return boundHead(text, fmt.Sprintf("truncated within line %d; no lossless next offset", lineNumber))
+		return bound(text, fmt.Sprintf("truncated within line %d; no lossless next offset", lineNumber), false)
 	}
 
 	return formatReadTruncation(text[:lineEnds[len(lineEnds)-1]], lineEnds, offset)
@@ -217,7 +217,7 @@ func formatReadTruncation(text string, lineEnds []int, offset int) string {
 			end = lineEnds[keptLines-1]
 		}
 		if keptLines <= defaultMaxLines-1 && end <= defaultMaxBytes-markerBytes-1 {
-			return boundHead(text[:end], notice)
+			return bound(text[:end], notice, false)
 		}
 		keptLines--
 	}

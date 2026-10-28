@@ -81,7 +81,7 @@ func (r *Registry) Execute(ctx context.Context, call agent.ToolCall, updates age
 		return agent.ToolResult{
 			CallID:  call.ID,
 			Tool:    call.Name,
-			Output:  boundHead(failure.Error(), ""),
+			Output:  bound(failure.Error(), "", false),
 			IsError: true,
 		}, nil
 	}
