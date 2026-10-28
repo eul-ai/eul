@@ -51,7 +51,8 @@ func (a activity) animated() bool {
 }
 
 type conversationModel struct {
-	transcript                session.Transcript
+	session                   Session
+	entries                   []session.Entry
 	conversationVersion       uint64
 	scrollTop                 int
 	following                 bool
@@ -176,6 +177,7 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 
 	model := &tuiModel{
 		conversationModel: conversationModel{
+			session:   options.Session,
 			following: true,
 		},
 		editorModel: editorModel{
@@ -200,14 +202,8 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 			activity:                   activity{kind: activityReady},
 		},
 	}
-	model.transcript = session.RestoreTranscript(options.Config.Transcript)
+	model.syncConversation()
 	model.restoreDraft(options.Config.Draft)
-	if options.Config.PreviousTurnActive {
-		model.appendEntry(session.EntryInfo, "Previous session ended during an active turn; tool side effects may remain")
-	}
-	for _, warning := range options.Config.Warnings {
-		model.appendEntry(session.EntryInfo, warning)
-	}
 	return model
 }
 
@@ -249,9 +245,18 @@ func (m *tuiModel) clearSteering(clear func() [][]agent.ContentPart) [][]agent.C
 	return messages
 }
 
-func (m *tuiModel) appendEntry(kind session.EntryKind, text string) {
-	m.transcript.Append(kind, text)
+func (m *tuiModel) syncConversation() {
+	entries, changed := m.session.Sync(m.entries)
+	if !changed {
+		return
+	}
+	m.entries = entries
 	m.conversationChanged()
+}
+
+func (m *tuiModel) appendEntry(kind session.EntryKind, text string) {
+	m.session.Append(kind, text)
+	m.syncConversation()
 }
 
 func (m *tuiModel) conversationChanged() {
@@ -259,10 +264,13 @@ func (m *tuiModel) conversationChanged() {
 }
 
 func (m *tuiModel) applyAgentEvent(event agent.Event) {
-	m.transcript.Apply(event)
-	m.conversationChanged()
+	m.syncConversation()
 
 	switch event.Kind {
+	case agent.EventSteering:
+		if m.deliverSteering(event.Content) {
+			m.setActiveActivity(activity{kind: activityThinking})
+		}
 	case agent.EventAssistantReasoning:
 		m.setActiveActivity(activity{kind: activityThinking})
 	case agent.EventAssistantText:
@@ -290,10 +298,9 @@ func toolActivity(name string) activity {
 }
 
 func (m *tuiModel) pendingToolActivity() activity {
-	entries := m.transcript.Entries
-	for index := len(entries) - 1; index >= 0; index-- {
-		if entries[index].Kind == session.EntryToolPending {
-			return toolActivity(entries[index].ToolName)
+	for index := len(m.entries) - 1; index >= 0; index-- {
+		if m.entries[index].Kind == session.EntryToolPending {
+			return toolActivity(m.entries[index].ToolName)
 		}
 	}
 	return activity{kind: activityThinking}
@@ -328,8 +335,8 @@ func (m *tuiModel) restoreSteering(messages [][]agent.ContentPart) {
 }
 
 func (m *tuiModel) appendUserContent(content []agent.ContentPart) {
-	m.transcript.AppendUser(content)
-	m.conversationChanged()
+	m.session.AppendUser(content)
+	m.syncConversation()
 }
 
 func (m *tuiModel) beginTurnOperation() {
@@ -355,8 +362,8 @@ func (m *tuiModel) beginCompaction() {
 func (m *tuiModel) finishTurn(runErr error) {
 	m.running = false
 	m.refreshCommandPickerAvailability()
-	m.transcript.FinishTurn(m.interrupted, runErr)
-	m.conversationChanged()
+	m.session.FinishTurn(m.interrupted, runErr)
+	m.syncConversation()
 
 	m.activity = activity{kind: activityReady}
 	if !m.interrupted && runErr != nil {

@@ -31,7 +31,7 @@ func buildTerminalFrame(model *tuiModel) terminalFrame {
 }
 
 func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
-	model := newTUIModel(72, 12, Options{Config: Config{
+	model := newTestModel(72, 12, Options{Config: Config{
 		Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, FastMode: true, ContextWindow: 272_000,
 	}})
 	model.contextTokens = 84_320
@@ -63,7 +63,7 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 }
 
 func TestRenderFrameShowsPermission(t *testing.T) {
-	model := newTUIModel(72, 12, Options{})
+	model := newTestModel(72, 12, Options{})
 	model.running = true
 	model.permission.queue = []PermissionRequest{{
 		Title:        "Network access requested",
@@ -148,7 +148,7 @@ func assertCachedConversationMatchesUncached(t *testing.T, renderer *tuiRenderer
 }
 
 func TestRenderStatusSanitizesMetadata(t *testing.T) {
-	model := newTUIModel(80, 8, Options{Config: Config{Model: "safe\x1b[31m", ThinkingLevel: agent.ThinkingLevel("high\a")}})
+	model := newTestModel(80, 8, Options{Config: Config{Model: "safe\x1b[31m", ThinkingLevel: agent.ThinkingLevel("high\a")}})
 	_, left, right := renderStatus(model, 80)
 	status := left + right
 	if strings.ContainsAny(status, "\x1b\a") || !strings.Contains(right, "safe [31m") || !strings.Contains(right, "high") {
@@ -157,7 +157,7 @@ func TestRenderStatusSanitizesMetadata(t *testing.T) {
 }
 
 func TestRenderStatusPrioritizesActivityAndContext(t *testing.T) {
-	model := newTUIModel(80, 20, Options{Config: Config{Model: "very-long-model", ThinkingLevel: agent.ThinkingMax, ContextWindow: 100}})
+	model := newTestModel(80, 20, Options{Config: Config{Model: "very-long-model", ThinkingLevel: agent.ThinkingMax, ContextWindow: 100}})
 	model.contextTokens = 50
 	model.activity = activity{kind: activityCompacting}
 
@@ -172,8 +172,8 @@ func TestRenderStatusPrioritizesActivityAndContext(t *testing.T) {
 }
 
 func TestTUIModelShowsGenerationRetries(t *testing.T) {
-	model := newTUIModel(80, 24, Options{})
-	model.applyAgentEvent(agent.Event{Kind: agent.EventGenerationRetry, Attempt: 2})
+	model := newTestModel(80, 24, Options{})
+	applyEvent(model, agent.Event{Kind: agent.EventGenerationRetry, Attempt: 2})
 
 	_, left, _ := renderStatus(model, 80)
 	if model.activity.kind != activityRetrying || !strings.Contains(left, strconv.Itoa(2)) {
@@ -182,28 +182,28 @@ func TestTUIModelShowsGenerationRetries(t *testing.T) {
 }
 
 func TestTUIModelTracksActivityAndContext(t *testing.T) {
-	model := newTUIModel(80, 24, Options{})
+	model := newTestModel(80, 24, Options{})
 	model.contextTokens = 100
-	model.applyAgentEvent(agent.Event{Kind: agent.EventCompactionStart})
-	if model.activity.kind != activityCompacting || len(model.transcript.Entries) != 0 {
-		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.transcript.Entries)
+	applyEvent(model, agent.Event{Kind: agent.EventCompactionStart})
+	if model.activity.kind != activityCompacting || len(model.entries) != 0 {
+		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.entries)
 	}
-	model.applyAgentEvent(agent.Event{Kind: agent.EventCompactionEnd})
-	if model.activity.kind != activityThinking || model.contextTokens != 0 || len(model.transcript.Entries) != 1 || model.transcript.Entries[0].Kind != session.EntryContext || model.transcript.Entries[0].Text != "Context compacted" {
-		t.Fatalf("activity = %+v, context = %d, blocks = %+v", model.activity, model.contextTokens, model.transcript.Entries)
+	applyEvent(model, agent.Event{Kind: agent.EventCompactionEnd})
+	if model.activity.kind != activityThinking || model.contextTokens != 0 || len(model.entries) != 1 || model.entries[0].Kind != session.EntryContext || model.entries[0].Text != "Context compacted" {
+		t.Fatalf("activity = %+v, context = %d, blocks = %+v", model.activity, model.contextTokens, model.entries)
 	}
-	model.applyAgentEvent(agent.Event{Kind: agent.EventContextUsage, Usage: agent.Usage{TotalTokens: 123}})
+	applyEvent(model, agent.Event{Kind: agent.EventContextUsage, Usage: agent.Usage{TotalTokens: 123}})
 	if model.contextTokens != 123 {
 		t.Fatalf("context tokens = %d", model.contextTokens)
 	}
-	model.applyAgentEvent(agent.Event{Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "call-1", Name: "read"}, Presentation: agent.ToolPresentation{Arguments: "file.go"}})
-	if model.activity.kind != activityTool || model.activity.detail != "read" || model.transcript.Entries[len(model.transcript.Entries)-1].Kind != session.EntryToolPending {
-		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.transcript.Entries)
+	applyEvent(model, agent.Event{Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "call-1", Name: "read"}, Presentation: agent.ToolPresentation{Arguments: "file.go"}})
+	if model.activity.kind != activityTool || model.activity.detail != "read" || model.entries[len(model.entries)-1].Kind != session.EntryToolPending {
+		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.entries)
 	}
-	toolBlocks := len(model.transcript.Entries)
-	model.applyAgentEvent(agent.Event{Kind: agent.EventToolEnd, Call: agent.ToolCall{ID: "call-1", Name: "read"}, Presentation: agent.ToolPresentation{Arguments: "file.go"}, Result: agent.ToolResult{Tool: "read", IsError: true, Output: "failed"}})
-	last := model.transcript.Entries[len(model.transcript.Entries)-1]
-	if model.activity.kind != activityThinking || len(model.transcript.Entries) != toolBlocks || last.Kind != session.EntryToolError {
-		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.transcript.Entries)
+	toolBlocks := len(model.entries)
+	applyEvent(model, agent.Event{Kind: agent.EventToolEnd, Call: agent.ToolCall{ID: "call-1", Name: "read"}, Presentation: agent.ToolPresentation{Arguments: "file.go"}, Result: agent.ToolResult{Tool: "read", IsError: true, Output: "failed"}})
+	last := model.entries[len(model.entries)-1]
+	if model.activity.kind != activityThinking || len(model.entries) != toolBlocks || last.Kind != session.EntryToolError {
+		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.entries)
 	}
 }

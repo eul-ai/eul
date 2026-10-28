@@ -27,6 +27,7 @@ const (
 	EntryContext     EntryKind = "context"
 	EntryError       EntryKind = "error"
 	EntryInfo        EntryKind = "info"
+	EntryNotice      EntryKind = "notice"
 )
 
 type Entry struct {
@@ -39,13 +40,14 @@ type Entry struct {
 }
 
 type Transcript struct {
-	Entries      []Entry
+	entries      []Entry
+	synced       int
 	stream       strings.Builder
 	streamKind   EntryKind
 	executedTool bool
 }
 
-func RestoreTranscript(entries []Entry) Transcript {
+func restoreTranscript(entries []Entry) Transcript {
 	entries = slices.Clone(entries)
 	for index := range entries {
 		if entries[index].Kind == EntryToolPending {
@@ -53,7 +55,29 @@ func RestoreTranscript(entries []Entry) Transcript {
 			entries[index].Tool.Outcome = "interrupted"
 		}
 	}
-	return Transcript{Entries: entries}
+	return Transcript{entries: entries}
+}
+
+// Sync brings a copy of the entries up to date with the transcript. It
+// copies only the entries changed since the previous call, so it serves a
+// single copy.
+func (t *Transcript) Sync(entries []Entry) ([]Entry, bool) {
+	if t.synced == len(t.entries) {
+		return entries, false
+	}
+	entries = append(entries[:t.synced], t.entries[t.synced:]...)
+	t.synced = len(t.entries)
+	return entries, true
+}
+
+func (t *Transcript) changed(index int) {
+	t.synced = min(t.synced, index)
+}
+
+func (t *Transcript) persisted() []Entry {
+	return slices.DeleteFunc(slices.Clone(t.entries), func(entry Entry) bool {
+		return entry.Kind == EntryNotice
+	})
 }
 
 func (t *Transcript) Apply(event agent.Event) {
@@ -66,6 +90,8 @@ func (t *Transcript) Apply(event agent.Event) {
 		t.Append(EntryContext, "Context compacted")
 	case agent.EventGoalContinuation:
 		t.Append(EntryInfo, "Goal continuing")
+	case agent.EventSteering:
+		t.AppendUser(event.Content)
 	case agent.EventToolStart:
 		t.startTool(event.Call, event.Presentation)
 	case agent.EventToolUpdate:
@@ -80,7 +106,7 @@ func (t *Transcript) Apply(event agent.Event) {
 
 func (t *Transcript) Append(kind EntryKind, text string) {
 	t.stream.Reset()
-	t.Entries = append(t.Entries, Entry{Kind: kind, Text: sanitizeText(text)})
+	t.entries = append(t.entries, Entry{Kind: kind, Text: sanitizeText(text)})
 }
 
 func (t *Transcript) AppendUser(content []agent.ContentPart) {
@@ -89,7 +115,7 @@ func (t *Transcript) AppendUser(content []agent.ContentPart) {
 	for index, part := range content {
 		parts[index] = agent.ContentPart{Kind: part.Kind, Text: sanitizeText(part.Text)}
 	}
-	t.Entries = append(t.Entries, Entry{Kind: EntryUser, Text: contentText(parts), Content: parts})
+	t.entries = append(t.entries, Entry{Kind: EntryUser, Text: contentText(parts), Content: parts})
 }
 
 func (t *Transcript) FinishTurn(interrupted bool, err error) {
@@ -120,21 +146,23 @@ func (t *Transcript) appendStream(kind EntryKind, text string) {
 		return
 	}
 
-	if t.stream.Len() > 0 && t.streamKind == kind && len(t.Entries) > 0 {
+	if t.stream.Len() > 0 && t.streamKind == kind && len(t.entries) > 0 {
+		last := len(t.entries) - 1
 		t.stream.WriteString(text)
-		t.Entries[len(t.Entries)-1].Text = t.stream.String()
+		t.entries[last].Text = t.stream.String()
+		t.changed(last)
 		return
 	}
 
 	t.stream.Reset()
 	t.stream.WriteString(text)
-	t.Entries = append(t.Entries, Entry{Kind: kind, Text: t.stream.String()})
+	t.entries = append(t.entries, Entry{Kind: kind, Text: t.stream.String()})
 	t.streamKind = kind
 }
 
 func (t *Transcript) startTool(call agent.ToolCall, presentation agent.ToolPresentation) {
 	t.stream.Reset()
-	t.Entries = append(t.Entries, Entry{
+	t.entries = append(t.entries, Entry{
 		Kind:       EntryToolPending,
 		ToolCallID: call.ID,
 		ToolName:   singleLine(call.Name, maxToolSummaryBytes),
@@ -148,7 +176,8 @@ func (t *Transcript) updateTool(call agent.ToolCall, presentation agent.ToolPres
 		t.startTool(call, presentation)
 		return
 	}
-	t.Entries[index].Tool = sanitizeToolPresentation(presentation)
+	t.entries[index].Tool = sanitizeToolPresentation(presentation)
+	t.changed(index)
 }
 
 func (t *Transcript) finishTool(call agent.ToolCall, presentation agent.ToolPresentation, result agent.ToolResult) {
@@ -159,19 +188,20 @@ func (t *Transcript) finishTool(call agent.ToolCall, presentation agent.ToolPres
 	index := t.toolIndex(call.ID)
 	if index < 0 {
 		t.startTool(call, presentation)
-		index = len(t.Entries) - 1
+		index = len(t.entries) - 1
 	}
 
 	presentation.Outcome = toolResultOutcome(result, presentation)
-	t.Entries[index].Kind = kind
-	t.Entries[index].Tool = sanitizeToolPresentation(presentation)
+	t.entries[index].Kind = kind
+	t.entries[index].Tool = sanitizeToolPresentation(presentation)
+	t.changed(index)
 }
 
 func (t *Transcript) toolIndex(callID string) int {
-	for index := len(t.Entries) - 1; index >= 0; index-- {
-		switch t.Entries[index].Kind {
+	for index := len(t.entries) - 1; index >= 0; index-- {
+		switch t.entries[index].Kind {
 		case EntryToolPending, EntryTool, EntryToolError:
-			if t.Entries[index].ToolCallID == callID {
+			if t.entries[index].ToolCallID == callID {
 				return index
 			}
 		}
@@ -180,16 +210,17 @@ func (t *Transcript) toolIndex(callID string) int {
 }
 
 func (t *Transcript) finishPendingTools(outcome string) {
-	for index := range t.Entries {
-		if t.Entries[index].Kind != EntryToolPending {
+	for index := range t.entries {
+		if t.entries[index].Kind != EntryToolPending {
 			continue
 		}
-		t.Entries[index].Kind = EntryToolError
-		t.Entries[index].Tool.Outcome = outcome
+		t.entries[index].Kind = EntryToolError
+		t.entries[index].Tool.Outcome = outcome
+		t.changed(index)
 	}
 }
 
-func Description(entries []Entry) string {
+func description(entries []Entry) string {
 	for _, entry := range entries {
 		if entry.Kind != EntryUser {
 			continue

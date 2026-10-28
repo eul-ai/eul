@@ -11,6 +11,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/subagent"
 )
 
@@ -74,32 +75,32 @@ func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 	if err := os.WriteFile(brokenSkill, []byte("invalid"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), sessionSettings{models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, thinkingLevel: agent.ThinkingMedium, cwd: cwd})
-	defer session.finish(nil)
-	if session.terminalOptions.Services.LoadUsage == nil {
+	wired := startTestSession(t, testLauncher(t, cwd, backendRuntime), sessionSettings{models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, thinkingLevel: agent.ThinkingMedium, cwd: cwd})
+	defer wired.finish(nil)
+	if wired.terminalOptions.Services.LoadUsage == nil {
 		t.Fatal("backend usage was not wired to the terminal")
 	}
-	usage, err := session.terminalOptions.Services.LoadUsage(context.Background())
+	usage, err := wired.terminalOptions.Services.LoadUsage(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if usageCalls != 1 || len(usage.Windows) != 1 || usage.MonthlyUsageUSD == nil || *usage.MonthlyUsageUSD != monthlyUsage || usage.LimitRemainingUSD == nil || *usage.LimitRemainingUSD != limitRemaining {
 		t.Fatalf("usage calls=%d result=%+v", usageCalls, usage)
 	}
-	if session.terminalOptions.Events.Subagents == nil {
+	if wired.terminalOptions.Events.Subagents == nil {
 		t.Fatal("subagent status was not wired to the terminal")
 	}
-	if session.terminalOptions.Config.WorkingDirectory != cwd {
-		t.Fatalf("terminal working directory = %q, want %q", session.terminalOptions.Config.WorkingDirectory, cwd)
+	if wired.terminalOptions.Config.WorkingDirectory != cwd {
+		t.Fatalf("terminal working directory = %q, want %q", wired.terminalOptions.Config.WorkingDirectory, cwd)
 	}
-	if session.terminalOptions.Config.ContextWindow != 123_000 || session.terminalOptions.Config.ThinkingLevel != agent.ThinkingHigh || !session.terminalOptions.Config.FastModeAvailable {
-		t.Fatalf("terminal metadata = %+v", session.terminalOptions)
+	if wired.terminalOptions.Config.ContextWindow != 123_000 || wired.terminalOptions.Config.ThinkingLevel != agent.ThinkingHigh || !wired.terminalOptions.Config.FastModeAvailable {
+		t.Fatalf("terminal metadata = %+v", wired.terminalOptions)
 	}
-	if len(session.terminalOptions.Config.Skills) != 1 || session.terminalOptions.Config.Skills[0].Name != "review" {
-		t.Fatalf("terminal skills = %+v", session.terminalOptions.Config.Skills)
+	if len(wired.terminalOptions.Config.Skills) != 1 || wired.terminalOptions.Config.Skills[0].Name != "review" {
+		t.Fatalf("terminal skills = %+v", wired.terminalOptions.Config.Skills)
 	}
-	if warnings := session.terminalOptions.Config.Warnings; len(warnings) != 1 || !strings.Contains(warnings[0], filepath.ToSlash(brokenSkill)) {
-		t.Fatalf("terminal warnings = %v", warnings)
+	if !transcriptHas(wired.terminalOptions, session.EntryNotice, filepath.ToSlash(brokenSkill)) {
+		t.Fatal("skill warning was not shown")
 	}
 }
 

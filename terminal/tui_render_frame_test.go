@@ -13,7 +13,7 @@ import (
 )
 
 func TestRendererOnlyWritesChangedRows(t *testing.T) {
-	model := newTUIModel(40, 8, Options{Config: Config{Model: "model"}})
+	model := newTestModel(40, 8, Options{Config: Config{Model: "model"}})
 	model.running = true
 	model.activity = activity{kind: activityThinking}
 	var renderer tuiRenderer
@@ -44,7 +44,7 @@ func TestRendererOnlyWritesChangedRows(t *testing.T) {
 }
 
 func TestRendererUsesScrollRegionForSingleConversationRow(t *testing.T) {
-	model := newTUIModel(20, 8, Options{})
+	model := newTestModel(20, 8, Options{})
 	model.appendEntry(session.EntryAssistant, "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten")
 	var renderer tuiRenderer
 	_ = renderModel(&renderer, model)
@@ -84,7 +84,7 @@ func TestRendererUsesScrollRegionForSingleConversationRow(t *testing.T) {
 }
 
 func TestRendererDoesNotScrollRegionWhenConversationChanges(t *testing.T) {
-	model := newTUIModel(20, 8, Options{})
+	model := newTestModel(20, 8, Options{})
 	model.appendEntry(session.EntryAssistant, "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten")
 	var renderer tuiRenderer
 	_ = renderModel(&renderer, model)
@@ -98,7 +98,7 @@ func TestRendererDoesNotScrollRegionWhenConversationChanges(t *testing.T) {
 }
 
 func TestRendererForcesFullRedrawAfterResizeOrCtrlL(t *testing.T) {
-	model := newTUIModel(20, 8, Options{})
+	model := newTestModel(20, 8, Options{})
 	var renderer tuiRenderer
 	_ = renderModel(&renderer, model)
 
@@ -116,7 +116,7 @@ func TestRendererForcesFullRedrawAfterResizeOrCtrlL(t *testing.T) {
 }
 
 func TestRendererLimitsHistoryAfterWidthResize(t *testing.T) {
-	model := newTUIModel(40, 8, Options{})
+	model := newTestModel(40, 8, Options{})
 	for index := range 300 {
 		model.appendEntry(session.EntryInfo, fmt.Sprintf("history %03d", index))
 	}
@@ -152,7 +152,7 @@ func TestRendererLimitsHistoryAfterWidthResize(t *testing.T) {
 }
 
 func TestRendererLoadsTruncatedResizeHistoryWhenScrollingPastTop(t *testing.T) {
-	model := newTUIModel(40, 8, Options{})
+	model := newTestModel(40, 8, Options{})
 	for index := range 300 {
 		model.appendEntry(session.EntryInfo, fmt.Sprintf("history %03d", index))
 	}
@@ -180,7 +180,7 @@ func TestRendererLoadsTruncatedResizeHistoryWhenScrollingPastTop(t *testing.T) {
 }
 
 func TestRendererPreservesViewportWhenHeightExtendsResizeHistory(t *testing.T) {
-	model := newTUIModel(40, 8, Options{})
+	model := newTestModel(40, 8, Options{})
 	for index := range 400 {
 		model.appendEntry(session.EntryInfo, fmt.Sprintf("history %03d", index))
 	}
@@ -204,7 +204,7 @@ func TestRendererPreservesViewportWhenHeightExtendsResizeHistory(t *testing.T) {
 }
 
 func TestRendererReflowsFullHistoryWhenResizeHistoryIsScrolled(t *testing.T) {
-	model := newTUIModel(40, 8, Options{})
+	model := newTestModel(40, 8, Options{})
 	for index := range 300 {
 		model.appendEntry(session.EntryInfo, fmt.Sprintf("history %03d", index))
 	}
@@ -230,7 +230,7 @@ func TestRendererReflowsFullHistoryWhenResizeHistoryIsScrolled(t *testing.T) {
 
 func TestRenderFrameHandlesTinyDimensions(t *testing.T) {
 	for _, size := range [][2]int{{1, 1}, {2, 2}, {3, 3}, {4, 4}} {
-		model := newTUIModel(size[0], size[1], Options{Config: Config{Model: "model", ThinkingLevel: agent.ThinkingHigh}})
+		model := newTestModel(size[0], size[1], Options{Config: Config{Model: "model", ThinkingLevel: agent.ThinkingHigh}})
 		model.appendEntry(session.EntryAssistant, "界")
 		if frame := renderFrame(model); frame == "" {
 			t.Fatalf("renderFrame(%dx%d) returned empty frame", size[0], size[1])

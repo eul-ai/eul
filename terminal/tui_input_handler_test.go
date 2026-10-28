@@ -25,7 +25,7 @@ func TestPermissionKeysTakePriority(t *testing.T) {
 		{name: "cancel", key: keys.Event{Code: keys.CtrlC}, want: tuiActionCancel},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			model := newTUIModel(80, 24, Options{})
+			model := newTestModel(80, 24, Options{})
 			model.running = true
 			model.permission.queue = []PermissionRequest{{Title: "Network access", Detail: "git push"}}
 			if err := model.insertInput("queued steering"); err != nil {
@@ -44,7 +44,7 @@ func TestPermissionKeysTakePriority(t *testing.T) {
 }
 
 func TestIdlePermissionCtrlCDeniesRequest(t *testing.T) {
-	model := newTUIModel(80, 24, Options{})
+	model := newTestModel(80, 24, Options{})
 	model.permission.queue = []PermissionRequest{{Title: "Network access"}}
 
 	action, err := reduceKey(model, keys.Event{Code: keys.CtrlC})
@@ -54,7 +54,7 @@ func TestIdlePermissionCtrlCDeniesRequest(t *testing.T) {
 }
 
 func TestPermissionSelectionAndScrolling(t *testing.T) {
-	model := newTUIModel(40, 12, Options{})
+	model := newTestModel(40, 12, Options{})
 	model.running = true
 	model.permission.queue = []PermissionRequest{{
 		Title:  "Permission requested",
@@ -82,7 +82,7 @@ func TestPermissionSelectionAndScrolling(t *testing.T) {
 }
 
 func TestFilePickerKeysTakePriorityOverEditorActions(t *testing.T) {
-	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "@"}); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestFilePickerKeysTakePriorityOverEditorActions(t *testing.T) {
 }
 
 func TestFilePickerRemainsUsableWhileRunning(t *testing.T) {
-	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	model.running = true
 	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "@"}); err != nil {
 		t.Fatal(err)
@@ -138,7 +138,7 @@ func TestFilePickerRemainsUsableWhileRunning(t *testing.T) {
 }
 
 func TestFilePickerKeepsCurrentResultsSelectableDuringRefresh(t *testing.T) {
-	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "@"}); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestFilePickerKeepsCurrentResultsSelectableDuringRefresh(t *testing.T) {
 }
 
 func TestFilePickerDoesNotApplyPreviousQueryResults(t *testing.T) {
-	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "@"}); err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestFilePickerDoesNotApplyPreviousQueryResults(t *testing.T) {
 }
 
 func TestFilePickerShowsEmptyResultsUpdatingWhileRescoring(t *testing.T) {
-	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "@missing"}); err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestFilePickerShowsEmptyResultsUpdatingWhileRescoring(t *testing.T) {
 }
 
 func TestHiddenFilePickerDoesNotInterceptEditorKeys(t *testing.T) {
-	model := newTUIModel(80, 5, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 5, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@"); err != nil {
 		t.Fatal(err)
 	}
@@ -279,8 +279,8 @@ func TestReduceKeyActions(t *testing.T) {
 			key:      keys.Event{Code: keys.Enter},
 			wantKind: tuiActionCommand, wantCommand: "/new",
 			check: func(t *testing.T, model *tuiModel) {
-				if len(model.history) != 1 || model.history[0] != "/new" || len(model.transcript.Entries) != 1 {
-					t.Fatalf("history=%q blocks=%+v", model.history, model.transcript.Entries)
+				if len(model.history) != 1 || model.history[0] != "/new" || len(model.entries) != 1 {
+					t.Fatalf("history=%q blocks=%+v", model.history, model.entries)
 				}
 			},
 		},
@@ -355,8 +355,8 @@ func TestReduceKeyActions(t *testing.T) {
 			wantKind: tuiActionSubmit,
 			wantText: " hello ",
 			check: func(t *testing.T, model *tuiModel) {
-				if model.running || len(model.history) != 0 || len(model.transcript.Entries) != 0 || model.inputText() != " hello " {
-					t.Fatalf("running=%v history=%q blocks=%+v input=%q", model.running, model.history, model.transcript.Entries, model.inputText())
+				if model.running || len(model.history) != 0 || len(model.entries) != 0 || model.inputText() != " hello " {
+					t.Fatalf("running=%v history=%q blocks=%+v input=%q", model.running, model.history, model.entries, model.inputText())
 				}
 			},
 		},
@@ -389,8 +389,8 @@ func TestReduceKeyActions(t *testing.T) {
 			wantCommand: "/skill:",
 			wantText:    "/skill:review check tests",
 			check: func(t *testing.T, model *tuiModel) {
-				if model.running || len(model.transcript.Entries) != 0 {
-					t.Fatalf("running=%v blocks=%+v", model.running, model.transcript.Entries)
+				if model.running || len(model.entries) != 0 {
+					t.Fatalf("running=%v blocks=%+v", model.running, model.entries)
 				}
 			},
 		},
@@ -403,8 +403,8 @@ func TestReduceKeyActions(t *testing.T) {
 			},
 			key: keys.Event{Code: keys.Enter},
 			check: func(t *testing.T, model *tuiModel) {
-				if len(model.history) != 1 || len(model.transcript.Entries) != 1 || model.transcript.Entries[0].Kind != session.EntryError || model.activity.kind != activityError {
-					t.Fatalf("history=%q blocks=%+v activity=%+v", model.history, model.transcript.Entries, model.activity)
+				if len(model.history) != 1 || len(model.entries) != 1 || model.entries[0].Kind != session.EntryError || model.activity.kind != activityError {
+					t.Fatalf("history=%q blocks=%+v activity=%+v", model.history, model.entries, model.activity)
 				}
 			},
 		},
@@ -432,8 +432,8 @@ func TestReduceKeyActions(t *testing.T) {
 			wantKind: tuiActionSteer,
 			wantText: "steer",
 			check: func(t *testing.T, model *tuiModel) {
-				if len(model.input) != 0 || len(model.history) != 1 || len(model.transcript.Entries) != 0 {
-					t.Fatalf("input=%q history=%q blocks=%+v", model.inputText(), model.history, model.transcript.Entries)
+				if len(model.input) != 0 || len(model.history) != 1 || len(model.entries) != 0 {
+					t.Fatalf("input=%q history=%q blocks=%+v", model.inputText(), model.history, model.entries)
 				}
 			},
 		},
@@ -550,7 +550,7 @@ func TestReduceKeyActions(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			model := newTUIModel(80, 24, test.options)
+			model := newTestModel(80, 24, test.options)
 			if test.setup != nil {
 				test.setup(t, model)
 			}
@@ -571,7 +571,7 @@ func TestReduceKeyActions(t *testing.T) {
 }
 
 func TestImageTerminatesFilePickerToken(t *testing.T) {
-	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@"); err != nil {
 		t.Fatal(err)
 	}
@@ -584,7 +584,7 @@ func TestImageTerminatesFilePickerToken(t *testing.T) {
 }
 
 func TestImageTerminatesSlashCommand(t *testing.T) {
-	model := newTUIModel(80, 24, Options{})
+	model := newTestModel(80, 24, Options{})
 	if err := model.insertInput("/help"); err != nil {
 		t.Fatal(err)
 	}
@@ -602,7 +602,7 @@ func TestImageTerminatesSlashCommand(t *testing.T) {
 }
 
 func TestImageAttachmentCanBeSubmittedWithoutText(t *testing.T) {
-	model := newTUIModel(80, 24, Options{})
+	model := newTestModel(80, 24, Options{})
 	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("png")}); err != nil {
 		t.Fatal(err)
 	}

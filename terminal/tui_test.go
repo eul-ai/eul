@@ -252,7 +252,7 @@ func TestHandleKeyRunsTurnAndAppliesOrderedEvents(t *testing.T) {
 		}
 		return agent.RunResult{Text: "answer"}, nil
 	}}
-	model := newTUIModel(80, 24, Options{})
+	model := newTestModel(80, 24, Options{})
 	if err := model.insertInput("hello"); err != nil {
 		t.Fatal(err)
 	}
@@ -275,8 +275,8 @@ func TestHandleKeyRunsTurnAndAppliesOrderedEvents(t *testing.T) {
 				if model.running || model.activity.kind != activityReady || model.contextTokens != 42 {
 					t.Fatalf("model after turn = %+v", model)
 				}
-				if len(model.transcript.Entries) != 2 || model.transcript.Entries[0].Kind != session.EntryUser || model.transcript.Entries[1].Text != "answer" {
-					t.Fatalf("blocks = %+v", model.transcript.Entries)
+				if len(model.entries) != 2 || model.entries[0].Kind != session.EntryUser || model.entries[1].Text != "answer" {
+					t.Fatalf("blocks = %+v", model.entries)
 				}
 				return
 			}
@@ -301,7 +301,7 @@ func TestHandleKeyCancelsIncompleteToolTurnWithoutResettingConversation(t *testi
 		<-ctx.Done()
 		return agent.RunResult{}, ctx.Err()
 	}
-	model := newTUIModel(80, 24, Options{})
+	model := newTestModel(80, 24, Options{})
 	model.contextTokens = 123
 	if err := model.insertInput("wait"); err != nil {
 		t.Fatal(err)
@@ -331,9 +331,9 @@ func TestHandleKeyCancelsIncompleteToolTurnWithoutResettingConversation(t *testi
 				continue
 			}
 			model.finishTurn(message.err)
-			last := model.transcript.Entries[len(model.transcript.Entries)-1]
+			last := model.entries[len(model.entries)-1]
 			if model.contextTokens != 456 || model.activity.kind != activityReady || last.Kind != session.EntryInfo {
-				t.Fatalf("context=%d activity=%+v blocks=%+v", model.contextTokens, model.activity, model.transcript.Entries)
+				t.Fatalf("context=%d activity=%+v blocks=%+v", model.contextTokens, model.activity, model.entries)
 			}
 			return
 		case <-timeout:
@@ -382,7 +382,7 @@ func (r terminalErrorReader) Read([]byte) (int, error) {
 }
 
 func TestHandleKeyCtrlCClearsInputBeforeExiting(t *testing.T) {
-	model := newTUIModel(80, 24, Options{})
+	model := newTestModel(80, 24, Options{})
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +403,7 @@ func TestHandleKeyCtrlCClearsInputBeforeExiting(t *testing.T) {
 
 func TestHandleKeyShiftTabCyclesThinkingLevel(t *testing.T) {
 	var configured agent.ThinkingLevel
-	model := newTUIModel(80, 24, Options{
+	model := newTestModel(80, 24, Options{
 		Config: Config{ThinkingLevel: agent.ThinkingMedium},
 		Controls: Controls{SetThinkingLevel: func(level agent.ThinkingLevel) error {
 			configured = level
@@ -431,7 +431,7 @@ func TestHandleKeyShiftTabCyclesThinkingLevel(t *testing.T) {
 }
 
 func TestHandleKeyCtrlLRequestsFullRedraw(t *testing.T) {
-	model := newTUIModel(80, 24, Options{})
+	model := newTestModel(80, 24, Options{})
 	messages := make(chan engineMessage, 1)
 	stopped := make(chan struct{})
 	defer close(stopped)
@@ -448,7 +448,7 @@ func TestHandleKeyCtrlLRequestsFullRedraw(t *testing.T) {
 
 func TestHandleKeyCommands(t *testing.T) {
 	engine := &fakeEngine{}
-	model := newTUIModel(80, 24, Options{})
+	model := newTestModel(80, 24, Options{})
 	messages := make(chan engineMessage, 1)
 	stopped := make(chan struct{})
 	defer close(stopped)
@@ -462,8 +462,8 @@ func TestHandleKeyCommands(t *testing.T) {
 			t.Fatalf("command %q exit=%v err=%v", command, exit, err)
 		}
 	}
-	if len(model.transcript.Entries) != 2 || model.transcript.Entries[0].Kind != session.EntryInfo || model.transcript.Entries[1].Kind != session.EntryError {
-		t.Fatalf("blocks = %+v", model.transcript.Entries)
+	if len(model.entries) != 2 || model.entries[0].Kind != session.EntryInfo || model.entries[1].Kind != session.EntryError {
+		t.Fatalf("blocks = %+v", model.entries)
 	}
 
 	if err := model.insertInput("/exit"); err != nil {
@@ -480,8 +480,8 @@ func TestHandleKeyCommands(t *testing.T) {
 	if err != nil || !exit {
 		t.Fatalf("new command exit=%v err=%v", exit, err)
 	}
-	if len(model.transcript.Entries) != 2 {
-		t.Fatalf("blocks=%+v", model.transcript.Entries)
+	if len(model.entries) != 2 {
+		t.Fatalf("blocks=%+v", model.entries)
 	}
 }
 

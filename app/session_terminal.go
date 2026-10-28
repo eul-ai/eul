@@ -24,15 +24,13 @@ type terminalOptionsBuilder struct {
 	engine             *agent.Engine
 	settings           *agent.Settings
 	goal               *agent.Goal
-	saver              *session.Saver
+	conversation       *session.Session
 	sessions           terminal.Sessions
 	messageHistory     terminal.MessageHistory
-	transcript         []session.Entry
 	draft              session.Draft
 	contextTokens      int64
 	initialPrompt      string
 	sessionID          string
-	previousTurnActive bool
 }
 
 func (source terminalOptionsBuilder) options() terminal.Options {
@@ -53,9 +51,18 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 		}, err
 	}
 	thinkingLevel, _ := source.settings.Snapshot()
-	callbacks := &terminalCallbacks{engine: source.engine, saver: source.saver, skills: source.config.skills}
 	return terminal.Options{
-		Operations: callbacks.operations(),
+		Operations: terminal.Operations{
+			RunTurn: func(ctx context.Context, content []agent.ContentPart, sink agent.EventSink) error {
+				content, err := expandSkillContent(content, source.config.skills)
+				if err != nil {
+					return err
+				}
+				_, err = source.engine.Run(ctx, content, sink)
+				return err
+			},
+			Compact: source.engine.Compact,
+		},
 		Controls: terminal.Controls{
 			Steer:            source.engine.Steer,
 			ClearSteering:    source.engine.ClearSteering,
@@ -65,25 +72,22 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 			SetThinkingLevel: source.settings.SetThinkingLevel,
 			SetFastMode:      source.settings.SetFastMode,
 		},
+		Session:        source.conversation,
 		Sessions:       source.sessions,
-		StateChanges:   terminal.StateChanges{Notify: source.saver.SaveView},
 		MessageHistory: source.messageHistory,
 		Config: terminal.Config{
-			Model:              source.config.models.Main,
-			WorkingDirectory:   source.config.cwd,
-			ThinkingLevel:      thinkingLevel,
-			ThinkingLevels:     source.metadata.ThinkingLevels,
-			FastMode:           source.config.fastMode,
-			FastModeAvailable:  source.metadata.FastMode,
-			ContextWindow:      source.metadata.ContextWindow,
-			ContextTokens:      source.contextTokens,
-			Skills:             source.config.skills,
-			Warnings:           source.config.warnings,
-			Transcript:         source.transcript,
-			Draft:              source.draft,
-			SessionID:          source.sessionID,
-			PreviousTurnActive: source.previousTurnActive,
-			InitialPrompt:      source.initialPrompt,
+			Model:             source.config.models.Main,
+			WorkingDirectory:  source.config.cwd,
+			ThinkingLevel:     thinkingLevel,
+			ThinkingLevels:    source.metadata.ThinkingLevels,
+			FastMode:          source.config.fastMode,
+			FastModeAvailable: source.metadata.FastMode,
+			ContextWindow:     source.metadata.ContextWindow,
+			ContextTokens:     source.contextTokens,
+			Skills:            source.config.skills,
+			Draft:             source.draft,
+			SessionID:         source.sessionID,
+			InitialPrompt:     source.initialPrompt,
 		},
 		Events: terminal.Events{
 			Interrupts:         source.interrupts,
@@ -91,28 +95,6 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 			PermissionRequests: source.permissionRequests,
 		},
 		Services: terminal.Services{LoadUsage: loadUsage},
-	}
-}
-
-type terminalCallbacks struct {
-	engine *agent.Engine
-	saver  *session.Saver
-	skills []skill.Skill
-}
-
-func (callbacks *terminalCallbacks) operations() terminal.Operations {
-	return terminal.Operations{
-		RunTurn: func(ctx context.Context, content []agent.ContentPart, stream terminal.EventStream) error {
-			content, err := expandSkillContent(content, callbacks.skills)
-			if err != nil {
-				return err
-			}
-			_, err = callbacks.engine.Run(ctx, content, callbacks.sink(stream))
-			return err
-		},
-		Compact: func(ctx context.Context, stream terminal.EventStream) error {
-			return callbacks.engine.Compact(ctx, callbacks.sink(stream))
-		},
 	}
 }
 
@@ -134,18 +116,4 @@ func expandSkillContent(content []agent.ContentPart, skills []skill.Skill) ([]ag
 		return content, nil
 	}
 	return content, nil
-}
-
-func (callbacks *terminalCallbacks) sink(stream terminal.EventStream) agent.EventSink {
-	return func(event agent.Event) error {
-		if event.Kind != agent.EventCheckpoint {
-			return stream.Emit(event)
-		}
-
-		transcript, draft, err := stream.Snapshot()
-		if err != nil {
-			return err
-		}
-		return callbacks.saver.SaveTurn(*event.Checkpoint, transcript, draft)
-	}
 }

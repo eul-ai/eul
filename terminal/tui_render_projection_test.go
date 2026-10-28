@@ -3,7 +3,7 @@ package terminal
 import "github.com/eul-ai/eul/session"
 
 func modelConversationLines(model *tuiModel, width int) []styledLine {
-	blocks := append([]session.Entry(nil), model.transcript.Entries...)
+	blocks := append([]session.Entry(nil), model.entries...)
 	for _, content := range model.pendingSteering() {
 		blocks = append(blocks, session.Entry{Kind: session.EntryInfo, Text: "Queued: " + displayContent(content) + " (alt+↑ to restore)"})
 	}

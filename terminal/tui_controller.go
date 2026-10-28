@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"slices"
 	"sync"
 
 	"github.com/eul-ai/eul/agent"
@@ -57,7 +56,6 @@ type controllerOptions struct {
 	clipboardImages chan<- tuiEvent
 	operations      Operations
 	controls        Controls
-	stateChanges    StateChanges
 	sessions        Sessions
 	messageHistory  MessageHistory
 }
@@ -75,7 +73,6 @@ func newTUIController(config controllerOptions) *tuiController {
 		fileSearch:         config.fileSearch,
 		loadUsage:          config.loadUsage,
 		usageResults:       config.usageResults,
-		stateChanges:       config.stateChanges,
 		sessions:           config.sessions,
 		messageHistory:     config.messageHistory,
 		readClipboardImage: clipboard.ReadImage,
@@ -99,7 +96,6 @@ type tuiController struct {
 	usageResults                 chan<- providerUsageMessage
 	usageLoading                 bool
 	usageLoads                   sync.WaitGroup
-	stateChanges                 StateChanges
 	sessions                     Sessions
 	messageHistory               MessageHistory
 	readClipboardImage           func(context.Context) (agent.Image, error)
@@ -116,6 +112,15 @@ type tuiController struct {
 }
 
 func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, error) {
+	done, err := c.dispatch(ctx, event)
+	switch event.kind {
+	case tuiEventKey, tuiEventInterrupt, tuiEventParentCanceled, tuiEventEngine:
+		c.model.session.SetDraft(c.model.draft())
+	}
+	return done, err
+}
+
+func (c *tuiController) dispatch(ctx context.Context, event tuiEvent) (bool, error) {
 	switch event.kind {
 	case tuiEventParentCanceled:
 		return c.handleParentCanceled(event.err)
@@ -152,7 +157,7 @@ func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, e
 func (c *tuiController) handleParentCanceled(parentErr error) (bool, error) {
 	c.cancelClipboardRequests()
 	if !c.model.running {
-		if err := c.saveCurrentCheckpoint(false); err != nil {
+		if err := c.saveDraft(false); err != nil {
 			return false, err
 		}
 		return true, parentErr
@@ -168,8 +173,8 @@ func (c *tuiController) handleParentCanceled(parentErr error) (bool, error) {
 func (c *tuiController) handleInterrupt() (bool, error) {
 	action, err := reduceInterrupt(c.model)
 	if err != nil {
-		if checkpointErr := c.saveCurrentCheckpoint(false); checkpointErr != nil {
-			return false, checkpointErr
+		if saveErr := c.saveDraft(false); saveErr != nil {
+			return false, saveErr
 		}
 		return false, err
 	}
@@ -198,8 +203,8 @@ func (c *tuiController) handleKey(ctx context.Context, key keys.Event) (bool, er
 	action, err := handleKeyInput(c.model, key, c.renderer.frame)
 	if err != nil {
 		if !c.model.running {
-			if checkpointErr := c.saveCurrentCheckpoint(false); checkpointErr != nil {
-				return false, checkpointErr
+			if saveErr := c.saveDraft(false); saveErr != nil {
+				return false, saveErr
 			}
 		}
 		return false, err
@@ -254,12 +259,10 @@ func (c *tuiController) flushMessageHistory() error {
 }
 
 func (c *tuiController) handleEngineMessage(ctx context.Context, message engineMessage) (bool, error) {
-	if message.snapshot != nil {
-		message.snapshot <- conversationSnapshot{transcript: slices.Clone(c.model.transcript.Entries), draft: c.model.draft()}
-		return false, nil
-	}
 	if !message.done {
-		return c.handleAgentEvent(message)
+		c.model.applyAgentEvent(*message.event)
+		c.dirty = true
+		return false, nil
 	}
 
 	if c.turnCancel != nil {
@@ -278,7 +281,7 @@ func (c *tuiController) handleEngineMessage(ctx context.Context, message engineM
 		c.model.restoreSteering(c.model.clearSteering(c.controls.ClearSteering))
 	}
 	c.model.finishTurn(message.err)
-	if err := c.saveCurrentCheckpoint(false); err != nil {
+	if err := c.saveDraft(false); err != nil {
 		return false, err
 	}
 	c.requestUsage(ctx)
@@ -286,19 +289,6 @@ func (c *tuiController) handleEngineMessage(ctx context.Context, message engineM
 		if err := c.startDeferredTurn(ctx); err != nil {
 			return false, err
 		}
-	}
-	c.dirty = true
-	return false, nil
-}
-
-func (c *tuiController) handleAgentEvent(message engineMessage) (bool, error) {
-	if message.event.Kind == agent.EventSteering {
-		if c.model.deliverSteering(message.event.Content) {
-			c.model.appendUserContent(message.event.Content)
-			c.model.setActiveActivity(activity{kind: activityThinking})
-		}
-	} else {
-		c.model.applyAgentEvent(*message.event)
 	}
 	c.dirty = true
 	return false, nil

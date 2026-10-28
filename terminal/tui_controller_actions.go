@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"slices"
 
 	"github.com/eul-ai/eul/agent"
 )
@@ -16,7 +15,7 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 	}
 	switch action.kind {
 	case tuiActionCommand, tuiActionExit, tuiActionResume, tuiActionSetThinking:
-		return exit, c.saveCurrentCheckpoint(false)
+		return exit, c.saveDraft(false)
 	}
 	return exit, nil
 }
@@ -82,15 +81,16 @@ func (c *tuiController) startTurn(ctx context.Context, content []agent.ContentPa
 		return errors.New("agent turns are unavailable")
 	}
 	c.model.beginTurnOperation()
-	if err := c.saveCurrentCheckpoint(true); err != nil {
+	if err := c.saveDraft(true); err != nil {
 		c.model.rollbackTurnStart()
 		return err
 	}
 	c.model.appendUserContent(content)
 
-	turnContext, cancel := context.WithCancel(ctx)
-	c.turnCancel = cancel
-	go runEngineTurn(turnContext, c.operations.RunTurn, content, c.engineMessages, c.stopped)
+	run := c.operations.RunTurn
+	c.launch(ctx, func(ctx context.Context, sink agent.EventSink) error {
+		return run(ctx, content, sink)
+	})
 	return nil
 }
 
@@ -99,14 +99,21 @@ func (c *tuiController) startCompaction(ctx context.Context) error {
 		return errors.New("compaction is unavailable")
 	}
 	c.model.beginCompaction()
-	if err := c.saveCurrentCheckpoint(true); err != nil {
+	if err := c.saveDraft(true); err != nil {
 		return err
 	}
 
+	c.launch(ctx, c.operations.Compact)
+	return nil
+}
+
+func (c *tuiController) launch(ctx context.Context, operation func(context.Context, agent.EventSink) error) {
 	turnContext, cancel := context.WithCancel(ctx)
 	c.turnCancel = cancel
-	go runEngineCompaction(turnContext, c.operations.Compact, c.engineMessages, c.stopped)
-	return nil
+	observe := c.model.session.Sink
+	go runEngineOperation(turnContext, c.engineMessages, c.stopped, func(emit agent.EventSink) error {
+		return operation(turnContext, observe(emit))
+	})
 }
 
 func (c *tuiController) startDeferredTurn(ctx context.Context) error {
@@ -139,9 +146,6 @@ func (c *tuiController) cancelTurn() {
 	c.model.activity = activity{kind: activityCanceling}
 }
 
-func (c *tuiController) saveCurrentCheckpoint(active bool) error {
-	if c.stateChanges.Notify == nil {
-		return nil
-	}
-	return c.stateChanges.Notify(slices.Clone(c.model.transcript.Entries), c.model.draft(), active)
+func (c *tuiController) saveDraft(active bool) error {
+	return c.model.session.SaveDraft(c.model.draft(), active)
 }

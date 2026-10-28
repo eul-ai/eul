@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -83,13 +84,21 @@ func startTestSession(t *testing.T, launcher *launcher, settings sessionSettings
 
 func savePrompt(t *testing.T, options terminal.Options, prompt string, active bool) {
 	t.Helper()
-	if err := options.StateChanges.Notify([]session.Entry{{Kind: session.EntryUser, Text: prompt}}, session.Draft{}, active); err != nil {
+	options.Session.AppendUser([]agent.ContentPart{{Kind: agent.ContentPartText, Text: prompt}})
+	if err := options.Session.SaveDraft(session.Draft{}, active); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func sessionClosed(options terminal.Options) bool {
-	return options.StateChanges.Notify(nil, session.Draft{}, false) != nil
+	return options.Session.SaveDraft(session.Draft{}, false) != nil
+}
+
+func transcriptHas(options terminal.Options, kind session.EntryKind, text string) bool {
+	entries, _ := options.Session.Sync(nil)
+	return slices.ContainsFunc(entries, func(entry session.Entry) bool {
+		return entry.Kind == kind && strings.Contains(entry.Text, text)
+	})
 }
 
 func sessionDirectory(t *testing.T, launcher *launcher, id string) string {

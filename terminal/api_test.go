@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/session"
 )
 
 type fakeEngine struct {
@@ -126,13 +127,11 @@ type fakeEngineAPI interface {
 
 func operationsFor(engine fakeEngineAPI) Operations {
 	return Operations{
-		RunTurn: func(ctx context.Context, content []agent.ContentPart, stream EventStream) error {
-			_, err := engine.RunContent(ctx, content, stream.Emit)
+		RunTurn: func(ctx context.Context, content []agent.ContentPart, sink agent.EventSink) error {
+			_, err := engine.RunContent(ctx, content, sink)
 			return err
 		},
-		Compact: func(ctx context.Context, stream EventStream) error {
-			return engine.Compact(ctx, stream.Emit)
-		},
+		Compact: engine.Compact,
 	}
 }
 
@@ -147,6 +146,9 @@ func controlsFor(engine fakeEngineAPI) Controls {
 }
 
 func optionsForEngine(engine fakeEngineAPI, options Options) Options {
+	if options.Session == nil {
+		options.Session = &testSession{}
+	}
 	options.Operations = operationsFor(engine)
 	controls := controlsFor(engine)
 	controls.SetThinkingLevel = options.Controls.SetThinkingLevel
@@ -155,9 +157,73 @@ func optionsForEngine(engine fakeEngineAPI, options Options) Options {
 	return options
 }
 
+type testSession struct {
+	mu         sync.Mutex
+	transcript session.Transcript
+	save       func(session.Draft, bool) error
+}
+
+func (s *testSession) Sink(next agent.EventSink) agent.EventSink {
+	return func(event agent.Event) error {
+		s.mu.Lock()
+		s.transcript.Apply(event)
+		s.mu.Unlock()
+		return next(event)
+	}
+}
+
+func (s *testSession) Sync(entries []session.Entry) ([]session.Entry, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.transcript.Sync(entries)
+}
+
+func (s *testSession) Append(kind session.EntryKind, text string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.transcript.Append(kind, text)
+}
+
+func (s *testSession) AppendUser(content []agent.ContentPart) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.transcript.AppendUser(content)
+}
+
+func (s *testSession) FinishTurn(interrupted bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.transcript.FinishTurn(interrupted, err)
+}
+
+func (s *testSession) SetDraft(session.Draft) {}
+
+func (s *testSession) SaveDraft(draft session.Draft, active bool) error {
+	if s.save == nil {
+		return nil
+	}
+	return s.save(draft, active)
+}
+
+func newTestModel(width, height int, options Options) *tuiModel {
+	if options.Session == nil {
+		options.Session = &testSession{}
+	}
+	return newTUIModel(width, height, options)
+}
+
+func onSave(model *tuiModel, save func(session.Draft, bool) error) {
+	model.session.(*testSession).save = save
+}
+
+func applyEvent(model *tuiModel, event agent.Event) {
+	_ = model.session.Sink(func(agent.Event) error { return nil })(event)
+	model.applyAgentEvent(event)
+}
+
 func streamAssistantText(model *tuiModel, text string) {
-	model.transcript.Apply(agent.Event{Kind: agent.EventAssistantText, Text: text})
-	model.conversationChanged()
+	_ = model.session.Sink(func(agent.Event) error { return nil })(agent.Event{Kind: agent.EventAssistantText, Text: text})
+	model.syncConversation()
 }
 
 func TestNewRunnerRequiresTerminal(t *testing.T) {

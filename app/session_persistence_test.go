@@ -39,8 +39,8 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if description := session.Description(second.terminalOptions.Config.Transcript); description != "first prompt" {
-		t.Fatalf("restored transcript = %+v", second.terminalOptions.Config.Transcript)
+	if !transcriptHas(second.terminalOptions, session.EntryUser, "first prompt") {
+		t.Fatal("restored transcript omits the first prompt")
 	}
 	if second.terminalOptions.Config.ContextTokens != 42 {
 		t.Fatalf("context tokens = %d", second.terminalOptions.Config.ContextTokens)
@@ -133,7 +133,7 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !second.terminalOptions.Config.PreviousTurnActive {
+	if !transcriptHas(second.terminalOptions, session.EntryNotice, "") {
 		t.Fatal("previous active turn was not reported")
 	}
 	if err := second.finish(nil); err != nil {

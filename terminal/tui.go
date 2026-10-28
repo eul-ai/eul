@@ -11,7 +11,6 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/filesearch"
-	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/terminal/keys"
 )
 
@@ -25,15 +24,9 @@ const (
 )
 
 type engineMessage struct {
-	event    *agent.Event
-	snapshot chan conversationSnapshot
-	err      error
-	done     bool
-}
-
-type conversationSnapshot struct {
-	transcript []session.Entry
-	draft      session.Draft
+	event *agent.Event
+	err   error
+	done  bool
 }
 
 type providerUsageMessage struct {
@@ -162,7 +155,6 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 		clipboardImages: clipboardImages,
 		operations:      options.Operations,
 		controls:        options.Controls,
-		stateChanges:    options.StateChanges,
 		sessions:        options.Sessions,
 		messageHistory:  options.MessageHistory,
 	})
@@ -286,57 +278,17 @@ func renderIfDirty(renderer *tuiRenderer, model *tuiModel, output io.Writer, dir
 	return nil
 }
 
-type tuiEventStream struct {
-	ctx      context.Context
-	messages chan<- engineMessage
-	stopped  <-chan struct{}
-}
-
-func (stream tuiEventStream) Emit(event agent.Event) error {
-	select {
-	case stream.messages <- engineMessage{event: &event}:
-		return nil
-	case <-stream.ctx.Done():
-		return stream.ctx.Err()
-	case <-stream.stopped:
-		return context.Canceled
-	}
-}
-
-func (stream tuiEventStream) Snapshot() ([]session.Entry, session.Draft, error) {
-	response := make(chan conversationSnapshot, 1)
-	select {
-	case stream.messages <- engineMessage{snapshot: response}:
-	case <-stream.ctx.Done():
-		return nil, session.Draft{}, stream.ctx.Err()
-	case <-stream.stopped:
-		return nil, session.Draft{}, context.Canceled
-	}
-
-	select {
-	case snapshot := <-response:
-		return snapshot.transcript, snapshot.draft, nil
-	case <-stream.ctx.Done():
-		return nil, session.Draft{}, stream.ctx.Err()
-	case <-stream.stopped:
-		return nil, session.Draft{}, context.Canceled
-	}
-}
-
-func runEngineTurn(ctx context.Context, operation func(context.Context, []agent.ContentPart, EventStream) error, content []agent.ContentPart, messages chan<- engineMessage, stopped <-chan struct{}) {
-	runEngineOperation(ctx, messages, stopped, func(stream EventStream) error {
-		return operation(ctx, content, stream)
+func runEngineOperation(ctx context.Context, messages chan<- engineMessage, stopped <-chan struct{}, operation func(agent.EventSink) error) {
+	err := operation(func(event agent.Event) error {
+		select {
+		case messages <- engineMessage{event: &event}:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-stopped:
+			return context.Canceled
+		}
 	})
-}
-
-func runEngineCompaction(ctx context.Context, operation func(context.Context, EventStream) error, messages chan<- engineMessage, stopped <-chan struct{}) {
-	runEngineOperation(ctx, messages, stopped, func(stream EventStream) error {
-		return operation(ctx, stream)
-	})
-}
-
-func runEngineOperation(ctx context.Context, messages chan<- engineMessage, stopped <-chan struct{}, operation func(EventStream) error) {
-	err := operation(tuiEventStream{ctx: ctx, messages: messages, stopped: stopped})
 	select {
 	case messages <- engineMessage{err: err, done: true}:
 	case <-stopped:

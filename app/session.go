@@ -20,7 +20,7 @@ type agentSession struct {
 	subagents       *subagent.Manager
 	terminalOptions terminal.Options
 	agentSettings   *agent.Settings
-	saver           *session.Saver
+	conversation    *session.Session
 }
 
 func newStoredAgentSession(
@@ -40,17 +40,15 @@ func newStoredAgentSession(
 		return nil, err
 	}
 
-	stored.saver = session.NewSaver(handle, stored.engine, stored.subagents, stored.agentSettings)
-	options.saver = stored.saver
+	stored.conversation = session.New(handle, stored.engine, stored.subagents, stored.agentSettings, config.warnings)
+	options.conversation = stored.conversation
 	options.messageHistory = terminal.MessageHistory{
 		Entries: historyEntries,
 		Append: func(entry string) error {
 			return launcher.history.Append(record.ID, entry)
 		},
 	}
-	options.transcript = record.Transcript
 	options.draft = record.Draft
-	options.previousTurnActive = record.Active
 	options.contextTokens = record.Agent.ContextUsage.TotalTokens
 	options.initialPrompt = prompt
 	options.sessionID = record.ID
@@ -169,5 +167,5 @@ func (session *agentSession) run(ctx context.Context, run func(context.Context, 
 
 func (session *agentSession) finish(runErr error) error {
 	session.subagents.Close()
-	return errors.Join(runErr, session.saver.Close())
+	return errors.Join(runErr, session.conversation.Close())
 }

@@ -262,7 +262,7 @@ func blockPresentation(kind session.EntryKind) lineStyle {
 		return lineStyle{foreground: currentTheme.foreground, background: currentTheme.toolErrorBackground, paintBackground: true}
 	case session.EntryError:
 		return lineStyle{foreground: currentTheme.error}
-	case session.EntryInfo:
+	case session.EntryInfo, session.EntryNotice:
 		return lineStyle{foreground: currentTheme.muted}
 	default:
 		return lineStyle{foreground: currentTheme.foreground}

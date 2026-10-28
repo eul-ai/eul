@@ -9,7 +9,7 @@ import (
 )
 
 func TestStatusTruncatesSessionID(t *testing.T) {
-	model := newTUIModel(120, 12, Options{Config: Config{
+	model := newTestModel(120, 12, Options{Config: Config{
 		Model: "opaque-model-value", SessionID: "0123456789abcdef0123456789abcdef",
 	}})
 
@@ -21,7 +21,7 @@ func TestStatusTruncatesSessionID(t *testing.T) {
 
 func TestStatusShowsProviderUsageWindows(t *testing.T) {
 	now := time.Now()
-	model := newTUIModel(180, 12, Options{Config: Config{Model: "opaque-model-value"}})
+	model := newTestModel(180, 12, Options{Config: Config{Model: "opaque-model-value"}})
 	model.providerUsage = ProviderUsage{Windows: []UsageWindow{
 		{Duration: 7 * 24 * time.Hour, UsedPercent: 20, ResetsAt: now.Add(3*24*time.Hour + 5*time.Hour)},
 		{Duration: 5 * time.Hour, UsedPercent: 42, ResetsAt: now.Add(3*time.Hour + 5*time.Minute)},
@@ -47,7 +47,7 @@ func TestStatusShowsProviderUsageWindows(t *testing.T) {
 
 func TestStatusUsesCompactContextAndSingleUsage(t *testing.T) {
 	now := time.Now()
-	model := newTUIModel(120, 12, Options{Config: Config{
+	model := newTestModel(120, 12, Options{Config: Config{
 		Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, ContextWindow: 272_000,
 	}})
 	model.providerUsage = ProviderUsage{Windows: []UsageWindow{{

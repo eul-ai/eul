@@ -23,14 +23,19 @@ var (
 	errOutput      = errors.New("terminal: write output")
 )
 
-type EventStream interface {
-	Emit(agent.Event) error
-	Snapshot() ([]session.Entry, session.Draft, error)
+type Session interface {
+	Sink(agent.EventSink) agent.EventSink
+	Sync([]session.Entry) ([]session.Entry, bool)
+	Append(session.EntryKind, string)
+	AppendUser([]agent.ContentPart)
+	FinishTurn(interrupted bool, err error)
+	SetDraft(session.Draft)
+	SaveDraft(session.Draft, bool) error
 }
 
 type Operations struct {
-	RunTurn func(context.Context, []agent.ContentPart, EventStream) error
-	Compact func(context.Context, EventStream) error
+	RunTurn func(context.Context, []agent.ContentPart, agent.EventSink) error
+	Compact func(context.Context, agent.EventSink) error
 }
 
 type Controls struct {
@@ -75,29 +80,22 @@ type PermissionRequest struct {
 }
 
 type Config struct {
-	Model              string
-	WorkingDirectory   string
-	ThinkingLevel      agent.ThinkingLevel
-	ThinkingLevels     []agent.ThinkingLevel
-	FastMode           bool
-	FastModeAvailable  bool
-	ContextWindow      int64
-	ContextTokens      int64
-	Skills             []skill.Skill
-	Warnings           []string
-	Transcript         []session.Entry
-	Draft              session.Draft
-	SessionID          string
-	PreviousTurnActive bool
-	InitialPrompt      string
+	Model             string
+	WorkingDirectory  string
+	ThinkingLevel     agent.ThinkingLevel
+	ThinkingLevels    []agent.ThinkingLevel
+	FastMode          bool
+	FastModeAvailable bool
+	ContextWindow     int64
+	ContextTokens     int64
+	Skills            []skill.Skill
+	Draft             session.Draft
+	SessionID         string
+	InitialPrompt     string
 }
 
 type Sessions struct {
 	List func(context.Context) ([]session.Summary, error)
-}
-
-type StateChanges struct {
-	Notify func([]session.Entry, session.Draft, bool) error
 }
 
 type MessageHistory struct {
@@ -131,8 +129,8 @@ type Options struct {
 	Config         Config
 	Operations     Operations
 	Controls       Controls
+	Session        Session
 	Sessions       Sessions
-	StateChanges   StateChanges
 	MessageHistory MessageHistory
 	Events         Events
 	Services       Services

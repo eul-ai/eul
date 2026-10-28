@@ -125,8 +125,8 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 			if options.Config.Model != "resume-main" || options.Config.ThinkingLevel != agent.ThinkingMedium || !options.Config.FastMode || options.Config.WorkingDirectory != targetCWD {
 				t.Fatalf("resumed options = model %q, thinking %q, fast %v, cwd %q", options.Config.Model, options.Config.ThinkingLevel, options.Config.FastMode, options.Config.WorkingDirectory)
 			}
-			if description := session.Description(options.Config.Transcript); description != "resume target prompt" {
-				t.Fatalf("resumed transcript = %#v", options.Config.Transcript)
+			if !transcriptHas(options, session.EntryUser, "resume target prompt") {
+				t.Fatal("resumed transcript omits the target prompt")
 			}
 			return terminal.RunOutcome{Action: terminal.RunExit}, nil
 		},

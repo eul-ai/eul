@@ -17,7 +17,7 @@ func TestResumePickerUsesNewestSessionAndReturnsSelection(t *testing.T) {
 		newID = "fedcba9876543210fedcba9876543210"
 	)
 	now := time.Now()
-	model := newTUIModel(80, 24, Options{})
+	model := newTestModel(80, 24, Options{})
 	model.openResumePicker([]session.Summary{
 		{ID: oldID, Description: "old prompt", UpdatedAt: now.Add(-time.Hour)},
 		{ID: newID, Description: "new prompt", UpdatedAt: now, Active: true},
@@ -41,7 +41,7 @@ func TestResumePickerUsesNewestSessionAndReturnsSelection(t *testing.T) {
 }
 
 func TestResumeCommandListsSessionsWithoutStoreDependency(t *testing.T) {
-	model := newTUIModel(80, 24, Options{})
+	model := newTestModel(80, 24, Options{})
 	if err := model.insertInput("/resume"); err != nil {
 		t.Fatal(err)
 	}

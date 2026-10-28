@@ -172,7 +172,7 @@ func (handle *Handle) save(next state, active bool, thinkingLevel agent.Thinking
 	record.FastMode = fastMode
 	record.state = next
 	if record.Description == "" {
-		record.Description = Description(next.Transcript)
+		record.Description = description(next.Transcript)
 	}
 	handle.record = record
 	if record.Description == "" {

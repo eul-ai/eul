@@ -13,7 +13,7 @@ import (
 
 func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 	started := time.Now().Add(-(time.Minute + 5*time.Second))
-	model := newTUIModel(140, 10, Options{})
+	model := newTestModel(140, 10, Options{})
 	model.subagentStatus = subagent.Status{Active: []subagent.JobStatus{
 		{
 			ID: "subagent-1", Description: "inspect layout", ModelProfile: "balanced", ThinkingLevel: agent.ThinkingLow,
@@ -51,7 +51,7 @@ func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 func TestSubagentStatusesUseStateColorsAndFreezeCompletedElapsed(t *testing.T) {
 	started := time.Now().Add(-time.Minute)
 	finished := started.Add(5 * time.Second)
-	model := newTUIModel(80, 10, Options{})
+	model := newTestModel(80, 10, Options{})
 	model.subagentStatus.Active = []subagent.JobStatus{
 		{ID: "running", State: subagent.StateRunning, Started: started},
 		{ID: "canceling", State: subagent.StateCanceling, Started: started},
@@ -91,7 +91,7 @@ func TestSubagentStatusesUseStateColorsAndFreezeCompletedElapsed(t *testing.T) {
 }
 
 func TestSubagentPanelIsCappedOnSmallTerminals(t *testing.T) {
-	model := newTUIModel(40, 8, Options{})
+	model := newTestModel(40, 8, Options{})
 	model.subagentStatus.Active = make([]subagent.JobStatus, 4)
 	for index := range model.subagentStatus.Active {
 		model.subagentStatus.Active[index] = subagent.JobStatus{ID: "subagent-" + strconv.Itoa(index+1), State: subagent.StateRunning}
@@ -104,7 +104,7 @@ func TestSubagentPanelIsCappedOnSmallTerminals(t *testing.T) {
 }
 
 func TestStatusOmitsBackgroundSubagents(t *testing.T) {
-	model := newTUIModel(120, 12, Options{Config: Config{Model: "model"}})
+	model := newTestModel(120, 12, Options{Config: Config{Model: "model"}})
 	model.subagentStatus = subagent.Status{
 		Active: []subagent.JobStatus{{ID: "subagent-1", State: subagent.StateRunning}},
 	}

@@ -57,7 +57,7 @@ func TestSteeringCoordinatorRestoresImagesToEditor(t *testing.T) {
 		{Kind: agent.ContentPartText, Text: "describe "},
 		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("png")}},
 	}
-	model := newTUIModel(80, 24, Options{})
+	model := newTestModel(80, 24, Options{})
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)
 	}

@@ -97,8 +97,8 @@ func (r *tuiRenderer) prepareConversation(model *tuiModel, conversationHeight, m
 }
 
 func (r *tuiRenderer) renderAllConversationBlocks(model *tuiModel) {
-	r.conversationBlocks = make([]renderedConversationBlock, len(model.transcript.Entries))
-	for index, block := range model.transcript.Entries {
+	r.conversationBlocks = make([]renderedConversationBlock, len(model.entries))
+	for index, block := range model.entries {
 		r.conversationBlocks[index] = renderConversationBlock(block, model.width)
 	}
 	r.conversationBlockStart = 0
@@ -106,25 +106,25 @@ func (r *tuiRenderer) renderAllConversationBlocks(model *tuiModel) {
 
 func (r *tuiRenderer) renderConversationTail(model *tuiModel, minimumRows int) {
 	r.conversationBlocks = nil
-	r.conversationBlockStart = len(model.transcript.Entries)
+	r.conversationBlockStart = len(model.entries)
 	r.prependConversationBlocks(model, minimumRows, false)
 }
 
 func (r *tuiRenderer) updateConversationBlocks(model *tuiModel) {
-	if r.conversationBlockStart > len(model.transcript.Entries) {
+	if r.conversationBlockStart > len(model.entries) {
 		clear(r.conversationBlocks)
 		r.conversationBlocks = nil
-		r.conversationBlockStart = len(model.transcript.Entries)
+		r.conversationBlockStart = len(model.entries)
 	}
 
-	cachedCount := len(model.transcript.Entries) - r.conversationBlockStart
+	cachedCount := len(model.entries) - r.conversationBlockStart
 	if len(r.conversationBlocks) > cachedCount {
 		clear(r.conversationBlocks[cachedCount:])
 		r.conversationBlocks = r.conversationBlocks[:cachedCount]
 	}
-	for blockIndex := r.conversationBlockStart; blockIndex < len(model.transcript.Entries); blockIndex++ {
+	for blockIndex := r.conversationBlockStart; blockIndex < len(model.entries); blockIndex++ {
 		cacheIndex := blockIndex - r.conversationBlockStart
-		block := model.transcript.Entries[blockIndex]
+		block := model.entries[blockIndex]
 		if cacheIndex == len(r.conversationBlocks) {
 			r.conversationBlocks = append(r.conversationBlocks, renderConversationBlock(block, model.width))
 			continue
@@ -141,7 +141,7 @@ func (r *tuiRenderer) prependConversationBlocks(model *tuiModel, minimumRows int
 	var reversed []renderedConversationBlock
 	for r.conversationBlockStart > 0 && (complete || rows < minimumRows) {
 		r.conversationBlockStart--
-		rendered := renderConversationBlock(model.transcript.Entries[r.conversationBlockStart], model.width)
+		rendered := renderConversationBlock(model.entries[r.conversationBlockStart], model.width)
 		reversed = append(reversed, rendered)
 		rows += len(rendered.lines)
 		if oldBlockCount > 0 || len(reversed) > 1 {
