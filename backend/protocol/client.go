@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
@@ -69,13 +70,9 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 		return agent.Response{}, err
 	}
 
-	history, err := DecodeState(request.State)
+	wire, input, err := client.build(request)
 	if err != nil {
-		return agent.Response{}, client.errorf("%v", err)
-	}
-	wire, newItems, err := client.codec.Build(request, history)
-	if err != nil {
-		return agent.Response{}, client.errorf("build request: %v", err)
+		return agent.Response{}, err
 	}
 
 	result, err := client.Complete(ctx, wire, observer, "request")
@@ -83,7 +80,7 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 		return agent.Response{}, err
 	}
 
-	state, err := EncodeState(history, newItems, result.Output)
+	state, err := EncodeState(input, result.Output)
 	if err != nil {
 		return agent.Response{}, client.errorf("%v", err)
 	}
@@ -96,13 +93,9 @@ func (client *Client) Compact(ctx context.Context, request agent.Request) (agent
 	}
 
 	request, continueTask := prepareSummary(request)
-	history, err := DecodeState(request.State)
+	wire, _, err := client.build(request)
 	if err != nil {
-		return agent.CompactResponse{}, client.errorf("%v", err)
-	}
-	wire, _, err := client.codec.Build(request, history)
-	if err != nil {
-		return agent.CompactResponse{}, client.errorf("build summary request: %v", err)
+		return agent.CompactResponse{}, err
 	}
 
 	result, err := client.Complete(ctx, wire, agent.StreamObserver{}, "summary request")
@@ -119,6 +112,18 @@ func (client *Client) Compact(ctx context.Context, request agent.Request) (agent
 		return agent.CompactResponse{}, client.errorf("encode summary state: %v", err)
 	}
 	return agent.CompactResponse{State: state, Usage: result.Usage}, nil
+}
+
+func (client *Client) build(request agent.Request) (Wire, []json.RawMessage, error) {
+	history, err := DecodeState(request.State)
+	if err != nil {
+		return nil, nil, client.errorf("%v", err)
+	}
+	wire, newItems, err := client.codec.Build(request, history)
+	if err != nil {
+		return nil, nil, client.errorf("build request: %v", err)
+	}
+	return wire, slices.Concat(history, newItems), nil
 }
 
 func (client *Client) Complete(ctx context.Context, wire Wire, observer agent.StreamObserver, operation string) (Result, error) {
