@@ -156,7 +156,7 @@ func TestDecodeBoundedJSONAndText(t *testing.T) {
 	if err != nil || !truncated {
 		t.Fatalf("truncated=%t err=%v", truncated, err)
 	}
-	text, truncated, err := ReadBoundedText(strings.NewReader(" value \n"), 16)
+	text, truncated, err := readBoundedText(strings.NewReader(" value \n"), 16)
 	if err != nil || truncated || text != "value" {
 		t.Fatalf("text=%q truncated=%t err=%v", text, truncated, err)
 	}

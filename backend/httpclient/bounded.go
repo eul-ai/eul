@@ -1,6 +1,7 @@
 package httpclient
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,7 +38,7 @@ func DecodeBoundedJSON(reader io.Reader, maximum int64, target any) (bool, error
 	return false, json.Unmarshal(data, target)
 }
 
-func ReadBoundedText(reader io.Reader, maximum int64) (string, bool, error) {
+func readBoundedText(reader io.Reader, maximum int64) (string, bool, error) {
 	data, truncated, err := ReadBounded(reader, maximum)
 	if err != nil {
 		return "", false, err
@@ -45,8 +46,42 @@ func ReadBoundedText(reader io.Reader, maximum int64) (string, bool, error) {
 	return strings.TrimSpace(strings.ToValidUTF8(string(data), "�")), truncated, nil
 }
 
+func GetJSON(ctx context.Context, client *http.Client, url string, prepare func(*http.Request), target any) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Accept", "application/json")
+	prepare(request)
+
+	response, err := client.Do(request)
+	if err != nil {
+		return contextOr(ctx, err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return ReadHTTPStatusError(response)
+	}
+	truncated, err := DecodeBoundedJSON(response.Body, maxResponseBytes, target)
+	if err != nil {
+		return contextOr(ctx, err)
+	}
+	if truncated {
+		return fmt.Errorf("response exceeds %d bytes", maxResponseBytes)
+	}
+	return nil
+}
+
+func contextOr(ctx context.Context, err error) error {
+	if contextErr := ctx.Err(); contextErr != nil {
+		return contextErr
+	}
+	return err
+}
+
 func ReadHTTPStatusError(response *http.Response) error {
-	detail, truncated, err := ReadBoundedText(response.Body, maxErrorBytes)
+	detail, truncated, err := readBoundedText(response.Body, maxErrorBytes)
 	switch {
 	case err != nil:
 		detail = "read error response: " + err.Error()
@@ -55,18 +90,18 @@ func ReadHTTPStatusError(response *http.Response) error {
 	case truncated:
 		detail += " [truncated]"
 	}
-	return errors.New(FormatErrorMessage("", "HTTP %s: %s", response.Status, detail))
+	return errors.New(formatErrorMessage("", "HTTP %s: %s", response.Status, detail))
 }
 
-func FormatErrorMessage(prefix string, format string, arguments ...any) string {
+func formatErrorMessage(prefix string, format string, arguments ...any) string {
 	message := strings.ToValidUTF8(fmt.Sprintf(format, arguments...), "�")
 	if prefix != "" {
 		message = prefix + ": " + message
 	}
-	return TruncateUTF8(message, int(maxErrorBytes))
+	return truncateUTF8(message, int(maxErrorBytes))
 }
 
-func TruncateUTF8(text string, maximum int) string {
+func truncateUTF8(text string, maximum int) string {
 	if maximum < 0 {
 		maximum = 0
 	}

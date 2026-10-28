@@ -63,7 +63,7 @@ func CompleteJSONSSE[T any](
 	}
 	defer response.Body.Close()
 
-	result, err := read(response.Body, MaxResponseBytes)
+	result, err := read(response.Body, maxResponseBytes)
 	if err == nil {
 		return result, nil
 	}

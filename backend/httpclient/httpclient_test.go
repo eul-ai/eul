@@ -171,7 +171,7 @@ func TestRetryClassificationAndDelay(t *testing.T) {
 }
 
 func TestTruncateUTF8(t *testing.T) {
-	if got := TruncateUTF8("a€b", 3); got != "a" {
-		t.Fatalf("TruncateUTF8() = %q", got)
+	if got := truncateUTF8("a€b", 3); got != "a" {
+		t.Fatalf("truncateUTF8() = %q", got)
 	}
 }

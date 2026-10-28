@@ -2,8 +2,8 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -51,51 +51,14 @@ func (client *UsageClient) Usage(ctx context.Context) (backend.AccountUsage, err
 	if err != nil {
 		return backend.AccountUsage{}, err
 	}
-	response, err := client.get(ctx, credential)
-	if err != nil {
-		return backend.AccountUsage{}, err
-	}
-	defer response.Body.Close()
-
-	body, truncated, err := backendhttp.ReadBounded(response.Body, backendhttp.MaxResponseBytes)
-	if err != nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return backend.AccountUsage{}, contextErr
-		}
-		return backend.AccountUsage{}, openAIErrors.Wrapf(err, "read usage response: %v", err)
-	}
-	if truncated {
-		return backend.AccountUsage{}, openAIErrors.Errorf("usage response exceeds %d bytes", backendhttp.MaxResponseBytes)
-	}
 
 	var wire usageResponse
-	if err := json.Unmarshal(body, &wire); err != nil {
-		return backend.AccountUsage{}, openAIErrors.Errorf("decode usage response: %v", err)
+	if err := backendhttp.GetJSON(ctx, client.requests.httpClient, baseURL+"/wham/usage", func(request *http.Request) {
+		setCredentialHeaders(request, credential)
+	}, &wire); err != nil {
+		return backend.AccountUsage{}, fmt.Errorf("openai: load usage: %w", err)
 	}
 	return normalizeProviderUsage(wire)
-}
-
-func (client *UsageClient) get(ctx context.Context, credential Credential) (*http.Response, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/wham/usage", nil)
-	if err != nil {
-		return nil, openAIErrors.Errorf("create usage request: %v", err)
-	}
-	setCredentialHeaders(request, credential)
-	request.Header.Set("Accept", "application/json")
-
-	response, err := client.requests.httpClient.Do(request)
-	if err != nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return nil, contextErr
-		}
-		return nil, openAIErrors.Wrapf(err, "usage request failed: %v", err)
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		defer response.Body.Close()
-		err := backendhttp.ReadHTTPStatusError(response)
-		return nil, openAIErrors.Wrapf(err, "%v", err)
-	}
-	return response, nil
 }
 
 func normalizeProviderUsage(response usageResponse) (backend.AccountUsage, error) {

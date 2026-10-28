@@ -190,5 +190,5 @@ func (config APIErrorConfig) retryableWrapf(cause error, format string, argument
 }
 
 func (config APIErrorConfig) message(format string, arguments ...any) string {
-	return FormatErrorMessage(config.Prefix, format, arguments...)
+	return formatErrorMessage(config.Prefix, format, arguments...)
 }

@@ -8,7 +8,7 @@ import (
 const (
 	DefaultGenerationHTTPTimeout       = 10 * time.Minute
 	maxRequestBytes              int64 = 32 * 1024 * 1024
-	MaxResponseBytes             int64 = 16 * 1024 * 1024
+	maxResponseBytes             int64 = 16 * 1024 * 1024
 	maxErrorBytes                int64 = 64 * 1024
 )
 

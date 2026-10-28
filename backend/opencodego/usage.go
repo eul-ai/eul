@@ -4,14 +4,11 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"net/http"
 	"time"
 
 	"github.com/eul-ai/eul/backend"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
-
-const maxUsageResponseBytes = int64(1024 * 1024)
 
 type usageResponse struct {
 	Usage struct {
@@ -65,32 +62,7 @@ func (configured *runtime) Usage(ctx context.Context) (backend.AccountUsage, err
 }
 
 func (configured *runtime) loadUsage(ctx context.Context) (usageResponse, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, configured.baseURL+"/usage", nil)
-	if err != nil {
-		return usageResponse{}, err
-	}
-	setBearerHeaders(request, configured.apiKey)
-	request.Header.Set("Accept", "application/json")
-
-	response, err := configured.credentialClient.Do(request)
-	if err != nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return usageResponse{}, contextErr
-		}
-		return usageResponse{}, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return usageResponse{}, responseError(response)
-	}
-
 	var result usageResponse
-	truncated, err := backendhttp.DecodeBoundedJSON(response.Body, maxUsageResponseBytes, &result)
-	if err != nil {
-		return usageResponse{}, err
-	}
-	if truncated {
-		return usageResponse{}, fmt.Errorf("response exceeds %d bytes", maxUsageResponseBytes)
-	}
-	return result, nil
+	err := backendhttp.GetJSON(ctx, configured.credentialClient, configured.baseURL+"/usage", configured.authorize, &result)
+	return result, err
 }

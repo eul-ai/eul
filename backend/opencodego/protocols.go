@@ -73,6 +73,10 @@ func setBearerHeaders(request *http.Request, apiKey string) {
 	request.Header.Set("x-opencode-client", "eul")
 }
 
+func (configured *runtime) authorize(request *http.Request) {
+	setBearerHeaders(request, configured.apiKey)
+}
+
 func prepareAnthropicRequest(apiKey string) func(context.Context, *http.Request) error {
 	return func(_ context.Context, request *http.Request) error {
 		request.Header.Set("x-api-key", apiKey)

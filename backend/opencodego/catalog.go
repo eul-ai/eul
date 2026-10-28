@@ -81,7 +81,7 @@ func (loader *catalogLoader) refresh(ctx context.Context, cached catalogCache, h
 		return cached, nil
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return catalogCache{}, responseError(response)
+		return catalogCache{}, backendhttp.ReadHTTPStatusError(response)
 	}
 
 	var providers map[string]json.RawMessage
