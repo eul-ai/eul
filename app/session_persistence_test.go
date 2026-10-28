@@ -132,7 +132,7 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 		t.Fatal(err)
 	}
 
-	reopened, err := launcher.store.Open(context.Background(), cwd, sessionID)
+	reopened, err := launcher.store.Open(cwd, sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}

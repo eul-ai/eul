@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"maps"
@@ -82,7 +81,7 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 		}
 	}
 
-	locked, err := store.Open(context.Background(), cwd, secondID)
+	locked, err := store.Open(cwd, secondID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,14 +96,14 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mostRecent, err := store.Open(context.Background(), cwd, "")
+	mostRecent, err := store.Open(cwd, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if mostRecent.record.ID != secondID {
 		t.Fatalf("most recent ID = %q", mostRecent.record.ID)
 	}
-	if _, err := store.Open(context.Background(), cwd, secondID); !errors.Is(err, errSessionInUse) {
+	if _, err := store.Open(cwd, secondID); !errors.Is(err, errSessionInUse) {
 		t.Fatalf("lock contention error = %v", err)
 	}
 	if err := mostRecent.Close(); err != nil {
@@ -112,7 +111,7 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 	}
 
 	otherCWD := t.TempDir()
-	explicit, err := store.Open(context.Background(), otherCWD, firstID)
+	explicit, err := store.Open(otherCWD, firstID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +146,7 @@ func TestSessionStoreIgnoresLegacySessionFiles(t *testing.T) {
 	store := newSessionStore(t.TempDir())
 	cwd := t.TempDir()
 	workspace := store.workspaceDirectory(cwd)
-	if err := secureSessionDirectory(workspace); err != nil {
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	id := "0123456789abcdef0123456789abcdef"
@@ -162,46 +161,8 @@ func TestSessionStoreIgnoresLegacySessionFiles(t *testing.T) {
 	if len(summaries) != 0 {
 		t.Fatalf("summaries = %+v", summaries)
 	}
-	if _, err := store.Open(context.Background(), cwd, id); err == nil {
+	if _, err := store.Open(cwd, id); err == nil {
 		t.Fatal("legacy session file was opened")
-	}
-}
-
-func TestSessionStoreRejectsMismatchedDirectoryID(t *testing.T) {
-	store := newSessionStore(t.TempDir())
-	cwd := t.TempDir()
-	handle, err := store.Create("test", cwd, backend.Models{Main: "model", Fast: "model", Balanced: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := handle.path
-	id := handle.record.ID
-	if err := handle.Close(); err != nil {
-		t.Fatal(err)
-	}
-	metadataPath := filepath.Join(path, sessionMetadataFileName)
-	var metadata sessionMetadata
-	if err := readSessionFile(metadataPath, &metadata); err != nil {
-		t.Fatal(err)
-	}
-	metadata.ID = "fedcba9876543210fedcba9876543210"
-	encoded, err := json.Marshal(metadata)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(metadataPath, encoded, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	summaries, err := store.List(cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(summaries) != 0 {
-		t.Fatalf("summaries = %+v", summaries)
-	}
-	if _, err := store.Open(context.Background(), cwd, id); err == nil {
-		t.Fatal("session with a mismatched directory ID was opened")
 	}
 }
 
@@ -209,7 +170,7 @@ func TestSessionStoreIgnoresAbandonedEmptyDirectory(t *testing.T) {
 	store := newSessionStore(t.TempDir())
 	cwd := t.TempDir()
 	workspace := store.workspaceDirectory(cwd)
-	if err := secureSessionDirectory(workspace); err != nil {
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	id := "0123456789abcdef0123456789abcdef"
@@ -224,7 +185,7 @@ func TestSessionStoreIgnoresAbandonedEmptyDirectory(t *testing.T) {
 	if len(summaries) != 0 {
 		t.Fatalf("summaries = %+v", summaries)
 	}
-	if _, err := store.Open(context.Background(), cwd, id); err == nil {
+	if _, err := store.Open(cwd, id); err == nil {
 		t.Fatal("abandoned empty session directory was opened")
 	}
 }
@@ -236,7 +197,7 @@ func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lockPath := sessionLockPath(handle.path)
+	lockPath := filepath.Join(handle.path, sessionLockFileName)
 	if _, err := os.Stat(lockPath); err != nil {
 		t.Fatal(err)
 	}
@@ -289,12 +250,12 @@ func TestSessionStoreListsMetadataWithoutDecodingCheckpoints(t *testing.T) {
 	if len(summaries) != 1 || summaries[0].ID != id || summaries[0].Description != "prompt" {
 		t.Fatalf("summaries = %+v", summaries)
 	}
-	if _, err := store.Open(context.Background(), cwd, id); err == nil {
+	if _, err := store.Open(cwd, id); err == nil {
 		t.Fatal("full session load accepted invalid checkpoint data")
 	}
 }
 
-func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
+func TestSessionStoreSkipsCorruptSessions(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
 	store := newSessionStore(home)
@@ -308,22 +269,13 @@ func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := os.Chmod(path, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Open(context.Background(), cwd, id); err == nil {
-		t.Fatalf("permission error = %v", err)
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(path, []byte(`{"id":`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Open(context.Background(), cwd, id); err == nil {
+	if _, err := store.Open(cwd, id); err == nil {
 		t.Fatal("corrupt session was accepted")
 	}
-	if _, err := store.Open(context.Background(), cwd, ""); err == nil {
+	if _, err := store.Open(cwd, ""); err == nil {
 		t.Fatalf("most recent corrupt-only error = %v", err)
 	}
 
@@ -343,7 +295,7 @@ func TestSessionStoreRejectsWorldReadableAndCorruptRecords(t *testing.T) {
 		t.Fatalf("summaries with corrupt record = %+v", summaries)
 	}
 
-	mostRecent, err := store.Open(context.Background(), cwd, "")
+	mostRecent, err := store.Open(cwd, "")
 	if err != nil {
 		t.Fatal(err)
 	}

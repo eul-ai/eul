@@ -51,16 +51,3 @@ func TestModelsWithDefaults(t *testing.T) {
 		t.Fatalf("models without provider defaults = %+v", got)
 	}
 }
-
-func TestValidID(t *testing.T) {
-	for _, id := range []string{"openai-codex", "provider.v2", "a_1"} {
-		if !ValidID(id) {
-			t.Fatalf("valid ID %q was rejected", id)
-		}
-	}
-	for _, id := range []string{"", "-provider", "Provider", "provider name", "provider/child"} {
-		if ValidID(id) {
-			t.Fatalf("invalid ID %q was accepted", id)
-		}
-	}
-}

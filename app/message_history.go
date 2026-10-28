@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -147,4 +148,12 @@ func releaseMessageHistoryFile(file *os.File) error {
 		return fmt.Errorf("close message history: %w", closeErr)
 	}
 	return nil
+}
+
+func validSessionID(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(id)
+	return err == nil && strings.ToLower(id) == id
 }

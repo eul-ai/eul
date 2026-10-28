@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
@@ -74,17 +73,4 @@ func (registry Registry) Lookup(id string) (Backend, error) {
 		}
 	}
 	return Backend{}, fmt.Errorf("backend: backend %q is not available", id)
-}
-
-func ValidID(id string) bool {
-	for index, character := range id {
-		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
-			continue
-		}
-		if index > 0 && strings.ContainsRune("._-", character) {
-			continue
-		}
-		return false
-	}
-	return id != ""
 }

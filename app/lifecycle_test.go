@@ -81,7 +81,7 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 	if err := runner.options[1].StateChanges.Notify(terminal.EmptyCheckpoint(), false); err == nil {
 		t.Fatalf("save after new session cleanup = %v", err)
 	}
-	newRecord, err := launcher.store.Open(ctx, cwd, runner.options[1].Config.SessionID)
+	newRecord, err := launcher.store.Open(cwd, runner.options[1].Config.SessionID)
 	if err != nil {
 		t.Fatalf("open new session record: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 		t.Fatalf("save after resumed session cleanup = %v", err)
 	}
 
-	reopened, err := launcher.store.Open(ctx, targetCWD, targetID)
+	reopened, err := launcher.store.Open(targetCWD, targetID)
 	if err != nil {
 		t.Fatalf("reopen resumed record: %v", err)
 	}

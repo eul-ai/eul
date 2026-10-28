@@ -98,7 +98,7 @@ func (launcher *launcher) resume(ctx context.Context, cwd, id, prompt string) (*
 	if err != nil {
 		return nil, err
 	}
-	handle, err := launcher.store.Open(ctx, cwd, id)
+	handle, err := launcher.store.Open(cwd, id)
 	if err != nil {
 		return nil, err
 	}
