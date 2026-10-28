@@ -52,7 +52,7 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 			return terminal.RunOutcome{Action: terminal.RunNewSession}, nil
 		},
 		func(_ context.Context, options terminal.Options) (terminal.RunOutcome, error) {
-			if !initialSession.persistence.handle.closed {
+			if !initialSession.saver.handle.closed {
 				t.Fatal("old session was not closed before the new session started")
 			}
 			if options.Config.SessionID == "" || options.Config.SessionID == initialID {
@@ -117,7 +117,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 			return terminal.RunOutcome{Action: terminal.RunResumeSession, SessionID: targetID}, nil
 		},
 		func(_ context.Context, options terminal.Options) (terminal.RunOutcome, error) {
-			if !initialSession.persistence.handle.closed {
+			if !initialSession.saver.handle.closed {
 				t.Fatal("old session was not closed before the resumed session started")
 			}
 			if options.Config.SessionID != targetID {
@@ -169,7 +169,7 @@ func TestRunSessionsExitClosesSession(t *testing.T) {
 	if err := runSessions(ctx, runner.Run, initialSession, launcher); err != nil {
 		t.Fatal(err)
 	}
-	if !initialSession.persistence.handle.closed {
+	if !initialSession.saver.handle.closed {
 		t.Fatal("session was not closed")
 	}
 }
@@ -236,8 +236,8 @@ func TestRunSessionsFinishesSessionAfterRunFailure(t *testing.T) {
 	err := runSessions(context.Background(), func(context.Context, terminal.Options) (terminal.RunOutcome, error) {
 		return terminal.RunOutcome{}, runFailure
 	}, session, nil)
-	if !errors.Is(err, runFailure) || !session.persistence.handle.closed {
-		t.Fatalf("run error = %v, session closed = %v", err, session.persistence.handle.closed)
+	if !errors.Is(err, runFailure) || !session.saver.handle.closed {
+		t.Fatalf("run error = %v, session closed = %v", err, session.saver.handle.closed)
 	}
 }
 

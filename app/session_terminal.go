@@ -23,7 +23,7 @@ type terminalOptionsBuilder struct {
 	engine             *agent.Engine
 	settings           *agent.Settings
 	goal               *agent.Goal
-	checkpoints        *checkpointCoordinator
+	saver              *sessionSaver
 	sessions           terminal.Sessions
 	messageHistory     terminal.MessageHistory
 	initialCheckpoint  *terminal.Checkpoint
@@ -51,7 +51,7 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 		}, err
 	}
 	thinkingLevel, _ := source.settings.Snapshot()
-	callbacks := &terminalCallbacks{engine: source.engine, checkpoints: source.checkpoints, skills: source.config.skills}
+	callbacks := &terminalCallbacks{engine: source.engine, saver: source.saver, skills: source.config.skills}
 	return terminal.Options{
 		Operations: callbacks.operations(),
 		Controls: terminal.Controls{
@@ -64,7 +64,7 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 			SetFastMode:      source.settings.SetFastMode,
 		},
 		Sessions:       source.sessions,
-		StateChanges:   terminal.StateChanges{Notify: source.checkpoints.SaveTerminalCheckpoint},
+		StateChanges:   terminal.StateChanges{Notify: source.saver.saveTerminal},
 		MessageHistory: source.messageHistory,
 		Config: terminal.Config{
 			Model:              source.config.models.Main,
@@ -92,9 +92,9 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 }
 
 type terminalCallbacks struct {
-	engine      *agent.Engine
-	checkpoints *checkpointCoordinator
-	skills      []skill.Skill
+	engine *agent.Engine
+	saver  *sessionSaver
+	skills []skill.Skill
 }
 
 func (callbacks *terminalCallbacks) operations() terminal.Operations {
@@ -143,6 +143,6 @@ func (callbacks *terminalCallbacks) sink(stream terminal.EventStream) agent.Even
 		if err != nil {
 			return err
 		}
-		return callbacks.checkpoints.SaveSessionCheckpoint(*event.Checkpoint, terminalCheckpoint, true)
+		return callbacks.saver.saveTurn(*event.Checkpoint, terminalCheckpoint)
 	}
 }

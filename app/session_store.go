@@ -189,30 +189,25 @@ func (handle *sessionHandle) Save(
 	if next.Description == "" {
 		next.Description = terminalCheckpoint.Description()
 	}
+	handle.record = next
 	if next.Description == "" {
-		handle.record = next
 		return nil
 	}
-	return handle.commit(next)
-}
 
-func (handle *sessionHandle) commit(record sessionRecord) error {
-	state, err := json.Marshal(record.sessionState)
+	state, err := json.Marshal(next.sessionState)
 	if err != nil {
 		return fmt.Errorf("encode session state: %w", err)
 	}
-	metadata, err := json.Marshal(record.sessionMetadata)
+	metadata, err := json.Marshal(next.sessionMetadata)
 	if err != nil {
 		return fmt.Errorf("encode session metadata: %w", err)
 	}
-
 	if err := writeSessionFile(filepath.Join(handle.path, sessionStateFileName), state); err != nil {
 		return err
 	}
 	if err := writeSessionFile(filepath.Join(handle.path, sessionMetadataFileName), metadata); err != nil {
 		return err
 	}
-	handle.record = record
 	handle.persisted = true
 	return nil
 }

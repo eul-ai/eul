@@ -12,40 +12,14 @@ import (
 	"github.com/eul-ai/eul/terminal"
 )
 
-type sessionPersistence struct {
-	handle      *sessionHandle
-	checkpoints *checkpointCoordinator
-	stopChanges chan struct{}
-	changesDone chan struct{}
-}
-
-type checkpointCoordinator struct {
+type sessionSaver struct {
 	mu        sync.Mutex
 	handle    *sessionHandle
 	engine    *agent.Engine
 	subagents *subagent.Manager
-	agent     agent.Checkpoint
-	terminal  terminal.Checkpoint
 	settings  *agent.Settings
-	idleErr   error
-	active    bool
-	closed    bool
-}
-
-func newCheckpointCoordinator(
-	handle *sessionHandle,
-	engine *agent.Engine,
-	subagents *subagent.Manager,
-	settings *agent.Settings,
-) *checkpointCoordinator {
-	return &checkpointCoordinator{
-		handle:    handle,
-		engine:    engine,
-		subagents: subagents,
-		agent:     handle.record.Agent,
-		terminal:  handle.record.Terminal,
-		settings:  settings,
-	}
+	stopWatch chan struct{}
+	watchDone chan struct{}
 }
 
 func newStoredAgentSession(
@@ -65,29 +39,17 @@ func newStoredAgentSession(
 		return nil, err
 	}
 
-	checkpoints := newCheckpointCoordinator(handle, session.engine, session.subagents, session.agentSettings)
-	persistence := &sessionPersistence{
-		handle:      handle,
-		checkpoints: checkpoints,
-		stopChanges: make(chan struct{}),
-		changesDone: make(chan struct{}),
+	session.saver = &sessionSaver{
+		handle:    handle,
+		engine:    session.engine,
+		subagents: session.subagents,
+		settings:  session.agentSettings,
+		stopWatch: make(chan struct{}),
+		watchDone: make(chan struct{}),
 	}
-	session.persistence = persistence
-	go func() {
-		defer close(persistence.changesDone)
-		changes := session.subagents.Changes()
-		for {
-			select {
-			case <-changes:
-				changes = session.subagents.Changes()
-				checkpoints.SaveIdle()
-			case <-persistence.stopChanges:
-				return
-			}
-		}
-	}()
+	go session.saver.watchSubagents()
 
-	options.checkpoints = checkpoints
+	options.saver = session.saver
 	options.messageHistory = terminal.MessageHistory{
 		Entries: historyEntries,
 		Append: func(entry string) error {
@@ -99,117 +61,76 @@ func newStoredAgentSession(
 	options.contextTokens = record.Agent.ContextUsage.TotalTokens
 	options.initialPrompt = prompt
 	options.sessionID = record.ID
-	options.sessions.List = sessionList(handle)
+	options.sessions.List = func(context.Context) ([]terminal.SessionSummary, error) {
+		return handle.store.List(record.WorkingDirectory)
+	}
 	session.terminalOptions = options.options()
 
 	return session, nil
 }
 
-func (coordinator *checkpointCoordinator) SaveSessionCheckpoint(agentCheckpoint agent.Checkpoint, terminalCheckpoint terminal.Checkpoint, active bool) error {
-	coordinator.mu.Lock()
-	defer coordinator.mu.Unlock()
-	if coordinator.closed {
-		return errors.New("session is closed")
+func (saver *sessionSaver) watchSubagents() {
+	defer close(saver.watchDone)
+	changes := saver.subagents.Changes()
+	for {
+		select {
+		case <-changes:
+			changes = saver.subagents.Changes()
+			saver.saveIdle()
+		case <-saver.stopWatch:
+			return
+		}
 	}
-
-	coordinator.agent = agentCheckpoint
-	coordinator.terminal = terminalCheckpoint
-	return coordinator.saveStateLocked(active)
 }
 
-func (coordinator *checkpointCoordinator) SaveTerminalCheckpoint(terminalCheckpoint terminal.Checkpoint, active bool) error {
-	coordinator.mu.Lock()
-	defer coordinator.mu.Unlock()
-	if coordinator.closed {
-		return errors.New("session is closed")
-	}
+func (saver *sessionSaver) saveTurn(agentCheckpoint agent.Checkpoint, terminalCheckpoint terminal.Checkpoint) error {
+	saver.mu.Lock()
+	defer saver.mu.Unlock()
+	return saver.saveLocked(agentCheckpoint, terminalCheckpoint, true)
+}
 
-	agentCheckpoint, err := coordinator.engine.Checkpoint()
+func (saver *sessionSaver) saveTerminal(terminalCheckpoint terminal.Checkpoint, active bool) error {
+	agentCheckpoint, err := saver.engine.Checkpoint()
 	if err != nil {
 		return err
 	}
-	coordinator.agent = agentCheckpoint
-	coordinator.terminal = terminalCheckpoint
-	return coordinator.saveStateLocked(active)
+
+	saver.mu.Lock()
+	defer saver.mu.Unlock()
+	return saver.saveLocked(agentCheckpoint, terminalCheckpoint, active)
 }
 
-func (coordinator *checkpointCoordinator) saveStateLocked(active bool) error {
-	coordinator.active = active
-	if err := coordinator.saveLocked(coordinator.agent); err != nil {
-		return err
-	}
-	if !active {
-		coordinator.idleErr = nil
-	}
-	return nil
-}
+// saveIdle persists subagent changes between turns. Its errors are not
+// reported, because every later save rewrites the whole session.
+func (saver *sessionSaver) saveIdle() {
+	saver.mu.Lock()
+	defer saver.mu.Unlock()
 
-func (coordinator *checkpointCoordinator) SaveIdle() {
-	coordinator.mu.Lock()
-	defer coordinator.mu.Unlock()
-	if coordinator.closed || coordinator.active {
+	record := saver.handle.Record()
+	if record.Status == sessionActive {
 		return
 	}
+	_ = saver.saveLocked(record.Agent, record.Terminal, false)
+}
 
-	if err := coordinator.saveLocked(coordinator.agent); err != nil {
-		coordinator.idleErr = errors.Join(coordinator.idleErr, err)
+func (saver *sessionSaver) saveLocked(agentCheckpoint agent.Checkpoint, terminalCheckpoint terminal.Checkpoint, active bool) error {
+	thinkingLevel, fastMode := saver.settings.Snapshot()
+	return saver.handle.Save(agentCheckpoint, saver.subagents.Checkpoint(), terminalCheckpoint, active, thinkingLevel, fastMode)
+}
+
+func (saver *sessionSaver) stop() {
+	close(saver.stopWatch)
+	<-saver.watchDone
+}
+
+func (saver *sessionSaver) close() error {
+	saver.stop()
+
+	saver.mu.Lock()
+	defer saver.mu.Unlock()
+	agentCheckpoint, err := saver.engine.Checkpoint()
+	if err == nil {
+		err = saver.saveLocked(agentCheckpoint, saver.handle.Record().Terminal, false)
 	}
-}
-
-func (coordinator *checkpointCoordinator) Stop() {
-	coordinator.mu.Lock()
-	coordinator.closed = true
-	coordinator.mu.Unlock()
-}
-
-func (coordinator *checkpointCoordinator) SaveFinal() error {
-	coordinator.mu.Lock()
-	defer coordinator.mu.Unlock()
-
-	agentCheckpoint, err := coordinator.engine.Checkpoint()
-	if err != nil {
-		return errors.Join(coordinator.idleErr, err)
-	}
-	coordinator.agent = agentCheckpoint
-	coordinator.active = false
-	return errors.Join(coordinator.idleErr, coordinator.saveLocked(agentCheckpoint))
-}
-
-func (coordinator *checkpointCoordinator) saveLocked(agentCheckpoint agent.Checkpoint) error {
-	thinkingLevel, fastMode := coordinator.settings.Snapshot()
-	return coordinator.handle.Save(
-		agentCheckpoint,
-		coordinator.subagents.Checkpoint(),
-		coordinator.terminal,
-		coordinator.active,
-		thinkingLevel,
-		fastMode,
-	)
-}
-
-func (coordinator *checkpointCoordinator) Close() error {
-	coordinator.mu.Lock()
-	defer coordinator.mu.Unlock()
-	coordinator.closed = true
-	return coordinator.handle.Close()
-}
-
-func sessionList(handle *sessionHandle) func(context.Context) ([]terminal.SessionSummary, error) {
-	return func(context.Context) ([]terminal.SessionSummary, error) {
-		return handle.store.List(handle.record.WorkingDirectory)
-	}
-}
-
-func (persistence *sessionPersistence) stop() {
-	persistence.checkpoints.Stop()
-	close(persistence.stopChanges)
-	<-persistence.changesDone
-}
-
-func (persistence *sessionPersistence) saveFinal() error {
-	return persistence.checkpoints.SaveFinal()
-}
-
-func (persistence *sessionPersistence) close() error {
-	return persistence.checkpoints.Close()
+	return errors.Join(err, saver.handle.Close())
 }

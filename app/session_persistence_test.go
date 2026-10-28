@@ -30,7 +30,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	if err := first.terminalOptions.StateChanges.Notify(terminalCheckpoint, false); err != nil {
 		t.Fatal(err)
 	}
-	sessionID := first.persistence.handle.record.ID
+	sessionID := first.saver.handle.record.ID
 	if err := first.finish(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		record, err := readSessionRecord(session.persistence.handle.path)
+		record, err := readSessionRecord(session.saver.handle.path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -117,10 +117,10 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 	if err := first.terminalOptions.StateChanges.Notify(terminalCheckpoint, true); err != nil {
 		t.Fatal(err)
 	}
-	sessionID := first.persistence.handle.record.ID
-	first.persistence.stop()
+	sessionID := first.saver.handle.record.ID
+	first.saver.stop()
 	first.subagents.Close()
-	if err := first.persistence.checkpoints.Close(); err != nil {
+	if err := first.saver.handle.Close(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -170,7 +170,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	if err := session.terminalOptions.StateChanges.Notify(testTerminalCheckpoint("saved prompt"), false); err != nil {
 		t.Fatal(err)
 	}
-	sessionID := session.persistence.handle.record.ID
+	sessionID := session.saver.handle.record.ID
 	if err := session.finish(nil); err != nil {
 		t.Fatal(err)
 	}

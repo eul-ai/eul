@@ -19,7 +19,7 @@ type agentSession struct {
 	subagents       *subagent.Manager
 	terminalOptions terminal.Options
 	agentSettings   *agent.Settings
-	persistence     *sessionPersistence
+	saver           *sessionSaver
 }
 
 func newSessionTools(
@@ -129,20 +129,6 @@ func (session *agentSession) run(ctx context.Context, run func(context.Context, 
 }
 
 func (session *agentSession) finish(runErr error) error {
-	if session.persistence != nil {
-		session.persistence.stop()
-	}
 	session.subagents.Close()
-	var finalCheckpointErr error
-	if session.persistence != nil {
-		finalCheckpointErr = session.persistence.saveFinal()
-	}
-	var persistenceErr error
-	if session.persistence != nil {
-		persistenceErr = session.persistence.close()
-	}
-	if persistenceErr != nil {
-		persistenceErr = fmt.Errorf("close session: %w", persistenceErr)
-	}
-	return errors.Join(runErr, finalCheckpointErr, persistenceErr)
+	return errors.Join(runErr, session.saver.close())
 }
