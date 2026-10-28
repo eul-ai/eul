@@ -15,10 +15,9 @@ import (
 )
 
 const (
-	maxTaskDescriptionBytes   = 500
-	maxCompletionResultBytes  = 32 * 1024
-	maxCompletionResultLines  = 1_000
-	maxCompletionMessageBytes = 40 * 1024
+	maxTaskDescriptionBytes = 500
+	maxCompletionBytes      = 40 * 1024
+	maxCompletionLines      = 1_000
 )
 
 var (
@@ -161,7 +160,7 @@ func (m *Manager) runJob(job *job) {
 		Status:      completionState(runErr),
 		Started:     job.started,
 		Finished:    time.Now(),
-		Result:      boundCompletionResult(text, runErr),
+		Result:      completionResult(text, runErr),
 	}
 	m.inbox = append(m.inbox, boundCompletion(completion))
 	m.publishLocked()
@@ -180,31 +179,29 @@ func completionState(err error) State {
 	}
 }
 
-func boundCompletionResult(text string, err error) string {
-	if err != nil {
-		if strings.TrimSpace(text) == "" {
-			text = err.Error()
-		} else {
-			text = strings.TrimSpace(text) + "\n\nError: " + err.Error()
-		}
+func completionResult(text string, err error) string {
+	text = strings.TrimSpace(text)
+	switch {
+	case err == nil:
+		return text
+	case text == "":
+		return err.Error()
+	default:
+		return text + "\n\nError: " + err.Error()
 	}
-	return truncateUTF8Lines(strings.TrimSpace(text), maxCompletionResultBytes, maxCompletionResultLines)
 }
 
+// boundCompletion limits the result to maxCompletionLines lines and shortens it
+// until the encoded completion fits in maxCompletionBytes.
 func boundCompletion(completion Completion) Completion {
-	encoded, _ := json.Marshal(completion)
-	if len(encoded) <= maxCompletionMessageBytes {
-		return completion
-	}
-
-	overhead := len(encoded) - len(completion.Result)
-	completion.Result = truncateUTF8Lines(completion.Result, max(0, maxCompletionMessageBytes-overhead), maxCompletionResultLines)
+	completion.Result = truncateUTF8Lines(completion.Result, len(completion.Result), maxCompletionLines)
 	for {
-		encoded, _ = json.Marshal(completion)
-		if len(encoded) <= maxCompletionMessageBytes || completion.Result == "" {
+		encoded, _ := json.Marshal(completion)
+		excess := len(encoded) - maxCompletionBytes
+		if excess <= 0 || completion.Result == "" {
 			return completion
 		}
-		completion.Result = truncateUTF8Lines(completion.Result, max(0, len(completion.Result)-(len(encoded)-maxCompletionMessageBytes)), maxCompletionResultLines)
+		completion.Result = truncateUTF8Lines(completion.Result, len(completion.Result)-excess, maxCompletionLines)
 	}
 }
 

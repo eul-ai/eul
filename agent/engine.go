@@ -10,12 +10,11 @@ import (
 var errEngineBusy = errors.New("agent: engine is busy")
 
 type Options struct {
-	Model                  string
-	Instructions           string
-	Checkpointing          bool
-	Inbox                  InboxSource
-	AdditionalInstructions func() string
-	Settings               *Settings
+	Model         string
+	Instructions  string
+	Checkpointing bool
+	Inbox         Inbox
+	Settings      *Settings
 }
 
 type RunResult struct {
@@ -23,19 +22,18 @@ type RunResult struct {
 }
 
 type Engine struct {
-	mu                     sync.Mutex
-	provider               Provider
-	tools                  Toolbox
-	definitions            []ToolDefinition
-	sessionID              string
-	model                  string
-	settings               *Settings
-	instructions           string
-	conversation           conversationState
-	continuations          continuationArbiter
-	checkpointing          bool
-	inbox                  InboxSource
-	additionalInstructions func() string
+	mu            sync.Mutex
+	provider      Provider
+	tools         Toolbox
+	definitions   []ToolDefinition
+	sessionID     string
+	model         string
+	settings      *Settings
+	instructions  string
+	conversation  conversationState
+	continuations continuationArbiter
+	checkpointing bool
+	inbox         Inbox
 }
 
 func New(provider Provider, tools Toolbox, options Options) *Engine {
@@ -45,15 +43,14 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 	}
 
 	return &Engine{
-		provider:               provider,
-		tools:                  tools,
-		definitions:            tools.Definitions(),
-		model:                  options.Model,
-		settings:               settings,
-		instructions:           options.Instructions,
-		checkpointing:          options.Checkpointing,
-		inbox:                  options.Inbox,
-		additionalInstructions: options.AdditionalInstructions,
+		provider:      provider,
+		tools:         tools,
+		definitions:   tools.Definitions(),
+		model:         options.Model,
+		settings:      settings,
+		instructions:  options.Instructions,
+		checkpointing: options.Checkpointing,
+		inbox:         options.Inbox,
 	}
 }
 

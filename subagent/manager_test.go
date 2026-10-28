@@ -240,7 +240,7 @@ func TestWaitCancellationDoesNotCancelChild(t *testing.T) {
 
 func TestInboxBoundsDescriptionAndResult(t *testing.T) {
 	manager := NewManager(func(context.Context, Task, func(agent.Usage)) (string, error) {
-		return strings.Repeat("é\n", maxCompletionResultLines+100) + strings.Repeat("x", maxCompletionResultBytes), nil
+		return strings.Repeat("<", maxCompletionBytes) + strings.Repeat("\né", maxCompletionLines+100), nil
 	})
 	defer manager.Close()
 	if _, err := manager.Start([]Task{{Description: strings.Repeat("description", 1_000), Prompt: "task"}}); err != nil {
@@ -252,8 +252,9 @@ func TestInboxBoundsDescriptionAndResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(completion.Description) > maxTaskDescriptionBytes || len(encoded) > maxCompletionMessageBytes {
-		t.Fatalf("description bytes = %d, completion bytes = %d", len(completion.Description), len(encoded))
+	lines := strings.Count(completion.Result, "\n") + 1
+	if len(completion.Description) > maxTaskDescriptionBytes || len(encoded) > maxCompletionBytes || lines > maxCompletionLines {
+		t.Fatalf("description bytes = %d, completion bytes = %d, result lines = %d", len(completion.Description), len(encoded), lines)
 	}
 }
 

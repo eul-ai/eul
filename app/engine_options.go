@@ -15,19 +15,18 @@ const (
 	childAgentInstructions = "This is a read-only research task. Inspect and report findings, but do not modify files. The main agent will make any edits."
 )
 
-func engineOptions(config resolvedConfig, model string, settings *agent.Settings, checkpointing bool, inbox agent.InboxSource, additionalInstructions func() string) agent.Options {
+func engineOptions(config resolvedConfig, model string, settings *agent.Settings, checkpointing bool, inbox agent.Inbox) agent.Options {
 	return agent.Options{
-		Model:                  model,
-		Settings:               settings,
-		Instructions:           systemPrompt(config),
-		Checkpointing:          checkpointing,
-		Inbox:                  inbox,
-		AdditionalInstructions: additionalInstructions,
+		Model:         model,
+		Settings:      settings,
+		Instructions:  systemPrompt(config),
+		Checkpointing: checkpointing,
+		Inbox:         inbox,
 	}
 }
 
 func childEngineOptions(config resolvedConfig, profile subagent.Profile, thinkingLevel agent.ThinkingLevel, fastMode bool) agent.Options {
-	options := engineOptions(config, config.models.forProfile(profile), agent.NewSettings(thinkingLevel, fastMode), false, nil, nil)
+	options := engineOptions(config, config.models.forProfile(profile), agent.NewSettings(thinkingLevel, fastMode), false, nil)
 	options.Instructions += "\n\n" + childAgentInstructions
 	return options
 }

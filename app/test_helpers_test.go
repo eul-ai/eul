@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
 )
 
@@ -176,4 +178,16 @@ func sessionStoreTestTerminalBlocks(t testing.TB, blocks []map[string]any) termi
 		t.Fatal(err)
 	}
 	return checkpoint
+}
+
+func waitForSubagentCompletions(t *testing.T, manager *subagent.Manager, count int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(manager.Snapshot().PendingCompletions) == count {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("pending completions = %d, want %d", len(manager.Snapshot().PendingCompletions), count)
 }

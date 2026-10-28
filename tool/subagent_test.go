@@ -215,3 +215,73 @@ func uniformThinkingLevels(levels ...agent.ThinkingLevel) map[subagent.Profile][
 		subagent.ProfileMain:     levels,
 	}
 }
+
+func TestSubagentInboxBatchesAndAcknowledgesCompletions(t *testing.T) {
+	manager := subagent.NewManager(func(context.Context, subagent.Task, func(agent.Usage)) (string, error) {
+		return strings.Repeat("x", 32*1024), nil
+	})
+	defer manager.Close()
+	if _, err := manager.Start([]subagent.Task{
+		{Description: "first", Prompt: "first"},
+		{Description: "second", Prompt: "second"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitForSubagentCompletions(t, manager, 2)
+
+	inbox := NewSubagentInbox(manager)
+	batch := inbox.Snapshot()
+	if len(batch.MessageIDs) != 1 || len(batch.Text) > maxSubagentNotificationBytes {
+		t.Fatalf("batch IDs = %v, bytes = %d", batch.MessageIDs, len(batch.Text))
+	}
+	if !strings.HasPrefix(batch.Text, "<subagent_notifications>\n[") || !strings.HasSuffix(batch.Text, "]\n</subagent_notifications>") {
+		t.Fatalf("batch = %q", batch.Text)
+	}
+	if err := inbox.Acknowledge(batch); err != nil {
+		t.Fatal(err)
+	}
+	remaining := inbox.Snapshot()
+	if len(remaining.MessageIDs) != 1 || remaining.MessageIDs[0] == batch.MessageIDs[0] {
+		t.Fatalf("remaining batch = %+v", remaining)
+	}
+	if err := inbox.Acknowledge(remaining); err != nil {
+		t.Fatal(err)
+	}
+	if empty := inbox.Snapshot(); len(empty.MessageIDs) != 0 || empty.Text != "" {
+		t.Fatalf("acknowledged completions remain pending: %+v", empty)
+	}
+}
+
+func TestSubagentInboxInstructionsListActiveSubagents(t *testing.T) {
+	manager := subagent.NewManager(func(ctx context.Context, _ subagent.Task, _ func(agent.Usage)) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	})
+	defer manager.Close()
+	if _, err := manager.Start([]subagent.Task{{Description: "inspect scheduler", Prompt: "inspect"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	instructions := NewSubagentInbox(manager).Snapshot().Instructions
+	for _, expected := range []string{"subagent-1", "inspect scheduler", waitToolName} {
+		if !strings.Contains(instructions, expected) {
+			t.Fatalf("instructions omit %q:\n%s", expected, instructions)
+		}
+	}
+}
+
+func waitForSubagentCompletions(t *testing.T, manager *subagent.Manager, count int) {
+	t.Helper()
+	timeout := time.After(2 * time.Second)
+	for {
+		changes := manager.Changes()
+		if len(manager.Snapshot().PendingCompletions) == count {
+			return
+		}
+		select {
+		case <-changes:
+		case <-timeout:
+			t.Fatalf("pending completions = %d, want %d", len(manager.Snapshot().PendingCompletions), count)
+		}
+	}
+}

@@ -109,7 +109,7 @@ func validateCheckpointData(data checkpointData) error {
 		}
 		seenJobs[completion.SubagentID] = struct{}{}
 		encoded, err := json.Marshal(completion)
-		if err != nil || len(encoded) > maxCompletionMessageBytes {
+		if err != nil || len(encoded) > maxCompletionBytes {
 			return errors.New("subagent: checkpoint contains an oversized completion")
 		}
 		switch completion.Status {

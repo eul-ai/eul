@@ -16,12 +16,6 @@ type sessionRunner interface {
 	Run(context.Context, terminal.Options) (terminal.RunOutcome, error)
 }
 
-type sessionToolset struct {
-	registry       *tool.Registry
-	subagents      *subagent.Manager
-	subagentBridge *subagentBridge
-}
-
 type agentSession struct {
 	engine          *agent.Engine
 	tools           *tool.Registry
@@ -32,7 +26,7 @@ type agentSession struct {
 	persistence     *sessionPersistence
 }
 
-func newSessionToolset(
+func newSessionTools(
 	config resolvedConfig,
 	env environment,
 	backendRuntime backend.Runtime,
@@ -40,7 +34,7 @@ func newSessionToolset(
 	settings *agent.Settings,
 	authorizeNetwork tool.NetworkAuthorizer,
 	completeGoal func() error,
-) (sessionToolset, error) {
+) (*tool.Registry, *subagent.Manager, error) {
 	newToolset := env.newToolset
 	if newToolset == nil {
 		newToolset = buildToolset
@@ -58,29 +52,21 @@ func newSessionToolset(
 	for profile, model := range metadata.subagent {
 		thinkingLevels[profile] = model.ThinkingLevels
 	}
-	launchSubagents := tool.NewLaunchSubagents(manager, thinkingLevels, settings)
-	waitForSubagent := tool.NewWaitForSubagent(manager)
-	cancelSubagents := tool.NewCancelSubagents(manager)
 	registry, err := newToolset(
 		config.cwd,
 		fullToolAccess,
 		config.noSandbox,
 		authorizeNetwork,
-		launchSubagents,
-		waitForSubagent,
-		cancelSubagents,
+		tool.NewLaunchSubagents(manager, thinkingLevels, settings),
+		tool.NewWaitForSubagent(manager),
+		tool.NewCancelSubagents(manager),
 		tool.NewUpdateGoal(completeGoal),
 	)
 	if err != nil {
 		manager.Close()
-		return sessionToolset{}, fmt.Errorf("configure tools: %w", err)
+		return nil, nil, fmt.Errorf("configure tools: %w", err)
 	}
-	bridge := newSubagentBridge(manager, waitForSubagent.Definition().Name)
-	return sessionToolset{
-		registry:       registry,
-		subagents:      manager,
-		subagentBridge: bridge,
-	}, nil
+	return registry, manager, nil
 }
 
 func newAgentSession(config resolvedConfig, env environment, backendRuntime backend.Runtime) (*agentSession, error) {
@@ -142,7 +128,7 @@ func newAgentSessionComponents(
 	settings := agent.NewSettings(metadata.thinkingLevel, config.fastMode)
 
 	var engine *agent.Engine
-	tools, err := newSessionToolset(config, env, backendRuntime, metadata, settings, authorizeNetwork, func() error {
+	registry, subagents, err := newSessionTools(config, env, backendRuntime, metadata, settings, authorizeNetwork, func() error {
 		if engine == nil {
 			return errors.New("goal completion is unavailable")
 		}
@@ -151,18 +137,11 @@ func newAgentSessionComponents(
 	if err != nil {
 		return nil, terminalOptionsBuilder{}, errors.Join(err, closeBackendRuntime(backendRuntime))
 	}
-	engine = agent.New(provider, tools.registry, engineOptions(
-		config,
-		config.models.main,
-		settings,
-		checkpointing,
-		tools.subagentBridge,
-		tools.subagentBridge.additionalInstructions,
-	))
+	engine = agent.New(provider, registry, engineOptions(config, config.models.main, settings, checkpointing, tool.NewSubagentInbox(subagents)))
 	session := &agentSession{
 		engine:         engine,
-		tools:          tools.registry,
-		subagents:      tools.subagents,
+		tools:          registry,
+		subagents:      subagents,
 		backendRuntime: backendRuntime,
 		settings:       settings,
 	}
@@ -172,7 +151,7 @@ func newAgentSessionComponents(
 		metadata:           metadata,
 		warnings:           warnings,
 		loadUsage:          loadUsage,
-		subagents:          tools.subagents,
+		subagents:          subagents,
 		permissionRequests: permissionRequests,
 		engine:             engine,
 		settings:           settings,

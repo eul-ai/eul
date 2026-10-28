@@ -1,12 +1,12 @@
 package agent
 
 type InboxBatch struct {
-	MessageIDs []uint64
-	Text       string
+	MessageIDs   []uint64
+	Text         string
+	Instructions string
 }
 
-type InboxSource interface {
-	SnapshotInbox() InboxBatch
-	AcknowledgeInbox(InboxBatch) error
-	InboxEmpty() bool
+type Inbox interface {
+	Snapshot() InboxBatch
+	Acknowledge(InboxBatch) error
 }

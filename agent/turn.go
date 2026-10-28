@@ -66,11 +66,8 @@ func (t *turn) decorate(request Request) Request {
 	if strings.TrimSpace(t.inbox.Text) != "" {
 		request.Inputs = append(request.Inputs, NewInboxInput(t.inbox.Text))
 	}
-	if t.engine.additionalInstructions == nil {
-		return request
-	}
-	if additional := strings.TrimSpace(t.engine.additionalInstructions()); additional != "" {
-		request.Instructions = strings.TrimSpace(request.Instructions) + "\n\n" + additional
+	if instructions := strings.TrimSpace(t.inbox.Instructions); instructions != "" {
+		request.Instructions = strings.TrimSpace(request.Instructions) + "\n\n" + instructions
 	}
 	return request
 }
@@ -104,7 +101,7 @@ func (t *turn) compact() error {
 
 func (t *turn) generate() (Response, error) {
 	if t.engine.inbox != nil {
-		t.inbox = t.engine.inbox.SnapshotInbox()
+		t.inbox = t.engine.inbox.Snapshot()
 	}
 	request := t.decorate(t.request())
 	if compactor, ok := t.engine.provider.(Compactor); ok && compactor.ShouldCompact(request, t.current.usage) {
@@ -217,7 +214,7 @@ func (t *turn) accept(response Response) (bool, error) {
 	if next, ok := t.engine.continuations.nextBeforeSettle(); ok {
 		return false, t.deliver(next)
 	}
-	return t.engine.inbox == nil || t.engine.inbox.InboxEmpty(), nil
+	return t.engine.inbox == nil || len(t.engine.inbox.Snapshot().MessageIDs) == 0, nil
 }
 
 func (t *turn) acknowledgeInbox(calls []ToolCall) error {
@@ -231,7 +228,7 @@ func (t *turn) acknowledgeInbox(calls []ToolCall) error {
 	if err := t.commit(); err != nil {
 		return err
 	}
-	return t.engine.inbox.AcknowledgeInbox(t.inbox)
+	return t.engine.inbox.Acknowledge(t.inbox)
 }
 
 func (t *turn) deliver(next pendingContinuation) error {
