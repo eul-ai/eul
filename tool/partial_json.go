@@ -51,7 +51,7 @@ func (p *streamingJSONParser) parseObject() (map[string]any, bool) {
 			return result, true
 		}
 
-		key, _, ok := p.parseString()
+		key, ok := p.parseString()
 		if !ok {
 			return result, true
 		}
@@ -67,12 +67,8 @@ func (p *streamingJSONParser) parseObject() (map[string]any, bool) {
 		result[key] = value
 
 		p.skipSpace()
-		switch {
-		case p.take(','):
-			continue
-		case p.take('}'), p.done():
-			return result, true
-		default:
+		if !p.take(',') {
+			p.take('}')
 			return result, true
 		}
 	}
@@ -98,12 +94,8 @@ func (p *streamingJSONParser) parseArray() ([]any, bool) {
 		result = append(result, value)
 
 		p.skipSpace()
-		switch {
-		case p.take(','):
-			continue
-		case p.take(']'), p.done():
-			return result, true
-		default:
+		if !p.take(',') {
+			p.take(']')
 			return result, true
 		}
 	}
@@ -117,8 +109,7 @@ func (p *streamingJSONParser) parseValue() (any, bool) {
 
 	switch p.input[p.pos] {
 	case '"':
-		value, _, ok := p.parseString()
-		return value, ok
+		return p.parseString()
 	case '{':
 		return p.parseObject()
 	case '[':
@@ -164,10 +155,10 @@ func (p *streamingJSONParser) parseNumber() (any, bool) {
 	return value, true
 }
 
-func (p *streamingJSONParser) parseString() (string, bool, bool) {
+func (p *streamingJSONParser) parseString() (string, bool) {
 	p.skipSpace()
 	if !p.take('"') {
-		return "", false, false
+		return "", false
 	}
 
 	var output bytes.Buffer
@@ -176,10 +167,10 @@ func (p *streamingJSONParser) parseString() (string, bool, bool) {
 		p.pos++
 		switch character {
 		case '"':
-			return output.String(), true, true
+			return output.String(), true
 		case '\\':
 			if !p.appendEscape(&output) {
-				return output.String(), false, true
+				return output.String(), true
 			}
 		default:
 			if character < 0x20 {
@@ -188,7 +179,7 @@ func (p *streamingJSONParser) parseString() (string, bool, bool) {
 			output.WriteByte(character)
 		}
 	}
-	return output.String(), false, true
+	return output.String(), true
 }
 
 func (p *streamingJSONParser) appendEscape(output *bytes.Buffer) bool {
