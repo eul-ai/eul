@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend/continuation"
+	"github.com/eul-ai/eul/backend/protocol"
 )
 
 type requestBuild struct {
@@ -14,7 +14,7 @@ type requestBuild struct {
 }
 
 func buildWireRequest(request agent.Request) (requestBuild, error) {
-	history, err := continuation.Decode(request.State)
+	history, err := protocol.DecodeState(request.State)
 	if err != nil {
 		return requestBuild{}, err
 	}

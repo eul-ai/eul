@@ -6,8 +6,8 @@ import (
 	"net/http"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend/continuation"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
+	"github.com/eul-ai/eul/backend/protocol"
 )
 
 type RequestOptions struct {
@@ -73,7 +73,7 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 		return agent.Response{}, client.wrapf(err, "%v", err)
 	}
 
-	state, err := continuation.Encode(build.history, build.newItems, stream.response.Output)
+	state, err := protocol.EncodeState(build.history, build.newItems, stream.response.Output)
 	if err != nil {
 		return agent.Response{}, client.errorf("%v", err)
 	}

@@ -8,8 +8,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend/compaction"
-	"github.com/eul-ai/eul/backend/continuation"
+	"github.com/eul-ai/eul/backend/protocol"
 )
 
 func TestClientCompactsBySummarizing(t *testing.T) {
@@ -18,7 +17,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 		if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
 			t.Fatal(err)
 		}
-		if wire.Instructions != compaction.Instructions || len(wire.Tools) != 0 || wire.ToolChoice != "" || wire.ParallelToolCalls || len(wire.Input) != 3 {
+		if wire.Instructions != protocol.SummaryInstructions || len(wire.Tools) != 0 || wire.ToolChoice != "" || wire.ParallelToolCalls || len(wire.Input) != 3 {
 			t.Errorf("summary request = %+v", wire)
 		}
 		if !strings.Contains(string(wire.Input[0]), "old answer") || !strings.Contains(string(wire.Input[1]), "pending request") {
@@ -40,7 +39,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 	}))
 
 	client := newTestClient(t, "key", Options{HTTPClient: server})
-	state, err := continuation.Encode([]json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
+	state, err := protocol.EncodeState([]json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +59,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 		t.Fatalf("usage = %+v", compacted.Usage)
 	}
 
-	items, err := continuation.Decode(compacted.State)
+	items, err := protocol.DecodeState(compacted.State)
 	if err != nil || len(items) != 2 {
 		t.Fatalf("summary state items = %d, error = %v", len(items), err)
 	}
@@ -90,7 +89,7 @@ func TestManualSemanticCompactionPreservesTurnBoundary(t *testing.T) {
 	server := responseServer(t, http.StatusOK, `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"concise handoff"}]}]}`)
 
 	client := newTestClient(t, "key", Options{HTTPClient: server})
-	state, err := continuation.Encode([]json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
+	state, err := protocol.EncodeState([]json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

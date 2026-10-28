@@ -8,9 +8,9 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend/codex/oauth"
-	"github.com/eul-ai/eul/backend/compaction"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 	"github.com/eul-ai/eul/backend/openai/responses"
+	"github.com/eul-ai/eul/backend/protocol"
 )
 
 const baseURL = "https://chatgpt.com/backend-api"
@@ -45,7 +45,7 @@ func (c *client) Generate(ctx context.Context, request agent.Request, observer a
 }
 
 func (*client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
-	return compaction.ShouldCompact(request, usage, models[request.Model].contextWindow)
+	return protocol.ShouldCompact(request, usage, models[request.Model].contextWindow)
 }
 
 func (c *client) Compact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {

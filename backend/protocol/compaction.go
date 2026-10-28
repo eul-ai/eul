@@ -1,4 +1,4 @@
-package compaction
+package protocol
 
 import (
 	"errors"
@@ -7,7 +7,7 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-const Instructions = `Create a concise, standalone handoff summary of the conversation so another coding agent can continue the task.
+const SummaryInstructions = `Create a concise, standalone handoff summary of the conversation so another coding agent can continue the task.
 
 Preserve only continuation-critical facts: the user's current goal, requirements, and constraints; important decisions and rationale; relevant files, symbols, and code details; changes already made; commands and tests run with their outcomes; errors and unresolved issues; and the exact next steps. Include pending user requests and relevant tool findings. Do not continue the task or address the user. Output only the summary.`
 
@@ -22,9 +22,9 @@ const (
 	maxStateBytes       = 16 * 1024 * 1024
 )
 
-func Prepare(request agent.Request) (agent.Request, bool) {
+func PrepareSummary(request agent.Request) (agent.Request, bool) {
 	continueTask := len(request.Inputs) != 0
-	request.Instructions = Instructions
+	request.Instructions = SummaryInstructions
 	request.Tools = nil
 	request.Inputs = append(append([]agent.Input(nil), request.Inputs...), agent.NewTextInput(summaryRequest))
 	return request, continueTask

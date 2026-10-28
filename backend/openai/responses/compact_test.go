@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend/continuation"
+	"github.com/eul-ai/eul/backend/protocol"
 )
 
 func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
@@ -90,7 +90,7 @@ func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
 	}))
 
 	client := newTestClient(t, token, Options{HTTPClient: server})
-	state, err := continuation.Encode([]json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
+	state, err := protocol.EncodeState([]json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
 	if compacted.Usage != (agent.Usage{InputTokens: 100, OutputTokens: 20, TotalTokens: 120}) {
 		t.Fatalf("compact usage = %+v", compacted.Usage)
 	}
-	items, err := continuation.Decode(compacted.State)
+	items, err := protocol.DecodeState(compacted.State)
 	if err != nil || len(items) != 2 {
 		t.Fatalf("compact state items = %d, error = %v", len(items), err)
 	}

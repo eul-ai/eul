@@ -7,8 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend/compaction"
-	"github.com/eul-ai/eul/backend/continuation"
+	"github.com/eul-ai/eul/backend/protocol"
 )
 
 type compactRequestBuild struct {
@@ -200,7 +199,7 @@ func (client *Client) Compact(ctx context.Context, request agent.Request) (agent
 	if err := validateCompactOutput(stream.response.Output); err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
-	state, err := continuation.Encode(compactedStateItems(build.input, stream.response.Output))
+	state, err := protocol.EncodeState(compactedStateItems(build.input, stream.response.Output))
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
@@ -213,7 +212,7 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 		return agent.CompactResponse{}, err
 	}
 
-	request, continueAfterCompaction := compaction.Prepare(request)
+	request, continueAfterCompaction := protocol.PrepareSummary(request)
 	build, err := client.buildSummaryRequest(request)
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
@@ -228,12 +227,12 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
-	summary, err = compaction.ValidateSummary(summary, len(calls))
+	summary, err = protocol.ValidateSummary(summary, len(calls))
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
 
-	state, err := continuation.Encode(semanticCompactionStateItems(summary, continueAfterCompaction))
+	state, err := protocol.EncodeState(semanticCompactionStateItems(summary, continueAfterCompaction))
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("encode summary state: %v", err)
 	}
@@ -244,7 +243,7 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 func semanticCompactionStateItems(summary string, continueTask bool) []json.RawMessage {
 	summaryItem, _ := json.Marshal(inputMessage{
 		Role:    "assistant",
-		Content: compaction.FormatSummary(summary),
+		Content: protocol.FormatSummary(summary),
 	})
 	items := []json.RawMessage{summaryItem}
 	if !continueTask {
@@ -253,7 +252,7 @@ func semanticCompactionStateItems(summary string, continueTask bool) []json.RawM
 
 	continuation, _ := json.Marshal(inputMessage{
 		Role:    "user",
-		Content: []inputContentPart{{Type: "input_text", Text: compaction.Continuation}},
+		Content: []inputContentPart{{Type: "input_text", Text: protocol.Continuation}},
 	})
 	return append(items, continuation)
 }

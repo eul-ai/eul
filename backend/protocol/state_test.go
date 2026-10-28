@@ -1,4 +1,4 @@
-package continuation
+package protocol
 
 import (
 	"encoding/json"
@@ -6,15 +6,15 @@ import (
 )
 
 func TestStateRoundTripAndVersion(t *testing.T) {
-	encoded, err := Encode([]json.RawMessage{json.RawMessage(`{"role":"user"}`)})
+	encoded, err := EncodeState([]json.RawMessage{json.RawMessage(`{"role":"user"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	items, err := Decode(encoded)
+	items, err := DecodeState(encoded)
 	if err != nil || len(items) != 1 || string(items[0]) != `{"role":"user"}` {
 		t.Fatalf("items = %s, error = %v", items, err)
 	}
-	if _, err := Decode([]byte(`{"version":2,"items":[]}`)); err == nil {
+	if _, err := DecodeState([]byte(`{"version":2,"items":[]}`)); err == nil {
 		t.Fatal("unsupported version was accepted")
 	}
 }

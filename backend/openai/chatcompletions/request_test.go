@@ -6,12 +6,12 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend/continuation"
+	"github.com/eul-ai/eul/backend/protocol"
 )
 
 func TestBuildRequestEncodesInputsToolsAndState(t *testing.T) {
 	stateMessage := json.RawMessage(`{"role":"assistant","content":"earlier"}`)
-	state, err := continuation.Encode([]json.RawMessage{stateMessage})
+	state, err := protocol.EncodeState([]json.RawMessage{stateMessage})
 	if err != nil {
 		t.Fatal(err)
 	}

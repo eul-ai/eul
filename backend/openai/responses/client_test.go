@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend/continuation"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
+	"github.com/eul-ai/eul/backend/protocol"
 )
 
 func generate(client *Client, ctx context.Context, request agent.Request, onText, onReasoning agent.TextSink, onToolCall agent.ToolCallSink) (agent.Response, error) {
@@ -152,7 +152,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	if len(first.ToolCalls) != 2 || first.ToolCalls[0].ID != "call_read" || first.ToolCalls[0].Name != "read" || string(first.ToolCalls[0].Arguments) != `{"path":"file.go"}` || first.ToolCalls[1].ID != "call_bash" {
 		t.Fatalf("first tool calls = %+v", first.ToolCalls)
 	}
-	firstState, err := continuation.Decode(first.State)
+	firstState, err := protocol.DecodeState(first.State)
 	if err != nil || len(firstState) != 6 {
 		t.Fatalf("first state items = %d, error = %v", len(firstState), err)
 	}

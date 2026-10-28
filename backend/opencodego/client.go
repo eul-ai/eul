@@ -8,8 +8,8 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/backend/compaction"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
+	"github.com/eul-ai/eul/backend/protocol"
 )
 
 type protocolClient interface {
@@ -19,7 +19,7 @@ type protocolClient interface {
 
 type provider struct {
 	models  *backend.Models[modelInfo]
-	clients map[protocol]protocolClient
+	clients map[wireProtocol]protocolClient
 }
 
 func newProvider(apiKey, baseURL string, httpClient *http.Client, models *backend.Models[modelInfo]) *provider {
@@ -55,7 +55,7 @@ func (provider *provider) ShouldCompact(request agent.Request, usage agent.Usage
 	if err != nil {
 		return false
 	}
-	return compaction.ShouldCompact(request, usage, info.contextWindow)
+	return protocol.ShouldCompact(request, usage, info.contextWindow)
 }
 
 func (provider *provider) Compact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {

@@ -1,4 +1,4 @@
-package continuation
+package protocol
 
 import (
 	"encoding/json"
@@ -12,7 +12,7 @@ type state struct {
 	Items   []json.RawMessage `json:"items"`
 }
 
-func Decode(encoded []byte) ([]json.RawMessage, error) {
+func DecodeState(encoded []byte) ([]json.RawMessage, error) {
 	if len(encoded) == 0 {
 		return nil, nil
 	}
@@ -27,7 +27,7 @@ func Decode(encoded []byte) ([]json.RawMessage, error) {
 	return decoded.Items, nil
 }
 
-func Encode(groups ...[]json.RawMessage) ([]byte, error) {
+func EncodeState(groups ...[]json.RawMessage) ([]byte, error) {
 	encoded, err := json.Marshal(state{Version: version, Items: join(groups...)})
 	if err != nil {
 		return nil, fmt.Errorf("encode continuation state: %w", err)

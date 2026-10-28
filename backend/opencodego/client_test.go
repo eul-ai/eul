@@ -20,7 +20,7 @@ func (function roundTripperFunc) RoundTrip(request *http.Request) (*http.Respons
 
 func TestProviderRoutesProtocols(t *testing.T) {
 	models := testModelInfos(t)
-	expected := map[protocol]string{
+	expected := map[wireProtocol]string{
 		protocolResponses:         "grok-4.5",
 		protocolChatCompletions:   "glm-5.2",
 		protocolAnthropicMessages: "minimax-m3",

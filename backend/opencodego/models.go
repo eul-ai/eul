@@ -7,10 +7,10 @@ import (
 	"github.com/eul-ai/eul/backend"
 )
 
-type protocol uint8
+type wireProtocol uint8
 
 const (
-	protocolResponses protocol = iota + 1
+	protocolResponses wireProtocol = iota + 1
 	protocolChatCompletions
 	protocolAnthropicMessages
 )
@@ -53,7 +53,7 @@ type thinkingConfig struct {
 type modelInfo struct {
 	contextWindow             int64
 	thinking                  thinkingConfig
-	protocol                  protocol
+	protocol                  wireProtocol
 	maxOutputTokens           int
 	lowTextVerbosity          bool
 	serializeReasoningContent bool

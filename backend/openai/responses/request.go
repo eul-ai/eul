@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend/continuation"
+	"github.com/eul-ai/eul/backend/protocol"
 )
 
 type requestBuild struct {
@@ -41,7 +41,7 @@ func (client *Client) buildSummaryRequest(request agent.Request) (requestBuild, 
 }
 
 func (client *Client) buildWireRequest(request agent.Request) (requestBuild, error) {
-	history, err := continuation.Decode(request.State)
+	history, err := protocol.DecodeState(request.State)
 	if err != nil {
 		return requestBuild{}, err
 	}

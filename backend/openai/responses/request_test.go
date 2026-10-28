@@ -6,11 +6,11 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend/continuation"
+	"github.com/eul-ai/eul/backend/protocol"
 )
 
 func TestBuildCreateRequest(t *testing.T) {
-	state, err := continuation.Encode([]json.RawMessage{json.RawMessage(`{"type":"reasoning","encrypted_content":"opaque"}`)})
+	state, err := protocol.EncodeState([]json.RawMessage{json.RawMessage(`{"type":"reasoning","encrypted_content":"opaque"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,11 +78,11 @@ func TestInboxInputSurvivesContinuationState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := continuation.Encode(build.newItems)
+	state, err := protocol.EncodeState(build.newItems)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored, err := continuation.Decode(state)
+	restored, err := protocol.DecodeState(state)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,11 +143,11 @@ func TestOrderedInputContentSurvivesContinuationState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := continuation.Encode(build.newItems)
+	state, err := protocol.EncodeState(build.newItems)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored, err := continuation.Decode(state)
+	restored, err := protocol.DecodeState(state)
 	if err != nil {
 		t.Fatal(err)
 	}

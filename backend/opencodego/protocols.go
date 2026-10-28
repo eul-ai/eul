@@ -13,8 +13,8 @@ import (
 	"github.com/eul-ai/eul/backend/openai/responses"
 )
 
-func newProtocolClients(apiKey, baseURL string, httpClient *http.Client, models *backend.Models[modelInfo]) map[protocol]protocolClient {
-	return map[protocol]protocolClient{
+func newProtocolClients(apiKey, baseURL string, httpClient *http.Client, models *backend.Models[modelInfo]) map[wireProtocol]protocolClient {
+	return map[wireProtocol]protocolClient{
 		protocolResponses: responses.New(responses.Options{
 			HTTPClient:     httpClient,
 			Endpoint:       baseURL + "/responses",

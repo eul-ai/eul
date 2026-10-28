@@ -7,9 +7,8 @@ import (
 	"net/http"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend/compaction"
-	"github.com/eul-ai/eul/backend/continuation"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
+	"github.com/eul-ai/eul/backend/protocol"
 )
 
 type RequestOptions struct {
@@ -71,7 +70,7 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 	}
 
 	output := []json.RawMessage{result.assistant}
-	state, err := continuation.Encode(build.history, build.newMessages, output)
+	state, err := protocol.EncodeState(build.history, build.newMessages, output)
 	if err != nil {
 		return agent.Response{}, client.errorf("%v", err)
 	}
@@ -89,7 +88,7 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 		return agent.CompactResponse{}, err
 	}
 
-	request, continueAfterCompaction := compaction.Prepare(request)
+	request, continueAfterCompaction := protocol.PrepareSummary(request)
 	build, err := buildWireRequest(request)
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("build summary request: %v", err)
@@ -104,23 +103,23 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 	if err != nil {
 		return agent.CompactResponse{}, err
 	}
-	summary, err := compaction.ValidateSummary(result.text, len(result.calls))
+	summary, err := protocol.ValidateSummary(result.text, len(result.calls))
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
 
-	questionRaw, _ := json.Marshal(message{Role: "user", Content: compaction.SummaryQuestion})
+	questionRaw, _ := json.Marshal(message{Role: "user", Content: protocol.SummaryQuestion})
 	summaryRaw, _ := json.Marshal(assistantMessage{
 		Role:             "assistant",
-		Content:          compaction.FormatSummary(summary),
+		Content:          protocol.FormatSummary(summary),
 		ReasoningContent: reasoningContent("", build.wire.serializeReasoningContent),
 	})
 	messages := []json.RawMessage{questionRaw, summaryRaw}
 	if continueAfterCompaction {
-		continuationMessage, _ := json.Marshal(message{Role: "user", Content: compaction.Continuation})
+		continuationMessage, _ := json.Marshal(message{Role: "user", Content: protocol.Continuation})
 		messages = append(messages, continuationMessage)
 	}
-	state, err := continuation.Encode(messages)
+	state, err := protocol.EncodeState(messages)
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("encode summary state: %v", err)
 	}

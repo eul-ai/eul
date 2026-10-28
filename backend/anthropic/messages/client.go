@@ -8,9 +8,8 @@ import (
 	"net/http"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend/compaction"
-	"github.com/eul-ai/eul/backend/continuation"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
+	"github.com/eul-ai/eul/backend/protocol"
 )
 
 const minimumThinkingBudgetTokens = 1024
@@ -73,7 +72,7 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 	}
 
 	output := []json.RawMessage{result.assistant}
-	state, err := continuation.Encode(build.history, build.newMessages, output)
+	state, err := protocol.EncodeState(build.history, build.newMessages, output)
 	if err != nil {
 		return agent.Response{}, client.errorf("%v", err)
 	}
@@ -91,7 +90,7 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 		return agent.CompactResponse{}, err
 	}
 
-	request, continueAfterCompaction := compaction.Prepare(request)
+	request, continueAfterCompaction := protocol.PrepareSummary(request)
 	build, err := buildWireRequest(request)
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("build summary request: %v", err)
@@ -106,28 +105,28 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 	if err != nil {
 		return agent.CompactResponse{}, err
 	}
-	summary, err := compaction.ValidateSummary(result.text, len(result.calls))
+	summary, err := protocol.ValidateSummary(result.text, len(result.calls))
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
 
-	question, err := marshalWireMessage("user", []contentBlock{{Type: "text", Text: compaction.SummaryQuestion}})
+	question, err := marshalWireMessage("user", []contentBlock{{Type: "text", Text: protocol.SummaryQuestion}})
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
-	summaryMessage, err := marshalWireMessage("assistant", []contentBlock{{Type: "text", Text: compaction.FormatSummary(summary)}})
+	summaryMessage, err := marshalWireMessage("assistant", []contentBlock{{Type: "text", Text: protocol.FormatSummary(summary)}})
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
 	messages := []json.RawMessage{question, summaryMessage}
 	if continueAfterCompaction {
-		continuation, err := marshalWireMessage("user", []contentBlock{{Type: "text", Text: compaction.Continuation}})
+		continuation, err := marshalWireMessage("user", []contentBlock{{Type: "text", Text: protocol.Continuation}})
 		if err != nil {
 			return agent.CompactResponse{}, client.errorf("%v", err)
 		}
 		messages = append(messages, continuation)
 	}
-	state, err := continuation.Encode(messages)
+	state, err := protocol.EncodeState(messages)
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("encode summary state: %v", err)
 	}
