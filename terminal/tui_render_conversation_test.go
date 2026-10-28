@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/terminal/keys"
 )
 
 func TestConversationBlocksUseCurrentTheme(t *testing.T) {
@@ -677,14 +678,14 @@ func TestAltDownJumpsConversationToBottom(t *testing.T) {
 		t.Fatalf("conversation did not scroll to top: top=%d following=%t", renderer.frame.conversationTop, model.following)
 	}
 
-	if _, err := handleKeyInput(model, keyEvent{code: keyAltDown}, renderer.frame); err != nil {
+	if _, err := handleKeyInput(model, keys.Event{Code: keys.AltDown}, renderer.frame); err != nil {
 		t.Fatal(err)
 	}
 	if model.scrollTop != bottom || !model.following {
 		t.Fatalf("conversation did not jump to bottom: top=%d bottom=%d following=%t", model.scrollTop, bottom, model.following)
 	}
 
-	reduceMouse(model, mouseEvent{kind: mouseWheelUp}, renderer.frame)
+	reduceMouse(model, keys.Mouse{Kind: keys.MouseWheelUp}, renderer.frame)
 	if model.scrollTop != bottom-mouseWheelScrollLines {
 		t.Fatalf("residual scroll jumped to stale viewport: top=%d bottom=%d", model.scrollTop, bottom)
 	}

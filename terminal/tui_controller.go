@@ -9,6 +9,7 @@ import (
 	"github.com/eul-ai/eul/filesearch"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal/clipboard"
+	"github.com/eul-ai/eul/terminal/keys"
 )
 
 type tuiEventKind uint8
@@ -31,7 +32,7 @@ const (
 
 type tuiEvent struct {
 	kind           tuiEventKind
-	key            keyEvent
+	key            keys.Event
 	engine         engineMessage
 	providerUsage  providerUsageMessage
 	subagentStatus subagent.Status
@@ -188,7 +189,7 @@ func (c *tuiController) handleResize() (bool, error) {
 	return false, nil
 }
 
-func (c *tuiController) handleKey(ctx context.Context, key keyEvent) (bool, error) {
+func (c *tuiController) handleKey(ctx context.Context, key keys.Event) (bool, error) {
 	pendingBefore := c.model.pendingImageRequests()
 	action, err := handleKeyInput(c.model, key, c.renderer.frame)
 	if err != nil {

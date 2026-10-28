@@ -1,19 +1,19 @@
-package terminal
+package keys
 
 import (
 	"reflect"
 	"testing"
 )
 
-type stableKeyEvent struct {
-	code  keyCode
+type stableEvent struct {
+	code  Code
 	text  string
-	mouse mouseEvent
+	mouse Mouse
 	err   string
 	fatal bool
 }
 
-func FuzzKeyDecoderChunking(f *testing.F) {
+func FuzzDecoderChunking(f *testing.F) {
 	for _, seed := range []struct {
 		input []byte
 		split uint16
@@ -34,17 +34,17 @@ func FuzzKeyDecoderChunking(f *testing.F) {
 			t.Skip()
 		}
 
-		wholeDecoder := &keyDecoder{}
-		whole := stableKeyEvents(wholeDecoder.feed(input, true))
+		wholeDecoder := &decoder{}
+		whole := stableEvents(wholeDecoder.feed(input, true))
 
 		split := 0
 		if len(input) > 0 {
 			split = int(splitSeed) % (len(input) + 1)
 		}
-		splitDecoder := &keyDecoder{}
+		splitDecoder := &decoder{}
 		chunkedEvents := splitDecoder.feed(input[:split], false)
 		chunkedEvents = append(chunkedEvents, splitDecoder.feed(input[split:], true)...)
-		chunked := stableKeyEvents(chunkedEvents)
+		chunked := stableEvents(chunkedEvents)
 
 		if !reflect.DeepEqual(chunked, whole) {
 			t.Fatalf("split %d produced different events:\nwhole:   %#v\nchunked: %#v", split, whole, chunked)
@@ -52,19 +52,19 @@ func FuzzKeyDecoderChunking(f *testing.F) {
 	})
 }
 
-func stableKeyEvents(events []keyEvent) []stableKeyEvent {
-	stable := make([]stableKeyEvent, 0, len(events))
+func stableEvents(events []Event) []stableEvent {
+	stable := make([]stableEvent, 0, len(events))
 	for _, event := range events {
-		current := stableKeyEvent{
-			code:  event.code,
-			text:  event.text,
-			mouse: event.mouse,
-			fatal: event.fatal,
+		current := stableEvent{
+			code:  event.Code,
+			text:  event.Text,
+			mouse: event.Mouse,
+			fatal: event.Fatal,
 		}
-		if event.err != nil {
-			current.err = event.err.Error()
+		if event.Err != nil {
+			current.err = event.Err.Error()
 		}
-		if current.code == keyText && len(stable) > 0 && stable[len(stable)-1].code == keyText {
+		if current.code == Text && len(stable) > 0 && stable[len(stable)-1].code == Text {
 			stable[len(stable)-1].text += current.text
 			continue
 		}

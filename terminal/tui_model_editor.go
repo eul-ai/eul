@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/terminal/keys"
 )
 
 func editorItemsFromText(text string) []editorItem {
@@ -104,7 +105,7 @@ func (m *tuiModel) finishSubmission(content []agent.ContentPart) {
 
 func (m *tuiModel) insertInput(text string) error {
 	if !utf8.ValidString(text) || strings.IndexByte(text, 0) >= 0 {
-		return errInvalidInput
+		return keys.ErrInvalidInput
 	}
 
 	text = strings.ReplaceAll(text, "\r\n", "\n")
@@ -122,7 +123,7 @@ func (m *tuiModel) insertInput(text string) error {
 		return character
 	}, text)
 	if len(m.inputText())+len(text) > maxInputBytes {
-		return errInputTooLong
+		return keys.ErrInputTooLong
 	}
 
 	m.insertRunes([]rune(text))
@@ -132,7 +133,7 @@ func (m *tuiModel) insertInput(text string) error {
 
 func (m *tuiModel) insertNewline() error {
 	if len(m.inputText())+1 > maxInputBytes {
-		return errInputTooLong
+		return keys.ErrInputTooLong
 	}
 	m.insertRunes([]rune{'\n'})
 	m.clearInputPickers()

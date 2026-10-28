@@ -11,6 +11,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/filesearch"
+	"github.com/eul-ai/eul/terminal/keys"
 )
 
 const (
@@ -39,7 +40,7 @@ type Runner struct {
 	inputFD   int
 	outputFD  int
 	state     *terminalState
-	keys      chan keyEvent
+	keys      chan keys.Event
 	stopped   chan struct{}
 	closeOnce sync.Once
 	closeErr  error
@@ -69,10 +70,10 @@ func NewRunner(input io.Reader, output io.Writer) (*Runner, error) {
 		inputFD:  inputFD,
 		outputFD: outputFD,
 		state:    state,
-		keys:     make(chan keyEvent, 64),
+		keys:     make(chan keys.Event, 64),
 		stopped:  make(chan struct{}),
 	}
-	go readKeyEvents(input, runner.keys, runner.stopped)
+	go keys.Read(input, runner.keys, runner.stopped)
 	return runner, nil
 }
 
@@ -261,7 +262,7 @@ func submitInitialPrompt(ctx context.Context, controller *tuiController, model *
 	if err := model.insertInput(prompt); err != nil {
 		return false, err
 	}
-	return controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}})
+	return controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Enter}})
 }
 
 func requestProviderUsage(requests chan<- struct{}) {

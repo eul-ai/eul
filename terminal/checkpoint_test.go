@@ -13,6 +13,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/subagent"
+	"github.com/eul-ai/eul/terminal/keys"
 )
 
 func TestTerminalCheckpointRoundTrip(t *testing.T) {
@@ -284,11 +285,11 @@ func TestResumePickerUsesNewestSessionAndReturnsSelection(t *testing.T) {
 	if !strings.Contains(frame, "new prompt") || !strings.Contains(frame, newID) || !strings.Contains(frame, oldID) {
 		t.Fatalf("frame = %q", frame)
 	}
-	action, handled := reduceResumePickerKey(model, keyEvent{code: keyDown})
+	action, handled := reduceResumePickerKey(model, keys.Event{Code: keys.Down})
 	if !handled || action.kind != tuiActionNone {
 		t.Fatalf("down action=%+v handled=%v", action, handled)
 	}
-	action, handled = reduceResumePickerKey(model, keyEvent{code: keyEnter})
+	action, handled = reduceResumePickerKey(model, keys.Event{Code: keys.Enter})
 	if !handled || action.kind != tuiActionResume || action.text != oldID {
 		t.Fatalf("enter action=%+v handled=%v", action, handled)
 	}
@@ -336,7 +337,7 @@ func TestResumeCommandListsSessionsWithoutStoreDependency(t *testing.T) {
 		}},
 	}
 
-	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Enter}}); err != nil {
 		t.Fatal(err)
 	}
 	if !model.resumePicker.active {
@@ -345,7 +346,7 @@ func TestResumeCommandListsSessionsWithoutStoreDependency(t *testing.T) {
 	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo || !strings.Contains(model.blocks[0].text, "resume-warning-sentinel") {
 		t.Fatalf("warning blocks = %+v", model.blocks)
 	}
-	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}})
+	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Enter}})
 	if err != nil || !exit || controller.outcome != (RunOutcome{Action: RunResumeSession, SessionID: "session"}) {
 		t.Fatalf("resume exit=%v outcome=%+v error=%v", exit, controller.outcome, err)
 	}

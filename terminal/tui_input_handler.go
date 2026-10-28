@@ -7,6 +7,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/filesearch"
+	"github.com/eul-ai/eul/terminal/keys"
 )
 
 type tuiActionKind uint8
@@ -36,12 +37,12 @@ type tuiAction struct {
 	permissionDecision PermissionDecision
 }
 
-func handleKeyInput(model *tuiModel, key keyEvent, frame terminalFrame) (tuiAction, error) {
+func handleKeyInput(model *tuiModel, key keys.Event, frame terminalFrame) (tuiAction, error) {
 	if model.permission.active() {
 		return reducePermissionKey(model, key), nil
 	}
-	if key.code == keyMouse {
-		return reduceMouse(model, key.mouse, frame), nil
+	if key.Code == keys.MouseInput {
+		return reduceMouse(model, key.Mouse, frame), nil
 	}
 	if action, handled := reduceResumePickerKey(model, key); handled {
 		return action, nil
@@ -53,22 +54,22 @@ func handleKeyInput(model *tuiModel, key keyEvent, frame terminalFrame) (tuiActi
 		return tuiAction{}, nil
 	}
 
-	switch key.code {
-	case keyFailure:
-		if key.fatal {
-			return tuiAction{}, fmt.Errorf("terminal: read input: %w", key.err)
+	switch key.Code {
+	case keys.Failure:
+		if key.Fatal {
+			return tuiAction{}, fmt.Errorf("terminal: read input: %w", key.Err)
 		}
 		if !model.running {
-			setInputError(model, key.err)
+			setInputError(model, key.Err)
 		}
 		return tuiAction{}, nil
-	case keyEOF:
+	case keys.EOF:
 		return tuiAction{kind: tuiActionExit}, nil
-	case keyEscape:
+	case keys.Escape:
 		if model.running {
 			return reduceInterrupt(model)
 		}
-	case keyCtrlC:
+	case keys.CtrlC:
 		if model.running {
 			return reduceInterrupt(model)
 		}
@@ -77,73 +78,73 @@ func handleKeyInput(model *tuiModel, key keyEvent, frame terminalFrame) (tuiActi
 			return tuiAction{}, nil
 		}
 		return tuiAction{}, ErrInterrupted
-	case keyCtrlL:
+	case keys.CtrlL:
 		return tuiAction{kind: tuiActionRedraw}, nil
-	case keyCtrlV:
+	case keys.CtrlV:
 		return tuiAction{kind: tuiActionAttachImage}, nil
-	case keyPageUp:
+	case keys.PageUp:
 		scrollConversation(model, -1, frame)
 		return tuiAction{}, nil
-	case keyPageDown:
+	case keys.PageDown:
 		scrollConversation(model, 1, frame)
 		return tuiAction{}, nil
-	case keyAltDown:
+	case keys.AltDown:
 		scrollConversationToBottom(model, frame)
 		return tuiAction{}, nil
-	case keyAltUp:
+	case keys.AltUp:
 		return tuiAction{kind: tuiActionDequeue}, nil
 	}
 
-	switch key.code {
-	case keyText:
-		if err := model.insertInput(key.text); err != nil {
+	switch key.Code {
+	case keys.Text:
+		if err := model.insertInput(key.Text); err != nil {
 			setInputError(model, err)
 		}
-	case keyNewline:
+	case keys.Newline:
 		if err := model.insertNewline(); err != nil {
 			setInputError(model, err)
 		}
-	case keyShiftTab:
+	case keys.ShiftTab:
 		level, err := model.nextThinkingLevel()
 		if err != nil {
 			setInputError(model, err)
 			return tuiAction{}, nil
 		}
 		return tuiAction{kind: tuiActionSetThinking, thinkingLevel: level}, nil
-	case keyLeft:
+	case keys.Left:
 		model.moveLeft()
-	case keyRight:
+	case keys.Right:
 		model.moveRight()
-	case keyHome:
+	case keys.Home:
 		model.moveHome()
-	case keyEnd:
+	case keys.End:
 		model.moveEnd()
-	case keyBackspace:
+	case keys.Backspace:
 		model.backspace()
-	case keyDelete:
+	case keys.Delete:
 		model.delete()
-	case keyUp:
+	case keys.Up:
 		if !model.moveUp() {
 			model.historyUp()
 		}
-	case keyDown:
+	case keys.Down:
 		if !model.moveDown() {
 			model.historyDown()
 		}
-	case keyCtrlD:
+	case keys.CtrlD:
 		if !model.running && len(model.input) == 0 {
 			return tuiAction{kind: tuiActionExit}, nil
 		}
-	case keyEnter:
+	case keys.Enter:
 		return reduceSubmission(model), nil
 	}
 	return tuiAction{}, nil
 }
 
-func reducePermissionKey(model *tuiModel, key keyEvent) tuiAction {
-	switch key.code {
-	case keyText:
-		switch strings.ToLower(strings.TrimSpace(key.text)) {
+func reducePermissionKey(model *tuiModel, key keys.Event) tuiAction {
+	switch key.Code {
+	case keys.Text:
+		switch strings.ToLower(strings.TrimSpace(key.Text)) {
 		case "a":
 			return permissionAction(PermissionAllowOnce)
 		case "d":
@@ -151,36 +152,36 @@ func reducePermissionKey(model *tuiModel, key keyEvent) tuiAction {
 		case "s":
 			return permissionAction(PermissionAllowSession)
 		}
-	case keyLeft:
+	case keys.Left:
 		if model.permission.selected > PermissionDenyOnce {
 			model.permission.selected--
 		}
-	case keyRight:
+	case keys.Right:
 		if model.permission.selected < PermissionAllowSession {
 			model.permission.selected++
 		}
-	case keyTab:
+	case keys.Tab:
 		model.permission.selected = (model.permission.selected + 1) % permissionDecisionCount
-	case keyShiftTab:
+	case keys.ShiftTab:
 		model.permission.selected = (model.permission.selected + permissionDecisionCount - 1) % permissionDecisionCount
-	case keyUp:
+	case keys.Up:
 		scrollPermission(model, -1)
-	case keyDown:
+	case keys.Down:
 		scrollPermission(model, 1)
-	case keyPageUp:
+	case keys.PageUp:
 		scrollPermission(model, -permissionDetailCapacityForModel(model))
-	case keyPageDown:
+	case keys.PageDown:
 		scrollPermission(model, permissionDetailCapacityForModel(model))
-	case keyEnter:
+	case keys.Enter:
 		return permissionAction(model.permission.selected)
-	case keyEscape:
+	case keys.Escape:
 		return permissionAction(PermissionDenyOnce)
-	case keyCtrlC:
+	case keys.CtrlC:
 		if model.running {
 			return tuiAction{kind: tuiActionCancel}
 		}
 		return permissionAction(PermissionDenyOnce)
-	case keyEOF, keyCtrlD:
+	case keys.EOF, keys.CtrlD:
 		return tuiAction{kind: tuiActionExit}
 	}
 	return tuiAction{}
@@ -196,25 +197,25 @@ func scrollPermission(model *tuiModel, delta int) {
 	model.permission.scroll = max(0, min(maximum, model.permission.scroll+delta))
 }
 
-func reduceResumePickerKey(model *tuiModel, key keyEvent) (tuiAction, bool) {
+func reduceResumePickerKey(model *tuiModel, key keys.Event) (tuiAction, bool) {
 	if !model.resumePickerVisible() {
 		return tuiAction{}, false
 	}
 
-	switch key.code {
-	case keyUp:
+	switch key.Code {
+	case keys.Up:
 		model.moveResumePickerSelection(-1)
-	case keyDown:
+	case keys.Down:
 		model.moveResumePickerSelection(1)
-	case keyEnter:
+	case keys.Enter:
 		sessionID, ok := model.selectedResumeSession()
 		if !ok {
 			return tuiAction{}, true
 		}
 		return tuiAction{kind: tuiActionResume, text: sessionID}, true
-	case keyEscape:
+	case keys.Escape:
 		model.dismissResumePicker()
-	case keyEOF, keyCtrlC, keyCtrlD:
+	case keys.EOF, keys.CtrlC, keys.CtrlD:
 		return tuiAction{}, false
 	default:
 		return tuiAction{}, true
@@ -222,21 +223,21 @@ func reduceResumePickerKey(model *tuiModel, key keyEvent) (tuiAction, bool) {
 	return tuiAction{}, true
 }
 
-func reduceCommandPickerKey(model *tuiModel, key keyEvent) bool {
+func reduceCommandPickerKey(model *tuiModel, key keys.Event) bool {
 	if !model.commandPickerVisible() {
 		return false
 	}
 
-	switch key.code {
-	case keyUp:
+	switch key.Code {
+	case keys.Up:
 		model.moveCommandPickerSelection(-1)
-	case keyDown:
+	case keys.Down:
 		model.moveCommandPickerSelection(1)
-	case keyTab:
+	case keys.Tab:
 		if err := model.applyCommandPickerSelection(); err != nil {
 			setInputError(model, err)
 		}
-	case keyEnter:
+	case keys.Enter:
 		selected := model.commandPicker.matches[model.commandPicker.selected]
 		if selected.text == model.commandPicker.query {
 			return false
@@ -246,7 +247,7 @@ func reduceCommandPickerKey(model *tuiModel, key keyEvent) bool {
 			return true
 		}
 		return false
-	case keyEscape:
+	case keys.Escape:
 		model.dismissCommandPicker()
 	default:
 		return false
@@ -254,8 +255,8 @@ func reduceCommandPickerKey(model *tuiModel, key keyEvent) bool {
 	return true
 }
 
-func reduceFilePickerKey(model *tuiModel, key keyEvent) bool {
-	if key.code == keyEscape && model.filePicker.active {
+func reduceFilePickerKey(model *tuiModel, key keys.Event) bool {
+	if key.Code == keys.Escape && model.filePicker.active {
 		model.dismissFilePicker()
 		return true
 	}
@@ -263,22 +264,22 @@ func reduceFilePickerKey(model *tuiModel, key keyEvent) bool {
 		return false
 	}
 	if !model.filePicker.matchesCurrent {
-		return key.code == keyUp || key.code == keyDown || key.code == keyEnter || key.code == keyTab || key.code == keyRight
+		return key.Code == keys.Up || key.Code == keys.Down || key.Code == keys.Enter || key.Code == keys.Tab || key.Code == keys.Right
 	}
 	if len(model.filePicker.matches) == 0 {
-		return model.filePicker.state == filesearch.StateDiscovering && (key.code == keyUp || key.code == keyDown || key.code == keyEnter || key.code == keyTab || key.code == keyRight)
+		return model.filePicker.state == filesearch.StateDiscovering && (key.Code == keys.Up || key.Code == keys.Down || key.Code == keys.Enter || key.Code == keys.Tab || key.Code == keys.Right)
 	}
 
-	switch key.code {
-	case keyUp:
+	switch key.Code {
+	case keys.Up:
 		model.moveFilePickerSelection(-1)
-	case keyDown:
+	case keys.Down:
 		model.moveFilePickerSelection(1)
-	case keyEnter:
+	case keys.Enter:
 		if err := model.applyFilePickerSelection(); err != nil {
 			setInputError(model, err)
 		}
-	case keyTab:
+	case keys.Tab:
 		match := model.filePicker.matches[model.filePicker.selected]
 		var err error
 		if match.IsDir {
@@ -289,7 +290,7 @@ func reduceFilePickerKey(model *tuiModel, key keyEvent) bool {
 		if err != nil {
 			setInputError(model, err)
 		}
-	case keyRight:
+	case keys.Right:
 		match := model.filePicker.matches[model.filePicker.selected]
 		if !match.IsDir {
 			return false

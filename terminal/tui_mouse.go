@@ -4,6 +4,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/eul-ai/eul/terminal/keys"
 )
 
 const mouseWheelScrollLines = 1
@@ -31,20 +33,20 @@ type cellRange struct {
 	end   int
 }
 
-func reduceMouse(model *tuiModel, event mouseEvent, frame terminalFrame) tuiAction {
-	switch event.kind {
-	case mouseWheelUp:
+func reduceMouse(model *tuiModel, event keys.Mouse, frame terminalFrame) tuiAction {
+	switch event.Kind {
+	case keys.MouseWheelUp:
 		scrollConversationBy(model, -mouseWheelScrollLines, frame)
-	case mouseWheelDown:
+	case keys.MouseWheelDown:
 		scrollConversationBy(model, mouseWheelScrollLines, frame)
-	case mousePress:
+	case keys.MousePress:
 		point := selectionPointAt(event, false, frame)
 		model.selection = textSelection{anchor: point, focus: point, set: true, pressing: true}
-	case mouseDrag:
+	case keys.MouseDrag:
 		if model.selection.pressing {
 			model.selection.focus = selectionPointAt(event, model.selection.anchor.conversation, frame)
 		}
-	case mouseRelease:
+	case keys.MouseRelease:
 		if !model.selection.pressing {
 			return tuiAction{}
 		}
@@ -64,17 +66,17 @@ func reduceMouse(model *tuiModel, event mouseEvent, frame terminalFrame) tuiActi
 	return tuiAction{}
 }
 
-func selectionPointAt(event mouseEvent, forceConversation bool, frame terminalFrame) selectionPoint {
+func selectionPointAt(event keys.Mouse, forceConversation bool, frame terminalFrame) selectionPoint {
 	layout := frame.layout
-	column := max(0, min(frame.width-1, event.column))
-	if forceConversation || event.row >= 0 && event.row < layout.conversationHeight {
-		viewportRow := max(0, min(layout.conversationHeight-1, event.row))
+	column := max(0, min(frame.width-1, event.Column))
+	if forceConversation || event.Row >= 0 && event.Row < layout.conversationHeight {
+		viewportRow := max(0, min(layout.conversationHeight-1, event.Row))
 		contentRow := frame.conversationTop + viewportRow
 		contentRow = max(0, min(len(frame.conversationLines)-1, contentRow))
 		return selectionPoint{row: contentRow, column: column, conversation: true}
 	}
 
-	row := max(0, min(frame.height-1, event.row))
+	row := max(0, min(frame.height-1, event.Row))
 	return selectionPoint{row: row, column: column}
 }
 

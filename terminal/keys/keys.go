@@ -1,106 +1,114 @@
-package terminal
+package keys
 
 import (
 	"bytes"
+	"errors"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 )
 
-type keyCode uint8
+const MaxPasteBytes = 1024 * 1024
 
-const (
-	keyText keyCode = iota
-	keyEnter
-	keyNewline
-	keyTab
-	keyShiftTab
-	keyEscape
-	keyLeft
-	keyRight
-	keyUp
-	keyAltUp
-	keyDown
-	keyAltDown
-	keyHome
-	keyEnd
-	keyBackspace
-	keyDelete
-	keyPageUp
-	keyPageDown
-	keyCtrlC
-	keyCtrlD
-	keyCtrlL
-	keyCtrlV
-	keyMouse
-	keyEOF
-	keyFailure
+var (
+	ErrInputTooLong = errors.New("input is too long")
+	ErrInvalidInput = errors.New("input must be valid UTF-8 text without NUL")
 )
 
-type keyEvent struct {
-	code  keyCode
-	text  string
-	mouse mouseEvent
-	err   error
-	fatal bool
-}
-
-type mouseEventKind uint8
+type Code uint8
 
 const (
-	mousePress mouseEventKind = iota
-	mouseDrag
-	mouseRelease
-	mouseWheelUp
-	mouseWheelDown
+	Text Code = iota
+	Enter
+	Newline
+	Tab
+	ShiftTab
+	Escape
+	Left
+	Right
+	Up
+	AltUp
+	Down
+	AltDown
+	Home
+	End
+	Backspace
+	Delete
+	PageUp
+	PageDown
+	CtrlC
+	CtrlD
+	CtrlL
+	CtrlV
+	MouseInput
+	EOF
+	Failure
 )
 
-type mouseEvent struct {
-	kind   mouseEventKind
-	column int
-	row    int
+type Event struct {
+	Code  Code
+	Text  string
+	Mouse Mouse
+	Err   error
+	Fatal bool
 }
 
-type keyDecoder struct {
+type MouseKind uint8
+
+const (
+	MousePress MouseKind = iota
+	MouseDrag
+	MouseRelease
+	MouseWheelUp
+	MouseWheelDown
+)
+
+type Mouse struct {
+	Kind   MouseKind
+	Column int
+	Row    int
+}
+
+type decoder struct {
 	buffer       []byte
 	paste        []byte
 	inPaste      bool
 	pasteTooLong bool
 }
 
-var keySequences = []struct {
+var sequences = []struct {
 	sequence string
-	code     keyCode
+	code     Code
 }{
-	{sequence: "\x1b[13;2~", code: keyNewline},
-	{sequence: "\x1b[27;2;13~", code: keyNewline},
-	{sequence: "\x1b\r", code: keyNewline},
-	{sequence: "\x1bOM", code: keyEnter},
-	{sequence: "\x1b[Z", code: keyShiftTab},
-	{sequence: "\x1b[27;2;9~", code: keyShiftTab},
-	{sequence: "\x1b[200~", code: keyText},
-	{sequence: "\x1b[1~", code: keyHome},
-	{sequence: "\x1b[4~", code: keyEnd},
-	{sequence: "\x1b[7~", code: keyHome},
-	{sequence: "\x1b[8~", code: keyEnd},
-	{sequence: "\x1b[3~", code: keyDelete},
-	{sequence: "\x1b[5~", code: keyPageUp},
-	{sequence: "\x1b[6~", code: keyPageDown},
-	{sequence: "\x1b[1;3A", code: keyAltUp},
-	{sequence: "\x1b[1;3B", code: keyAltDown},
-	{sequence: "\x1b[A", code: keyUp},
-	{sequence: "\x1b[B", code: keyDown},
-	{sequence: "\x1b[C", code: keyRight},
-	{sequence: "\x1b[D", code: keyLeft},
-	{sequence: "\x1b[H", code: keyHome},
-	{sequence: "\x1b[F", code: keyEnd},
-	{sequence: "\x1bOA", code: keyUp},
-	{sequence: "\x1bOB", code: keyDown},
-	{sequence: "\x1bOC", code: keyRight},
-	{sequence: "\x1bOD", code: keyLeft},
-	{sequence: "\x1bOH", code: keyHome},
-	{sequence: "\x1bOF", code: keyEnd},
+	{sequence: "\x1b[13;2~", code: Newline},
+	{sequence: "\x1b[27;2;13~", code: Newline},
+	{sequence: "\x1b\r", code: Newline},
+	{sequence: "\x1bOM", code: Enter},
+	{sequence: "\x1b[Z", code: ShiftTab},
+	{sequence: "\x1b[27;2;9~", code: ShiftTab},
+	{sequence: "\x1b[200~", code: Text},
+	{sequence: "\x1b[1~", code: Home},
+	{sequence: "\x1b[4~", code: End},
+	{sequence: "\x1b[7~", code: Home},
+	{sequence: "\x1b[8~", code: End},
+	{sequence: "\x1b[3~", code: Delete},
+	{sequence: "\x1b[5~", code: PageUp},
+	{sequence: "\x1b[6~", code: PageDown},
+	{sequence: "\x1b[1;3A", code: AltUp},
+	{sequence: "\x1b[1;3B", code: AltDown},
+	{sequence: "\x1b[A", code: Up},
+	{sequence: "\x1b[B", code: Down},
+	{sequence: "\x1b[C", code: Right},
+	{sequence: "\x1b[D", code: Left},
+	{sequence: "\x1b[H", code: Home},
+	{sequence: "\x1b[F", code: End},
+	{sequence: "\x1bOA", code: Up},
+	{sequence: "\x1bOB", code: Down},
+	{sequence: "\x1bOC", code: Right},
+	{sequence: "\x1bOD", code: Left},
+	{sequence: "\x1bOH", code: Home},
+	{sequence: "\x1bOF", code: End},
 }
 
 const (
@@ -109,9 +117,9 @@ const (
 	pasteEnd         = "\x1b[201~"
 )
 
-func (d *keyDecoder) feed(data []byte, final bool) []keyEvent {
+func (d *decoder) feed(data []byte, final bool) []Event {
 	d.buffer = append(d.buffer, data...)
-	var events []keyEvent
+	var events []Event
 
 	for len(d.buffer) > 0 {
 		if d.inPaste {
@@ -149,20 +157,20 @@ func (d *keyDecoder) feed(data []byte, final bool) []keyEvent {
 				continue
 			}
 
-			matched, partial, event := matchKeySequence(d.buffer)
+			matched, partial, event := matchSequence(d.buffer)
 			if matched {
-				d.buffer = d.buffer[len(event.text):]
-				if event.text == pasteStart {
+				d.buffer = d.buffer[len(event.Text):]
+				if event.Text == pasteStart {
 					d.inPaste = true
 					d.paste = nil
 					d.pasteTooLong = false
 					continue
 				}
-				event.text = ""
+				event.Text = ""
 				events = append(events, event)
 				continue
 			}
-			consumed, kittyPartial, event, emit := matchKittyKeySequence(d.buffer)
+			consumed, kittyPartial, event, emit := matchKittySequence(d.buffer)
 			if consumed > 0 {
 				d.buffer = d.buffer[consumed:]
 				if emit {
@@ -187,47 +195,47 @@ func (d *keyDecoder) feed(data []byte, final bool) []keyEvent {
 		character := d.buffer[0]
 		switch character {
 		case 0:
-			events = append(events, keyEvent{code: keyFailure, err: errInvalidInput})
+			events = append(events, Event{Code: Failure, Err: ErrInvalidInput})
 			d.buffer = d.buffer[1:]
 			continue
 		case '\r':
-			events = append(events, keyEvent{code: keyEnter})
+			events = append(events, Event{Code: Enter})
 			d.buffer = d.buffer[1:]
 			continue
 		case '\n':
-			events = append(events, keyEvent{code: keyNewline})
+			events = append(events, Event{Code: Newline})
 			d.buffer = d.buffer[1:]
 			continue
 		case '\t':
-			events = append(events, keyEvent{code: keyTab})
+			events = append(events, Event{Code: Tab})
 			d.buffer = d.buffer[1:]
 			continue
 		case 0x01:
-			events = append(events, keyEvent{code: keyHome})
+			events = append(events, Event{Code: Home})
 			d.buffer = d.buffer[1:]
 			continue
 		case 0x05:
-			events = append(events, keyEvent{code: keyEnd})
+			events = append(events, Event{Code: End})
 			d.buffer = d.buffer[1:]
 			continue
 		case 0x7f, 0x08:
-			events = append(events, keyEvent{code: keyBackspace})
+			events = append(events, Event{Code: Backspace})
 			d.buffer = d.buffer[1:]
 			continue
 		case 0x03:
-			events = append(events, keyEvent{code: keyCtrlC})
+			events = append(events, Event{Code: CtrlC})
 			d.buffer = d.buffer[1:]
 			continue
 		case 0x04:
-			events = append(events, keyEvent{code: keyCtrlD})
+			events = append(events, Event{Code: CtrlD})
 			d.buffer = d.buffer[1:]
 			continue
 		case 0x0c:
-			events = append(events, keyEvent{code: keyCtrlL})
+			events = append(events, Event{Code: CtrlL})
 			d.buffer = d.buffer[1:]
 			continue
 		case 0x16:
-			events = append(events, keyEvent{code: keyCtrlV})
+			events = append(events, Event{Code: CtrlV})
 			d.buffer = d.buffer[1:]
 			continue
 		}
@@ -236,14 +244,14 @@ func (d *keyDecoder) feed(data []byte, final bool) []keyEvent {
 			if !final {
 				break
 			}
-			events = append(events, keyEvent{code: keyFailure, err: errInvalidInput})
+			events = append(events, Event{Code: Failure, Err: ErrInvalidInput})
 			d.buffer = d.buffer[1:]
 			continue
 		}
 
 		r, size := utf8.DecodeRune(d.buffer)
 		if r == utf8.RuneError && size == 1 {
-			events = append(events, keyEvent{code: keyFailure, err: errInvalidInput})
+			events = append(events, Event{Code: Failure, Err: ErrInvalidInput})
 			d.buffer = d.buffer[1:]
 			continue
 		}
@@ -257,11 +265,11 @@ func (d *keyDecoder) feed(data []byte, final bool) []keyEvent {
 	return events
 }
 
-func (d *keyDecoder) appendPaste(content []byte) {
+func (d *decoder) appendPaste(content []byte) {
 	if d.pasteTooLong {
 		return
 	}
-	if len(d.paste)+len(content) > maxInputBytes {
+	if len(d.paste)+len(content) > MaxPasteBytes {
 		d.paste = nil
 		d.pasteTooLong = true
 		return
@@ -269,39 +277,39 @@ func (d *keyDecoder) appendPaste(content []byte) {
 	d.paste = append(d.paste, content...)
 }
 
-func (d *keyDecoder) finishPaste() []keyEvent {
+func (d *decoder) finishPaste() []Event {
 	d.inPaste = false
 	if d.pasteTooLong {
 		d.pasteTooLong = false
-		return []keyEvent{{code: keyFailure, err: errInputTooLong}}
+		return []Event{{Code: Failure, Err: ErrInputTooLong}}
 	}
 
 	content := string(d.paste)
 	d.paste = nil
 	if !utf8.ValidString(content) || bytes.IndexByte([]byte(content), 0) >= 0 {
-		return []keyEvent{{code: keyFailure, err: errInvalidInput}}
+		return []Event{{Code: Failure, Err: ErrInvalidInput}}
 	}
 	if content == "" {
 		return nil
 	}
-	return []keyEvent{{code: keyText, text: content}}
+	return []Event{{Code: Text, Text: content}}
 }
 
-func matchKeySequence(buffer []byte) (bool, bool, keyEvent) {
+func matchSequence(buffer []byte) (bool, bool, Event) {
 	partial := false
-	for _, key := range keySequences {
+	for _, key := range sequences {
 		sequence := []byte(key.sequence)
 		if bytes.HasPrefix(buffer, sequence) {
-			return true, false, keyEvent{code: key.code, text: key.sequence}
+			return true, false, Event{Code: key.code, Text: key.sequence}
 		}
 		if bytes.HasPrefix(sequence, buffer) {
 			partial = true
 		}
 	}
-	return false, partial, keyEvent{}
+	return false, partial, Event{}
 }
 
-func matchMouseSequence(buffer []byte) (int, bool, keyEvent, bool) {
+func matchMouseSequence(buffer []byte) (int, bool, Event, bool) {
 	consumed, sgrPartial, event, emit := matchSGRMouseSequence(buffer)
 	if consumed > 0 {
 		return consumed, false, event, emit
@@ -310,16 +318,16 @@ func matchMouseSequence(buffer []byte) (int, bool, keyEvent, bool) {
 	if consumed > 0 {
 		return consumed, false, event, emit
 	}
-	return 0, sgrPartial || x10Partial, keyEvent{}, false
+	return 0, sgrPartial || x10Partial, Event{}, false
 }
 
-func matchSGRMouseSequence(buffer []byte) (int, bool, keyEvent, bool) {
+func matchSGRMouseSequence(buffer []byte) (int, bool, Event, bool) {
 	prefix := []byte("\x1b[<")
 	if bytes.HasPrefix(prefix, buffer) {
-		return 0, true, keyEvent{}, false
+		return 0, true, Event{}, false
 	}
 	if !bytes.HasPrefix(buffer, prefix) {
-		return 0, false, keyEvent{}, false
+		return 0, false, Event{}, false
 	}
 
 	final := -1
@@ -328,84 +336,84 @@ func matchSGRMouseSequence(buffer []byte) (int, bool, keyEvent, bool) {
 			continue
 		}
 		if buffer[index] != 'M' && buffer[index] != 'm' {
-			return index + 1, false, keyEvent{}, false
+			return index + 1, false, Event{}, false
 		}
 		final = index
 		break
 	}
 	if final < 0 {
-		return 0, true, keyEvent{}, false
+		return 0, true, Event{}, false
 	}
 
 	consumed := final + 1
 	parameters := strings.Split(string(buffer[len(prefix):final]), ";")
 	if len(parameters) != 3 {
-		return consumed, false, keyEvent{}, false
+		return consumed, false, Event{}, false
 	}
 	button, buttonErr := strconv.Atoi(parameters[0])
 	column, columnErr := strconv.Atoi(parameters[1])
 	row, rowErr := strconv.Atoi(parameters[2])
 	if buttonErr != nil || columnErr != nil || rowErr != nil || column < 1 || row < 1 {
-		return consumed, false, keyEvent{}, false
+		return consumed, false, Event{}, false
 	}
 
-	mouse := mouseEvent{column: column - 1, row: row - 1}
+	mouse := Mouse{Column: column - 1, Row: row - 1}
 	switch {
 	case button&64 != 0 && button&3 == 0:
-		mouse.kind = mouseWheelUp
+		mouse.Kind = MouseWheelUp
 	case button&64 != 0 && button&3 == 1:
-		mouse.kind = mouseWheelDown
+		mouse.Kind = MouseWheelDown
 	case buffer[final] == 'm' && button&3 == 0:
-		mouse.kind = mouseRelease
+		mouse.Kind = MouseRelease
 	case button&3 != 0 || buffer[final] == 'm':
-		return consumed, false, keyEvent{}, false
+		return consumed, false, Event{}, false
 	case button&32 != 0:
-		mouse.kind = mouseDrag
+		mouse.Kind = MouseDrag
 	default:
-		mouse.kind = mousePress
+		mouse.Kind = MousePress
 	}
-	return consumed, false, keyEvent{code: keyMouse, mouse: mouse}, true
+	return consumed, false, Event{Code: MouseInput, Mouse: mouse}, true
 }
 
-func matchX10MouseSequence(buffer []byte) (int, bool, keyEvent, bool) {
+func matchX10MouseSequence(buffer []byte) (int, bool, Event, bool) {
 	prefix := []byte("\x1b[M")
 	if bytes.HasPrefix(prefix, buffer) {
-		return 0, true, keyEvent{}, false
+		return 0, true, Event{}, false
 	}
 	if !bytes.HasPrefix(buffer, prefix) {
-		return 0, false, keyEvent{}, false
+		return 0, false, Event{}, false
 	}
 	if len(buffer) < 6 {
-		return 0, true, keyEvent{}, false
+		return 0, true, Event{}, false
 	}
 
 	button := int(buffer[3]) - 32
 	column := int(buffer[4]) - 33
 	row := int(buffer[5]) - 33
 	if button < 0 || column < 0 || row < 0 {
-		return 6, false, keyEvent{}, false
+		return 6, false, Event{}, false
 	}
-	mouse := mouseEvent{column: column, row: row}
+	mouse := Mouse{Column: column, Row: row}
 	switch {
 	case button&64 != 0 && button&3 == 0:
-		mouse.kind = mouseWheelUp
+		mouse.Kind = MouseWheelUp
 	case button&64 != 0 && button&3 == 1:
-		mouse.kind = mouseWheelDown
+		mouse.Kind = MouseWheelDown
 	case button&3 == 3:
-		mouse.kind = mouseRelease
+		mouse.Kind = MouseRelease
 	case button&3 != 0:
-		return 6, false, keyEvent{}, false
+		return 6, false, Event{}, false
 	case button&32 != 0:
-		mouse.kind = mouseDrag
+		mouse.Kind = MouseDrag
 	default:
-		mouse.kind = mousePress
+		mouse.Kind = MousePress
 	}
-	return 6, false, keyEvent{code: keyMouse, mouse: mouse}, true
+	return 6, false, Event{Code: MouseInput, Mouse: mouse}, true
 }
 
-func matchKittyKeySequence(buffer []byte) (int, bool, keyEvent, bool) {
+func matchKittySequence(buffer []byte) (int, bool, Event, bool) {
 	if len(buffer) < 2 || buffer[0] != '\x1b' || buffer[1] != '[' {
-		return 0, false, keyEvent{}, false
+		return 0, false, Event{}, false
 	}
 
 	final := -1
@@ -416,11 +424,11 @@ func matchKittyKeySequence(buffer []byte) (int, bool, keyEvent, bool) {
 		}
 	}
 	if final < 0 {
-		return 0, true, keyEvent{}, false
+		return 0, true, Event{}, false
 	}
 	finalByte := buffer[final]
 	if finalByte != 'u' && finalByte != '~' && !strings.ContainsRune("ABCDFHZ", rune(finalByte)) {
-		return 0, false, keyEvent{}, false
+		return 0, false, Event{}, false
 	}
 
 	consumed := final + 1
@@ -428,7 +436,7 @@ func matchKittyKeySequence(buffer []byte) (int, bool, keyEvent, bool) {
 	codepoints := strings.Split(parameters[0], ":")
 	codepoint, err := strconv.Atoi(codepoints[0])
 	if err != nil {
-		return consumed, false, keyEvent{}, false
+		return consumed, false, Event{}, false
 	}
 
 	modifier := 1
@@ -437,17 +445,17 @@ func matchKittyKeySequence(buffer []byte) (int, bool, keyEvent, bool) {
 		modifiers := strings.Split(parameters[1], ":")
 		modifier, err = strconv.Atoi(modifiers[0])
 		if err != nil || modifier < 1 {
-			return consumed, false, keyEvent{}, false
+			return consumed, false, Event{}, false
 		}
 		if len(modifiers) > 1 {
 			eventType, err = strconv.Atoi(modifiers[1])
 			if err != nil {
-				return consumed, false, keyEvent{}, false
+				return consumed, false, Event{}, false
 			}
 		}
 	}
 	if eventType == 3 {
-		return consumed, false, keyEvent{}, false
+		return consumed, false, Event{}, false
 	}
 
 	modifier--
@@ -459,72 +467,72 @@ func matchKittyKeySequence(buffer []byte) (int, bool, keyEvent, bool) {
 		switch finalByte {
 		case 'A':
 			if alt {
-				return consumed, false, keyEvent{code: keyAltUp}, true
+				return consumed, false, Event{Code: AltUp}, true
 			}
-			return consumed, false, keyEvent{code: keyUp}, true
+			return consumed, false, Event{Code: Up}, true
 		case 'B':
 			if alt {
-				return consumed, false, keyEvent{code: keyAltDown}, true
+				return consumed, false, Event{Code: AltDown}, true
 			}
-			return consumed, false, keyEvent{code: keyDown}, true
+			return consumed, false, Event{Code: Down}, true
 		case 'C':
-			return consumed, false, keyEvent{code: keyRight}, true
+			return consumed, false, Event{Code: Right}, true
 		case 'D':
-			return consumed, false, keyEvent{code: keyLeft}, true
+			return consumed, false, Event{Code: Left}, true
 		case 'H':
-			return consumed, false, keyEvent{code: keyHome}, true
+			return consumed, false, Event{Code: Home}, true
 		case 'F':
-			return consumed, false, keyEvent{code: keyEnd}, true
+			return consumed, false, Event{Code: End}, true
 		case 'Z':
 			if shift {
-				return consumed, false, keyEvent{code: keyShiftTab}, true
+				return consumed, false, Event{Code: ShiftTab}, true
 			}
 		case '~':
 			switch codepoint {
 			case 3:
-				return consumed, false, keyEvent{code: keyDelete}, true
+				return consumed, false, Event{Code: Delete}, true
 			case 5:
-				return consumed, false, keyEvent{code: keyPageUp}, true
+				return consumed, false, Event{Code: PageUp}, true
 			case 6:
-				return consumed, false, keyEvent{code: keyPageDown}, true
+				return consumed, false, Event{Code: PageDown}, true
 			case 7:
-				return consumed, false, keyEvent{code: keyHome}, true
+				return consumed, false, Event{Code: Home}, true
 			case 8:
-				return consumed, false, keyEvent{code: keyEnd}, true
+				return consumed, false, Event{Code: End}, true
 			}
 		}
-		return consumed, false, keyEvent{}, false
+		return consumed, false, Event{}, false
 	}
 
 	switch {
 	case codepoint == 32 && shift:
-		return consumed, false, keyEvent{code: keyText, text: " "}, true
+		return consumed, false, Event{Code: Text, Text: " "}, true
 	case (codepoint == 13 || codepoint == kittyKeypadEnter) && shift:
-		return consumed, false, keyEvent{code: keyNewline}, true
+		return consumed, false, Event{Code: Newline}, true
 	case codepoint == 13 || codepoint == kittyKeypadEnter:
-		return consumed, false, keyEvent{code: keyEnter}, true
+		return consumed, false, Event{Code: Enter}, true
 	case codepoint == 9 && shift:
-		return consumed, false, keyEvent{code: keyShiftTab}, true
+		return consumed, false, Event{Code: ShiftTab}, true
 	case codepoint == 9:
-		return consumed, false, keyEvent{code: keyTab}, true
+		return consumed, false, Event{Code: Tab}, true
 	case codepoint == 27:
-		return consumed, false, keyEvent{code: keyEscape}, true
+		return consumed, false, Event{Code: Escape}, true
 	case (control && codepoint == 97) || codepoint == 1:
-		return consumed, false, keyEvent{code: keyHome}, true
+		return consumed, false, Event{Code: Home}, true
 	case (control && codepoint == 99) || codepoint == 3:
-		return consumed, false, keyEvent{code: keyCtrlC}, true
+		return consumed, false, Event{Code: CtrlC}, true
 	case (control && codepoint == 100) || codepoint == 4:
-		return consumed, false, keyEvent{code: keyCtrlD}, true
+		return consumed, false, Event{Code: CtrlD}, true
 	case (control && codepoint == 101) || codepoint == 5:
-		return consumed, false, keyEvent{code: keyEnd}, true
+		return consumed, false, Event{Code: End}, true
 	case (control && codepoint == 108) || codepoint == 12:
-		return consumed, false, keyEvent{code: keyCtrlL}, true
+		return consumed, false, Event{Code: CtrlL}, true
 	case ((control || super) && codepoint == 118) || codepoint == 22:
-		return consumed, false, keyEvent{code: keyCtrlV}, true
+		return consumed, false, Event{Code: CtrlV}, true
 	case codepoint == 127:
-		return consumed, false, keyEvent{code: keyBackspace}, true
+		return consumed, false, Event{Code: Backspace}, true
 	default:
-		return consumed, false, keyEvent{}, false
+		return consumed, false, Event{}, false
 	}
 }
 
@@ -544,10 +552,10 @@ func consumeUnknownEscape(buffer []byte) (int, bool) {
 	return 0, false
 }
 
-func appendTextEvent(events []keyEvent, text string) []keyEvent {
-	if len(events) > 0 && events[len(events)-1].code == keyText {
-		events[len(events)-1].text += text
+func appendTextEvent(events []Event, text string) []Event {
+	if len(events) > 0 && events[len(events)-1].Code == Text {
+		events[len(events)-1].Text += text
 		return events
 	}
-	return append(events, keyEvent{code: keyText, text: text})
+	return append(events, Event{Code: Text, Text: text})
 }

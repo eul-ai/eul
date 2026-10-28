@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/terminal/keys"
 )
 
 func TestTUIModelEditsAndNavigatesHistory(t *testing.T) {
@@ -166,14 +167,14 @@ func TestArrowUpMovesToPreviousInputLineBeforeHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := reduceKey(model, keyEvent{code: keyUp}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Up}); err != nil {
 		t.Fatal(err)
 	}
 	if got := model.inputText(); got != "first\nsecond" || model.cursor != len([]rune("first")) || model.historyIndex != -1 {
 		t.Fatalf("first up: input=%q cursor=%d historyIndex=%d", got, model.cursor, model.historyIndex)
 	}
 
-	if _, err := reduceKey(model, keyEvent{code: keyUp}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Up}); err != nil {
 		t.Fatal(err)
 	}
 	if got := model.inputText(); got != "old prompt" || model.historyIndex != 0 {
@@ -190,14 +191,14 @@ func TestArrowDownMovesToNextInputLineBeforeHistory(t *testing.T) {
 	model.setInput(model.history[0])
 	model.cursor = len([]rune("first"))
 
-	if _, err := reduceKey(model, keyEvent{code: keyDown}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Down}); err != nil {
 		t.Fatal(err)
 	}
 	if got := model.inputText(); got != "first\nsecond" || model.cursor != len([]rune("first\nsecon")) || model.historyIndex != 0 {
 		t.Fatalf("first down: input=%q cursor=%d historyIndex=%d", got, model.cursor, model.historyIndex)
 	}
 
-	if _, err := reduceKey(model, keyEvent{code: keyDown}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Down}); err != nil {
 		t.Fatal(err)
 	}
 	if got := model.inputText(); got != "draft" || model.historyIndex != -1 {
@@ -210,14 +211,14 @@ func TestHomeAndEndMoveWithinCurrentInputLine(t *testing.T) {
 	model.setInput("first\nsecond\nthird")
 	model.cursor = len([]rune("first\nsec"))
 
-	if _, err := reduceKey(model, keyEvent{code: keyHome}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Home}); err != nil {
 		t.Fatal(err)
 	}
 	if model.cursor != len([]rune("first\n")) {
 		t.Fatalf("home cursor = %d", model.cursor)
 	}
 
-	if _, err := reduceKey(model, keyEvent{code: keyEnd}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.End}); err != nil {
 		t.Fatal(err)
 	}
 	if model.cursor != len([]rune("first\nsecond")) {
@@ -246,7 +247,7 @@ func TestTUIModelCyclesSupportedThinkingLevels(t *testing.T) {
 		Controls: Controls{SetThinkingLevel: setThinkingLevel},
 	})
 	for _, want := range []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh} {
-		exit, err := handleModelKey(model, keyEvent{code: keyShiftTab}, setThinkingLevel)
+		exit, err := handleModelKey(model, keys.Event{Code: keys.ShiftTab}, setThinkingLevel)
 		if err != nil || exit {
 			t.Fatalf("handleKey() exit=%v error=%v", exit, err)
 		}
@@ -266,7 +267,7 @@ func TestTUIModelKeepsThinkingLevelWhenUpdateFails(t *testing.T) {
 		Config:   Config{ThinkingLevel: agent.ThinkingMedium},
 		Controls: Controls{SetThinkingLevel: setThinkingLevel},
 	})
-	exit, err := handleModelKey(model, keyEvent{code: keyShiftTab}, setThinkingLevel)
+	exit, err := handleModelKey(model, keys.Event{Code: keys.ShiftTab}, setThinkingLevel)
 	if err != nil || exit {
 		t.Fatalf("handleKey() exit=%v error=%v", exit, err)
 	}
@@ -286,7 +287,7 @@ func TestTUIModelPreservesPastedNewlinesAndRejectsNUL(t *testing.T) {
 	if got := model.inputText(); got != "one\n\ntwo three�" {
 		t.Fatalf("input = %q", got)
 	}
-	if err := model.insertInput("bad\x00"); !errors.Is(err, errInvalidInput) {
+	if err := model.insertInput("bad\x00"); !errors.Is(err, keys.ErrInvalidInput) {
 		t.Fatalf("insertInput() error = %v", err)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/skill"
 	"github.com/eul-ai/eul/subagent"
+	"github.com/eul-ai/eul/terminal/keys"
 )
 
 func TestTUIControllerFlushesMessageHistory(t *testing.T) {
@@ -52,7 +53,7 @@ func TestTUIControllerPastesClipboardImage(t *testing.T) {
 		clipboardImages: clipboardImages,
 	}
 
-	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyCtrlV}}); err != nil {
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.CtrlV}}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -92,7 +93,7 @@ func TestTUIControllerQueuesClipboardImageWhileRunning(t *testing.T) {
 		stopped:         make(chan struct{}),
 	}
 
-	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlV}); err != nil {
+	if _, err := controller.handleKey(context.Background(), keys.Event{Code: keys.CtrlV}); err != nil {
 		t.Fatal(err)
 	}
 	event := <-clipboardImages
@@ -102,7 +103,7 @@ func TestTUIControllerQueuesClipboardImageWhileRunning(t *testing.T) {
 	if err := model.insertInput(" please"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyEnter}); err != nil {
+	if _, err := controller.handleKey(context.Background(), keys.Event{Code: keys.Enter}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -304,11 +305,11 @@ func TestTUIControllerDiscardsClearedClipboardRead(t *testing.T) {
 		stopped:         make(chan struct{}),
 	}
 
-	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlV}); err != nil {
+	if _, err := controller.handleKey(context.Background(), keys.Event{Code: keys.CtrlV}); err != nil {
 		t.Fatal(err)
 	}
 	<-started
-	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlC}); err != nil {
+	if _, err := controller.handleKey(context.Background(), keys.Event{Code: keys.CtrlC}); err != nil {
 		t.Fatal(err)
 	}
 	<-finished
@@ -333,11 +334,11 @@ func TestTUIControllerDeletingPendingImageCancelsRead(t *testing.T) {
 		clipboardImages: make(chan tuiEvent, 1),
 		stopped:         make(chan struct{}),
 	}
-	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlV}); err != nil {
+	if _, err := controller.handleKey(context.Background(), keys.Event{Code: keys.CtrlV}); err != nil {
 		t.Fatal(err)
 	}
 	<-started
-	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyBackspace}); err != nil {
+	if _, err := controller.handleKey(context.Background(), keys.Event{Code: keys.Backspace}); err != nil {
 		t.Fatal(err)
 	}
 	<-canceled
@@ -362,14 +363,14 @@ func TestTUIControllerDeleteCancelsPendingImage(t *testing.T) {
 		clipboardImages: make(chan tuiEvent, 1),
 		stopped:         make(chan struct{}),
 	}
-	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlV}); err != nil {
+	if _, err := controller.handleKey(context.Background(), keys.Event{Code: keys.CtrlV}); err != nil {
 		t.Fatal(err)
 	}
 	<-started
-	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyLeft}); err != nil {
+	if _, err := controller.handleKey(context.Background(), keys.Event{Code: keys.Left}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyDelete}); err != nil {
+	if _, err := controller.handleKey(context.Background(), keys.Event{Code: keys.Delete}); err != nil {
 		t.Fatal(err)
 	}
 	<-canceled
@@ -399,15 +400,15 @@ func TestTUIControllerHistoryCancelsPendingImage(t *testing.T) {
 		stopped:         make(chan struct{}),
 	}
 
-	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlV}); err != nil {
+	if _, err := controller.handleKey(context.Background(), keys.Event{Code: keys.CtrlV}); err != nil {
 		t.Fatal(err)
 	}
 	<-started
-	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyUp}); err != nil {
+	if _, err := controller.handleKey(context.Background(), keys.Event{Code: keys.Up}); err != nil {
 		t.Fatal(err)
 	}
 	<-canceled
-	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyDown}); err != nil {
+	if _, err := controller.handleKey(context.Background(), keys.Event{Code: keys.Down}); err != nil {
 		t.Fatal(err)
 	}
 	if model.inputText() != "draft" || len(model.pendingImageRequests()) != 0 || len(controller.clipboardRequests) != 0 {
@@ -443,11 +444,11 @@ func TestTUIControllerSubmittingCancelsPendingImage(t *testing.T) {
 		clipboardImages: make(chan tuiEvent, 1),
 		stopped:         make(chan struct{}),
 	}
-	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlV}); err != nil {
+	if _, err := controller.handleKey(context.Background(), keys.Event{Code: keys.CtrlV}); err != nil {
 		t.Fatal(err)
 	}
 	<-started
-	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyEnter}); err != nil {
+	if _, err := controller.handleKey(context.Background(), keys.Event{Code: keys.Enter}); err != nil {
 		t.Fatal(err)
 	}
 	<-canceled
@@ -473,7 +474,7 @@ func TestTUIControllerExitCancelsClipboardRead(t *testing.T) {
 		clipboardImages: make(chan tuiEvent, 1),
 		stopped:         make(chan struct{}),
 	}
-	if _, err := controller.handleKey(context.Background(), keyEvent{code: keyCtrlV}); err != nil {
+	if _, err := controller.handleKey(context.Background(), keys.Event{Code: keys.CtrlV}); err != nil {
 		t.Fatal(err)
 	}
 	<-started
@@ -534,7 +535,7 @@ func TestTUIControllerKeepsDraftWhenActiveCheckpointFails(t *testing.T) {
 		stateChanges: StateChanges{Notify: func(Checkpoint, bool) error { return checkpointErr }},
 	}
 
-	action, err := reduceKey(model, keyEvent{code: keyEnter})
+	action, err := reduceKey(model, keys.Event{Code: keys.Enter})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -633,7 +634,7 @@ func TestTUIControllerEOFWhileRunningDefersCheckpoint(t *testing.T) {
 		}},
 	}
 
-	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEOF}})
+	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.EOF}})
 	if err != nil || exit {
 		t.Fatalf("transition exit=%v error=%v", exit, err)
 	}
@@ -860,7 +861,7 @@ func TestTUIControllerSendsSkillCommandTextToTurn(t *testing.T) {
 		engineMessages: messages, stopped: stopped,
 	}
 
-	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Enter}}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -888,7 +889,7 @@ func TestTUIControllerNewSessionKeepsCurrentConversation(t *testing.T) {
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 	}
 
-	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}})
+	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Enter}})
 	if err != nil || !exit || controller.outcome.Action != RunNewSession {
 		t.Fatalf("transition exit=%v outcome=%+v error=%v", exit, controller.outcome, err)
 	}
@@ -919,7 +920,7 @@ func TestTUIControllerCompactsConversation(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
+	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Enter}}); err != nil {
 		t.Fatal(err)
 	}
 	if !model.running || model.activity.kind != activityCompacting {
@@ -1012,7 +1013,7 @@ func TestTUIControllerShowsHelpAndGoalWhileRunning(t *testing.T) {
 		if err := model.insertInput(command); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
+		if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Enter}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1036,7 +1037,7 @@ func TestTUIControllerSetsGoalWhileRunning(t *testing.T) {
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 	}
 
-	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Enter}}); err != nil {
 		t.Fatal(err)
 	}
 	goal, ok := engine.Goal()
@@ -1061,7 +1062,7 @@ func TestTUIControllerClearsGoalWhileRunning(t *testing.T) {
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 	}
 
-	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Enter}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := engine.Goal(); ok {
@@ -1299,8 +1300,8 @@ func TestMouseSelectionUsesCommittedFrame(t *testing.T) {
 	model.blocks = nil
 	model.conversationChanged()
 	model.appendBlock(blockAssistant, "new unseen text")
-	reduceMouse(model, mouseEvent{kind: mousePress, column: 1, row: 1}, committed)
-	action := reduceMouse(model, mouseEvent{kind: mouseRelease, column: 5, row: 1}, committed)
+	reduceMouse(model, keys.Mouse{Kind: keys.MousePress, Column: 1, Row: 1}, committed)
+	action := reduceMouse(model, keys.Mouse{Kind: keys.MouseRelease, Column: 5, Row: 1}, committed)
 	if action.kind != tuiActionCopy || action.text != "alpha" || strings.Contains(action.text, "unseen") {
 		t.Fatalf("action = %+v", action)
 	}
@@ -1321,7 +1322,7 @@ func TestMouseWheelUsesCommittedConversationBounds(t *testing.T) {
 		model.appendBlock(blockInfo, "unseen line")
 	}
 
-	reduceMouse(model, mouseEvent{kind: mouseWheelUp}, renderer.frame)
+	reduceMouse(model, keys.Mouse{Kind: keys.MouseWheelUp}, renderer.frame)
 	if model.scrollTop != committedTop-mouseWheelScrollLines {
 		t.Fatalf("scroll top = %d, want %d", model.scrollTop, committedTop-mouseWheelScrollLines)
 	}
@@ -1350,7 +1351,7 @@ func TestTUIControllerQueuesAndDequeuesSteering(t *testing.T) {
 	if err := model.insertInput("steer"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Enter}}); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(steeringTexts(queued), []string{"steer"}) || !slices.Equal(steeringTexts(controller.model.steering.pending()), []string{"steer"}) {
@@ -1363,7 +1364,7 @@ func TestTUIControllerQueuesAndDequeuesSteering(t *testing.T) {
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyAltUp}}); err != nil {
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.AltUp}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(queued) != 0 || len(controller.model.steering.pending()) != 0 || model.inputText() != "steer\n\ndraft" {
@@ -1389,7 +1390,7 @@ func TestTUIControllerCancelRestoresQueuedAndDeferredSteering(t *testing.T) {
 		turnCancel: func() { canceled = true },
 	}
 
-	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEscape}}); err != nil {
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Escape}}); err != nil {
 		t.Fatal(err)
 	}
 	if !canceled || !model.interrupted || model.activity.kind != activityCanceling || len(controller.model.steering.pending()) != 0 {
@@ -1423,7 +1424,7 @@ func TestTUIControllerRunsRejectedSteeringSequentially(t *testing.T) {
 		if err := model.insertInput(prompt); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
+		if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Enter}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1610,7 +1611,7 @@ func TestTUIControllerAppliesThinkingLevelWhileRunning(t *testing.T) {
 			return nil
 		}},
 	}
-	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyShiftTab}}); err != nil {
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.ShiftTab}}); err != nil {
 		t.Fatal(err)
 	}
 	if configured != agent.ThinkingHigh || model.thinkingLevel != agent.ThinkingHigh || !model.running || model.activity.kind != activityThinking || checkpointCalls != 0 {
@@ -1629,7 +1630,7 @@ func TestTUIControllerAppliesThinkingLevelOutsideModel(t *testing.T) {
 			return nil
 		}},
 	}
-	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyShiftTab}}); err != nil {
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.ShiftTab}}); err != nil {
 		t.Fatal(err)
 	}
 	if configured != agent.ThinkingHigh || model.thinkingLevel != agent.ThinkingHigh {

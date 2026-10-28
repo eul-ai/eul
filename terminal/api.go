@@ -11,18 +11,15 @@ import (
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/skill"
 	"github.com/eul-ai/eul/subagent"
+	"github.com/eul-ai/eul/terminal/keys"
 )
 
-const (
-	maxInputBytes = 1024 * 1024
-)
+const maxInputBytes = keys.MaxPasteBytes
 
 var (
-	ErrInterrupted  = errors.New("terminal: interrupted")
-	errNotTerminal  = errors.New("terminal: interactive mode requires terminal input and output")
-	errInputTooLong = errors.New("terminal: input is too long")
-	errInvalidInput = errors.New("terminal: input must be valid UTF-8 text without NUL")
-	errOutput       = errors.New("terminal: write output")
+	ErrInterrupted = errors.New("terminal: interrupted")
+	errNotTerminal = errors.New("terminal: interactive mode requires terminal input and output")
+	errOutput      = errors.New("terminal: write output")
 )
 
 type EventStream interface {

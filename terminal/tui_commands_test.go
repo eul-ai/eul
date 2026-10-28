@@ -7,6 +7,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/skill"
+	"github.com/eul-ai/eul/terminal/keys"
 )
 
 func TestCommandReferenceRequiresCommandPositionAndTracksReplacement(t *testing.T) {
@@ -56,7 +57,7 @@ func TestFastCommandOnlyAppearsWhenAvailable(t *testing.T) {
 	if err := available.insertInput("/fast"); err != nil {
 		t.Fatal(err)
 	}
-	action, err := reduceKey(available, keyEvent{code: keyEnter})
+	action, err := reduceKey(available, keys.Event{Code: keys.Enter})
 	if err != nil || action.kind != tuiActionCommand || action.command.name != "/fast" {
 		t.Fatalf("action=%+v error=%v", action, err)
 	}
@@ -86,7 +87,7 @@ func TestCommandPickerEnterCompletesAndSubmits(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	action, err := reduceKey(model, keyEvent{code: keyEnter})
+	action, err := reduceKey(model, keys.Event{Code: keys.Enter})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +109,7 @@ func TestCommandPickerLetsExactCommandSubmit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	action, err := reduceKey(model, keyEvent{code: keyEnter})
+	action, err := reduceKey(model, keys.Event{Code: keys.Enter})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,11 +123,11 @@ func TestCommandPickerEnterExecutesArrowSelection(t *testing.T) {
 	if err := model.insertInput("/c"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reduceKey(model, keyEvent{code: keyDown}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Down}); err != nil {
 		t.Fatal(err)
 	}
 
-	action, err := reduceKey(model, keyEvent{code: keyEnter})
+	action, err := reduceKey(model, keys.Event{Code: keys.Enter})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,10 +144,10 @@ func TestCommandPickerNavigationAndTabReplaceCommandFragment(t *testing.T) {
 	model.cursor = len([]rune("/sk"))
 	model.refreshCommandPicker(true)
 
-	if _, err := reduceKey(model, keyEvent{code: keyDown}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Down}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reduceKey(model, keyEvent{code: keyTab}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Tab}); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := model.inputText(), "/skill:refactor existing"; got != want {
@@ -179,7 +180,7 @@ func TestCommandPickerEscapeDismissesUntilEdit(t *testing.T) {
 	if err := model.insertInput("/"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reduceKey(model, keyEvent{code: keyEscape}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Escape}); err != nil {
 		t.Fatal(err)
 	}
 	if model.commandPickerVisible() {
@@ -190,7 +191,7 @@ func TestCommandPickerEscapeDismissesUntilEdit(t *testing.T) {
 	if model.commandPickerVisible() {
 		t.Fatal("picker reopened without an edit")
 	}
-	if _, err := reduceKey(model, keyEvent{code: keyText, text: "h"}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "h"}); err != nil {
 		t.Fatal(err)
 	}
 	if !model.commandPickerVisible() {
@@ -205,7 +206,7 @@ func TestHiddenCommandPickerDoesNotInterceptEscape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	action, err := reduceKey(model, keyEvent{code: keyEscape})
+	action, err := reduceKey(model, keys.Event{Code: keys.Escape})
 	if err != nil {
 		t.Fatal(err)
 	}

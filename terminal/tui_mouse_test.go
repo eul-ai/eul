@@ -5,6 +5,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/eul-ai/eul/terminal/keys"
 )
 
 func TestHighlightCellsIgnoresClickableLinkEscapes(t *testing.T) {
@@ -33,12 +35,7 @@ func TestMouseWheelScrollsConversationWithoutNavigatingHistory(t *testing.T) {
 		t.Fatal("conversation did not overflow the viewport")
 	}
 
-	decoder := &keyDecoder{}
-	events := decoder.feed([]byte("\x1b[<64;2;2M"), false)
-	if len(events) != 1 {
-		t.Fatalf("wheel events = %+v", events)
-	}
-	if action := reduceMouse(model, events[0].mouse, frame); action.kind != tuiActionNone {
+	if action := reduceMouse(model, keys.Mouse{Kind: keys.MouseWheelUp, Column: 1, Row: 1}, frame); action.kind != tuiActionNone {
 		t.Fatalf("wheel action = %+v", action)
 	}
 	if model.scrollTop != max(0, bottom-mouseWheelScrollLines) || model.following {
@@ -48,7 +45,7 @@ func TestMouseWheelScrollsConversationWithoutNavigatingHistory(t *testing.T) {
 		t.Fatalf("mouse wheel navigated input history: input=%q historyIndex=%d", got, model.historyIndex)
 	}
 
-	if action := reduceMouse(model, mouseEvent{kind: mouseWheelDown}, frame); action.kind != tuiActionNone {
+	if action := reduceMouse(model, keys.Mouse{Kind: keys.MouseWheelDown}, frame); action.kind != tuiActionNone {
 		t.Fatalf("wheel action = %+v", action)
 	}
 	if model.scrollTop != bottom || !model.following {
@@ -65,9 +62,9 @@ func TestMouseDragSelectsAndCopiesRenderedText(t *testing.T) {
 	committed := buildTerminalFrame(model)
 
 	var output bytes.Buffer
-	for _, event := range []mouseEvent{
-		{kind: mousePress, column: 1, row: 1},
-		{kind: mouseDrag, column: 5, row: 1},
+	for _, event := range []keys.Mouse{
+		{Kind: keys.MousePress, Column: 1, Row: 1},
+		{Kind: keys.MouseDrag, Column: 5, Row: 1},
 	} {
 		if exit, err := handleModelMouse(model, &output, committed, event); err != nil || exit {
 			t.Fatalf("handle mouse %+v: exit=%t err=%v", event, exit, err)
@@ -77,7 +74,7 @@ func TestMouseDragSelectsAndCopiesRenderedText(t *testing.T) {
 		t.Fatalf("selected row does not highlight text: %q", row)
 	}
 
-	if exit, err := handleModelMouse(model, &output, committed, mouseEvent{kind: mouseRelease, column: 5, row: 1}); err != nil || exit {
+	if exit, err := handleModelMouse(model, &output, committed, keys.Mouse{Kind: keys.MouseRelease, Column: 5, Row: 1}); err != nil || exit {
 		t.Fatalf("release selection: exit=%t err=%v", exit, err)
 	}
 	if got, want := output.String(), "\x1b]52;c;YWxwaGE=\x07"; got != want {
@@ -97,9 +94,9 @@ func TestMouseSelectionDoesNotHighlightConversationPadding(t *testing.T) {
 	committed := buildTerminalFrame(model)
 
 	var output bytes.Buffer
-	for _, event := range []mouseEvent{
-		{kind: mousePress, column: 0, row: 1},
-		{kind: mouseDrag, column: 15, row: 1},
+	for _, event := range []keys.Mouse{
+		{Kind: keys.MousePress, Column: 0, Row: 1},
+		{Kind: keys.MouseDrag, Column: 15, Row: 1},
 	} {
 		if exit, err := handleModelMouse(model, &output, committed, event); err != nil || exit {
 			t.Fatalf("handle mouse %+v: exit=%t err=%v", event, exit, err)
@@ -116,7 +113,7 @@ func TestMouseSelectionDoesNotHighlightConversationPadding(t *testing.T) {
 		t.Fatalf("selected row highlights padding: %q", frame.rows[1])
 	}
 
-	if exit, err := handleModelMouse(model, &output, committed, mouseEvent{kind: mouseRelease, column: 15, row: 1}); err != nil || exit {
+	if exit, err := handleModelMouse(model, &output, committed, keys.Mouse{Kind: keys.MouseRelease, Column: 15, Row: 1}); err != nil || exit {
 		t.Fatalf("release selection: exit=%t err=%v", exit, err)
 	}
 	if got, want := output.String(), "\x1b]52;c;YWxwaGE=\x07"; got != want {
@@ -172,10 +169,10 @@ func TestMouseClickDoesNotCopy(t *testing.T) {
 	committed := buildTerminalFrame(model)
 
 	var output bytes.Buffer
-	if _, err := handleModelMouse(model, &output, committed, mouseEvent{kind: mousePress, column: 1, row: 1}); err != nil {
+	if _, err := handleModelMouse(model, &output, committed, keys.Mouse{Kind: keys.MousePress, Column: 1, Row: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := handleModelMouse(model, &output, committed, mouseEvent{kind: mouseRelease, column: 1, row: 1}); err != nil {
+	if _, err := handleModelMouse(model, &output, committed, keys.Mouse{Kind: keys.MouseRelease, Column: 1, Row: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if output.Len() != 0 || model.selection.set {
@@ -206,7 +203,7 @@ func TestFullScreenModeEnablesAndDisablesMouseReporting(t *testing.T) {
 	}
 }
 
-func handleModelMouse(model *tuiModel, output *bytes.Buffer, frame terminalFrame, mouse mouseEvent) (bool, error) {
+func handleModelMouse(model *tuiModel, output *bytes.Buffer, frame terminalFrame, mouse keys.Mouse) (bool, error) {
 	messages := make(chan engineMessage, 1)
 	stopped := make(chan struct{})
 	defer close(stopped)
@@ -214,5 +211,5 @@ func handleModelMouse(model *tuiModel, output *bytes.Buffer, frame terminalFrame
 		model: model, renderer: &tuiRenderer{frame: frame}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: output,
 		engineMessages: messages, stopped: stopped,
 	}
-	return controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyMouse, mouse: mouse}})
+	return controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.MouseInput, Mouse: mouse}})
 }

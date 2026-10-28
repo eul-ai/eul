@@ -13,6 +13,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/subagent"
+	"github.com/eul-ai/eul/terminal/keys"
 )
 
 func TestScreenModesRestoreEnhancedKeyboardReporting(t *testing.T) {
@@ -336,7 +337,7 @@ func TestHandleKeyRunsTurnAndAppliesOrderedEvents(t *testing.T) {
 	defer close(stopped)
 	var cancel context.CancelFunc
 
-	exit, err := handleKey(context.Background(), model, engine, keyEvent{code: keyEnter}, messages, stopped, &cancel)
+	exit, err := handleKey(context.Background(), model, engine, keys.Event{Code: keys.Enter}, messages, stopped, &cancel)
 	if err != nil || exit || !model.running {
 		t.Fatalf("handleKey() exit=%v err=%v running=%v", exit, err, model.running)
 	}
@@ -386,11 +387,11 @@ func TestHandleKeyCancelsIncompleteToolTurnWithoutResettingConversation(t *testi
 	defer close(stopped)
 	var cancel context.CancelFunc
 
-	if _, err := handleKey(context.Background(), model, engine, keyEvent{code: keyEnter}, messages, stopped, &cancel); err != nil {
+	if _, err := handleKey(context.Background(), model, engine, keys.Event{Code: keys.Enter}, messages, stopped, &cancel); err != nil {
 		t.Fatal(err)
 	}
 	<-started
-	if _, err := handleKey(context.Background(), model, engine, keyEvent{code: keyCtrlC}, messages, stopped, &cancel); err != nil {
+	if _, err := handleKey(context.Background(), model, engine, keys.Event{Code: keys.CtrlC}, messages, stopped, &cancel); err != nil {
 		t.Fatal(err)
 	}
 	if model.activity.kind != activityCanceling {
@@ -418,9 +419,9 @@ func TestHandleKeyCancelsIncompleteToolTurnWithoutResettingConversation(t *testi
 }
 
 func runTest(ctx context.Context, options Options) (RunOutcome, error) {
-	runner := &Runner{output: options.Output, outputFD: -1, keys: make(chan keyEvent, 64), stopped: make(chan struct{})}
+	runner := &Runner{output: options.Output, outputFD: -1, keys: make(chan keys.Event, 64), stopped: make(chan struct{})}
 	defer close(runner.stopped)
-	go readKeyEvents(options.Input, runner.keys, runner.stopped)
+	go keys.Read(options.Input, runner.keys, runner.stopped)
 	return runner.run(ctx, options, 80, 24)
 }
 
@@ -466,11 +467,11 @@ func TestHandleKeyCtrlCClearsInputBeforeExiting(t *testing.T) {
 	defer close(stopped)
 	var cancel context.CancelFunc
 
-	exit, err := handleKey(context.Background(), model, &fakeEngine{}, keyEvent{code: keyCtrlC}, messages, stopped, &cancel)
+	exit, err := handleKey(context.Background(), model, &fakeEngine{}, keys.Event{Code: keys.CtrlC}, messages, stopped, &cancel)
 	if err != nil || exit || len(model.input) != 0 {
 		t.Fatalf("first Ctrl-C: exit=%v err=%v input=%q", exit, err, model.inputText())
 	}
-	exit, err = handleKey(context.Background(), model, &fakeEngine{}, keyEvent{code: keyCtrlC}, messages, stopped, &cancel)
+	exit, err = handleKey(context.Background(), model, &fakeEngine{}, keys.Event{Code: keys.CtrlC}, messages, stopped, &cancel)
 	if exit || !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("second Ctrl-C: exit=%v err=%v", exit, err)
 	}
@@ -496,7 +497,7 @@ func TestHandleKeyShiftTabCyclesThinkingLevel(t *testing.T) {
 		}}, output: io.Discard,
 		engineMessages: messages, stopped: stopped,
 	}
-	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyShiftTab}})
+	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.ShiftTab}})
 	if err != nil || exit || model.thinkingLevel != agent.ThinkingHigh || configured != agent.ThinkingHigh {
 		t.Fatalf("exit=%v err=%v thinking=%q configured=%q", exit, err, model.thinkingLevel, configured)
 	}
@@ -515,7 +516,7 @@ func TestHandleKeyCtrlLRequestsFullRedraw(t *testing.T) {
 		engineMessages: messages, stopped: stopped,
 	}
 
-	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyCtrlL}})
+	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.CtrlL}})
 	if err != nil || exit || !controller.forceRedraw {
 		t.Fatalf("exit=%v err=%v forceRedraw=%v", exit, err, controller.forceRedraw)
 	}
@@ -533,7 +534,7 @@ func TestHandleKeyCommands(t *testing.T) {
 		if err := model.insertInput(command); err != nil {
 			t.Fatal(err)
 		}
-		if exit, err := handleKey(context.Background(), model, engine, keyEvent{code: keyEnter}, messages, stopped, &cancel); err != nil || exit {
+		if exit, err := handleKey(context.Background(), model, engine, keys.Event{Code: keys.Enter}, messages, stopped, &cancel); err != nil || exit {
 			t.Fatalf("command %q exit=%v err=%v", command, exit, err)
 		}
 	}
@@ -544,14 +545,14 @@ func TestHandleKeyCommands(t *testing.T) {
 	if err := model.insertInput("/exit"); err != nil {
 		t.Fatal(err)
 	}
-	if exit, err := handleKey(context.Background(), model, engine, keyEvent{code: keyEnter}, messages, stopped, &cancel); err != nil || !exit {
+	if exit, err := handleKey(context.Background(), model, engine, keys.Event{Code: keys.Enter}, messages, stopped, &cancel); err != nil || !exit {
 		t.Fatalf("exit command exit=%v err=%v", exit, err)
 	}
 
 	if err := model.insertInput("/new"); err != nil {
 		t.Fatal(err)
 	}
-	exit, err := handleKey(context.Background(), model, engine, keyEvent{code: keyEnter}, messages, stopped, &cancel)
+	exit, err := handleKey(context.Background(), model, engine, keys.Event{Code: keys.Enter}, messages, stopped, &cancel)
 	if err != nil || !exit {
 		t.Fatalf("new command exit=%v err=%v", exit, err)
 	}

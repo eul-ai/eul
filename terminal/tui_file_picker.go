@@ -7,6 +7,7 @@ import (
 	"unicode"
 
 	"github.com/eul-ai/eul/filesearch"
+	"github.com/eul-ai/eul/terminal/keys"
 )
 
 const filePickerMaxVisible = 5
@@ -257,7 +258,7 @@ func (m *tuiModel) applyFilePickerSelection() error {
 	}
 	removedBytes := len(editorText(m.input[picker.tokenStart:picker.tokenEnd]))
 	if len(m.inputText())-removedBytes+len(reference) > maxInputBytes {
-		return errInputTooLong
+		return keys.ErrInputTooLong
 	}
 
 	m.leaveHistory()
@@ -297,7 +298,7 @@ func (m *tuiModel) drillIntoFilePickerDirectory() error {
 	reference := formatFileReference(match.BrowseQuery)
 	removedBytes := len(editorText(m.input[picker.tokenStart:picker.tokenEnd]))
 	if len(m.inputText())-removedBytes+len(reference) > maxInputBytes {
-		return errInputTooLong
+		return keys.ErrInputTooLong
 	}
 
 	m.leaveHistory()

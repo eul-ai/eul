@@ -8,6 +8,7 @@ import (
 	"unicode"
 
 	"github.com/eul-ai/eul/skill"
+	"github.com/eul-ai/eul/terminal/keys"
 )
 
 const (
@@ -343,7 +344,7 @@ func (m *tuiModel) applyCommandPickerSelection() error {
 	completion := picker.matches[picker.selected].text
 	removedBytes := len(editorText(m.input[picker.tokenStart:picker.tokenEnd]))
 	if len(m.inputText())-removedBytes+len(completion) > maxInputBytes {
-		return errInputTooLong
+		return keys.ErrInputTooLong
 	}
 
 	m.leaveHistory()

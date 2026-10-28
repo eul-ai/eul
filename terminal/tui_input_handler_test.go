@@ -6,21 +6,22 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/filesearch"
+	"github.com/eul-ai/eul/terminal/keys"
 )
 
 func TestPermissionKeysTakePriority(t *testing.T) {
 	for _, test := range []struct {
 		name         string
-		key          keyEvent
+		key          keys.Event
 		want         tuiActionKind
 		wantDecision PermissionDecision
 	}{
-		{name: "allow", key: keyEvent{code: keyText, text: "a"}, want: tuiActionResolvePermission, wantDecision: PermissionAllowOnce},
-		{name: "allow session", key: keyEvent{code: keyText, text: "s"}, want: tuiActionResolvePermission, wantDecision: PermissionAllowSession},
-		{name: "deny", key: keyEvent{code: keyText, text: "d"}, want: tuiActionResolvePermission, wantDecision: PermissionDenyOnce},
-		{name: "enter denies", key: keyEvent{code: keyEnter}, want: tuiActionResolvePermission, wantDecision: PermissionDenyOnce},
-		{name: "escape denies", key: keyEvent{code: keyEscape}, want: tuiActionResolvePermission, wantDecision: PermissionDenyOnce},
-		{name: "cancel", key: keyEvent{code: keyCtrlC}, want: tuiActionCancel},
+		{name: "allow", key: keys.Event{Code: keys.Text, Text: "a"}, want: tuiActionResolvePermission, wantDecision: PermissionAllowOnce},
+		{name: "allow session", key: keys.Event{Code: keys.Text, Text: "s"}, want: tuiActionResolvePermission, wantDecision: PermissionAllowSession},
+		{name: "deny", key: keys.Event{Code: keys.Text, Text: "d"}, want: tuiActionResolvePermission, wantDecision: PermissionDenyOnce},
+		{name: "enter denies", key: keys.Event{Code: keys.Enter}, want: tuiActionResolvePermission, wantDecision: PermissionDenyOnce},
+		{name: "escape denies", key: keys.Event{Code: keys.Escape}, want: tuiActionResolvePermission, wantDecision: PermissionDenyOnce},
+		{name: "cancel", key: keys.Event{Code: keys.CtrlC}, want: tuiActionCancel},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			model := newTUIModel(80, 24, Options{})
@@ -45,7 +46,7 @@ func TestIdlePermissionCtrlCDeniesRequest(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.showPermission(PermissionRequest{Title: "Network access"}, 1, 1)
 
-	action, err := reduceKey(model, keyEvent{code: keyCtrlC})
+	action, err := reduceKey(model, keys.Event{Code: keys.CtrlC})
 	if err != nil || action.kind != tuiActionResolvePermission || action.permissionDecision != PermissionDenyOnce {
 		t.Fatalf("action=%+v error=%v", action, err)
 	}
@@ -59,29 +60,29 @@ func TestPermissionSelectionAndScrolling(t *testing.T) {
 		Detail: strings.Repeat("long command ", 30),
 	}, 1, 1)
 
-	if action, err := reduceKey(model, keyEvent{code: keyRight}); err != nil || action.kind != tuiActionNone || model.permission.selected != PermissionAllowOnce {
+	if action, err := reduceKey(model, keys.Event{Code: keys.Right}); err != nil || action.kind != tuiActionNone || model.permission.selected != PermissionAllowOnce {
 		t.Fatalf("right action=%+v err=%v permission=%+v", action, err, model.permission)
 	}
-	if action, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil || action.kind != tuiActionResolvePermission || action.permissionDecision != PermissionAllowOnce {
+	if action, err := reduceKey(model, keys.Event{Code: keys.Enter}); err != nil || action.kind != tuiActionResolvePermission || action.permissionDecision != PermissionAllowOnce {
 		t.Fatalf("enter action=%+v err=%v", action, err)
 	}
-	if action, err := reduceKey(model, keyEvent{code: keyRight}); err != nil || action.kind != tuiActionNone || model.permission.selected != PermissionAllowSession {
+	if action, err := reduceKey(model, keys.Event{Code: keys.Right}); err != nil || action.kind != tuiActionNone || model.permission.selected != PermissionAllowSession {
 		t.Fatalf("second right action=%+v err=%v permission=%+v", action, err, model.permission)
 	}
-	if action, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil || action.kind != tuiActionResolvePermission || action.permissionDecision != PermissionAllowSession {
+	if action, err := reduceKey(model, keys.Event{Code: keys.Enter}); err != nil || action.kind != tuiActionResolvePermission || action.permissionDecision != PermissionAllowSession {
 		t.Fatalf("session enter action=%+v err=%v", action, err)
 	}
-	if action, err := reduceKey(model, keyEvent{code: keyLeft}); err != nil || action.kind != tuiActionNone || model.permission.selected != PermissionAllowOnce {
+	if action, err := reduceKey(model, keys.Event{Code: keys.Left}); err != nil || action.kind != tuiActionNone || model.permission.selected != PermissionAllowOnce {
 		t.Fatalf("left action=%+v err=%v permission=%+v", action, err, model.permission)
 	}
-	if action, err := reduceKey(model, keyEvent{code: keyDown}); err != nil || action.kind != tuiActionNone || model.permission.scroll == 0 {
+	if action, err := reduceKey(model, keys.Event{Code: keys.Down}); err != nil || action.kind != tuiActionNone || model.permission.scroll == 0 {
 		t.Fatalf("down action=%+v err=%v scroll=%d", action, err, model.permission.scroll)
 	}
 }
 
 func TestFilePickerKeysTakePriorityOverEditorActions(t *testing.T) {
 	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
-	if _, err := reduceKey(model, keyEvent{code: keyText, text: "@"}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "@"}); err != nil {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
@@ -90,10 +91,10 @@ func TestFilePickerKeysTakePriorityOverEditorActions(t *testing.T) {
 		t.Fatal("picker did not open")
 	}
 
-	if action, err := reduceKey(model, keyEvent{code: keyDown}); err != nil || action.kind != tuiActionNone {
+	if action, err := reduceKey(model, keys.Event{Code: keys.Down}); err != nil || action.kind != tuiActionNone {
 		t.Fatalf("down action = %+v, err = %v", action, err)
 	}
-	if action, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil || action.kind != tuiActionNone {
+	if action, err := reduceKey(model, keys.Event{Code: keys.Enter}); err != nil || action.kind != tuiActionNone {
 		t.Fatalf("enter action = %+v, err = %v", action, err)
 	}
 	if got := model.inputText(); got != "@b.go " {
@@ -104,10 +105,10 @@ func TestFilePickerKeysTakePriorityOverEditorActions(t *testing.T) {
 	}
 
 	model.clearInput()
-	if _, err := reduceKey(model, keyEvent{code: keyText, text: "@"}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "@"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reduceKey(model, keyEvent{code: keyEscape}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Escape}); err != nil {
 		t.Fatal(err)
 	}
 	if got := model.inputText(); got != "@" || model.filePickerVisible() {
@@ -118,16 +119,16 @@ func TestFilePickerKeysTakePriorityOverEditorActions(t *testing.T) {
 func TestFilePickerRemainsUsableWhileRunning(t *testing.T) {
 	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
 	model.running = true
-	if _, err := reduceKey(model, keyEvent{code: keyText, text: "@"}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "@"}); err != nil {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
 	model.applyFileSearchResult(testFileSearchResult(request.ID, "a.go", "b.go"))
 
-	if _, err := reduceKey(model, keyEvent{code: keyDown}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Down}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Enter}); err != nil {
 		t.Fatal(err)
 	}
 	if got := model.inputText(); got != "@b.go " || !model.running {
@@ -137,7 +138,7 @@ func TestFilePickerRemainsUsableWhileRunning(t *testing.T) {
 
 func TestFilePickerKeepsCurrentResultsSelectableDuringRefresh(t *testing.T) {
 	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
-	if _, err := reduceKey(model, keyEvent{code: keyText, text: "@"}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "@"}); err != nil {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
@@ -148,7 +149,7 @@ func TestFilePickerKeepsCurrentResultsSelectableDuringRefresh(t *testing.T) {
 	if model.filePicker.state != filesearch.StateDiscovering || model.filePickerHeight() != originalHeight || len(model.filePicker.matches) != 3 {
 		t.Fatalf("picker changed while refreshing: %+v", model.filePicker)
 	}
-	if action, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil || action.kind != tuiActionNone {
+	if action, err := reduceKey(model, keys.Event{Code: keys.Enter}); err != nil || action.kind != tuiActionNone {
 		t.Fatalf("enter action = %+v, err = %v", action, err)
 	}
 	if got := model.inputText(); got != "@a.go " {
@@ -158,19 +159,19 @@ func TestFilePickerKeepsCurrentResultsSelectableDuringRefresh(t *testing.T) {
 
 func TestFilePickerDoesNotApplyPreviousQueryResults(t *testing.T) {
 	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
-	if _, err := reduceKey(model, keyEvent{code: keyText, text: "@"}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "@"}); err != nil {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
 	model.applyFileSearchResult(testFileSearchResult(request.ID, "a.go", "b.go"))
 
-	if _, err := reduceKey(model, keyEvent{code: keyText, text: "missing"}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "missing"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(model.filePicker.matches) != 2 || model.filePicker.matchesCurrent {
 		t.Fatalf("previous query results were not retained as pending: %+v", model.filePicker)
 	}
-	if action, err := reduceKey(model, keyEvent{code: keyEnter}); err != nil || action.kind != tuiActionNone {
+	if action, err := reduceKey(model, keys.Event{Code: keys.Enter}); err != nil || action.kind != tuiActionNone {
 		t.Fatalf("enter action = %+v, err = %v", action, err)
 	}
 	if got := model.inputText(); got != "@missing" {
@@ -180,14 +181,14 @@ func TestFilePickerDoesNotApplyPreviousQueryResults(t *testing.T) {
 
 func TestFilePickerShowsEmptyResultsUpdatingWhileRescoring(t *testing.T) {
 	model := newTUIModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
-	if _, err := reduceKey(model, keyEvent{code: keyText, text: "@missing"}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "@missing"}); err != nil {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
 	model.applyFileSearchResult(filesearch.Result{ID: request.ID, State: filesearch.StateComplete})
 	settled := renderFilePicker(model, model.filePickerHeight())
 
-	if _, err := reduceKey(model, keyEvent{code: keyText, text: "x"}); err != nil {
+	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	pending := renderFilePicker(model, model.filePickerHeight())
@@ -208,7 +209,7 @@ func TestHiddenFilePickerDoesNotInterceptEditorKeys(t *testing.T) {
 		t.Fatal("picker is visible without layout space")
 	}
 
-	action, err := reduceKey(model, keyEvent{code: keyEnter})
+	action, err := reduceKey(model, keys.Event{Code: keys.Enter})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +223,7 @@ func TestReduceKeyActions(t *testing.T) {
 		name        string
 		options     Options
 		setup       func(*testing.T, *tuiModel)
-		key         keyEvent
+		key         keys.Event
 		wantKind    tuiActionKind
 		wantCommand string
 		wantText    string
@@ -231,7 +232,7 @@ func TestReduceKeyActions(t *testing.T) {
 	}{
 		{
 			name: "none",
-			key:  keyEvent{code: keyText, text: "draft"},
+			key:  keys.Event{Code: keys.Text, Text: "draft"},
 			check: func(t *testing.T, model *tuiModel) {
 				if model.inputText() != "draft" {
 					t.Fatalf("input = %q", model.inputText())
@@ -244,7 +245,7 @@ func TestReduceKeyActions(t *testing.T) {
 				model.running = true
 				model.activity = activity{kind: activityThinking}
 			},
-			key:      keyEvent{code: keyCtrlC},
+			key:      keys.Event{Code: keys.CtrlC},
 			wantKind: tuiActionCancel,
 			check: func(t *testing.T, model *tuiModel) {
 				if model.interrupted || model.activity.kind != activityThinking {
@@ -258,7 +259,7 @@ func TestReduceKeyActions(t *testing.T) {
 				model.running = true
 				model.activity = activity{kind: activityThinking}
 			},
-			key:      keyEvent{code: keyEscape},
+			key:      keys.Event{Code: keys.Escape},
 			wantKind: tuiActionCancel,
 			check: func(t *testing.T, model *tuiModel) {
 				if model.interrupted || model.activity.kind != activityThinking {
@@ -274,7 +275,7 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:      keyEvent{code: keyEnter},
+			key:      keys.Event{Code: keys.Enter},
 			wantKind: tuiActionCommand, wantCommand: "/new",
 			check: func(t *testing.T, model *tuiModel) {
 				if len(model.history) != 1 || model.history[0] != "/new" || len(model.blocks) != 1 {
@@ -289,7 +290,7 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:      keyEvent{code: keyEnter},
+			key:      keys.Event{Code: keys.Enter},
 			wantKind: tuiActionCommand, wantCommand: "/compact",
 		},
 		{
@@ -299,7 +300,7 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:         keyEvent{code: keyEnter},
+			key:         keys.Event{Code: keys.Enter},
 			wantKind:    tuiActionCommand,
 			wantCommand: "/exit",
 			check: func(t *testing.T, model *tuiModel) {
@@ -315,7 +316,7 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:      keyEvent{code: keyEnter},
+			key:      keys.Event{Code: keys.Enter},
 			wantKind: tuiActionCommand, wantCommand: "/goal",
 		},
 		{
@@ -325,7 +326,7 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:         keyEvent{code: keyEnter},
+			key:         keys.Event{Code: keys.Enter},
 			wantKind:    tuiActionCommand,
 			wantCommand: "/goal",
 			wantText:    "finish migration",
@@ -337,7 +338,7 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:         keyEvent{code: keyEnter},
+			key:         keys.Event{Code: keys.Enter},
 			wantKind:    tuiActionCommand,
 			wantCommand: "/goal",
 			wantText:    "clear",
@@ -349,7 +350,7 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:      keyEvent{code: keyEnter},
+			key:      keys.Event{Code: keys.Enter},
 			wantKind: tuiActionSubmit,
 			wantText: " hello ",
 			check: func(t *testing.T, model *tuiModel) {
@@ -366,7 +367,7 @@ func TestReduceKeyActions(t *testing.T) {
 					panic("reducer invoked external thinking setter")
 				}},
 			},
-			key:       keyEvent{code: keyShiftTab},
+			key:       keys.Event{Code: keys.ShiftTab},
 			wantKind:  tuiActionSetThinking,
 			wantLevel: agent.ThinkingHigh,
 			check: func(t *testing.T, model *tuiModel) {
@@ -382,7 +383,7 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:         keyEvent{code: keyEnter},
+			key:         keys.Event{Code: keys.Enter},
 			wantKind:    tuiActionCommand,
 			wantCommand: "/skill:",
 			wantText:    "/skill:review check tests",
@@ -399,7 +400,7 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key: keyEvent{code: keyEnter},
+			key: keys.Event{Code: keys.Enter},
 			check: func(t *testing.T, model *tuiModel) {
 				if len(model.history) != 1 || len(model.blocks) != 1 || model.blocks[0].kind != blockError || model.activity.kind != activityError {
 					t.Fatalf("history=%q blocks=%+v activity=%+v", model.history, model.blocks, model.activity)
@@ -411,7 +412,7 @@ func TestReduceKeyActions(t *testing.T) {
 			setup: func(t *testing.T, model *tuiModel) {
 				model.running = true
 			},
-			key: keyEvent{code: keyText, text: "draft"},
+			key: keys.Event{Code: keys.Text, Text: "draft"},
 			check: func(t *testing.T, model *tuiModel) {
 				if model.inputText() != "draft" {
 					t.Fatalf("input = %q", model.inputText())
@@ -426,7 +427,7 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:      keyEvent{code: keyEnter},
+			key:      keys.Event{Code: keys.Enter},
 			wantKind: tuiActionSteer,
 			wantText: "steer",
 			check: func(t *testing.T, model *tuiModel) {
@@ -443,7 +444,7 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:      keyEvent{code: keyEnter},
+			key:      keys.Event{Code: keys.Enter},
 			wantKind: tuiActionCommand, wantCommand: "/help",
 			check: func(t *testing.T, model *tuiModel) {
 				if len(model.input) != 0 || len(model.history) != 1 {
@@ -459,7 +460,7 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:      keyEvent{code: keyEnter},
+			key:      keys.Event{Code: keys.Enter},
 			wantKind: tuiActionCommand, wantCommand: "/goal",
 			check: func(t *testing.T, model *tuiModel) {
 				if len(model.input) != 0 || len(model.history) != 1 {
@@ -475,7 +476,7 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:         keyEvent{code: keyEnter},
+			key:         keys.Event{Code: keys.Enter},
 			wantKind:    tuiActionCommand,
 			wantCommand: "/goal",
 			wantText:    "finish migration",
@@ -493,7 +494,7 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:         keyEvent{code: keyEnter},
+			key:         keys.Event{Code: keys.Enter},
 			wantKind:    tuiActionCommand,
 			wantCommand: "/goal",
 			wantText:    "clear",
@@ -511,7 +512,7 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key: keyEvent{code: keyEnter},
+			key: keys.Event{Code: keys.Enter},
 			check: func(t *testing.T, model *tuiModel) {
 				if model.inputText() != "/new" || model.activity.kind != activityError {
 					t.Fatalf("input=%q activity=%+v", model.inputText(), model.activity)
@@ -530,7 +531,7 @@ func TestReduceKeyActions(t *testing.T) {
 				model.running = true
 				model.activity = activity{kind: activityThinking}
 			},
-			key:       keyEvent{code: keyShiftTab},
+			key:       keys.Event{Code: keys.ShiftTab},
 			wantKind:  tuiActionSetThinking,
 			wantLevel: agent.ThinkingHigh,
 			check: func(t *testing.T, model *tuiModel) {
@@ -541,7 +542,7 @@ func TestReduceKeyActions(t *testing.T) {
 		},
 		{
 			name:     "dequeue",
-			key:      keyEvent{code: keyAltUp},
+			key:      keys.Event{Code: keys.AltUp},
 			wantKind: tuiActionDequeue,
 		},
 	}
@@ -590,7 +591,7 @@ func TestImageTerminatesSlashCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	action, err := reduceKey(model, keyEvent{code: keyEnter})
+	action, err := reduceKey(model, keys.Event{Code: keys.Enter})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -605,7 +606,7 @@ func TestImageAttachmentCanBeSubmittedWithoutText(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	action, err := reduceKey(model, keyEvent{code: keyEnter})
+	action, err := reduceKey(model, keys.Event{Code: keys.Enter})
 	if err != nil {
 		t.Fatal(err)
 	}

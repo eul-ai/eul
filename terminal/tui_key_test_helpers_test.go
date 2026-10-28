@@ -6,9 +6,10 @@ import (
 	"slices"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/terminal/keys"
 )
 
-func reduceKey(model *tuiModel, key keyEvent) (tuiAction, error) {
+func reduceKey(model *tuiModel, key keys.Event) (tuiAction, error) {
 	return handleKeyInput(model, key, buildTerminalFrame(model))
 }
 
@@ -21,7 +22,7 @@ func handleKey(
 	ctx context.Context,
 	model *tuiModel,
 	engine fakeEngineAPI,
-	key keyEvent,
+	key keys.Event,
 	messages chan<- engineMessage,
 	stopped <-chan struct{},
 	turnCancel *context.CancelFunc,
@@ -52,4 +53,15 @@ func handleKey(
 	exit, err := controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: key})
 	*turnCancel = controller.turnCancel
 	return exit, err
+}
+
+func handleModelKey(model *tuiModel, key keys.Event, setThinkingLevel func(agent.ThinkingLevel) error) (bool, error) {
+	messages := make(chan engineMessage, 1)
+	stopped := make(chan struct{})
+	defer close(stopped)
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: Controls{SetThinkingLevel: setThinkingLevel}, output: io.Discard,
+		engineMessages: messages, stopped: stopped,
+	}
+	return controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: key})
 }
