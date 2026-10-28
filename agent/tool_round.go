@@ -27,23 +27,7 @@ func (t *turn) executeTools(calls []ToolCall) error {
 }
 
 func (t *turn) executeToolRound(calls []ToolCall) ([]Input, error) {
-	if err := t.ctx.Err(); err != nil {
-		_ = t.tools.closeRemaining(err)
-		return unexecutedToolInputs(calls, err), err
-	}
-
-	for _, call := range calls {
-		if err := t.ctx.Err(); err != nil {
-			_ = t.tools.closeRemaining(err)
-			return unexecutedToolInputs(calls, err), err
-		}
-		if err := t.tools.beginExecution(call); err != nil {
-			_ = t.tools.closeRemaining(err)
-			return unexecutedToolInputs(calls, err), err
-		}
-	}
-
-	if err := t.ctx.Err(); err != nil {
+	if err := t.beginToolRound(calls); err != nil {
 		_ = t.tools.closeRemaining(err)
 		return unexecutedToolInputs(calls, err), err
 	}
@@ -56,15 +40,7 @@ func (t *turn) executeToolRound(calls []ToolCall) ([]Input, error) {
 	completions := make(chan toolCompletion, len(calls))
 	for index, call := range calls {
 		go func() {
-			toolCtx := context.WithValue(roundCtx, steeringSignalKey{}, steering)
-			result, err := executeTool(toolCtx, t.engine.tools, call, t.tools.update(call))
-			if updateErr := t.tools.updateError(call); updateErr != nil {
-				result = failedToolResult(call, result, updateErr)
-				err = updateErr
-			}
-			if err != nil {
-				result = failedToolResult(call, result, err)
-			}
+			result, err := t.executeTool(context.WithValue(roundCtx, steeringSignalKey{}, steering), call)
 			completions <- toolCompletion{index: index, call: call, result: result, err: err}
 		}()
 	}
@@ -108,29 +84,38 @@ func unexecutedToolInputs(calls []ToolCall, cause error) []Input {
 	return inputs
 }
 
-func failedToolResult(call ToolCall, result ToolResult, cause error) ToolResult {
+func (t *turn) beginToolRound(calls []ToolCall) error {
+	for _, call := range calls {
+		if err := t.tools.beginExecution(call); err != nil {
+			return err
+		}
+	}
+	return t.ctx.Err()
+}
+
+func (t *turn) executeTool(ctx context.Context, call ToolCall) (ToolResult, error) {
+	result, err := t.engine.tools.Execute(ctx, call, t.tools.update(call))
+	switch {
+	case err == nil:
+	case ctx.Err() != nil:
+		err = ctx.Err()
+		result = failedToolResult(result, err)
+	default:
+		result, err = ToolResult{Output: err.Error(), IsError: true}, nil
+	}
+	if updateErr := t.tools.updateError(call); updateErr != nil {
+		result, err = failedToolResult(result, updateErr), updateErr
+	}
+
 	result.CallID = call.ID
 	result.Tool = call.Name
+	return result, err
+}
+
+func failedToolResult(result ToolResult, cause error) ToolResult {
 	if result.Output == "" {
 		result.Output = cause.Error()
 	}
 	result.IsError = true
 	return result
-}
-
-func executeTool(ctx context.Context, tools Toolbox, call ToolCall, updates ToolUpdateSink) (ToolResult, error) {
-	result, err := tools.Execute(ctx, call, updates)
-	result.CallID = call.ID
-	result.Tool = call.Name
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			if result.Output == "" {
-				result.Output = ctxErr.Error()
-			}
-			result.IsError = true
-			return result, ctxErr
-		}
-		result = ToolResult{CallID: call.ID, Tool: call.Name, Output: err.Error(), IsError: true}
-	}
-	return result, nil
 }
