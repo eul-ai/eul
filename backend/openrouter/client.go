@@ -42,12 +42,7 @@ func (c *client) Generate(ctx context.Context, request agent.Request, observer a
 }
 
 func (c *client) ShouldCompact(request agent.Request, usage agent.Usage) bool {
-	return compaction.ShouldCompact(
-		request,
-		usage,
-		c.metadata(request.Model).contextWindow,
-		c.responses.ShouldCompactState(request),
-	)
+	return compaction.ShouldCompact(request, usage, c.metadata(request.Model).contextWindow)
 }
 
 func (c *client) Compact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {

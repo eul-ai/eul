@@ -15,7 +15,7 @@ type requestBuild struct {
 }
 
 func (client *Client) buildGenerationRequest(request agent.Request) (requestBuild, error) {
-	build, err := client.buildGenerationWireRequest(request)
+	build, err := client.buildWireRequest(request)
 	if err != nil {
 		return requestBuild{}, fmt.Errorf("build request: %w", err)
 	}
@@ -40,19 +40,8 @@ func (client *Client) buildSummaryRequest(request agent.Request) (requestBuild, 
 	return build, nil
 }
 
-func (client *Client) buildGenerationWireRequest(request agent.Request) (requestBuild, error) {
-	build, err := client.buildWireRequest(request)
-	if err != nil {
-		return requestBuild{}, err
-	}
-	if _, err := continuation.Encode(continuation.GenerationBytes, build.history, build.newItems); err != nil {
-		return requestBuild{}, err
-	}
-	return build, nil
-}
-
 func (client *Client) buildWireRequest(request agent.Request) (requestBuild, error) {
-	history, err := continuation.Decode(request.State, continuation.MaximumBytes)
+	history, err := continuation.Decode(request.State)
 	if err != nil {
 		return requestBuild{}, err
 	}

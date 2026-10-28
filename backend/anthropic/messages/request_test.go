@@ -9,7 +9,7 @@ import (
 )
 
 func TestBuildRequestEncodesAnthropicInputs(t *testing.T) {
-	build, err := buildGenerationRequest(agent.Request{
+	build, err := buildWireRequest(agent.Request{
 		Model:        "model",
 		Instructions: "instructions",
 		Inputs: []agent.Input{

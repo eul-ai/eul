@@ -13,19 +13,8 @@ type requestBuild struct {
 	newMessages []json.RawMessage
 }
 
-func buildGenerationRequest(request agent.Request) (requestBuild, error) {
-	build, err := buildWireRequest(request)
-	if err != nil {
-		return requestBuild{}, err
-	}
-	if _, err := continuation.Encode(continuation.GenerationBytes, build.history, build.newMessages); err != nil {
-		return requestBuild{}, err
-	}
-	return build, nil
-}
-
 func buildWireRequest(request agent.Request) (requestBuild, error) {
-	history, err := continuation.Decode(request.State, continuation.MaximumBytes)
+	history, err := continuation.Decode(request.State)
 	if err != nil {
 		return requestBuild{}, err
 	}

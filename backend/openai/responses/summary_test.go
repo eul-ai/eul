@@ -40,7 +40,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 	}))
 
 	client := newTestClient(t, "key", Options{HTTPClient: server})
-	state, err := continuation.Encode(continuation.MaximumBytes, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
+	state, err := continuation.Encode([]json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 		t.Fatalf("usage = %+v", compacted.Usage)
 	}
 
-	items, err := continuation.Decode(compacted.State, continuation.MaximumBytes)
+	items, err := continuation.Decode(compacted.State)
 	if err != nil || len(items) != 2 {
 		t.Fatalf("summary state items = %d, error = %v", len(items), err)
 	}
@@ -77,7 +77,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 		t.Fatalf("continuation message = %s, error = %v", items[1], err)
 	}
 
-	continued, err := client.buildGenerationWireRequest(agent.Request{State: compacted.State})
+	continued, err := client.buildWireRequest(agent.Request{State: compacted.State})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestManualSemanticCompactionPreservesTurnBoundary(t *testing.T) {
 	server := responseServer(t, http.StatusOK, `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"concise handoff"}]}]}`)
 
 	client := newTestClient(t, "key", Options{HTTPClient: server})
-	state, err := continuation.Encode(continuation.MaximumBytes, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
+	state, err := continuation.Encode([]json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestManualSemanticCompactionPreservesTurnBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	continued, err := client.buildGenerationWireRequest(agent.Request{
+	continued, err := client.buildWireRequest(agent.Request{
 		State:  compacted.State,
 		Inputs: []agent.Input{agent.NewTextInput("new request")},
 	})

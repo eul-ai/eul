@@ -14,7 +14,6 @@ import (
 
 type protocolClient interface {
 	Generate(context.Context, agent.Request, agent.StreamObserver) (agent.Response, error)
-	ShouldCompactState(agent.Request) bool
 	SemanticCompact(context.Context, agent.Request) (agent.CompactResponse, error)
 }
 
@@ -52,16 +51,11 @@ func (*provider) RetryGeneration(err error, failedAttempts int) (time.Duration, 
 }
 
 func (provider *provider) ShouldCompact(request agent.Request, usage agent.Usage) bool {
-	info, selected, err := provider.modelClient(request.Model)
+	info, _, err := provider.modelClient(request.Model)
 	if err != nil {
 		return false
 	}
-	return compaction.ShouldCompact(
-		request,
-		usage,
-		info.contextWindow,
-		selected.ShouldCompactState(request),
-	)
+	return compaction.ShouldCompact(request, usage, info.contextWindow)
 }
 
 func (provider *provider) Compact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {

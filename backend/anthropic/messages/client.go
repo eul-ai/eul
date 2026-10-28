@@ -54,26 +54,12 @@ func New(options Options) *Client {
 	}
 }
 
-func (client *Client) ShouldCompactState(request agent.Request) bool {
-	if len(request.State) == 0 {
-		return false
-	}
-	if _, err := buildGenerationRequest(request); err == nil {
-		return false
-	}
-
-	withoutState := request
-	withoutState.State = nil
-	_, err := buildGenerationRequest(withoutState)
-	return err == nil
-}
-
 func (client *Client) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.Response{}, err
 	}
 
-	build, err := buildGenerationRequest(request)
+	build, err := buildWireRequest(request)
 	if err != nil {
 		return agent.Response{}, client.errorf("build request: %v", err)
 	}
@@ -87,7 +73,7 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 	}
 
 	output := []json.RawMessage{result.assistant}
-	state, err := continuation.Encode(continuation.MaximumBytes, build.history, build.newMessages, output)
+	state, err := continuation.Encode(build.history, build.newMessages, output)
 	if err != nil {
 		return agent.Response{}, client.errorf("%v", err)
 	}
@@ -141,7 +127,7 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 		}
 		messages = append(messages, continuation)
 	}
-	state, err := continuation.Encode(continuation.GenerationBytes, messages)
+	state, err := continuation.Encode(messages)
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("encode summary state: %v", err)
 	}

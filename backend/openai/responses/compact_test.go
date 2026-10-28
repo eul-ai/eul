@@ -90,7 +90,7 @@ func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
 	}))
 
 	client := newTestClient(t, token, Options{HTTPClient: server})
-	state, err := continuation.Encode(continuation.MaximumBytes, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
+	state, err := continuation.Encode([]json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
 	if compacted.Usage != (agent.Usage{InputTokens: 100, OutputTokens: 20, TotalTokens: 120}) {
 		t.Fatalf("compact usage = %+v", compacted.Usage)
 	}
-	items, err := continuation.Decode(compacted.State, continuation.MaximumBytes)
+	items, err := continuation.Decode(compacted.State)
 	if err != nil || len(items) != 2 {
 		t.Fatalf("compact state items = %d, error = %v", len(items), err)
 	}

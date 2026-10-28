@@ -5,23 +5,16 @@ import (
 	"fmt"
 )
 
-const (
-	MaximumBytes    = 16 * 1024 * 1024
-	GenerationBytes = MaximumBytes - 1024*1024
-	version         = 1
-)
+const version = 1
 
 type state struct {
 	Version int               `json:"version"`
 	Items   []json.RawMessage `json:"items"`
 }
 
-func Decode(encoded []byte, maximum int) ([]json.RawMessage, error) {
+func Decode(encoded []byte) ([]json.RawMessage, error) {
 	if len(encoded) == 0 {
 		return nil, nil
-	}
-	if len(encoded) > maximum {
-		return nil, fmt.Errorf("continuation state exceeds %d bytes", maximum)
 	}
 
 	var decoded state
@@ -34,15 +27,11 @@ func Decode(encoded []byte, maximum int) ([]json.RawMessage, error) {
 	return decoded.Items, nil
 }
 
-func Encode(maximum int, groups ...[]json.RawMessage) ([]byte, error) {
+func Encode(groups ...[]json.RawMessage) ([]byte, error) {
 	encoded, err := json.Marshal(state{Version: version, Items: join(groups...)})
 	if err != nil {
 		return nil, fmt.Errorf("encode continuation state: %w", err)
 	}
-	if len(encoded) > maximum {
-		return nil, fmt.Errorf("continuation state exceeds %d bytes", maximum)
-	}
-
 	return encoded, nil
 }
 

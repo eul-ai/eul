@@ -11,12 +11,12 @@ import (
 
 func TestBuildRequestEncodesInputsToolsAndState(t *testing.T) {
 	stateMessage := json.RawMessage(`{"role":"assistant","content":"earlier"}`)
-	state, err := continuation.Encode(continuation.MaximumBytes, []json.RawMessage{stateMessage})
+	state, err := continuation.Encode([]json.RawMessage{stateMessage})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	build, err := buildGenerationRequest(agent.Request{
+	build, err := buildWireRequest(agent.Request{
 		Model:        "model",
 		Instructions: "instructions",
 		State:        state,

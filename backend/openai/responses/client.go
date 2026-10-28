@@ -53,20 +53,6 @@ func New(options Options) *Client {
 	}
 }
 
-func (client *Client) ShouldCompactState(request agent.Request) bool {
-	if len(request.State) == 0 {
-		return false
-	}
-	if _, err := client.buildGenerationWireRequest(request); err == nil {
-		return false
-	}
-
-	withoutState := request
-	withoutState.State = nil
-	_, err := client.buildGenerationWireRequest(withoutState)
-	return err == nil
-}
-
 func (client *Client) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.Response{}, err
@@ -87,7 +73,7 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 		return agent.Response{}, client.wrapf(err, "%v", err)
 	}
 
-	state, err := continuation.Encode(continuation.MaximumBytes, build.history, build.newItems, stream.response.Output)
+	state, err := continuation.Encode(build.history, build.newItems, stream.response.Output)
 	if err != nil {
 		return agent.Response{}, client.errorf("%v", err)
 	}

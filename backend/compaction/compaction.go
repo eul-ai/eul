@@ -19,6 +19,7 @@ const (
 	compactionThreshold = 90
 	imageInputTokens    = 1_024
 	bytesPerToken       = 4
+	maxStateBytes       = 16 * 1024 * 1024
 )
 
 func Prepare(request agent.Request) (agent.Request, bool) {
@@ -45,11 +46,11 @@ func FormatSummary(summary string) string {
 	return summaryIntroduction + "\n\n" + summary
 }
 
-func ShouldCompact(request agent.Request, usage agent.Usage, contextWindow int64, stateTooLarge bool) bool {
+func ShouldCompact(request agent.Request, usage agent.Usage, contextWindow int64) bool {
 	if len(request.State) == 0 {
 		return false
 	}
-	if stateTooLarge {
+	if len(request.State) > maxStateBytes {
 		return true
 	}
 	if usage.TotalTokens <= 0 || contextWindow <= 0 {

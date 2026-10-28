@@ -10,12 +10,12 @@ import (
 )
 
 func TestBuildCreateRequest(t *testing.T) {
-	state, err := continuation.Encode(continuation.MaximumBytes, []json.RawMessage{json.RawMessage(`{"type":"reasoning","encrypted_content":"opaque"}`)})
+	state, err := continuation.Encode([]json.RawMessage{json.RawMessage(`{"type":"reasoning","encrypted_content":"opaque"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	build, err := testClient().buildGenerationWireRequest(agent.Request{
+	build, err := testClient().buildWireRequest(agent.Request{
 		Model:    "model",
 		FastMode: true,
 		State:    state,
@@ -74,15 +74,15 @@ func TestEncodeInboxInputAsUserMessageByDefault(t *testing.T) {
 func TestInboxInputSurvivesContinuationState(t *testing.T) {
 	client := testClient()
 	client.encodeInboxAsAgentMessage = true
-	build, err := client.buildGenerationWireRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}}})
+	build, err := client.buildWireRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := continuation.Encode(continuation.MaximumBytes, build.newItems)
+	state, err := continuation.Encode(build.newItems)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored, err := continuation.Decode(state, continuation.MaximumBytes)
+	restored, err := continuation.Decode(state)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestBuildCreateRequestRejectsInvalidInputKinds(t *testing.T) {
 	for _, input := range []agent.Input{
 		{Kind: "unknown", Text: "value"},
 	} {
-		if _, err := testClient().buildGenerationWireRequest(agent.Request{Inputs: []agent.Input{input}}); err == nil {
+		if _, err := testClient().buildWireRequest(agent.Request{Inputs: []agent.Input{input}}); err == nil {
 			t.Fatalf("input %+v was accepted", input)
 		}
 	}
@@ -139,15 +139,15 @@ func TestOrderedInputContentSurvivesContinuationState(t *testing.T) {
 		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("one")}},
 		{Kind: agent.ContentPartText, Text: "after"},
 	}
-	build, err := testClient().buildGenerationWireRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputUser, Content: parts}}})
+	build, err := testClient().buildWireRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputUser, Content: parts}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := continuation.Encode(continuation.MaximumBytes, build.newItems)
+	state, err := continuation.Encode(build.newItems)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored, err := continuation.Decode(state, continuation.MaximumBytes)
+	restored, err := continuation.Decode(state)
 	if err != nil {
 		t.Fatal(err)
 	}

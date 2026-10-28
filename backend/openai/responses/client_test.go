@@ -152,7 +152,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	if len(first.ToolCalls) != 2 || first.ToolCalls[0].ID != "call_read" || first.ToolCalls[0].Name != "read" || string(first.ToolCalls[0].Arguments) != `{"path":"file.go"}` || first.ToolCalls[1].ID != "call_bash" {
 		t.Fatalf("first tool calls = %+v", first.ToolCalls)
 	}
-	firstState, err := continuation.Decode(first.State, continuation.MaximumBytes)
+	firstState, err := continuation.Decode(first.State)
 	if err != nil || len(firstState) != 6 {
 		t.Fatalf("first state items = %d, error = %v", len(firstState), err)
 	}

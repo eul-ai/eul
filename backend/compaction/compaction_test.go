@@ -15,11 +15,10 @@ func TestShouldCompact(t *testing.T) {
 		request       agent.Request
 		usage         agent.Usage
 		contextWindow int64
-		stateTooLarge bool
 		want          bool
 	}{
-		{name: "no state", usage: agent.Usage{TotalTokens: 900}, contextWindow: 1_000, stateTooLarge: true},
-		{name: "state too large", request: agent.Request{State: state}, stateTooLarge: true, want: true},
+		{name: "no state", usage: agent.Usage{TotalTokens: 900}, contextWindow: 1_000},
+		{name: "state too large", request: agent.Request{State: make([]byte, maxStateBytes+1)}, want: true},
 		{name: "missing usage", request: agent.Request{State: state}, contextWindow: 1_000},
 		{name: "at threshold", request: agent.Request{State: state}, usage: agent.Usage{TotalTokens: 900}, contextWindow: 1_000, want: true},
 		{name: "pending text", request: agent.Request{State: state, Inputs: []agent.Input{agent.NewTextInput("12345")}}, usage: agent.Usage{TotalTokens: 898}, contextWindow: 1_000, want: true},
@@ -27,7 +26,7 @@ func TestShouldCompact(t *testing.T) {
 		{name: "pending image", request: agent.Request{State: state, Inputs: []agent.Input{image}}, usage: agent.Usage{TotalTokens: 100}, contextWindow: 1_248, want: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := ShouldCompact(test.request, test.usage, test.contextWindow, test.stateTooLarge); got != test.want {
+			if got := ShouldCompact(test.request, test.usage, test.contextWindow); got != test.want {
 				t.Fatalf("ShouldCompact() = %t, want %t", got, test.want)
 			}
 		})

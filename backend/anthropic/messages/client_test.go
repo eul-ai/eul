@@ -153,7 +153,7 @@ func TestSemanticCompactStoresValidAnthropicExchange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	messages, err := continuation.Decode(compacted.State, continuation.MaximumBytes)
+	messages, err := continuation.Decode(compacted.State)
 	if err != nil {
 		t.Fatal(err)
 	}
