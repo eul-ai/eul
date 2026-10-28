@@ -11,9 +11,9 @@ import (
 )
 
 func TestSubagentBridgeFormatsBoundsAndAcknowledgesCompletions(t *testing.T) {
-	manager := subagent.NewManager(subagent.Config{Runner: subagent.RunFunc(func(context.Context, subagent.RunRequest, func(subagent.Progress)) (agent.RunResult, error) {
-		return agent.RunResult{Text: strings.Repeat("x", 32*1024)}, nil
-	})})
+	manager := subagent.NewManager(func(context.Context, subagent.Task, func(agent.Usage)) (string, error) {
+		return strings.Repeat("x", 32*1024), nil
+	})
 	defer manager.Close()
 	if _, err := manager.Start([]subagent.Task{
 		{Description: "first", Prompt: "first"},
@@ -50,10 +50,10 @@ func TestSubagentBridgeFormatsBoundsAndAcknowledgesCompletions(t *testing.T) {
 }
 
 func TestSubagentBridgeOwnsActiveInstructions(t *testing.T) {
-	manager := subagent.NewManager(subagent.Config{Runner: subagent.RunFunc(func(ctx context.Context, _ subagent.RunRequest, _ func(subagent.Progress)) (agent.RunResult, error) {
+	manager := subagent.NewManager(func(ctx context.Context, _ subagent.Task, _ func(agent.Usage)) (string, error) {
 		<-ctx.Done()
-		return agent.RunResult{}, ctx.Err()
-	})})
+		return "", ctx.Err()
+	})
 	defer manager.Close()
 	if _, err := manager.Start([]subagent.Task{{Description: "inspect scheduler", Prompt: "inspect"}}); err != nil {
 		t.Fatal(err)

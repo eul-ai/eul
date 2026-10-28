@@ -63,7 +63,7 @@ func (bridge *subagentBridge) additionalInstructions() string {
 	var activeContext strings.Builder
 	activeContext.WriteString("Active subagents:\n")
 	for _, job := range active {
-		fmt.Fprintf(&activeContext, "- %s: %s (%s)\n", job.ID, strings.TrimSpace(job.Task), job.State)
+		fmt.Fprintf(&activeContext, "- %s: %s (%s)\n", job.ID, job.Description, job.State)
 	}
 	fmt.Fprintf(&activeContext, "Do not finish while required delegated work is still active. Continue independent work, or call %s when the next step depends on these results.", bridge.waitToolName)
 	return instructions + "\n\n" + activeContext.String()

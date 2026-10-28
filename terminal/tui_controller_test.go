@@ -1116,28 +1116,27 @@ func TestTUIControllerAppliesSubagentStatus(t *testing.T) {
 	_, err := controller.transition(context.Background(), tuiEvent{
 		kind: tuiEventSubagentStatus,
 		subagentStatus: subagent.Status{
-			Running: 2,
 			Active: []subagent.JobStatus{
-				{ID: "subagent-1\nignored", Task: "inspect\nignored", State: subagent.StateRunning},
+				{ID: "subagent-1\nignored", Description: "inspect\nignored", State: subagent.StateRunning},
 			},
 			PendingCompletions: []subagent.Completion{
-				{SubagentID: "subagent-2", Task: "finished", Status: subagent.StateComplete},
-				{SubagentID: "subagent-3", Task: "failed", Status: subagent.StateFailed},
+				{SubagentID: "subagent-2", Description: "finished", Status: subagent.StateComplete},
+				{SubagentID: "subagent-3", Description: "failed", Status: subagent.StateFailed},
 			},
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if model.subagentStatus.Running != 2 || len(model.subagentStatus.PendingCompletions) != 2 || len(model.subagentStatus.Active) != 1 || model.subagentStatus.Active[0].ID != "subagent-1 ignored" || model.subagentStatus.Active[0].Task != "inspect ignored" || model.subagentStatus.PendingCompletions[0].Status != subagent.StateComplete || model.subagentStatus.PendingCompletions[1].Status != subagent.StateFailed || !controller.dirty {
+	if len(model.subagentStatus.PendingCompletions) != 2 || len(model.subagentStatus.Active) != 1 || model.subagentStatus.Active[0].ID != "subagent-1 ignored" || model.subagentStatus.Active[0].Description != "inspect ignored" || model.subagentStatus.PendingCompletions[0].Status != subagent.StateComplete || model.subagentStatus.PendingCompletions[1].Status != subagent.StateFailed || !controller.dirty {
 		t.Fatalf("status=%+v dirty=%v", model.subagentStatus, controller.dirty)
 	}
 
 	_, err = controller.transition(context.Background(), tuiEvent{
 		kind:           tuiEventSubagentStatus,
-		subagentStatus: subagent.Status{Running: -1, PendingCompletions: nil},
+		subagentStatus: subagent.Status{},
 	})
-	if err != nil || model.subagentStatus.Running != 0 || len(model.subagentStatus.PendingCompletions) != 0 || len(model.subagentStatus.Active) != 0 {
+	if err != nil || len(model.subagentStatus.PendingCompletions) != 0 || len(model.subagentStatus.Active) != 0 {
 		t.Fatalf("sanitized status=%+v error=%v", model.subagentStatus, err)
 	}
 }
@@ -1220,7 +1219,7 @@ func TestTUIControllerEventDirtiness(t *testing.T) {
 		{
 			name: "running subagent spinner redraws",
 			prepare: func(model *tuiModel) {
-				model.subagentStatus = subagent.Status{Running: 1, Active: []subagent.JobStatus{{State: subagent.StateRunning}}}
+				model.subagentStatus = subagent.Status{Active: []subagent.JobStatus{{State: subagent.StateRunning}}}
 			},
 			event:     tuiEvent{kind: tuiEventSpinner},
 			wantDirty: true,

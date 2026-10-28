@@ -23,38 +23,39 @@ func (models modelSet) forProfile(profile subagent.Profile) string {
 	}
 }
 
-func runChildAgent(
-	ctx context.Context,
-	backendRuntime backend.Runtime,
-	newToolset toolsetFactory,
-	authorizeNetwork tool.NetworkAuthorizer,
-	config resolvedConfig,
-	modelProfile subagent.Profile,
-	thinkingLevel agent.ThinkingLevel,
-	fastMode bool,
-	task string,
-	update func(subagent.Progress),
-) (agent.RunResult, error) {
-	provider, err := backendRuntime.NewProvider()
+type childRunner struct {
+	backendRuntime   backend.Runtime
+	newToolset       toolsetFactory
+	authorizeNetwork tool.NetworkAuthorizer
+	config           resolvedConfig
+	models           map[subagent.Profile]backend.ModelMetadata
+	settings         *agent.Settings
+}
+
+func (runner childRunner) run(ctx context.Context, task subagent.Task, progress func(agent.Usage)) (string, error) {
+	provider, err := runner.backendRuntime.NewProvider()
 	if err != nil {
-		return agent.RunResult{}, fmt.Errorf("configure subagent provider: %w", err)
+		return "", fmt.Errorf("configure subagent provider: %w", err)
 	}
 
-	registry, err := newToolset(config.cwd, subagentToolAccess, config.noSandbox, authorizeNetwork)
+	registry, err := runner.newToolset(runner.config.cwd, subagentToolAccess, runner.config.noSandbox, runner.authorizeNetwork)
 	if err != nil {
-		return agent.RunResult{}, fmt.Errorf("configure subagent tools: %w", err)
+		return "", fmt.Errorf("configure subagent tools: %w", err)
 	}
-	child := agent.New(provider, registry, childEngineOptions(config, modelProfile, thinkingLevel, fastMode))
-	var liveUsage agent.Usage
-	result, runErr := child.Run(ctx, []agent.ContentPart{{Kind: agent.ContentPartText, Text: task}}, func(event agent.Event) error {
+	_, fastMode := runner.settings.Snapshot()
+	fastMode = fastMode && runner.models[task.ModelProfile].FastMode
+	child := agent.New(provider, registry, childEngineOptions(runner.config, task.ModelProfile, task.ThinkingLevel, fastMode))
+
+	var usage agent.Usage
+	result, err := child.Run(ctx, []agent.ContentPart{{Kind: agent.ContentPartText, Text: task.Prompt}}, func(event agent.Event) error {
 		switch event.Kind {
 		case agent.EventCompactionEnd, agent.EventContextUsage:
-			liveUsage.InputTokens += event.Usage.InputTokens
-			liveUsage.OutputTokens += event.Usage.OutputTokens
-			liveUsage.TotalTokens += event.Usage.TotalTokens
-			update(subagent.Progress{Usage: liveUsage})
+			usage.InputTokens += event.Usage.InputTokens
+			usage.OutputTokens += event.Usage.OutputTokens
+			usage.TotalTokens += event.Usage.TotalTokens
+			progress(usage)
 		}
 		return nil
 	})
-	return result, runErr
+	return result.Text, err
 }

@@ -254,18 +254,22 @@ func (provider steeringWaitProvider) Generate(ctx context.Context, request agent
 func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) {
 	release := make(chan struct{})
 	childDone := make(chan struct{})
-	manager := subagent.NewManager(subagent.Config{Runner: subagent.RunFunc(func(ctx context.Context, _ subagent.RunRequest, _ func(subagent.Progress)) (agent.RunResult, error) {
+	manager := subagent.NewManager(func(ctx context.Context, _ subagent.Task, _ func(agent.Usage)) (string, error) {
 		defer close(childDone)
 		select {
 		case <-ctx.Done():
-			return agent.RunResult{}, ctx.Err()
+			return "", ctx.Err()
 		case <-release:
-			return agent.RunResult{Text: "done"}, nil
+			return "done", nil
 		}
-	})})
+	})
 	defer manager.Close()
 
-	registry, err := tool.NewRegistry([]tool.Tool{tool.NewLaunchSubagents(manager), tool.NewWaitForSubagent(manager)})
+	thinkingLevels := map[subagent.Profile][]agent.ThinkingLevel{subagent.ProfileMain: agent.ThinkingLevels()}
+	registry, err := tool.NewRegistry([]tool.Tool{
+		tool.NewLaunchSubagents(manager, thinkingLevels, agent.NewSettings(agent.ThinkingMedium, false)),
+		tool.NewWaitForSubagent(manager),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

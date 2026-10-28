@@ -29,7 +29,6 @@ type checkpointData struct {
 
 type activeCheckpoint struct {
 	ID            string              `json:"id"`
-	Order         uint64              `json:"order"`
 	Description   string              `json:"description"`
 	ModelProfile  Profile             `json:"model_profile"`
 	ThinkingLevel agent.ThinkingLevel `json:"thinking_level"`
@@ -81,11 +80,8 @@ func validateCheckpointData(data checkpointData) error {
 	}
 	seenJobs := make(map[string]struct{}, len(data.Active)+len(data.Inbox))
 	for _, active := range data.Active {
-		if strings.TrimSpace(active.ID) == "" || active.Order == 0 || strings.TrimSpace(active.Description) == "" || len(active.Description) > maxTaskDescriptionBytes {
+		if strings.TrimSpace(active.ID) == "" || strings.TrimSpace(active.Description) == "" || len(active.Description) > maxTaskDescriptionBytes {
 			return errors.New("subagent: checkpoint contains invalid active job")
-		}
-		if active.Order > data.NextID {
-			return errors.New("subagent: active job exceeds ID high-water mark")
 		}
 		if _, exists := seenJobs[active.ID]; exists {
 			return fmt.Errorf("subagent: duplicate active job %q", active.ID)
@@ -93,8 +89,8 @@ func validateCheckpointData(data checkpointData) error {
 		if !active.ModelProfile.valid() {
 			return fmt.Errorf("subagent: invalid model profile %q", active.ModelProfile)
 		}
-		if err := validateThinkingLevel(active.ThinkingLevel); err != nil {
-			return fmt.Errorf("subagent: invalid active thinking level: %w", err)
+		if !active.ThinkingLevel.Valid() {
+			return fmt.Errorf("subagent: invalid active thinking level %q", active.ThinkingLevel)
 		}
 		seenJobs[active.ID] = struct{}{}
 		switch active.State {
@@ -136,15 +132,13 @@ func (m *Manager) Checkpoint() Checkpoint {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	jobs := m.sortedJobsLocked()
-	active := make([]activeCheckpoint, len(jobs))
-	for index, job := range jobs {
+	active := make([]activeCheckpoint, len(m.active))
+	for index, job := range m.active {
 		active[index] = activeCheckpoint{
 			ID:            job.id,
-			Order:         job.order,
-			Description:   job.description,
-			ModelProfile:  job.modelProfile,
-			ThinkingLevel: job.thinkingLevel,
+			Description:   job.task.Description,
+			ModelProfile:  job.task.ModelProfile,
+			ThinkingLevel: job.task.ThinkingLevel,
 			State:         job.state,
 			Started:       job.started,
 		}
@@ -179,13 +173,13 @@ func (m *Manager) RestoreCheckpoint(checkpoint Checkpoint) error {
 	for _, active := range data.Active {
 		m.nextMessageID++
 		m.inbox = append(m.inbox, boundCompletion(Completion{
-			MessageID:  m.nextMessageID,
-			SubagentID: active.ID,
-			Task:       active.Description,
-			Status:     StateInterrupted,
-			Started:    active.Started,
-			Finished:   time.Now(),
-			Result:     "Subagent execution was interrupted when the previous session ended.",
+			MessageID:   m.nextMessageID,
+			SubagentID:  active.ID,
+			Description: active.Description,
+			Status:      StateInterrupted,
+			Started:     active.Started,
+			Finished:    time.Now(),
+			Result:      "Subagent execution was interrupted when the previous session ended.",
 		}))
 	}
 	m.publishLocked()

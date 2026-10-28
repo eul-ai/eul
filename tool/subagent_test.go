@@ -12,31 +12,26 @@ import (
 	"github.com/eul-ai/eul/subagent"
 )
 
-func TestSubagentLaunchUsesPerTaskPolicyDefaultsAndSurfacesManagerValidation(t *testing.T) {
-	requests := make(chan subagent.RunRequest, 2)
-	manager := subagent.NewManager(subagent.Config{
-		Runner: subagent.RunFunc(func(_ context.Context, request subagent.RunRequest, _ func(subagent.Progress)) (agent.RunResult, error) {
-			requests <- request
-			return agent.RunResult{}, nil
-		}),
-		SupportedThinkingLevels: func(subagent.Profile) []agent.ThinkingLevel {
-			return []agent.ThinkingLevel{agent.ThinkingMedium}
-		},
+func TestSubagentLaunchUsesPerTaskPolicyDefaultsAndValidation(t *testing.T) {
+	requests := make(chan subagent.Task, 2)
+	manager := subagent.NewManager(func(_ context.Context, task subagent.Task, _ func(agent.Usage)) (string, error) {
+		requests <- task
+		return "", nil
 	})
 	defer manager.Close()
-	launch := NewLaunchSubagents(manager)
+	launch := NewLaunchSubagents(manager, uniformThinkingLevels(agent.ThinkingMedium), agent.NewSettings(agent.ThinkingHigh, false))
 
 	result, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"default","prompt":"default"},{"description":"custom","prompt":"custom","model_profile":"fast","thinking_level":"medium"}]}`), discardUpdates)
 	if err != nil || result.IsError {
 		t.Fatalf("launch result = %+v, error = %v", result, err)
 	}
 	for range 2 {
-		request := <-requests
-		if request.Task == "default" && (request.Profile != subagent.ProfileMain || request.ThinkingLevel != agent.ThinkingMedium) {
-			t.Fatalf("default request = %+v", request)
+		task := <-requests
+		if task.Prompt == "default" && (task.ModelProfile != subagent.ProfileMain || task.ThinkingLevel != agent.ThinkingMedium) {
+			t.Fatalf("default task = %+v", task)
 		}
-		if request.Task == "custom" && (request.Profile != subagent.ProfileFast || request.ThinkingLevel != agent.ThinkingMedium) {
-			t.Fatalf("custom request = %+v", request)
+		if task.Prompt == "custom" && (task.ModelProfile != subagent.ProfileFast || task.ThinkingLevel != agent.ThinkingMedium) {
+			t.Fatalf("custom task = %+v", task)
 		}
 	}
 
@@ -44,6 +39,7 @@ func TestSubagentLaunchUsesPerTaskPolicyDefaultsAndSurfacesManagerValidation(t *
 		`{"tasks":[]}`,
 		`{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"unknown"}]}`,
 		`{"tasks":[{"description":"inspect","prompt":"inspect","thinking_level":"max"}]}`,
+		`{"tasks":[{"description":"inspect","prompt":"inspect","thinking_level":"invalid"}]}`,
 		`{"tasks":[{"description":"inspect","prompt":"inspect"}],"model_profile":"fast"}`,
 	} {
 		result, err := launch.Execute(context.Background(), json.RawMessage(arguments), discardUpdates)
@@ -54,9 +50,7 @@ func TestSubagentLaunchUsesPerTaskPolicyDefaultsAndSurfacesManagerValidation(t *
 }
 
 func TestSubagentLaunchSchemaPlacesPolicyOnTasks(t *testing.T) {
-	manager := subagent.NewManager(subagent.Config{})
-	defer manager.Close()
-	definition := NewLaunchSubagents(manager).Definition()
+	definition := NewLaunchSubagents(nil, uniformThinkingLevels(agent.ThinkingMedium), nil).Definition()
 	if _, ok := definition.Parameters.Properties["model_profile"]; ok {
 		t.Fatal("launch-level model profile remains in schema")
 	}
@@ -76,21 +70,11 @@ func TestSubagentLaunchSchemaPlacesPolicyOnTasks(t *testing.T) {
 }
 
 func TestSubagentLaunchSchemaUsesProfileThinkingLevels(t *testing.T) {
-	manager := subagent.NewManager(subagent.Config{
-		SupportedThinkingLevels: func(profile subagent.Profile) []agent.ThinkingLevel {
-			switch profile {
-			case subagent.ProfileFast:
-				return []agent.ThinkingLevel{agent.ThinkingLow}
-			case subagent.ProfileBalanced:
-				return []agent.ThinkingLevel{agent.ThinkingMedium}
-			default:
-				return []agent.ThinkingLevel{agent.ThinkingHigh}
-			}
-		},
-	})
-	defer manager.Close()
-
-	definition := NewLaunchSubagents(manager).Definition()
+	definition := NewLaunchSubagents(nil, map[subagent.Profile][]agent.ThinkingLevel{
+		subagent.ProfileFast:     {agent.ThinkingLow},
+		subagent.ProfileBalanced: {agent.ThinkingMedium},
+		subagent.ProfileMain:     {agent.ThinkingHigh},
+	}, nil).Definition()
 	description := definition.Parameters.Properties["tasks"].Items.Properties["thinking_level"].Description
 	for _, supported := range []string{"fast: low", "balanced: medium", "main: high"} {
 		if !strings.Contains(description, supported) {
@@ -103,13 +87,7 @@ func TestSubagentLaunchSchemaUsesProfileThinkingLevels(t *testing.T) {
 }
 
 func TestSubagentLaunchFinalizesFailedPresentation(t *testing.T) {
-	manager := subagent.NewManager(subagent.Config{
-		SupportedThinkingLevels: func(subagent.Profile) []agent.ThinkingLevel {
-			return []agent.ThinkingLevel{agent.ThinkingMedium}
-		},
-	})
-	defer manager.Close()
-	launch := NewLaunchSubagents(manager)
+	launch := NewLaunchSubagents(nil, uniformThinkingLevels(agent.ThinkingMedium), nil)
 
 	var final agent.ToolPresentation
 	finalCalls := 0
@@ -155,11 +133,11 @@ func TestSubagentWaitPresentationShowsProvidedTimeout(t *testing.T) {
 }
 
 func TestSubagentWaitIsSynchronizationOnly(t *testing.T) {
-	manager := subagent.NewManager(subagent.Config{Runner: subagent.RunFunc(func(context.Context, subagent.RunRequest, func(subagent.Progress)) (agent.RunResult, error) {
-		return agent.RunResult{Text: "research result"}, nil
-	})})
+	manager := subagent.NewManager(func(context.Context, subagent.Task, func(agent.Usage)) (string, error) {
+		return "research result", nil
+	})
 	defer manager.Close()
-	launch := NewLaunchSubagents(manager)
+	launch := NewLaunchSubagents(manager, uniformThinkingLevels(agent.ThinkingMedium), agent.NewSettings(agent.ThinkingMedium, false))
 	wait := NewWaitForSubagent(manager)
 
 	if _, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`), discardUpdates); err != nil {
@@ -177,15 +155,15 @@ func TestSubagentWaitIsSynchronizationOnly(t *testing.T) {
 func TestSubagentWaitTimesOutWithoutCancelingChild(t *testing.T) {
 	release := make(chan struct{})
 	childDone := make(chan struct{})
-	manager := subagent.NewManager(subagent.Config{Runner: subagent.RunFunc(func(ctx context.Context, _ subagent.RunRequest, _ func(subagent.Progress)) (agent.RunResult, error) {
+	manager := subagent.NewManager(func(ctx context.Context, _ subagent.Task, _ func(agent.Usage)) (string, error) {
 		defer close(childDone)
 		select {
 		case <-ctx.Done():
-			return agent.RunResult{}, ctx.Err()
+			return "", ctx.Err()
 		case <-release:
-			return agent.RunResult{Text: "done"}, nil
+			return "done", nil
 		}
-	})})
+	})
 	defer manager.Close()
 	if _, err := manager.Start([]subagent.Task{{Description: "inspect", Prompt: "inspect"}}); err != nil {
 		t.Fatal(err)
@@ -215,9 +193,7 @@ func TestSubagentWaitTimesOutWithoutCancelingChild(t *testing.T) {
 }
 
 func TestSubagentWaitValidatesTimeout(t *testing.T) {
-	manager := subagent.NewManager(subagent.Config{})
-	defer manager.Close()
-	wait := NewWaitForSubagent(manager)
+	wait := NewWaitForSubagent(nil)
 
 	for _, arguments := range []string{
 		`{"timeout_ms":0}`,
@@ -229,5 +205,13 @@ func TestSubagentWaitValidatesTimeout(t *testing.T) {
 		if err != nil || !result.IsError {
 			t.Fatalf("arguments = %s, result = %+v, error = %v", arguments, result, err)
 		}
+	}
+}
+
+func uniformThinkingLevels(levels ...agent.ThinkingLevel) map[subagent.Profile][]agent.ThinkingLevel {
+	return map[subagent.Profile][]agent.ThinkingLevel{
+		subagent.ProfileFast:     levels,
+		subagent.ProfileBalanced: levels,
+		subagent.ProfileMain:     levels,
 	}
 }

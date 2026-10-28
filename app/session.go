@@ -46,21 +46,20 @@ func newSessionToolset(
 	if newToolset == nil {
 		newToolset = buildToolset
 	}
-	manager := subagent.NewManager(subagent.Config{
-		Runner: subagent.RunFunc(func(ctx context.Context, request subagent.RunRequest, update func(subagent.Progress)) (agent.RunResult, error) {
-			_, fastMode := settings.Snapshot()
-			enabled := fastMode && metadata.subagent[request.Profile].FastMode
-			return runChildAgent(ctx, backendRuntime, newToolset, authorizeNetwork, config, request.Profile, request.ThinkingLevel, enabled, request.Task, update)
-		}),
-		SupportedThinkingLevels: func(profile subagent.Profile) []agent.ThinkingLevel {
-			return metadata.subagent[profile].ThinkingLevels
-		},
-		DefaultThinkingLevel: func() agent.ThinkingLevel {
-			thinkingLevel, _ := settings.Snapshot()
-			return thinkingLevel
-		},
-	})
-	launchSubagents := tool.NewLaunchSubagents(manager)
+	runner := childRunner{
+		backendRuntime:   backendRuntime,
+		newToolset:       newToolset,
+		authorizeNetwork: authorizeNetwork,
+		config:           config,
+		models:           metadata.subagent,
+		settings:         settings,
+	}
+	manager := subagent.NewManager(runner.run)
+	thinkingLevels := make(map[subagent.Profile][]agent.ThinkingLevel, len(metadata.subagent))
+	for profile, model := range metadata.subagent {
+		thinkingLevels[profile] = model.ThinkingLevels
+	}
+	launchSubagents := tool.NewLaunchSubagents(manager, thinkingLevels, settings)
 	waitForSubagent := tool.NewWaitForSubagent(manager)
 	cancelSubagents := tool.NewCancelSubagents(manager)
 	registry, err := newToolset(

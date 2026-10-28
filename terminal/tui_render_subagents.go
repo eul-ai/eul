@@ -11,7 +11,7 @@ import (
 
 type subagentRow struct {
 	ID            string
-	Task          string
+	Description   string
 	ModelProfile  subagent.Profile
 	ThinkingLevel agent.ThinkingLevel
 	State         subagent.State
@@ -25,7 +25,7 @@ func subagentRows(status subagent.Status) []subagentRow {
 	for _, job := range status.Active {
 		rows = append(rows, subagentRow{
 			ID:            job.ID,
-			Task:          job.Task,
+			Description:   job.Description,
 			ModelProfile:  job.ModelProfile,
 			ThinkingLevel: job.ThinkingLevel,
 			State:         job.State,
@@ -35,11 +35,11 @@ func subagentRows(status subagent.Status) []subagentRow {
 	}
 	for _, completion := range status.PendingCompletions {
 		rows = append(rows, subagentRow{
-			ID:       completion.SubagentID,
-			Task:     completion.Task,
-			State:    completion.Status,
-			Started:  completion.Started,
-			Finished: completion.Finished,
+			ID:          completion.SubagentID,
+			Description: completion.Description,
+			State:       completion.Status,
+			Started:     completion.Started,
+			Finished:    completion.Finished,
 		})
 	}
 	return rows
@@ -81,8 +81,8 @@ func appendSubagentSection(lines []styledLine, category string, jobs []subagentR
 			{Text: state, Style: text.Style{Foreground: subagentStateForeground(job.State)}},
 			{Text: " (" + strings.Join(details, ", ") + ")"},
 		}
-		if job.Task != "" {
-			spans = append(spans, text.Span{Text: " — " + job.Task})
+		if job.Description != "" {
+			spans = append(spans, text.Span{Text: " — " + job.Description})
 		}
 		lines = append(lines, styledLine{
 			spans:   spans,

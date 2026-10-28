@@ -27,14 +27,12 @@ var (
 )
 
 type Manager struct {
-	runner                  Runner
-	supportedThinkingLevels func(Profile) []agent.ThinkingLevel
-	defaultThinkingLevel    func() agent.ThinkingLevel
+	run func(context.Context, Task, func(agent.Usage)) (string, error)
 
 	ctx           context.Context
 	cancel        context.CancelCauseFunc
 	mu            sync.Mutex
-	active        map[string]*job
+	active        []*job
 	inbox         []Completion
 	nextID        uint64
 	nextMessageID uint64
@@ -47,49 +45,37 @@ type Manager struct {
 }
 
 type job struct {
-	id            string
-	order         uint64
-	description   string
-	task          string
-	modelProfile  Profile
-	thinkingLevel agent.ThinkingLevel
-	ctx           context.Context
-	cancel        context.CancelCauseFunc
-	state         State
-	started       time.Time
-	usage         agent.Usage
+	id      string
+	task    Task
+	ctx     context.Context
+	cancel  context.CancelCauseFunc
+	state   State
+	started time.Time
+	usage   agent.Usage
 }
 
-func NewManager(config Config) *Manager {
-	supportedThinkingLevels := config.SupportedThinkingLevels
-	if supportedThinkingLevels == nil {
-		supportedThinkingLevels = func(Profile) []agent.ThinkingLevel {
-			return agent.ThinkingLevels()
-		}
+func (job *job) status() JobStatus {
+	return JobStatus{
+		ID:            job.id,
+		Description:   job.task.Description,
+		ModelProfile:  job.task.ModelProfile,
+		ThinkingLevel: job.task.ThinkingLevel,
+		State:         job.state,
+		Started:       job.started,
+		Usage:         job.usage,
 	}
-	defaultThinkingLevel := config.DefaultThinkingLevel
-	if defaultThinkingLevel == nil {
-		defaultThinkingLevel = func() agent.ThinkingLevel {
-			return agent.DefaultThinkingLevel
-		}
-	}
+}
 
+func NewManager(run func(ctx context.Context, task Task, progress func(agent.Usage)) (string, error)) *Manager {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	return &Manager{
-		runner:                  config.Runner,
-		supportedThinkingLevels: supportedThinkingLevels,
-		defaultThinkingLevel:    defaultThinkingLevel,
-		ctx:                     ctx,
-		cancel:                  cancel,
-		active:                  make(map[string]*job),
-		status:                  make(chan Status, 1),
-		changes:                 make(chan struct{}),
-		dirty:                   make(chan struct{}, 1),
+		run:     run,
+		ctx:     ctx,
+		cancel:  cancel,
+		status:  make(chan Status, 1),
+		changes: make(chan struct{}),
+		dirty:   make(chan struct{}, 1),
 	}
-}
-
-func (m *Manager) SupportedThinkingLevels(profile Profile) []agent.ThinkingLevel {
-	return slices.Clone(m.supportedThinkingLevels(profile))
 }
 
 // StatusChanges coalesces status changes when the receiver falls behind.
@@ -120,79 +106,45 @@ func (m *Manager) Close() error {
 	return nil
 }
 
-func (m *Manager) Start(tasks []Task) ([]Job, error) {
-	tasks = m.normalizeTasks(tasks)
-	if err := m.validateStart(tasks); err != nil {
+func (m *Manager) Start(tasks []Task) ([]JobStatus, error) {
+	if err := validateTasks(tasks); err != nil {
 		return nil, err
 	}
 
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.closed {
-		m.mu.Unlock()
 		return nil, errors.New("subagent manager is closed")
 	}
 	if requested := len(m.active) + len(tasks); requested > maxActive {
-		m.mu.Unlock()
 		return nil, fmt.Errorf("active subagents must not exceed %d (requested: %d)", maxActive, requested)
 	}
 
 	started := time.Now()
-	jobs := make([]*job, len(tasks))
+	statuses := make([]JobStatus, len(tasks))
 	for index, task := range tasks {
 		m.nextID++
-		jobCtx, cancel := context.WithCancelCause(m.ctx)
+		task.Description = truncateUTF8Lines(strings.TrimSpace(task.Description), maxTaskDescriptionBytes, 1)
+		ctx, cancel := context.WithCancelCause(m.ctx)
 		job := &job{
-			id:            fmt.Sprintf("subagent-%d", m.nextID),
-			order:         m.nextID,
-			description:   truncateUTF8Lines(strings.TrimSpace(task.Description), maxTaskDescriptionBytes, 1),
-			task:          task.Prompt,
-			modelProfile:  task.ModelProfile,
-			thinkingLevel: task.ThinkingLevel,
-			ctx:           jobCtx,
-			cancel:        cancel,
-			state:         StateRunning,
-			started:       started,
+			id:      fmt.Sprintf("subagent-%d", m.nextID),
+			task:    task,
+			ctx:     ctx,
+			cancel:  cancel,
+			state:   StateRunning,
+			started: started,
 		}
-		m.active[job.id] = job
-		jobs[index] = job
+		m.active = append(m.active, job)
+		statuses[index] = job.status()
+		m.workers.Go(func() { m.runJob(job) })
 	}
-
-	m.workers.Add(len(jobs))
 	m.publishLocked()
-	m.mu.Unlock()
-
-	startedJobs := make([]Job, len(jobs))
-	for index, job := range jobs {
-		startedJobs[index] = Job{
-			ID:            job.id,
-			Description:   job.description,
-			ModelProfile:  job.modelProfile,
-			ThinkingLevel: job.thinkingLevel,
-		}
-		go m.runJob(job)
-	}
-	return startedJobs, nil
+	return statuses, nil
 }
 
-func (m *Manager) normalizeTasks(tasks []Task) []Task {
-	normalized := slices.Clone(tasks)
-	for index := range normalized {
-		if normalized[index].ModelProfile == "" {
-			normalized[index].ModelProfile = ProfileMain
-		}
-		if normalized[index].ThinkingLevel == "" {
-			normalized[index].ThinkingLevel = agent.ClampThinkingLevel(m.defaultThinkingLevel(), m.supportedThinkingLevels(normalized[index].ModelProfile))
-		}
-	}
-	return normalized
-}
-
-func (m *Manager) validateStart(tasks []Task) error {
+func validateTasks(tasks []Task) error {
 	if len(tasks) == 0 {
 		return errors.New("at least one task is required")
-	}
-	if len(tasks) > maxActive {
-		return fmt.Errorf("tasks must not exceed %d (requested: %d)", maxActive, len(tasks))
 	}
 	for _, task := range tasks {
 		if strings.TrimSpace(task.Description) == "" {
@@ -201,71 +153,36 @@ func (m *Manager) validateStart(tasks []Task) error {
 		if strings.TrimSpace(task.Prompt) == "" {
 			return errors.New("task prompts must be nonempty")
 		}
-		if !task.ModelProfile.valid() {
-			return errors.New("model profile must be one of fast, balanced, or main")
-		}
-		if err := validateThinkingLevel(task.ThinkingLevel); err != nil {
-			return err
-		}
-		if !slices.Contains(m.supportedThinkingLevels(task.ModelProfile), task.ThinkingLevel) {
-			return fmt.Errorf("thinking level %q is not supported by the %s model", task.ThinkingLevel, task.ModelProfile)
-		}
 	}
 	return nil
 }
 
-func validateThinkingLevel(level agent.ThinkingLevel) error {
-	if level.Valid() {
-		return nil
-	}
-
-	return fmt.Errorf("thinking level must be one of %s", formatThinkingLevels(agent.ThinkingLevels()))
-}
-
-func formatThinkingLevels(levels []agent.ThinkingLevel) string {
-	values := make([]string, len(levels))
-	for index, level := range levels {
-		values[index] = string(level)
-	}
-	if len(values) < 2 {
-		return strings.Join(values, "")
-	}
-	return strings.Join(values[:len(values)-1], ", ") + ", or " + values[len(values)-1]
-}
-
 func (m *Manager) runJob(job *job) {
-	defer m.workers.Done()
-
-	request := RunRequest{Task: job.task, Profile: job.modelProfile, ThinkingLevel: job.thinkingLevel}
-	result, runErr := m.runner.Run(job.ctx, request, func(progress Progress) {
+	text, runErr := m.run(job.ctx, job.task, func(usage agent.Usage) {
 		m.mu.Lock()
-		if m.active[job.id] == job && progress.Usage != (agent.Usage{}) {
-			job.usage = progress.Usage
-			m.publishLocked()
-		}
-		m.mu.Unlock()
+		defer m.mu.Unlock()
+		job.usage = usage
+		m.publishLocked()
 	})
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.active[job.id] != job {
-		return
-	}
-	cause := context.Cause(job.ctx)
-	job.cancel(nil)
-	if cause != nil {
+	if cause := context.Cause(job.ctx); cause != nil {
 		runErr = cause
 	}
+	job.cancel(nil)
 
-	delete(m.active, job.id)
+	index := slices.Index(m.active, job)
+	m.active = slices.Delete(m.active, index, index+1)
 	m.nextMessageID++
 	completion := Completion{
-		MessageID:  m.nextMessageID,
-		SubagentID: job.id,
-		Task:       strings.TrimSpace(job.description),
-		Status:     completionState(runErr),
-		Started:    job.started,
-		Finished:   time.Now(),
-		Result:     boundCompletionResult(result.Text, runErr),
+		MessageID:   m.nextMessageID,
+		SubagentID:  job.id,
+		Description: job.task.Description,
+		Status:      completionState(runErr),
+		Started:     job.started,
+		Finished:    time.Now(),
+		Result:      boundCompletionResult(text, runErr),
 	}
 	m.inbox = append(m.inbox, boundCompletion(completion))
 	m.publishLocked()
@@ -353,23 +270,22 @@ func lineEnd(text string, maxLines int) int {
 }
 
 func (m *Manager) Cancel(ids []string) ([]string, error) {
-	if err := validateCancellationIDs(ids); err != nil {
-		return nil, err
+	if len(ids) == 0 {
+		return nil, errors.New("at least one subagent ID is required")
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
 	if m.closed {
 		return nil, errors.New("subagent manager is closed")
 	}
 	jobs := make([]*job, len(ids))
 	for index, id := range ids {
-		job, ok := m.active[id]
-		if !ok {
+		position := slices.IndexFunc(m.active, func(job *job) bool { return job.id == id })
+		if position < 0 {
 			return nil, fmt.Errorf("subagent %q is not active", id)
 		}
-		jobs[index] = job
+		jobs[index] = m.active[position]
 	}
 
 	canceled := make([]string, 0, len(jobs))
@@ -385,26 +301,6 @@ func (m *Manager) Cancel(ids []string) ([]string, error) {
 		m.publishLocked()
 	}
 	return canceled, nil
-}
-
-func validateCancellationIDs(ids []string) error {
-	if len(ids) == 0 {
-		return errors.New("at least one subagent ID is required")
-	}
-	if len(ids) > maxActive {
-		return fmt.Errorf("subagent IDs must not exceed %d (requested: %d)", maxActive, len(ids))
-	}
-	seen := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		if strings.TrimSpace(id) == "" {
-			return errors.New("subagent IDs must be nonempty")
-		}
-		if _, ok := seen[id]; ok {
-			return fmt.Errorf("duplicate subagent ID %q", id)
-		}
-		seen[id] = struct{}{}
-	}
-	return nil
 }
 
 func (m *Manager) Wait(ctx context.Context) (WaitOutcome, error) {
@@ -497,33 +393,11 @@ func (m *Manager) publishLocked() {
 }
 
 func (m *Manager) statusLocked() Status {
-	status := Status{PendingCompletions: append([]Completion(nil), m.inbox...)}
-	jobs := m.sortedJobsLocked()
-	status.Active = make([]JobStatus, len(jobs))
-	status.Running = len(jobs)
-	for index, job := range jobs {
-		status.Active[index] = JobStatus{
-			ID:            job.id,
-			Task:          job.description,
-			ModelProfile:  job.modelProfile,
-			ThinkingLevel: job.thinkingLevel,
-			State:         job.state,
-			Started:       job.started,
-			Usage:         job.usage,
-		}
+	active := make([]JobStatus, len(m.active))
+	for index, job := range m.active {
+		active[index] = job.status()
 	}
-	return status
-}
-
-func (m *Manager) sortedJobsLocked() []*job {
-	jobs := make([]*job, 0, len(m.active))
-	for _, job := range m.active {
-		jobs = append(jobs, job)
-	}
-	slices.SortFunc(jobs, func(left, right *job) int {
-		return int(left.order) - int(right.order)
-	})
-	return jobs
+	return Status{Active: active, PendingCompletions: slices.Clone(m.inbox)}
 }
 
 func (m *Manager) signalChangeLocked() {

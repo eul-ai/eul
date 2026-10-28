@@ -3,7 +3,9 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,7 +23,9 @@ const (
 	maximumWaitTimeoutMS = int(maximumWaitTimeout / time.Millisecond)
 )
 
-func launchDefinitionFor(manager *subagent.Manager) agent.ToolDefinition {
+var subagentProfiles = []subagent.Profile{subagent.ProfileFast, subagent.ProfileBalanced, subagent.ProfileMain}
+
+func launchDefinition(thinkingLevels map[subagent.Profile][]agent.ThinkingLevel) agent.ToolDefinition {
 	taskSchema := strictObject(map[string]agent.JSONSchema{
 		"description": {
 			Type:        "string",
@@ -32,7 +36,7 @@ func launchDefinitionFor(manager *subagent.Manager) agent.ToolDefinition {
 			Description: "Complete task with all needed context.",
 		},
 		"model_profile":  nullable("string", "fast, balanced, or main; null inherits the parent."),
-		"thinking_level": nullable("string", subagentThinkingLevelDescription(manager)),
+		"thinking_level": nullable("string", subagentThinkingLevelDescription(thinkingLevels)),
 	}, "description", "prompt", "model_profile", "thinking_level")
 
 	return agent.ToolDefinition{
@@ -48,11 +52,10 @@ func launchDefinitionFor(manager *subagent.Manager) agent.ToolDefinition {
 	}
 }
 
-func subagentThinkingLevelDescription(manager *subagent.Manager) string {
-	profiles := []subagent.Profile{subagent.ProfileFast, subagent.ProfileBalanced, subagent.ProfileMain}
-	choices := make([]string, len(profiles))
-	for index, profile := range profiles {
-		choices[index] = fmt.Sprintf("%s: %s", profile, formatThinkingLevelChoices(manager.SupportedThinkingLevels(profile)))
+func subagentThinkingLevelDescription(thinkingLevels map[subagent.Profile][]agent.ThinkingLevel) string {
+	choices := make([]string, len(subagentProfiles))
+	for index, profile := range subagentProfiles {
+		choices[index] = fmt.Sprintf("%s: %s", profile, formatThinkingLevelChoices(thinkingLevels[profile]))
 	}
 	return "Supported by model profile: " + strings.Join(choices, "; ") + "; null inherits the parent."
 }
@@ -94,12 +97,14 @@ var cancelDefinition = agent.ToolDefinition{
 }
 
 type launchArguments struct {
-	Tasks []struct {
-		Description   string              `json:"description"`
-		Prompt        string              `json:"prompt"`
-		ModelProfile  subagent.Profile    `json:"model_profile"`
-		ThinkingLevel agent.ThinkingLevel `json:"thinking_level"`
-	} `json:"tasks"`
+	Tasks []launchTaskArguments `json:"tasks"`
+}
+
+type launchTaskArguments struct {
+	Description   string              `json:"description"`
+	Prompt        string              `json:"prompt"`
+	ModelProfile  subagent.Profile    `json:"model_profile"`
+	ThinkingLevel agent.ThinkingLevel `json:"thinking_level"`
 }
 
 type waitArguments struct {
@@ -114,33 +119,64 @@ type launchTool struct {
 	spec[launchArguments]
 }
 
-func NewLaunchSubagents(manager *subagent.Manager) Tool {
+type subagentLauncher struct {
+	manager        *subagent.Manager
+	thinkingLevels map[subagent.Profile][]agent.ThinkingLevel
+	settings       *agent.Settings
+}
+
+func NewLaunchSubagents(manager *subagent.Manager, thinkingLevels map[subagent.Profile][]agent.ThinkingLevel, settings *agent.Settings) Tool {
+	launcher := subagentLauncher{manager: manager, thinkingLevels: thinkingLevels, settings: settings}
 	return launchTool{spec[launchArguments]{
-		definition: launchDefinitionFor(manager),
+		definition: launchDefinition(thinkingLevels),
 		present: func(args launchArguments) agent.ToolPresentation {
 			return launchPresentation(len(args.Tasks), fmt.Sprintf("Starting %d subagent(s).", len(args.Tasks)))
 		},
-		run: func(_ context.Context, args launchArguments, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
-			tasks := make([]subagent.Task, len(args.Tasks))
-			for index, task := range args.Tasks {
-				tasks[index] = subagent.Task(task)
-			}
-			jobs, err := manager.Start(tasks)
-			if err != nil {
-				return agent.ToolResult{}, err
-			}
-
-			var output strings.Builder
-			output.WriteString("Started subagents:")
-			for _, job := range jobs {
-				fmt.Fprintf(&output, "\n- %s (%s, %s thinking): %s", job.ID, job.ModelProfile, job.ThinkingLevel, strings.TrimSpace(job.Description))
-			}
-			if updates != nil {
-				updates.SetFinal(launchPresentation(len(jobs), fmt.Sprintf("Started %d subagent(s).", len(jobs))))
-			}
-			return successResult(output.String()), nil
-		},
+		run: launcher.run,
 	}}
+}
+
+func (launcher subagentLauncher) run(_ context.Context, args launchArguments, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
+	tasks := make([]subagent.Task, len(args.Tasks))
+	for index, task := range args.Tasks {
+		resolved, err := launcher.resolve(subagent.Task(task))
+		if err != nil {
+			return agent.ToolResult{}, err
+		}
+		tasks[index] = resolved
+	}
+	jobs, err := launcher.manager.Start(tasks)
+	if err != nil {
+		return agent.ToolResult{}, err
+	}
+
+	var output strings.Builder
+	output.WriteString("Started subagents:")
+	for _, job := range jobs {
+		fmt.Fprintf(&output, "\n- %s (%s, %s thinking): %s", job.ID, job.ModelProfile, job.ThinkingLevel, job.Description)
+	}
+	if updates != nil {
+		updates.SetFinal(launchPresentation(len(jobs), fmt.Sprintf("Started %d subagent(s).", len(jobs))))
+	}
+	return successResult(output.String()), nil
+}
+
+func (launcher subagentLauncher) resolve(task subagent.Task) (subagent.Task, error) {
+	if task.ModelProfile == "" {
+		task.ModelProfile = subagent.ProfileMain
+	}
+	supported, ok := launcher.thinkingLevels[task.ModelProfile]
+	if !ok {
+		return subagent.Task{}, errors.New("model profile must be one of fast, balanced, or main")
+	}
+	if task.ThinkingLevel == "" {
+		defaultLevel, _ := launcher.settings.Snapshot()
+		task.ThinkingLevel = agent.ClampThinkingLevel(defaultLevel, supported)
+	}
+	if !slices.Contains(supported, task.ThinkingLevel) {
+		return subagent.Task{}, fmt.Errorf("thinking level %q is not supported by the %s model", task.ThinkingLevel, task.ModelProfile)
+	}
+	return task, nil
 }
 
 func (launch launchTool) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {

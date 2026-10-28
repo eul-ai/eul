@@ -340,18 +340,17 @@ func (c *tuiController) handleSubagentStatus(status subagent.Status) (bool, erro
 
 func sanitizeSubagentStatus(status subagent.Status) subagent.Status {
 	sanitized := subagent.Status{
-		Running:            max(0, status.Running),
 		Active:             make([]subagent.JobStatus, 0, len(status.Active)),
 		PendingCompletions: make([]subagent.Completion, 0, len(status.PendingCompletions)),
 	}
 	for _, job := range status.Active {
 		job.ID = singleLine(job.ID, 120)
-		job.Task = singleLine(job.Task, 120)
+		job.Description = singleLine(job.Description, 120)
 		sanitized.Active = append(sanitized.Active, job)
 	}
 	for _, completion := range status.PendingCompletions {
 		completion.SubagentID = singleLine(completion.SubagentID, 120)
-		completion.Task = singleLine(completion.Task, 120)
+		completion.Description = singleLine(completion.Description, 120)
 		sanitized.PendingCompletions = append(sanitized.PendingCompletions, completion)
 	}
 	return sanitized
@@ -367,7 +366,7 @@ func (c *tuiController) handleFileSearch(result filesearch.Result) (bool, error)
 }
 
 func (c *tuiController) handleSpinner() (bool, error) {
-	if (!c.model.activity.animated() || c.model.permission.active()) && c.model.subagentStatus.Running == 0 {
+	if (!c.model.activity.animated() || c.model.permission.active()) && len(c.model.subagentStatus.Active) == 0 {
 		return false, nil
 	}
 

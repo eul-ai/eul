@@ -201,7 +201,7 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 	if _, err := session.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "inspect parent"}}, func(agent.Event) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(parentRequest.Instructions, status.Active[0].ID) || !strings.Contains(parentRequest.Instructions, status.Active[0].Task) {
+	if !strings.Contains(parentRequest.Instructions, status.Active[0].ID) || !strings.Contains(parentRequest.Instructions, status.Active[0].Description) {
 		t.Fatalf("instructions omit active subagent data: %q", parentRequest.Instructions)
 	}
 }

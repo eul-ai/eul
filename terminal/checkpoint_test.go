@@ -21,7 +21,7 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	model.appendUserContent(textContent("  First line of the prompt  \nsecond line"))
 	model.appendBlock(blockAssistant, "answer")
 	model.running = false
-	model.subagentStatus = subagent.Status{Running: 1, PendingCompletions: []subagent.Completion{{Status: subagent.StateComplete}}}
+	model.subagentStatus = subagent.Status{Active: []subagent.JobStatus{{State: subagent.StateRunning}}, PendingCompletions: []subagent.Completion{{Status: subagent.StateComplete}}}
 	model.history = []string{"older prompt"}
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)
@@ -48,7 +48,7 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 		Config:         Config{InitialCheckpoint: &decoded},
 		MessageHistory: MessageHistory{Entries: []string{"global prompt"}},
 	})
-	if restored.running || restored.streamText.Len() != 0 || restored.activity.kind != activityReady || restored.subagentStatus.Running != 0 || len(restored.subagentStatus.Active) != 0 {
+	if restored.running || restored.streamText.Len() != 0 || restored.activity.kind != activityReady || len(restored.subagentStatus.Active) != 0 {
 		t.Fatalf("runtime state was restored: %+v", restored)
 	}
 	if len(restored.blocks) != 2 || restored.blocks[0].kind != blockUser || restored.blocks[1].text != "answer" {

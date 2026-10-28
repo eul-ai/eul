@@ -14,7 +14,6 @@ func TestCheckpointRejectsInvalidActivePolicy(t *testing.T) {
 		NextID:  1,
 		Active: []activeCheckpoint{{
 			ID:            "subagent-1",
-			Order:         1,
 			Description:   "task",
 			ModelProfile:  ProfileBalanced,
 			ThinkingLevel: agent.ThinkingLow,
@@ -37,18 +36,21 @@ func TestCheckpointRejectsInvalidActivePolicy(t *testing.T) {
 
 func TestCheckpointRoundTripRestoresPendingAndInterruptsActive(t *testing.T) {
 	block := make(chan struct{})
-	manager := NewManager(Config{Runner: RunFunc(func(ctx context.Context, request RunRequest, _ func(Progress)) (agent.RunResult, error) {
-		if request.Task == "complete" {
-			return agent.RunResult{Text: "finished"}, nil
+	manager := NewManager(func(ctx context.Context, task Task, _ func(agent.Usage)) (string, error) {
+		if task.Prompt == "complete" {
+			return "finished", nil
 		}
 		select {
 		case <-ctx.Done():
-			return agent.RunResult{}, ctx.Err()
+			return "", ctx.Err()
 		case <-block:
-			return agent.RunResult{}, nil
+			return "", nil
 		}
-	})})
-	if _, err := manager.Start([]Task{{Description: "finished", Prompt: "complete"}, {Description: "running", Prompt: "running"}}); err != nil {
+	})
+	if _, err := manager.Start([]Task{
+		{Description: "finished", Prompt: "complete", ModelProfile: ProfileMain, ThinkingLevel: agent.ThinkingMedium},
+		{Description: "running", Prompt: "running", ModelProfile: ProfileFast, ThinkingLevel: agent.ThinkingLow},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	waitForStatus(t, manager, func(status Status) bool { return len(status.PendingCompletions) == 1 && len(status.Active) == 1 })
@@ -65,9 +67,9 @@ func TestCheckpointRoundTripRestoresPendingAndInterruptsActive(t *testing.T) {
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	restored := NewManager(Config{Runner: RunFunc(func(context.Context, RunRequest, func(Progress)) (agent.RunResult, error) {
-		return agent.RunResult{Text: "restored"}, nil
-	})})
+	restored := NewManager(func(context.Context, Task, func(agent.Usage)) (string, error) {
+		return "restored", nil
+	})
 	defer restored.Close()
 	if err := restored.RestoreCheckpoint(decoded); err != nil {
 		t.Fatal(err)

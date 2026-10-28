@@ -16,11 +16,11 @@ func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 	model := newTUIModel(140, 10, Options{})
 	model.subagentStatus = subagent.Status{Active: []subagent.JobStatus{
 		{
-			ID: "subagent-1", Task: "inspect layout", ModelProfile: "balanced", ThinkingLevel: agent.ThinkingLow,
+			ID: "subagent-1", Description: "inspect layout", ModelProfile: "balanced", ThinkingLevel: agent.ThinkingLow,
 			State: subagent.StateRunning, Started: started, Usage: agent.Usage{InputTokens: 1_200, OutputTokens: 34},
 		},
 		{
-			ID: "subagent-2", Task: "review progress", State: subagent.StateCanceling, Started: started,
+			ID: "subagent-2", Description: "review progress", State: subagent.StateCanceling, Started: started,
 		},
 	}}
 
@@ -106,8 +106,7 @@ func TestSubagentPanelIsCappedOnSmallTerminals(t *testing.T) {
 func TestStatusOmitsBackgroundSubagents(t *testing.T) {
 	model := newTUIModel(120, 12, Options{Config: Config{Model: "model"}})
 	model.subagentStatus = subagent.Status{
-		Running: 1,
-		Active:  []subagent.JobStatus{{ID: "subagent-1", State: subagent.StateRunning}},
+		Active: []subagent.JobStatus{{ID: "subagent-1", State: subagent.StateRunning}},
 	}
 
 	_, left, _ := renderStatus(model, model.width)

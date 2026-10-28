@@ -118,7 +118,7 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 	if err := session.terminalOptions.StateChanges.Notify(sessionStoreTestTerminalCheckpoint(t, "prompt"), false); err != nil {
 		t.Fatal(err)
 	}
-	launch := tool.NewLaunchSubagents(session.subagents)
+	launch := tool.NewLaunchSubagents(session.subagents, map[subagent.Profile][]agent.ThinkingLevel{subagent.ProfileMain: agent.ThinkingLevels()}, session.settings)
 	if _, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`), nil); err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	launch := tool.NewLaunchSubagents(first.subagents)
+	launch := tool.NewLaunchSubagents(first.subagents, map[subagent.Profile][]agent.ThinkingLevel{subagent.ProfileMain: agent.ThinkingLevels()}, first.settings)
 	if _, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"running","prompt":"running"}]}`), nil); err != nil {
 		t.Fatal(err)
 	}
