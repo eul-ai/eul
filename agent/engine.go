@@ -16,6 +16,7 @@ type Options struct {
 	Checkpointing bool
 	Inbox         Inbox
 	Settings      *Settings
+	Goal          *Goal
 }
 
 type RunResult struct {
@@ -42,6 +43,10 @@ func New(provider Provider, tools []Tool, options Options) *Engine {
 	if settings == nil {
 		settings = NewSettings(DefaultThinkingLevel, false)
 	}
+	goal := options.Goal
+	if goal == nil {
+		goal = &Goal{}
+	}
 
 	byName := make(map[string]Tool, len(tools))
 	definitions := make([]ToolDefinition, len(tools))
@@ -60,6 +65,7 @@ func New(provider Provider, tools []Tool, options Options) *Engine {
 		model:         options.Model,
 		settings:      settings,
 		instructions:  options.Instructions,
+		continuations: continuationArbiter{goal: goal},
 		checkpointing: options.Checkpointing,
 		inbox:         options.Inbox,
 	}
@@ -116,20 +122,4 @@ func (e *Engine) Steer(content []ContentPart) bool {
 
 func (e *Engine) ClearSteering() [][]ContentPart {
 	return e.continuations.clearSteering()
-}
-
-func (e *Engine) SetGoal(objective string) error {
-	return e.continuations.setGoal(objective)
-}
-
-func (e *Engine) Goal() (GoalState, bool) {
-	return e.continuations.getGoal()
-}
-
-func (e *Engine) ClearGoal() {
-	e.continuations.clearGoal()
-}
-
-func (e *Engine) CompleteGoal() error {
-	return e.continuations.completeGoal()
 }

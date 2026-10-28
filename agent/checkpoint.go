@@ -128,12 +128,12 @@ func (e *Engine) RestoreCheckpoint(checkpoint Checkpoint) error {
 		usage:  data.ContextUsage,
 		inputs: data.PendingInputs,
 	}
-	e.continuations.restoreGoal(data.Goal)
+	e.continuations.goal.restore(data.Goal)
 	return nil
 }
 
 func (e *Engine) checkpointLocked() Checkpoint {
-	goal, ok := e.continuations.getGoal()
+	goal, ok := e.continuations.goal.State()
 	var storedGoal *GoalState
 	if ok {
 		storedGoal = &goal

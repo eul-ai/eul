@@ -2,17 +2,10 @@ package agent
 
 import (
 	"context"
-	"errors"
-	"strings"
 	"sync"
 )
 
 const goalContinuationPrompt = `Continue the active goal. Take the next unfinished step, or call update_goal when complete.`
-
-var (
-	ErrNoGoal              = errors.New("agent: no goal is set")
-	ErrGoalAlreadyComplete = errors.New("agent: goal is already complete")
-)
 
 type steeringSignalKey struct{}
 
@@ -33,17 +26,12 @@ type pendingContinuation struct {
 	content []ContentPart
 }
 
-type GoalState struct {
-	Objective string `json:"objective"`
-	Complete  bool   `json:"complete"`
-}
-
 type continuationArbiter struct {
 	mu                sync.Mutex
 	acceptingSteering bool
 	steering          [][]ContentPart
 	toolRoundSteering chan struct{}
-	goal              *GoalState
+	goal              *Goal
 }
 
 func (arbiter *continuationArbiter) setRunning(running bool) {
@@ -101,58 +89,6 @@ func (arbiter *continuationArbiter) endToolRound(steering <-chan struct{}) {
 	}
 }
 
-func (arbiter *continuationArbiter) setGoal(objective string) error {
-	objective = strings.TrimSpace(objective)
-	if objective == "" {
-		return errors.New("agent: goal objective is required")
-	}
-
-	arbiter.mu.Lock()
-	defer arbiter.mu.Unlock()
-
-	arbiter.goal = &GoalState{Objective: objective}
-	return nil
-}
-
-func (arbiter *continuationArbiter) getGoal() (GoalState, bool) {
-	arbiter.mu.Lock()
-	defer arbiter.mu.Unlock()
-
-	if arbiter.goal == nil {
-		return GoalState{}, false
-	}
-	return *arbiter.goal, true
-}
-
-func (arbiter *continuationArbiter) clearGoal() {
-	arbiter.mu.Lock()
-	defer arbiter.mu.Unlock()
-
-	arbiter.goal = nil
-}
-
-func (arbiter *continuationArbiter) restoreGoal(goal *GoalState) {
-	arbiter.mu.Lock()
-	defer arbiter.mu.Unlock()
-
-	arbiter.goal = goal
-}
-
-func (arbiter *continuationArbiter) completeGoal() error {
-	arbiter.mu.Lock()
-	defer arbiter.mu.Unlock()
-
-	switch {
-	case arbiter.goal == nil:
-		return ErrNoGoal
-	case arbiter.goal.Complete:
-		return ErrGoalAlreadyComplete
-	default:
-		arbiter.goal.Complete = true
-		return nil
-	}
-}
-
 func (arbiter *continuationArbiter) nextAfterTools() (pendingContinuation, bool) {
 	arbiter.mu.Lock()
 	defer arbiter.mu.Unlock()
@@ -167,12 +103,12 @@ func (arbiter *continuationArbiter) nextBeforeSettle() (pendingContinuation, boo
 	if next, ok := arbiter.nextSteeringLocked(); ok {
 		return next, true
 	}
-	if arbiter.goal != nil && !arbiter.goal.Complete {
+	if goal, ok := arbiter.goal.State(); ok && !goal.Complete {
 		return pendingContinuation{
 			kind: continuationGoal,
 			content: []ContentPart{{
 				Kind: ContentPartText,
-				Text: goalContinuationPrompt + "\n\nGoal: " + arbiter.goal.Objective,
+				Text: goalContinuationPrompt + "\n\nGoal: " + goal.Objective,
 			}},
 		}, true
 	}

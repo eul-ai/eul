@@ -349,7 +349,7 @@ func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("inactive completion result = %+v", result)
 	}
-	if err := session.engine.SetGoal("finish"); err != nil {
+	if err := session.terminalOptions.Controls.SetGoal("finish"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -357,7 +357,7 @@ func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	goal, ok := session.engine.Goal()
+	goal, ok := session.terminalOptions.Controls.Goal()
 	if result.IsError || !ok || !goal.Complete {
 		t.Fatalf("result=%+v goal=%+v exists=%v", result, goal, ok)
 	}

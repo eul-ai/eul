@@ -11,7 +11,7 @@ import (
 )
 
 func TestEngineContinuesActiveGoalBeforeSettling(t *testing.T) {
-	var engine *Engine
+	goal := &Goal{}
 	provider := &scriptedProvider{t: t, steps: []providerStep{
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
 			assertUserInput(t, request, "start")
@@ -24,12 +24,12 @@ func TestEngineContinuesActiveGoalBeforeSettling(t *testing.T) {
 			if !strings.Contains(request.Inputs[0].PlainText(), "finish the migration") {
 				t.Fatalf("goal continuation input = %+v", request.Inputs[0])
 			}
-			engine.ClearGoal()
+			goal.Clear()
 			return Response{Text: "done", State: []byte("done-state")}, nil
 		},
 	}}
-	engine = newTestEngine(t, provider, &fakeToolbox{}, Options{})
-	if err := engine.SetGoal("finish the migration"); err != nil {
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{Goal: goal})
+	if err := goal.Set("finish the migration"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -47,6 +47,7 @@ func TestEngineContinuesActiveGoalBeforeSettling(t *testing.T) {
 }
 
 func TestEngineGivesSteeringPriorityOverGoal(t *testing.T) {
+	goal := &Goal{}
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var engine *Engine
@@ -62,12 +63,12 @@ func TestEngineGivesSteeringPriorityOverGoal(t *testing.T) {
 			if string(request.State) != "initial" {
 				t.Fatalf("steering state = %q", request.State)
 			}
-			engine.ClearGoal()
+			goal.Clear()
 			return Response{Text: "redirected"}, nil
 		},
 	}}
-	engine = newTestEngine(t, provider, &fakeToolbox{}, Options{})
-	if err := engine.SetGoal("keep going"); err != nil {
+	engine = newTestEngine(t, provider, &fakeToolbox{}, Options{Goal: goal})
+	if err := goal.Set("keep going"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -94,6 +95,7 @@ func TestEngineGivesSteeringPriorityOverGoal(t *testing.T) {
 }
 
 func TestEngineDrainsSteeringBeforeGoalContinuation(t *testing.T) {
+	goal := &Goal{}
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var engine *Engine
@@ -116,12 +118,12 @@ func TestEngineDrainsSteeringBeforeGoalContinuation(t *testing.T) {
 			if string(request.State) != "steer-two" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputUser || !strings.Contains(request.Inputs[0].PlainText(), "keep going") {
 				t.Fatalf("goal request = %+v", request)
 			}
-			engine.ClearGoal()
+			goal.Clear()
 			return Response{Text: "done"}, nil
 		},
 	}}
-	engine = newTestEngine(t, provider, &fakeToolbox{}, Options{})
-	if err := engine.SetGoal("keep going"); err != nil {
+	engine = newTestEngine(t, provider, &fakeToolbox{}, Options{Goal: goal})
+	if err := goal.Set("keep going"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -156,7 +158,7 @@ func TestEngineDrainsSteeringBeforeGoalContinuation(t *testing.T) {
 }
 
 func TestEngineDoesNotInjectGoalAfterToolBatch(t *testing.T) {
-	var engine *Engine
+	goal := &Goal{}
 	provider := &scriptedProvider{t: t, steps: []providerStep{
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
 			assertUserInput(t, request, "start")
@@ -169,14 +171,14 @@ func TestEngineDoesNotInjectGoalAfterToolBatch(t *testing.T) {
 			if string(request.State) != "tool-state" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputToolResult {
 				t.Fatalf("tool continuation request = %+v", request)
 			}
-			engine.ClearGoal()
+			goal.Clear()
 			return Response{Text: "done"}, nil
 		},
 	}}
-	engine = newTestEngine(t, provider, &fakeToolbox{definitions: toolDefinitions("tool"), execute: func(context.Context, ToolCall) (ToolResult, error) {
+	engine := newTestEngine(t, provider, &fakeToolbox{definitions: toolDefinitions("tool"), execute: func(context.Context, ToolCall) (ToolResult, error) {
 		return ToolResult{Output: "tool result"}, nil
-	}}, Options{})
-	if err := engine.SetGoal("keep going"); err != nil {
+	}}, Options{Goal: goal})
+	if err := goal.Set("keep going"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -193,6 +195,7 @@ func TestEngineDoesNotInjectGoalAfterToolBatch(t *testing.T) {
 }
 
 func TestEngineClearGoalDuringToolBatchFinishesResultsAndStopsContinuation(t *testing.T) {
+	goal := &Goal{}
 	toolStarted := make(chan struct{})
 	releaseTool := make(chan struct{})
 	provider := &scriptedProvider{t: t, steps: []providerStep{
@@ -220,8 +223,8 @@ func TestEngineClearGoalDuringToolBatchFinishesResultsAndStopsContinuation(t *te
 		startedOnce.Do(func() { close(toolStarted) })
 		<-releaseTool
 		return ToolResult{Output: "result"}, nil
-	}}, Options{})
-	if err := engine.SetGoal("keep going"); err != nil {
+	}}, Options{Goal: goal})
+	if err := goal.Set("keep going"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -235,7 +238,7 @@ func TestEngineClearGoalDuringToolBatchFinishesResultsAndStopsContinuation(t *te
 		done <- err
 	}()
 	<-toolStarted
-	engine.ClearGoal()
+	goal.Clear()
 	close(releaseTool)
 	if err := <-done; err != nil {
 		t.Fatal(err)
@@ -246,7 +249,7 @@ func TestEngineClearGoalDuringToolBatchFinishesResultsAndStopsContinuation(t *te
 }
 
 func TestEngineCompletionToolStopsGoalContinuation(t *testing.T) {
-	var engine *Engine
+	goal := &Goal{}
 	provider := &scriptedProvider{t: t, steps: []providerStep{
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
 			assertUserInput(t, request, "start")
@@ -266,10 +269,10 @@ func TestEngineCompletionToolStopsGoalContinuation(t *testing.T) {
 		if call.Name != "update_goal" {
 			t.Fatalf("tool = %q", call.Name)
 		}
-		return ToolResult{Output: "Goal marked complete."}, engine.CompleteGoal()
+		return ToolResult{Output: "Goal marked complete."}, goal.Complete()
 	}}
-	engine = newTestEngine(t, provider, toolbox, Options{})
-	if err := engine.SetGoal("finish"); err != nil {
+	engine := newTestEngine(t, provider, toolbox, Options{Goal: goal})
+	if err := goal.Set("finish"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -281,15 +284,15 @@ func TestEngineCompletionToolStopsGoalContinuation(t *testing.T) {
 	if err != nil || result.Text != "complete" || provider.calls != 2 {
 		t.Fatalf("result=%+v calls=%d error=%v", result, provider.calls, err)
 	}
-	goal, ok := engine.Goal()
-	if !ok || !goal.Complete || slices.Contains(eventKinds(events), EventGoalContinuation) {
+	state, ok := goal.State()
+	if !ok || !state.Complete || slices.Contains(eventKinds(events), EventGoalContinuation) {
 		t.Fatalf("goal=%+v exists=%v events=%v", goal, ok, eventKinds(events))
 	}
 }
 
 func TestEngineRollsBackGoalInputWhenEventFails(t *testing.T) {
+	goal := &Goal{}
 	sinkErr := errors.New("sink failed")
-	var engine *Engine
 	provider := &scriptedProvider{t: t, steps: []providerStep{
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
 			assertUserInput(t, request, "first")
@@ -300,12 +303,12 @@ func TestEngineRollsBackGoalInputWhenEventFails(t *testing.T) {
 			if string(request.State) != "partial-state" {
 				t.Fatalf("recovery state = %q", request.State)
 			}
-			engine.ClearGoal()
+			goal.Clear()
 			return Response{Text: "recovered"}, nil
 		},
 	}}
-	engine = newTestEngine(t, provider, &fakeToolbox{}, Options{})
-	if err := engine.SetGoal("continue"); err != nil {
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{Goal: goal})
+	if err := goal.Set("continue"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -325,6 +328,7 @@ func TestEngineRollsBackGoalInputWhenEventFails(t *testing.T) {
 }
 
 func TestEngineClearGoalDuringGenerationPreventsContinuation(t *testing.T) {
+	goal := &Goal{}
 	started := make(chan struct{})
 	release := make(chan struct{})
 	provider := &scriptedProvider{t: t, steps: []providerStep{
@@ -335,8 +339,8 @@ func TestEngineClearGoalDuringGenerationPreventsContinuation(t *testing.T) {
 			return Response{Text: "stopped"}, nil
 		},
 	}}
-	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
-	if err := engine.SetGoal("continue"); err != nil {
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{Goal: goal})
+	if err := goal.Set("continue"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -346,7 +350,7 @@ func TestEngineClearGoalDuringGenerationPreventsContinuation(t *testing.T) {
 		done <- err
 	}()
 	<-started
-	engine.ClearGoal()
+	goal.Clear()
 	close(release)
 	if err := <-done; err != nil {
 		t.Fatal(err)
@@ -356,37 +360,38 @@ func TestEngineClearGoalDuringGenerationPreventsContinuation(t *testing.T) {
 	}
 }
 
-func TestEngineRejectsInactiveAndRepeatedGoalCompletion(t *testing.T) {
-	engine := newTestEngine(t, &scriptedProvider{t: t}, &fakeToolbox{}, Options{})
-	if err := engine.CompleteGoal(); !errors.Is(err, ErrNoGoal) {
+func TestGoalRejectsInactiveAndRepeatedCompletion(t *testing.T) {
+	goal := &Goal{}
+	if err := goal.Complete(); !errors.Is(err, ErrNoGoal) {
 		t.Fatalf("inactive completion error = %v", err)
 	}
-	if err := engine.SetGoal("finish"); err != nil {
+	if err := goal.Set("finish"); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.CompleteGoal(); err != nil {
+	if err := goal.Complete(); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.CompleteGoal(); !errors.Is(err, ErrGoalAlreadyComplete) {
+	if err := goal.Complete(); !errors.Is(err, ErrGoalAlreadyComplete) {
 		t.Fatalf("repeated completion error = %v", err)
 	}
 }
 
-func TestEngineReplacesGoal(t *testing.T) {
-	engine := newTestEngine(t, &scriptedProvider{t: t}, &fakeToolbox{}, Options{})
-	if err := engine.SetGoal("first"); err != nil {
+func TestGoalReplacesObjective(t *testing.T) {
+	goal := &Goal{}
+	if err := goal.Set("first"); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.SetGoal("second"); err != nil {
+	if err := goal.Set("second"); err != nil {
 		t.Fatal(err)
 	}
-	goal, ok := engine.Goal()
-	if !ok || goal.Objective != "second" || goal.Complete {
-		t.Fatalf("replacement goal = %+v, exists=%v", goal, ok)
+	state, ok := goal.State()
+	if !ok || state.Objective != "second" || state.Complete {
+		t.Fatalf("replacement goal = %+v, exists=%v", state, ok)
 	}
 }
 
 func TestEngineToolLifecycleFailureRetainsGoalWithoutContinuing(t *testing.T) {
+	goal := &Goal{}
 	sinkErr := errors.New("sink failed")
 	provider := &scriptedProvider{t: t, steps: []providerStep{
 		func(_ context.Context, request Request, _ TextSink) (Response, error) {
@@ -397,8 +402,8 @@ func TestEngineToolLifecycleFailureRetainsGoalWithoutContinuing(t *testing.T) {
 			}, nil
 		},
 	}}
-	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
-	if err := engine.SetGoal("continue"); err != nil {
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{Goal: goal})
+	if err := goal.Set("continue"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -411,40 +416,42 @@ func TestEngineToolLifecycleFailureRetainsGoalWithoutContinuing(t *testing.T) {
 	if !errors.Is(err, sinkErr) || provider.calls != 1 {
 		t.Fatalf("run error=%v calls=%d", err, provider.calls)
 	}
-	goal, ok := engine.Goal()
-	if !ok || goal.Objective != "continue" || goal.Complete {
-		t.Fatalf("goal after tool lifecycle failure = %+v, exists=%v", goal, ok)
+	state, ok := goal.State()
+	if !ok || state.Objective != "continue" || state.Complete {
+		t.Fatalf("goal after tool lifecycle failure = %+v, exists=%v", state, ok)
 	}
 }
 
 func TestEngineFailureRetainsGoal(t *testing.T) {
+	goal := &Goal{}
 	failure := errors.New("provider failed")
 	provider := streamingProviderFunc(func(context.Context, Request, TextSink, TextSink, ToolCallSink) (Response, error) {
 		return Response{}, failure
 	})
-	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
-	if err := engine.SetGoal("continue"); err != nil {
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{Goal: goal})
+	if err := goal.Set("continue"); err != nil {
 		t.Fatal(err)
 	}
 
 	if _, err := engine.Run(context.Background(), textParts("start"), discardEvents); !errors.Is(err, failure) {
 		t.Fatalf("run error = %v", err)
 	}
-	goal, ok := engine.Goal()
-	if !ok || goal.Objective != "continue" || goal.Complete {
-		t.Fatalf("goal after failure = %+v, exists=%v", goal, ok)
+	state, ok := goal.State()
+	if !ok || state.Objective != "continue" || state.Complete {
+		t.Fatalf("goal after failure = %+v, exists=%v", state, ok)
 	}
 }
 
 func TestEngineCancellationRetainsGoal(t *testing.T) {
+	goal := &Goal{}
 	started := make(chan struct{})
 	provider := streamingProviderFunc(func(ctx context.Context, _ Request, _ TextSink, _ TextSink, _ ToolCallSink) (Response, error) {
 		close(started)
 		<-ctx.Done()
 		return Response{}, ctx.Err()
 	})
-	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
-	if err := engine.SetGoal("continue"); err != nil {
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{Goal: goal})
+	if err := goal.Set("continue"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -459,8 +466,8 @@ func TestEngineCancellationRetainsGoal(t *testing.T) {
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatalf("run error = %v", err)
 	}
-	goal, ok := engine.Goal()
-	if !ok || goal.Objective != "continue" || goal.Complete {
-		t.Fatalf("goal after cancellation = %+v, exists=%v", goal, ok)
+	state, ok := goal.State()
+	if !ok || state.Objective != "continue" || state.Complete {
+		t.Fatalf("goal after cancellation = %+v, exists=%v", state, ok)
 	}
 }

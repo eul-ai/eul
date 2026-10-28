@@ -2,67 +2,58 @@ package tool
 
 import (
 	"context"
-	"errors"
-	"strings"
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
 )
 
 func TestUpdateGoalMarksActiveGoalComplete(t *testing.T) {
-	calls := 0
-	goalTool := NewUpdateGoal(func() error {
-		calls++
-		return nil
-	})
-	result, err := goalTool.Execute(context.Background(), []byte(`{"status":"complete"}`), discardUpdates)
+	goal := &agent.Goal{}
+	if err := goal.Set("finish"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := NewUpdateGoal(goal).Execute(context.Background(), []byte(`{"status":"complete"}`), discardUpdates)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.IsError || calls != 1 {
-		t.Fatalf("result=%+v calls=%d", result, calls)
+	state, _ := goal.State()
+	if result.IsError || !state.Complete {
+		t.Fatalf("result=%+v goal=%+v", result, state)
 	}
 }
 
 func TestUpdateGoalRejectsInvalidStatus(t *testing.T) {
-	calls := 0
-	goalTool := NewUpdateGoal(func() error {
-		calls++
-		return nil
-	})
+	goal := &agent.Goal{}
+	if err := goal.Set("finish"); err != nil {
+		t.Fatal(err)
+	}
 
-	result, err := goalTool.Execute(context.Background(), []byte(`{"status":"paused"}`), discardUpdates)
+	result, err := NewUpdateGoal(goal).Execute(context.Background(), []byte(`{"status":"paused"}`), discardUpdates)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.IsError || calls != 0 {
-		t.Fatalf("result=%+v calls=%d", result, calls)
+	state, _ := goal.State()
+	if !result.IsError || state.Complete {
+		t.Fatalf("result=%+v goal=%+v", result, state)
 	}
 }
 
 func TestUpdateGoalIgnoresInactiveGoal(t *testing.T) {
-	for _, completionErr := range []error{agent.ErrNoGoal, agent.ErrGoalAlreadyComplete} {
-		goalTool := NewUpdateGoal(func() error { return completionErr })
+	complete := &agent.Goal{}
+	if err := complete.Set("finish"); err != nil {
+		t.Fatal(err)
+	}
+	if err := complete.Complete(); err != nil {
+		t.Fatal(err)
+	}
 
-		result, err := goalTool.Execute(context.Background(), []byte(`{"status":"complete"}`), discardUpdates)
+	for _, goal := range []*agent.Goal{{}, complete} {
+		result, err := NewUpdateGoal(goal).Execute(context.Background(), []byte(`{"status":"complete"}`), discardUpdates)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if result.IsError {
-			t.Fatalf("completion error %v returned %+v", completionErr, result)
+			t.Fatalf("inactive goal returned %+v", result)
 		}
-	}
-}
-
-func TestUpdateGoalReportsCompletionFailure(t *testing.T) {
-	failure := errors.New("completion failed")
-	goalTool := NewUpdateGoal(func() error { return failure })
-
-	result, err := goalTool.Execute(context.Background(), []byte(`{"status":"complete"}`), discardUpdates)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.IsError || !strings.Contains(result.Output, failure.Error()) {
-		t.Fatalf("result = %+v", result)
 	}
 }

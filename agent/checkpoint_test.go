@@ -11,7 +11,8 @@ import (
 )
 
 func TestEngineCheckpointRoundTrip(t *testing.T) {
-	engine := newTestEngine(t, &scriptedProvider{t: t}, &fakeToolbox{}, Options{})
+	goal := &Goal{}
+	engine := newTestEngine(t, &scriptedProvider{t: t}, &fakeToolbox{}, Options{Goal: goal})
 	engine.conversation.state = []byte("provider-state")
 	engine.conversation.usage = Usage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}
 	engine.conversation.inputs = []Input{
@@ -21,10 +22,10 @@ func TestEngineCheckpointRoundTrip(t *testing.T) {
 		}},
 		{Kind: InputToolResult, Text: "result", CallID: "call", Tool: "read"},
 	}
-	if err := engine.SetGoal("finish migration"); err != nil {
+	if err := goal.Set("finish migration"); err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.CompleteGoal(); err != nil {
+	if err := goal.Complete(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -42,7 +43,8 @@ func TestEngineCheckpointRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	restored := newTestEngine(t, &scriptedProvider{t: t}, &fakeToolbox{}, Options{})
+	restoredGoal := &Goal{}
+	restored := newTestEngine(t, &scriptedProvider{t: t}, &fakeToolbox{}, Options{Goal: restoredGoal})
 	if err := restored.RestoreCheckpoint(decoded); err != nil {
 		t.Fatal(err)
 	}
@@ -59,9 +61,9 @@ func TestEngineCheckpointRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(restored.conversation.inputs, wantInputs) || restored.conversation.usage.TotalTokens != 12 {
 		t.Fatalf("inputs=%+v usage=%+v", restored.conversation.inputs, restored.conversation.usage)
 	}
-	goal, ok := restored.Goal()
-	if !ok || goal.Objective != "finish migration" || !goal.Complete {
-		t.Fatalf("goal=%+v exists=%v", goal, ok)
+	state, ok := restoredGoal.State()
+	if !ok || state.Objective != "finish migration" || !state.Complete {
+		t.Fatalf("goal=%+v exists=%v", state, ok)
 	}
 }
 
@@ -90,7 +92,8 @@ func TestVersionThreeCheckpointFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	engine := newTestEngine(t, &scriptedProvider{t: t}, &fakeToolbox{}, Options{})
+	goal := &Goal{}
+	engine := newTestEngine(t, &scriptedProvider{t: t}, &fakeToolbox{}, Options{Goal: goal})
 	if err := engine.RestoreCheckpoint(checkpoint); err != nil {
 		t.Fatal(err)
 	}
@@ -100,9 +103,9 @@ func TestVersionThreeCheckpointFixture(t *testing.T) {
 	if len(engine.conversation.inputs) != 2 || engine.conversation.inputs[0].Kind != InputUser || engine.conversation.inputs[1].Kind != InputToolResult || engine.conversation.inputs[1].CallID != "call-1" {
 		t.Fatalf("inputs = %+v", engine.conversation.inputs)
 	}
-	goal, ok := engine.Goal()
-	if !ok || goal.Objective != "finish migration" || goal.Complete {
-		t.Fatalf("goal = %+v, exists = %t", goal, ok)
+	state, ok := goal.State()
+	if !ok || state.Objective != "finish migration" || state.Complete {
+		t.Fatalf("goal = %+v, exists = %t", state, ok)
 	}
 
 	encoded, err := json.Marshal(checkpoint)
@@ -180,8 +183,9 @@ func TestCheckpointFailureStopsGoalContinuation(t *testing.T) {
 			return Response{Text: "partial", State: []byte("partial")}, nil
 		},
 	}}
-	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{Checkpointing: true})
-	if err := engine.SetGoal("continue"); err != nil {
+	goal := &Goal{}
+	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{Checkpointing: true, Goal: goal})
+	if err := goal.Set("continue"); err != nil {
 		t.Fatal(err)
 	}
 	persistErr := errors.New("persist failed")

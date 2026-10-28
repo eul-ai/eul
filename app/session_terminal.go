@@ -28,6 +28,7 @@ type terminalOptionsBuilder struct {
 	permissionRequests <-chan terminal.PermissionRequest
 	engine             *agent.Engine
 	settings           *agent.Settings
+	goal               *agent.Goal
 	checkpoints        *checkpointCoordinator
 	sessions           terminal.Sessions
 	messageHistory     terminal.MessageHistory
@@ -99,9 +100,9 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 		Controls: terminal.Controls{
 			Steer:            source.engine.Steer,
 			ClearSteering:    source.engine.ClearSteering,
-			SetGoal:          source.engine.SetGoal,
-			Goal:             source.engine.Goal,
-			ClearGoal:        source.engine.ClearGoal,
+			SetGoal:          source.goal.Set,
+			Goal:             source.goal.State,
+			ClearGoal:        source.goal.Clear,
 			SetThinkingLevel: source.settings.SetThinkingLevel,
 			SetFastMode: func(enabled bool) error {
 				source.settings.SetFastMode(enabled)

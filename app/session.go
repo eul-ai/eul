@@ -33,7 +33,7 @@ func newSessionTools(
 	metadata sessionModelMetadata,
 	settings *agent.Settings,
 	authorizeNetwork tool.NetworkAuthorizer,
-	completeGoal func() error,
+	goal *agent.Goal,
 ) ([]agent.Tool, *subagent.Manager) {
 	newToolset := env.newToolset
 	if newToolset == nil {
@@ -60,7 +60,7 @@ func newSessionTools(
 		tool.NewLaunchSubagents(manager, thinkingLevels, settings),
 		tool.NewWaitForSubagent(manager),
 		tool.NewCancelSubagents(manager),
-		tool.NewUpdateGoal(completeGoal),
+		tool.NewUpdateGoal(goal),
 	)
 	return tools, manager
 }
@@ -123,14 +123,13 @@ func newAgentSessionComponents(
 	authorizeNetwork, permissionRequests := newNetworkPermissionBroker(config.noSandbox)
 	settings := agent.NewSettings(metadata.thinkingLevel, config.fastMode)
 
-	var engine *agent.Engine
-	tools, subagents := newSessionTools(config, env, backendRuntime, metadata, settings, authorizeNetwork, func() error {
-		if engine == nil {
-			return errors.New("goal completion is unavailable")
-		}
-		return engine.CompleteGoal()
-	})
-	engine = agent.New(provider, tools, engineOptions(config, config.models.main, settings, checkpointing, tool.NewSubagentInbox(subagents)))
+	goal := &agent.Goal{}
+	tools, subagents := newSessionTools(config, env, backendRuntime, metadata, settings, authorizeNetwork, goal)
+	options := engineOptions(config, config.models.main, settings)
+	options.Checkpointing = checkpointing
+	options.Inbox = tool.NewSubagentInbox(subagents)
+	options.Goal = goal
+	engine := agent.New(provider, tools, options)
 	session := &agentSession{
 		engine:         engine,
 		tools:          tools,
@@ -138,7 +137,7 @@ func newAgentSessionComponents(
 		backendRuntime: backendRuntime,
 		settings:       settings,
 	}
-	options := terminalOptionsBuilder{
+	terminalOptions := terminalOptionsBuilder{
 		config:             config,
 		runtime:            env,
 		metadata:           metadata,
@@ -148,8 +147,9 @@ func newAgentSessionComponents(
 		permissionRequests: permissionRequests,
 		engine:             engine,
 		settings:           settings,
+		goal:               goal,
 	}
-	return session, options, nil
+	return session, terminalOptions, nil
 }
 
 func (session *agentSession) run(ctx context.Context, runner sessionRunner) (terminal.RunOutcome, error) {
