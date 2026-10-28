@@ -34,22 +34,6 @@ type terminalOptionsBuilder struct {
 }
 
 func (source terminalOptionsBuilder) options() terminal.Options {
-	loadUsage := func(ctx context.Context) (terminal.ProviderUsage, error) {
-		usage, err := source.loadUsage(ctx)
-		windows := make([]terminal.UsageWindow, len(usage.Windows))
-		for index, window := range usage.Windows {
-			windows[index] = terminal.UsageWindow{
-				Duration:    window.Duration,
-				UsedPercent: window.UsedPercent,
-				ResetsAt:    window.ResetsAt,
-			}
-		}
-		return terminal.ProviderUsage{
-			Windows:           windows,
-			MonthlyUsageUSD:   usage.MonthlyUsageUSD,
-			LimitRemainingUSD: usage.LimitRemainingUSD,
-		}, err
-	}
 	thinkingLevel, _ := source.settings.Snapshot()
 	return terminal.Options{
 		Operations: terminal.Operations{
@@ -76,11 +60,11 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 		Sessions:       source.sessions,
 		MessageHistory: source.messageHistory,
 		Config: terminal.Config{
-			Model:             source.config.models.Main,
-			WorkingDirectory:  source.config.cwd,
+			Model:             source.config.Models.Main,
+			WorkingDirectory:  source.config.WorkingDirectory,
 			ThinkingLevel:     thinkingLevel,
 			ThinkingLevels:    source.metadata.ThinkingLevels,
-			FastMode:          source.config.fastMode,
+			FastMode:          source.config.FastMode,
 			FastModeAvailable: source.metadata.FastMode,
 			ContextWindow:     source.metadata.ContextWindow,
 			ContextTokens:     source.contextTokens,
@@ -94,7 +78,7 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 			Subagents:          source.subagents,
 			PermissionRequests: source.permissionRequests,
 		},
-		Services: terminal.Services{LoadUsage: loadUsage},
+		Services: terminal.Services{LoadUsage: source.loadUsage},
 	}
 }
 

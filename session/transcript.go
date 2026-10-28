@@ -10,7 +10,6 @@ import (
 )
 
 const (
-	maxToolSummaryBytes = 500
 	maxErrorBytes       = 500
 	maxDescriptionBytes = 120
 )
@@ -106,14 +105,14 @@ func (t *Transcript) Apply(event agent.Event) {
 
 func (t *Transcript) Append(kind EntryKind, text string) {
 	t.stream.Reset()
-	t.entries = append(t.entries, Entry{Kind: kind, Text: sanitizeText(text)})
+	t.entries = append(t.entries, Entry{Kind: kind, Text: text})
 }
 
 func (t *Transcript) AppendUser(content []agent.ContentPart) {
 	t.stream.Reset()
 	parts := make([]agent.ContentPart, len(content))
 	for index, part := range content {
-		parts[index] = agent.ContentPart{Kind: part.Kind, Text: sanitizeText(part.Text)}
+		parts[index] = agent.ContentPart{Kind: part.Kind, Text: part.Text}
 	}
 	t.entries = append(t.entries, Entry{Kind: EntryUser, Text: contentText(parts), Content: parts})
 }
@@ -141,7 +140,6 @@ func (t *Transcript) FinishTurn(interrupted bool, err error) {
 }
 
 func (t *Transcript) appendStream(kind EntryKind, text string) {
-	text = sanitizeText(text)
 	if text == "" {
 		return
 	}
@@ -165,8 +163,8 @@ func (t *Transcript) startTool(call agent.ToolCall, presentation agent.ToolPrese
 	t.entries = append(t.entries, Entry{
 		Kind:       EntryToolPending,
 		ToolCallID: call.ID,
-		ToolName:   singleLine(call.Name, maxToolSummaryBytes),
-		Tool:       sanitizeToolPresentation(presentation),
+		ToolName:   call.Name,
+		Tool:       presentation,
 	})
 }
 
@@ -176,7 +174,7 @@ func (t *Transcript) updateTool(call agent.ToolCall, presentation agent.ToolPres
 		t.startTool(call, presentation)
 		return
 	}
-	t.entries[index].Tool = sanitizeToolPresentation(presentation)
+	t.entries[index].Tool = presentation
 	t.changed(index)
 }
 
@@ -193,7 +191,7 @@ func (t *Transcript) finishTool(call agent.ToolCall, presentation agent.ToolPres
 
 	presentation.Outcome = toolResultOutcome(result, presentation)
 	t.entries[index].Kind = kind
-	t.entries[index].Tool = sanitizeToolPresentation(presentation)
+	t.entries[index].Tool = presentation
 	t.changed(index)
 }
 
@@ -252,12 +250,6 @@ func toolResultOutcome(result agent.ToolResult, presentation agent.ToolPresentat
 	return "error: " + detail
 }
 
-func sanitizeToolPresentation(presentation agent.ToolPresentation) agent.ToolPresentation {
-	presentation.Arguments = singleLine(presentation.Arguments, maxToolSummaryBytes)
-	presentation.Outcome = singleLine(presentation.Outcome, maxToolSummaryBytes)
-	return presentation
-}
-
 func contentText(content []agent.ContentPart) string {
 	var text strings.Builder
 	for _, part := range content {
@@ -272,15 +264,6 @@ func hasImage(content []agent.ContentPart) bool {
 	return slices.ContainsFunc(content, func(part agent.ContentPart) bool {
 		return part.Kind == agent.ContentPartImage
 	})
-}
-
-func sanitizeText(value string) string {
-	return strings.Map(func(character rune) rune {
-		if character != '\n' && character != '\t' && unicode.IsControl(character) {
-			return '�'
-		}
-		return character
-	}, value)
 }
 
 func singleLine(value string, maximum int) string {

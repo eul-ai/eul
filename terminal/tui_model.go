@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal/text"
@@ -150,7 +151,7 @@ type statusModel struct {
 	fastModeAvailable          bool
 	contextWindow              int64
 	contextTokens              int64
-	providerUsage              ProviderUsage
+	providerUsage              backend.AccountUsage
 	subagentStatus             subagent.Status
 	activity                   activity
 	spinner                    int

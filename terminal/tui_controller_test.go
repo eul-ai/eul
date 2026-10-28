@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/skill"
 	"github.com/eul-ai/eul/subagent"
@@ -1150,7 +1151,7 @@ func TestTUIControllerStoresProviderUsage(t *testing.T) {
 
 	_, err := controller.transition(context.Background(), tuiEvent{
 		kind: tuiEventProviderUsage,
-		providerUsage: providerUsageMessage{usage: ProviderUsage{
+		providerUsage: providerUsageMessage{usage: backend.AccountUsage{
 			MonthlyUsageUSD:   &monthlyUsage,
 			LimitRemainingUSD: &limitRemaining,
 		}},
@@ -1165,7 +1166,7 @@ func TestTUIControllerUsageClockRefreshesWhileRunning(t *testing.T) {
 	results := make(chan providerUsageMessage, 1)
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, usageResults: results,
-		loadUsage: func(context.Context) (ProviderUsage, error) { return ProviderUsage{}, nil },
+		loadUsage: func(context.Context) (backend.AccountUsage, error) { return backend.AccountUsage{}, nil },
 	}
 
 	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventUsageClock}); err != nil {
@@ -1241,7 +1242,7 @@ func TestTUIControllerEventDirtiness(t *testing.T) {
 		{
 			name: "usage clock with reset redraws",
 			prepare: func(model *tuiModel) {
-				model.providerUsage.Windows = []UsageWindow{{ResetsAt: time.Unix(1, 0)}}
+				model.providerUsage.Windows = []backend.UsageWindow{{ResetsAt: time.Unix(1, 0)}}
 			},
 			event:     tuiEvent{kind: tuiEventUsageClock},
 			wantDirty: true,

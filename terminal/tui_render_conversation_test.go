@@ -615,7 +615,7 @@ func TestTUIToolActivityOmitsArguments(t *testing.T) {
 		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "read-1", Name: "read"},
 		Presentation: agent.ToolPresentation{Arguments: "first\n" + strings.Repeat("x", 1_000)},
 	})
-	block := model.entries[0]
+	block := sanitizeEntry(model.entries[0])
 	if strings.Contains(block.Tool.Arguments, "\n") || len(block.Tool.Arguments) > maxToolPresentationSummaryBytes || model.activity.detail != "read" {
 		t.Fatalf("presentation=%+v activity=%q", block.Tool, model.activity.detail)
 	}

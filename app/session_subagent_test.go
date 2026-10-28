@@ -13,6 +13,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/tool"
 )
@@ -33,10 +34,10 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 		return agent.Response{Text: "answer"}, nil
 	}))
 
-	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), sessionSettings{
-		thinkingLevel: agent.ThinkingXHigh,
-		fastMode:      true,
-		cwd:           cwd,
+	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), session.Settings{
+		ThinkingLevel:    agent.ThinkingXHigh,
+		FastMode:         true,
+		WorkingDirectory: cwd,
 	})
 	result, runErr := session.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "test prompt"}}, func(agent.Event) error { return nil })
 	if err := session.finish(runErr); err != nil {
@@ -156,11 +157,11 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 		return childProvider(ctx, request, sink)
 	}))
 
-	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), sessionSettings{
-		models:        backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"},
-		thinkingLevel: agent.ThinkingHigh,
-		fastMode:      true,
-		cwd:           cwd,
+	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), session.Settings{
+		Models:           backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"},
+		ThinkingLevel:    agent.ThinkingHigh,
+		FastMode:         true,
+		WorkingDirectory: cwd,
 	})
 	result, runErr := session.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "review in parallel"}}, func(agent.Event) error { return nil })
 	if err := session.finish(runErr); err != nil {

@@ -36,9 +36,9 @@ func TestModelSetSelectsSubagentProfiles(t *testing.T) {
 }
 
 func TestNewAgentSessionRejectsUnsupportedModel(t *testing.T) {
-	_, err := testLauncher(t, t.TempDir(), testBackendRuntime(emptyProvider())).start(context.Background(), sessionSettings{
-		models: backend.Models{Main: "unknown", Fast: "model", Balanced: "model"},
-		cwd:    t.TempDir(),
+	_, err := testLauncher(t, t.TempDir(), testBackendRuntime(emptyProvider())).start(context.Background(), session.Settings{
+		Models:           backend.Models{Main: "unknown", Fast: "model", Balanced: "model"},
+		WorkingDirectory: t.TempDir(),
 	}, "")
 	var unsupported *backend.ModelNotSupportedError
 	if !errors.As(err, &unsupported) || unsupported.Model != "unknown" {
@@ -75,7 +75,7 @@ func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 	if err := os.WriteFile(brokenSkill, []byte("invalid"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	wired := startTestSession(t, testLauncher(t, cwd, backendRuntime), sessionSettings{models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, thinkingLevel: agent.ThinkingMedium, cwd: cwd})
+	wired := startTestSession(t, testLauncher(t, cwd, backendRuntime), session.Settings{Models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, ThinkingLevel: agent.ThinkingMedium, WorkingDirectory: cwd})
 	defer wired.finish(nil)
 	if wired.terminalOptions.Services.LoadUsage == nil {
 		t.Fatal("backend usage was not wired to the terminal")
@@ -113,7 +113,7 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 		return agent.Response{Text: "child result"}, nil
 	}}
 	cwd := t.TempDir()
-	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), sessionSettings{models: backend.Models{Main: "model"}, cwd: cwd})
+	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), session.Settings{Models: backend.Models{Main: "model"}, WorkingDirectory: cwd})
 	defer func() {
 		close(releaseChild)
 		if err := session.finish(nil); err != nil {
@@ -145,10 +145,10 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 
 func TestNewAgentSessionRejectsUnsupportedFastMode(t *testing.T) {
 	backendRuntime := &backend.Runtime{Provider: emptyProvider(), Catalog: map[string]backend.ModelMetadata{"model": {}}}
-	session, err := testLauncher(t, t.TempDir(), backendRuntime).start(context.Background(), sessionSettings{
-		models:   backend.Models{Main: "model", Fast: "model", Balanced: "model"},
-		fastMode: true,
-		cwd:      t.TempDir(),
+	session, err := testLauncher(t, t.TempDir(), backendRuntime).start(context.Background(), session.Settings{
+		Models:           backend.Models{Main: "model", Fast: "model", Balanced: "model"},
+		FastMode:         true,
+		WorkingDirectory: t.TempDir(),
 	}, "")
 	if session != nil || err == nil {
 		t.Fatalf("session=%v error=%v", session, err)
@@ -166,10 +166,10 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 		"balanced": {ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingHigh}},
 	}
 	cwd := t.TempDir()
-	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), sessionSettings{
-		models:        backend.Models{Main: "main", Fast: "fast", Balanced: "balanced"},
-		thinkingLevel: agent.ThinkingHigh,
-		cwd:           cwd,
+	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), session.Settings{
+		Models:           backend.Models{Main: "main", Fast: "fast", Balanced: "balanced"},
+		ThinkingLevel:    agent.ThinkingHigh,
+		WorkingDirectory: cwd,
 	})
 
 	result, err := caller.call(session, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"fast","thinking_level":"high"}]}`)
@@ -194,10 +194,10 @@ func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 	backendRuntime := caller.runtime()
 	backendRuntime.Catalog = testCatalog("main", "fast", "balanced")
 	cwd := t.TempDir()
-	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), sessionSettings{
-		models:        backend.Models{Main: "main", Fast: "fast", Balanced: "balanced"},
-		thinkingLevel: agent.ThinkingHigh,
-		cwd:           cwd,
+	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), session.Settings{
+		Models:           backend.Models{Main: "main", Fast: "fast", Balanced: "balanced"},
+		ThinkingLevel:    agent.ThinkingHigh,
+		WorkingDirectory: cwd,
 	})
 	defer session.finish(nil)
 
@@ -231,7 +231,7 @@ func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 	caller := &toolCaller{}
 	cwd := t.TempDir()
-	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), sessionSettings{models: backend.Models{Main: "model"}, cwd: cwd})
+	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), session.Settings{Models: backend.Models{Main: "model"}, WorkingDirectory: cwd})
 	defer session.finish(nil)
 
 	result, err := caller.call(session, "update_goal", `{"status":"complete"}`)

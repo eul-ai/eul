@@ -11,6 +11,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
 )
@@ -32,7 +33,7 @@ func callToolAsync(caller *toolCaller, session *agentSession, name, arguments st
 func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
 	caller := &toolCaller{}
 	cwd := t.TempDir()
-	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), sessionSettings{models: backend.Models{Main: "model"}, cwd: cwd})
+	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), session.Settings{Models: backend.Models{Main: "model"}, WorkingDirectory: cwd})
 	defer session.finish(nil)
 
 	done := callToolAsync(caller, session, "bash", `{"command":"printf approved","timeout":null,"network":true}`)
@@ -58,7 +59,7 @@ func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
 func TestAgentSessionRoutesSubagentNetworkApprovalToTerminal(t *testing.T) {
 	caller := &toolCaller{child: networkBashChildProvider("child approved", nil)}
 	cwd := t.TempDir()
-	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), sessionSettings{models: backend.Models{Main: "model"}, cwd: cwd})
+	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), session.Settings{Models: backend.Models{Main: "model"}, WorkingDirectory: cwd})
 	defer session.finish(nil)
 
 	result, err := caller.call(session, "launch_subagents", `{"tasks":[{"description":"inspect network","prompt":"inspect network"}]}`)
@@ -95,7 +96,7 @@ func TestAgentSessionSharesNetworkSessionApprovalWithSubagents(t *testing.T) {
 	childCompleted := make(chan struct{})
 	caller := &toolCaller{child: networkBashChildProvider("child approved", childCompleted)}
 	cwd := t.TempDir()
-	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), sessionSettings{models: backend.Models{Main: "model"}, cwd: cwd})
+	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), session.Settings{Models: backend.Models{Main: "model"}, WorkingDirectory: cwd})
 	defer session.finish(nil)
 
 	parentDone := callToolAsync(caller, session, "bash", `{"command":"printf parent","timeout":null,"network":true}`)

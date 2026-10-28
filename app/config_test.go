@@ -8,6 +8,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/skill"
 )
 
@@ -15,33 +16,33 @@ func TestResolveConfigLoadsDefaultAndExplicitModels(t *testing.T) {
 	t.Chdir(t.TempDir())
 	selected := testBackend("test", nil)
 
-	defaults, err := resolveConfig(sessionSettings{}, selected)
+	defaults, err := resolveConfig(session.Settings{}, selected)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if defaults.provider != "test" || defaults.models != (backend.Models{Main: "gpt-5.6-sol", Fast: "gpt-5.6-luna", Balanced: "gpt-5.6-terra"}) {
+	if defaults.Provider != "test" || defaults.Models != (backend.Models{Main: "gpt-5.6-sol", Fast: "gpt-5.6-luna", Balanced: "gpt-5.6-terra"}) {
 		t.Fatalf("resolved defaults = %+v", defaults)
 	}
 
-	explicit, err := resolveConfig(sessionSettings{
-		models: backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"},
+	explicit, err := resolveConfig(session.Settings{
+		Models: backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"},
 	}, selected)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if explicit.models != (backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"}) {
+	if explicit.Models != (backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"}) {
 		t.Fatalf("config = %+v", explicit)
 	}
 
-	fastMode, err := resolveConfig(sessionSettings{fastMode: true}, selected)
-	if err != nil || !fastMode.fastMode {
+	fastMode, err := resolveConfig(session.Settings{FastMode: true}, selected)
+	if err != nil || !fastMode.FastMode {
 		t.Fatalf("fast mode config = %+v, error = %v", fastMode, err)
 	}
 }
 
 func TestResolveConfigRequiresMainModel(t *testing.T) {
 	selected := backend.Backend{ID: "test"}
-	if _, err := resolveConfig(sessionSettings{models: backend.Models{Fast: "fast-model"}}, selected); err == nil {
+	if _, err := resolveConfig(session.Settings{Models: backend.Models{Fast: "fast-model"}}, selected); err == nil {
 		t.Fatal("missing main model was accepted")
 	}
 }
@@ -67,7 +68,7 @@ func TestResolveConfigLoadsOnlyGenericSkillLocations(t *testing.T) {
 
 	t.Chdir(root)
 	t.Setenv("HOME", home)
-	config, err := resolveConfig(sessionSettings{cwd: "project"}, testBackend("test", nil))
+	config, err := resolveConfig(session.Settings{WorkingDirectory: "project"}, testBackend("test", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +87,7 @@ func TestResolveConfigSkipsGlobalSkillsWhenHomeIsUnavailable(t *testing.T) {
 	t.Chdir(cwd)
 	t.Setenv("HOME", "")
 
-	config, err := resolveConfig(sessionSettings{}, testBackend("test", nil))
+	config, err := resolveConfig(session.Settings{}, testBackend("test", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,15 +120,15 @@ func TestResolveConfigLoadsProjectAndResolvesWorkingDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(root)
-	config, err := resolveConfig(sessionSettings{
-		models:        backend.Models{Main: "gpt-5.6-sol"},
-		thinkingLevel: agent.ThinkingMax,
-		cwd:           "project",
+	config, err := resolveConfig(session.Settings{
+		Models:           backend.Models{Main: "gpt-5.6-sol"},
+		ThinkingLevel:    agent.ThinkingMax,
+		WorkingDirectory: "project",
 	}, testBackend("test", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.models.Main != "gpt-5.6-sol" || config.thinkingLevel != agent.ThinkingMax || config.cwd != cwd || config.projectInstructions != "Project rules." {
+	if config.Models.Main != "gpt-5.6-sol" || config.ThinkingLevel != agent.ThinkingMax || config.WorkingDirectory != cwd || config.projectInstructions != "Project rules." {
 		t.Fatalf("config = %+v", config)
 	}
 }
@@ -147,7 +148,7 @@ func TestSystemPrompt(t *testing.T) {
 	cwd := filepath.Join("workspace", "project")
 	projectInstructions := "Run focused tests before finishing.\n"
 	prompt := systemPrompt(resolvedConfig{
-		sessionSettings:     sessionSettings{cwd: cwd},
+		Settings:            session.Settings{WorkingDirectory: cwd},
 		projectInstructions: projectInstructions,
 		skills:              []skill.Skill{{Name: "review", Description: "Review code", FilePath: "/skills/review/SKILL.md"}},
 	})

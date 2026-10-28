@@ -31,11 +31,11 @@ type childRunner struct {
 }
 
 func (runner childRunner) run(ctx context.Context, task subagent.Task, progress func(agent.Usage)) (string, error) {
-	tools := buildToolset(runner.config.cwd, subagentToolAccess, runner.authorizeNetwork)
+	tools := buildToolset(runner.config.WorkingDirectory, subagentToolAccess, runner.authorizeNetwork)
 	_, fastMode := runner.settings.Snapshot()
 	fastMode = fastMode && runner.models[task.ModelProfile].FastMode
 	child := agent.New(runner.provider, tools, agent.Options{
-		Model:        modelForProfile(runner.config.models, task.ModelProfile),
+		Model:        modelForProfile(runner.config.Models, task.ModelProfile),
 		Settings:     agent.NewSettings(task.ThinkingLevel, fastMode),
 		Instructions: systemPrompt(runner.config) + "\n\n" + childAgentInstructions,
 	})

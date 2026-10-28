@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 )
 
 func TestStatusTruncatesSessionID(t *testing.T) {
@@ -22,7 +23,7 @@ func TestStatusTruncatesSessionID(t *testing.T) {
 func TestStatusShowsProviderUsageWindows(t *testing.T) {
 	now := time.Now()
 	model := newTestModel(180, 12, Options{Config: Config{Model: "opaque-model-value"}})
-	model.providerUsage = ProviderUsage{Windows: []UsageWindow{
+	model.providerUsage = backend.AccountUsage{Windows: []backend.UsageWindow{
 		{Duration: 7 * 24 * time.Hour, UsedPercent: 20, ResetsAt: now.Add(3*24*time.Hour + 5*time.Hour)},
 		{Duration: 5 * time.Hour, UsedPercent: 42, ResetsAt: now.Add(3*time.Hour + 5*time.Minute)},
 	}}
@@ -50,7 +51,7 @@ func TestStatusUsesCompactContextAndSingleUsage(t *testing.T) {
 	model := newTestModel(120, 12, Options{Config: Config{
 		Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, ContextWindow: 272_000,
 	}})
-	model.providerUsage = ProviderUsage{Windows: []UsageWindow{{
+	model.providerUsage = backend.AccountUsage{Windows: []backend.UsageWindow{{
 		Duration: 7 * 24 * time.Hour, UsedPercent: 59, ResetsAt: now.Add(9*time.Hour + 41*time.Minute),
 	}}}
 
@@ -65,7 +66,7 @@ func TestStatusUsesCompactContextAndSingleUsage(t *testing.T) {
 func TestStatusShowsMonthlyUsageAndLimitRemaining(t *testing.T) {
 	monthlyUsage := 12.34
 	limitRemaining := 87.66
-	usage := ProviderUsage{
+	usage := backend.AccountUsage{
 		MonthlyUsageUSD:   &monthlyUsage,
 		LimitRemainingUSD: &limitRemaining,
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 )
 
 func TestStorePartitionsListsAndResolvesSessions(t *testing.T) {
@@ -18,7 +19,7 @@ func TestStorePartitionsListsAndResolvesSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := NewStore(home)
-	models := Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"}
+	models := backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"}
 
 	first := createStoredSession(t, store, Settings{Provider: "test", WorkingDirectory: cwd, Models: models, ThinkingLevel: agent.ThinkingHigh, FastMode: true}, "first prompt\nmore")
 	firstID := first.record.ID
@@ -115,7 +116,7 @@ func TestStorePartitionsListsAndResolvesSessions(t *testing.T) {
 }
 
 func TestMetadataStoresModelsAsJSONObject(t *testing.T) {
-	models := Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"}
+	models := backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"}
 	encoded, err := json.Marshal(metadata{Settings: Settings{Models: models}})
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +185,7 @@ func TestStoreIgnoresAbandonedEmptyDirectory(t *testing.T) {
 func TestStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 	store := NewStore(t.TempDir())
 	cwd := t.TempDir()
-	handle, err := store.Create(Settings{Provider: "test", WorkingDirectory: cwd, Models: Models{Main: "model"}, ThinkingLevel: agent.ThinkingMedium})
+	handle, err := store.Create(Settings{Provider: "test", WorkingDirectory: cwd, Models: backend.Models{Main: "model"}, ThinkingLevel: agent.ThinkingMedium})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +222,7 @@ func TestStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 func TestStoreListsMetadataWithoutDecodingCheckpoints(t *testing.T) {
 	store := NewStore(t.TempDir())
 	cwd := t.TempDir()
-	handle := createStoredSession(t, store, Settings{Provider: "test", WorkingDirectory: cwd, Models: Models{Main: "model"}}, "prompt")
+	handle := createStoredSession(t, store, Settings{Provider: "test", WorkingDirectory: cwd, Models: backend.Models{Main: "model"}}, "prompt")
 	path := filepath.Join(handle.path, stateFileName)
 	id := handle.record.ID
 	if err := handle.Close(); err != nil {
@@ -247,7 +248,7 @@ func TestStoreSkipsCorruptSessions(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
 	store := NewStore(home)
-	handle := createStoredSession(t, store, Settings{Provider: "test", WorkingDirectory: cwd, Models: Models{Main: "model"}}, "prompt")
+	handle := createStoredSession(t, store, Settings{Provider: "test", WorkingDirectory: cwd, Models: backend.Models{Main: "model"}}, "prompt")
 	path := filepath.Join(handle.path, metadataFileName)
 	id := handle.record.ID
 	if err := handle.Close(); err != nil {
@@ -264,7 +265,7 @@ func TestStoreSkipsCorruptSessions(t *testing.T) {
 		t.Fatalf("most recent corrupt-only error = %v", err)
 	}
 
-	valid := createStoredSession(t, store, Settings{Provider: "test", WorkingDirectory: cwd, Models: Models{Main: "model"}}, "valid prompt")
+	valid := createStoredSession(t, store, Settings{Provider: "test", WorkingDirectory: cwd, Models: backend.Models{Main: "model"}}, "valid prompt")
 	validID := valid.record.ID
 	if err := valid.Close(); err != nil {
 		t.Fatal(err)

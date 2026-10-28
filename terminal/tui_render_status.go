@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/terminal/text"
 )
 
@@ -53,8 +54,8 @@ func renderStatus(model *tuiModel, width int) (string, string, string) {
 	return spinner, text.Truncate(activity, width-text.Width(spinner), true), ""
 }
 
-func providerUsageText(usage ProviderUsage, now time.Time) (string, string) {
-	windows := append([]UsageWindow(nil), usage.Windows...)
+func providerUsageText(usage backend.AccountUsage, now time.Time) (string, string) {
+	windows := append([]backend.UsageWindow(nil), usage.Windows...)
 	sort.SliceStable(windows, func(left, right int) bool {
 		return windows[left].Duration < windows[right].Duration
 	})

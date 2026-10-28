@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/filesearch"
 	"github.com/eul-ai/eul/terminal/keys"
 )
@@ -30,7 +31,7 @@ type engineMessage struct {
 }
 
 type providerUsageMessage struct {
-	usage ProviderUsage
+	usage backend.AccountUsage
 	err   error
 }
 

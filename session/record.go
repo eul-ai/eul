@@ -4,19 +4,14 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/subagent"
 )
-
-type Models struct {
-	Main     string `json:"main"`
-	Fast     string `json:"fast"`
-	Balanced string `json:"balanced"`
-}
 
 type Settings struct {
 	Provider         string              `json:"provider"`
 	WorkingDirectory string              `json:"working_directory"`
-	Models           Models              `json:"models"`
+	Models           backend.Models      `json:"models"`
 	ThinkingLevel    agent.ThinkingLevel `json:"thinking_level"`
 	FastMode         bool                `json:"fast_mode,omitempty"`
 }

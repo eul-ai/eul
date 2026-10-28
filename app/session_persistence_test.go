@@ -25,7 +25,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 		return agent.Response{Text: "second answer", State: []byte("next-state")}, nil
 	})))
 
-	first := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd})
+	first := startTestSession(t, launcher, session.Settings{Models: backend.Models{Main: "model"}, ThinkingLevel: agent.ThinkingHigh, WorkingDirectory: cwd})
 	if _, err := first.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "first prompt"}}, func(agent.Event) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 		return agent.Response{Text: "result for " + request.Inputs[0].PlainText()}, nil
 	}}
 	launcher := testLauncher(t, cwd, caller.runtime())
-	idle := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd})
+	idle := startTestSession(t, launcher, session.Settings{Models: backend.Models{Main: "model"}, ThinkingLevel: agent.ThinkingHigh, WorkingDirectory: cwd})
 	defer idle.finish(nil)
 	savePrompt(t, idle.terminalOptions, "prompt", false)
 	if _, err := caller.call(idle, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect"}]}`); err != nil {
@@ -105,7 +105,7 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 	}}
 	launcher := testLauncher(t, cwd, caller.runtime())
 
-	first := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd})
+	first := startTestSession(t, launcher, session.Settings{Models: backend.Models{Main: "model"}, ThinkingLevel: agent.ThinkingHigh, WorkingDirectory: cwd})
 	if _, err := caller.call(first, "launch_subagents", `{"tasks":[{"description":"running","prompt":"running"}]}`); err != nil {
 		t.Fatal(err)
 	}
@@ -169,8 +169,8 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if selected.config.provider != "alternate" {
-		t.Fatalf("provider = %q", selected.config.provider)
+	if selected.config.Provider != "alternate" {
+		t.Fatalf("provider = %q", selected.config.Provider)
 	}
 	savePrompt(t, selected.terminalOptions, "saved prompt", false)
 	sessionID := selected.terminalOptions.Config.SessionID
@@ -183,7 +183,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restored.finish(nil)
-	if restored.config.provider != "alternate" || restored.config.models != models {
+	if restored.config.Provider != "alternate" || restored.config.Models != models {
 		t.Fatalf("restored = %+v", restored.config)
 	}
 }

@@ -15,7 +15,7 @@ import (
 )
 
 type agentSession struct {
-	config          sessionSettings
+	config          session.Settings
 	engine          *agent.Engine
 	subagents       *subagent.Manager
 	terminalOptions terminal.Options
@@ -81,7 +81,7 @@ func newSessionTools(
 		thinkingLevels[profile] = model.ThinkingLevels
 	}
 	tools := buildToolset(
-		config.cwd,
+		config.WorkingDirectory,
 		fullToolAccess,
 		authorizeNetwork,
 		tool.NewLaunchSubagents(manager, thinkingLevels, settings),
@@ -111,21 +111,21 @@ func newAgentSessionComponents(
 	noSandbox bool,
 	interrupts <-chan os.Signal,
 ) (*agentSession, terminalOptionsBuilder, error) {
-	metadata, err := resolveModelMetadata(runtime, config.models)
+	metadata, err := resolveModelMetadata(runtime, config.Models)
 	if err != nil {
 		return nil, terminalOptionsBuilder{}, err
 	}
 	main := metadata[subagent.ProfileMain]
-	if config.fastMode && !main.FastMode {
-		return nil, terminalOptionsBuilder{}, fmt.Errorf("fast mode is unavailable for model %q", config.models.Main)
+	if config.FastMode && !main.FastMode {
+		return nil, terminalOptionsBuilder{}, fmt.Errorf("fast mode is unavailable for model %q", config.Models.Main)
 	}
 	authorizeNetwork, permissionRequests := newNetworkPermissionBroker(noSandbox)
-	settings := agent.NewSettings(main.ClampThinkingLevel(config.thinkingLevel), config.fastMode)
+	settings := agent.NewSettings(main.ClampThinkingLevel(config.ThinkingLevel), config.FastMode)
 
 	goal := &agent.Goal{}
 	tools, subagents := newSessionTools(config, runtime.Provider, metadata, settings, authorizeNetwork, goal, record.Subagent)
 	engine := agent.New(runtime.Provider, tools, agent.Options{
-		Model:         config.models.Main,
+		Model:         config.Models.Main,
 		Instructions:  systemPrompt(config),
 		SessionID:     record.ID,
 		Checkpoint:    record.Agent,
@@ -135,7 +135,7 @@ func newAgentSessionComponents(
 		Goal:          goal,
 	})
 	session := &agentSession{
-		config:        config.sessionSettings,
+		config:        config.Settings,
 		engine:        engine,
 		subagents:     subagents,
 		agentSettings: settings,
@@ -154,9 +154,9 @@ func newAgentSessionComponents(
 	return session, terminalOptions, nil
 }
 
-func (session *agentSession) settings() sessionSettings {
+func (session *agentSession) settings() session.Settings {
 	settings := session.config
-	settings.thinkingLevel, settings.fastMode = session.agentSettings.Snapshot()
+	settings.ThinkingLevel, settings.FastMode = session.agentSettings.Snapshot()
 	return settings
 }
 

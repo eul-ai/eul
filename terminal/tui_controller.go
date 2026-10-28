@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/filesearch"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal/clipboard"
@@ -51,7 +52,7 @@ type controllerOptions struct {
 	engineMessages  chan<- engineMessage
 	stopped         <-chan struct{}
 	fileSearch      *filesearch.Searcher
-	loadUsage       func(context.Context) (ProviderUsage, error)
+	loadUsage       func(context.Context) (backend.AccountUsage, error)
 	usageResults    chan<- providerUsageMessage
 	clipboardImages chan<- tuiEvent
 	operations      Operations
@@ -92,7 +93,7 @@ type tuiController struct {
 	engineMessages               chan<- engineMessage
 	stopped                      <-chan struct{}
 	fileSearch                   *filesearch.Searcher
-	loadUsage                    func(context.Context) (ProviderUsage, error)
+	loadUsage                    func(context.Context) (backend.AccountUsage, error)
 	usageResults                 chan<- providerUsageMessage
 	usageLoading                 bool
 	usageLoads                   sync.WaitGroup
@@ -312,11 +313,7 @@ func (c *tuiController) requestUsage(ctx context.Context) {
 func (c *tuiController) handleProviderUsage(message providerUsageMessage) (bool, error) {
 	c.usageLoading = false
 	if message.err == nil {
-		c.model.providerUsage = ProviderUsage{
-			Windows:           append([]UsageWindow(nil), message.usage.Windows...),
-			MonthlyUsageUSD:   message.usage.MonthlyUsageUSD,
-			LimitRemainingUSD: message.usage.LimitRemainingUSD,
-		}
+		c.model.providerUsage = message.usage
 	}
 
 	c.dirty = true

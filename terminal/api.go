@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/skill"
 	"github.com/eul-ai/eul/subagent"
@@ -109,20 +109,8 @@ type Events struct {
 	PermissionRequests <-chan PermissionRequest
 }
 
-type ProviderUsage struct {
-	Windows           []UsageWindow
-	MonthlyUsageUSD   *float64
-	LimitRemainingUSD *float64
-}
-
-type UsageWindow struct {
-	Duration    time.Duration
-	UsedPercent int
-	ResetsAt    time.Time
-}
-
 type Services struct {
-	LoadUsage func(context.Context) (ProviderUsage, error)
+	LoadUsage func(context.Context) (backend.AccountUsage, error)
 }
 
 type Options struct {

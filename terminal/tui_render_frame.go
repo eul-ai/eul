@@ -236,8 +236,9 @@ func (r *tuiRenderer) flattenConversation(model *tuiModel) {
 }
 
 func renderConversationBlock(block session.Entry, width int) renderedConversationBlock {
-	markdown, _ := markdownSource(block)
-	lines := conversationBlockLines(block, width)
+	sanitized := sanitizeEntry(block)
+	markdown, _ := markdownSource(sanitized)
+	lines := conversationBlockLines(sanitized, width)
 	plain := make([]string, len(lines))
 	separators := make([]string, len(lines))
 	for index, line := range lines {

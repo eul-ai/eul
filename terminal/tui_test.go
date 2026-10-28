@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal/keys"
@@ -130,9 +131,9 @@ func TestRunTUILoadsProviderUsageAtStartupAndAfterTurn(t *testing.T) {
 	calls := make(chan struct{}, 3)
 	output := newSignalingWriter("usage 25%")
 	options := Options{
-		Services: Services{LoadUsage: func(context.Context) (ProviderUsage, error) {
+		Services: Services{LoadUsage: func(context.Context) (backend.AccountUsage, error) {
 			calls <- struct{}{}
-			return ProviderUsage{Windows: []UsageWindow{{Duration: 5 * time.Hour, UsedPercent: 25}}}, nil
+			return backend.AccountUsage{Windows: []backend.UsageWindow{{Duration: 5 * time.Hour, UsedPercent: 25}}}, nil
 		}},
 	}
 
@@ -190,12 +191,12 @@ func TestRunTUIWaitsForProviderUsageCleanup(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, err := runTest(context.Background(), reader, io.Discard, optionsForEngine(&fakeEngine{}, Options{
-			Services: Services{LoadUsage: func(ctx context.Context) (ProviderUsage, error) {
+			Services: Services{LoadUsage: func(ctx context.Context) (backend.AccountUsage, error) {
 				close(started)
 				<-ctx.Done()
 				close(canceled)
 				<-release
-				return ProviderUsage{}, ctx.Err()
+				return backend.AccountUsage{}, ctx.Err()
 			}},
 		}))
 		done <- err

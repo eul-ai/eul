@@ -67,7 +67,7 @@ func runSessions(
 		case terminal.RunNewSession:
 			session, err = launcher.start(ctx, session.settings(), "")
 		case terminal.RunResumeSession:
-			session, err = launcher.resume(ctx, session.config.cwd, outcome.SessionID, "")
+			session, err = launcher.resume(ctx, session.config.WorkingDirectory, outcome.SessionID, "")
 		default:
 			return fmt.Errorf("session: unknown terminal run action %d", outcome.Action)
 		}
@@ -81,16 +81,16 @@ func (launcher *launcher) launch(ctx context.Context, options Options) (*agentSe
 	if options.Resume {
 		return launcher.resume(ctx, "", options.SessionID, options.Prompt)
 	}
-	return launcher.start(ctx, sessionSettings{
-		provider:      options.Provider,
-		models:        options.Models,
-		thinkingLevel: options.ThinkingLevel,
-		fastMode:      options.FastMode,
-		cwd:           options.WorkingDirectory,
+	return launcher.start(ctx, session.Settings{
+		Provider:         options.Provider,
+		Models:           options.Models,
+		ThinkingLevel:    options.ThinkingLevel,
+		FastMode:         options.FastMode,
+		WorkingDirectory: options.WorkingDirectory,
 	}, options.Prompt)
 }
 
-func (launcher *launcher) start(ctx context.Context, settings sessionSettings, prompt string) (*agentSession, error) {
+func (launcher *launcher) start(ctx context.Context, settings session.Settings, prompt string) (*agentSession, error) {
 	return launcher.open(ctx, settings, nil, prompt)
 }
 
@@ -104,15 +104,15 @@ func (launcher *launcher) resume(ctx context.Context, cwd, id, prompt string) (*
 		return nil, err
 	}
 
-	resumed, err := launcher.open(ctx, storedSessionSettings(handle.Record().Settings), handle, prompt)
+	resumed, err := launcher.open(ctx, handle.Record().Settings, handle, prompt)
 	if err != nil {
 		return nil, errors.Join(err, handle.Close())
 	}
 	return resumed, nil
 }
 
-func (launcher *launcher) open(ctx context.Context, settings sessionSettings, handle *session.Handle, prompt string) (*agentSession, error) {
-	selected, err := launcher.backends.Lookup(settings.provider)
+func (launcher *launcher) open(ctx context.Context, settings session.Settings, handle *session.Handle, prompt string) (*agentSession, error) {
+	selected, err := launcher.backends.Lookup(settings.Provider)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +126,7 @@ func (launcher *launcher) open(ctx context.Context, settings sessionSettings, ha
 		return nil, err
 	}
 	if handle == nil {
-		handle, err = launcher.store.Create(config.sessionSettings.stored())
+		handle, err = launcher.store.Create(config.Settings)
 		if err != nil {
 			return nil, err
 		}

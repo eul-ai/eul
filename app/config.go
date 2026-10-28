@@ -35,53 +35,25 @@ type Dependencies struct {
 	Backends   backend.Registry
 }
 
-type sessionSettings struct {
-	provider      string
-	models        backend.Models
-	thinkingLevel agent.ThinkingLevel
-	fastMode      bool
-	cwd           string
-}
-
-func (settings sessionSettings) stored() session.Settings {
-	return session.Settings{
-		Provider:         settings.provider,
-		WorkingDirectory: settings.cwd,
-		Models:           session.Models(settings.models),
-		ThinkingLevel:    settings.thinkingLevel,
-		FastMode:         settings.fastMode,
-	}
-}
-
-func storedSessionSettings(settings session.Settings) sessionSettings {
-	return sessionSettings{
-		provider:      settings.Provider,
-		models:        backend.Models(settings.Models),
-		thinkingLevel: settings.ThinkingLevel,
-		fastMode:      settings.FastMode,
-		cwd:           settings.WorkingDirectory,
-	}
-}
-
 type resolvedConfig struct {
-	sessionSettings
+	session.Settings
 	projectInstructions string
 	skills              []skill.Skill
 	warnings            []string
 }
 
-func resolveConfig(settings sessionSettings, selected backend.Backend) (resolvedConfig, error) {
-	settings.provider = selected.ID
-	settings.models = settings.models.WithDefaults(selected.Models)
-	if settings.models.Main == "" {
+func resolveConfig(settings session.Settings, selected backend.Backend) (resolvedConfig, error) {
+	settings.Provider = selected.ID
+	settings.Models = settings.Models.WithDefaults(selected.Models)
+	if settings.Models.Main == "" {
 		return resolvedConfig{}, errors.New("main model is required; use --model")
 	}
 
-	cwd, err := resolveCWD(settings.cwd)
+	cwd, err := resolveCWD(settings.WorkingDirectory)
 	if err != nil {
 		return resolvedConfig{}, err
 	}
-	settings.cwd = cwd
+	settings.WorkingDirectory = cwd
 	projectInstructions, err := readProjectInstructions(cwd)
 	if err != nil {
 		return resolvedConfig{}, err
@@ -93,7 +65,7 @@ func resolveConfig(settings sessionSettings, selected backend.Backend) (resolved
 	skills, warnings := skill.Load(skillDirectories...)
 
 	return resolvedConfig{
-		sessionSettings:     settings,
+		Settings:            settings,
 		projectInstructions: projectInstructions,
 		skills:              skills,
 		warnings:            warnings,
@@ -148,7 +120,7 @@ func systemPrompt(config resolvedConfig) string {
 	prompt.WriteString("\n\nIndependent tool calls may run concurrently; separate dependent calls.\n")
 	if config.projectInstructions != "" {
 		prompt.WriteString("\n<project_instructions path=\"")
-		prompt.WriteString(html.EscapeString(filepath.ToSlash(filepath.Join(config.cwd, "AGENTS.md"))))
+		prompt.WriteString(html.EscapeString(filepath.ToSlash(filepath.Join(config.WorkingDirectory, "AGENTS.md"))))
 		prompt.WriteString("\">\n")
 		prompt.WriteString(strings.TrimSuffix(config.projectInstructions, "\n"))
 		prompt.WriteString("\n</project_instructions>\n")
@@ -157,6 +129,6 @@ func systemPrompt(config resolvedConfig) string {
 		prompt.WriteString("\n" + section + "\n")
 	}
 	prompt.WriteString("\nCurrent working directory: ")
-	prompt.WriteString(filepath.ToSlash(config.cwd))
+	prompt.WriteString(filepath.ToSlash(config.WorkingDirectory))
 	return prompt.String()
 }

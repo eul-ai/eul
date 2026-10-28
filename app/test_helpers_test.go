@@ -73,7 +73,7 @@ func testLauncher(t *testing.T, cwd string, runtime *backend.Runtime) *launcher 
 	return newLauncher(t.TempDir(), backend.Registry{testBackend("test", runtime)}, false, nil)
 }
 
-func startTestSession(t *testing.T, launcher *launcher, settings sessionSettings) *agentSession {
+func startTestSession(t *testing.T, launcher *launcher, settings session.Settings) *agentSession {
 	t.Helper()
 	session, err := launcher.start(context.Background(), settings, "")
 	if err != nil {

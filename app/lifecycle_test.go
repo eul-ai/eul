@@ -31,10 +31,10 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 	cwd := t.TempDir()
 	opened := 0
 	launcher := newLifecycleLauncher(t, cwd, testBackendRuntime(emptyProvider()), &opened)
-	initialSession := startTestSession(t, launcher, sessionSettings{
-		models:        backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"},
-		thinkingLevel: agent.ThinkingHigh,
-		cwd:           cwd,
+	initialSession := startTestSession(t, launcher, session.Settings{
+		Models:           backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"},
+		ThinkingLevel:    agent.ThinkingHigh,
+		WorkingDirectory: cwd,
 	})
 	initialID := initialSession.terminalOptions.Config.SessionID
 
@@ -101,10 +101,10 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 	launcher := newLifecycleLauncher(t, initialCWD, backendRuntime, &opened)
 	targetID := createTargetSession(t, launcher, targetCWD, "resume target prompt")
 
-	initialSession := startTestSession(t, launcher, sessionSettings{
-		models:        backend.Models{Main: "initial-main", Fast: "initial-fast", Balanced: "initial-balanced"},
-		thinkingLevel: agent.ThinkingHigh,
-		cwd:           initialCWD,
+	initialSession := startTestSession(t, launcher, session.Settings{
+		Models:           backend.Models{Main: "initial-main", Fast: "initial-fast", Balanced: "initial-balanced"},
+		ThinkingLevel:    agent.ThinkingHigh,
+		WorkingDirectory: initialCWD,
 	})
 	initialID := initialSession.terminalOptions.Config.SessionID
 
@@ -158,7 +158,7 @@ func TestRunSessionsExitClosesSession(t *testing.T) {
 	ctx := context.Background()
 	cwd := t.TempDir()
 	launcher := testLauncher(t, cwd, testBackendRuntime(emptyProvider()))
-	initialSession := startTestSession(t, launcher, sessionSettings{cwd: cwd, thinkingLevel: agent.ThinkingHigh})
+	initialSession := startTestSession(t, launcher, session.Settings{WorkingDirectory: cwd, ThinkingLevel: agent.ThinkingHigh})
 	runner := &scriptedSessionRunner{steps: []func(context.Context, terminal.Options) (terminal.RunOutcome, error){
 		func(context.Context, terminal.Options) (terminal.RunOutcome, error) {
 			return terminal.RunOutcome{Action: terminal.RunExit}, nil
@@ -181,7 +181,7 @@ func TestRunSessionsKeepsNoSandboxAcrossResumeAndNewSession(t *testing.T) {
 	launcher := testLauncher(t, cwd, backendRuntime)
 	launcher.noSandbox = true
 	targetID := createTargetSession(t, launcher, cwd, "resume target prompt")
-	initialSession := startTestSession(t, launcher, sessionSettings{cwd: cwd, thinkingLevel: agent.ThinkingHigh})
+	initialSession := startTestSession(t, launcher, session.Settings{WorkingDirectory: cwd, ThinkingLevel: agent.ThinkingHigh})
 
 	unsandboxed := func(options terminal.Options) {
 		if options.Events.PermissionRequests != nil {
@@ -230,7 +230,7 @@ func TestLaunchResumeKeepsPrompt(t *testing.T) {
 func TestRunSessionsFinishesSessionAfterRunFailure(t *testing.T) {
 	runFailure := errors.New("run failed")
 	cwd := t.TempDir()
-	failing := startTestSession(t, testLauncher(t, cwd, testBackendRuntime(emptyProvider())), sessionSettings{cwd: cwd, thinkingLevel: agent.ThinkingHigh})
+	failing := startTestSession(t, testLauncher(t, cwd, testBackendRuntime(emptyProvider())), session.Settings{WorkingDirectory: cwd, ThinkingLevel: agent.ThinkingHigh})
 
 	err := runSessions(context.Background(), func(context.Context, terminal.Options) (terminal.RunOutcome, error) {
 		return terminal.RunOutcome{}, runFailure
@@ -254,12 +254,12 @@ func newLifecycleLauncher(t *testing.T, cwd string, runtime *backend.Runtime, op
 
 func createTargetSession(t *testing.T, launcher *launcher, cwd string, prompt string) string {
 	t.Helper()
-	target := startTestSession(t, launcher, sessionSettings{
-		provider:      "test",
-		cwd:           cwd,
-		models:        backend.Models{Main: "resume-main", Fast: "resume-fast", Balanced: "resume-balanced"},
-		thinkingLevel: agent.ThinkingMedium,
-		fastMode:      true,
+	target := startTestSession(t, launcher, session.Settings{
+		Provider:         "test",
+		WorkingDirectory: cwd,
+		Models:           backend.Models{Main: "resume-main", Fast: "resume-fast", Balanced: "resume-balanced"},
+		ThinkingLevel:    agent.ThinkingMedium,
+		FastMode:         true,
 	})
 	savePrompt(t, target.terminalOptions, prompt, false)
 	if err := target.finish(nil); err != nil {
