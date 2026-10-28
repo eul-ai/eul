@@ -14,6 +14,7 @@ import (
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
+	"github.com/eul-ai/eul/tool"
 )
 
 type providerFunction func(context.Context, agent.Request, agent.TextSink) (agent.Response, error)
@@ -200,4 +201,18 @@ func executeTool(tools []agent.Tool, name, arguments string) (agent.ToolResult, 
 		}
 	}
 	return agent.ToolResult{}, fmt.Errorf("unknown tool %q", name)
+}
+
+func captureTools(captured *[]agent.Tool, newToolset toolsetFactory) toolsetFactory {
+	return func(cwd string, access toolAccess, authorizeNetwork tool.NetworkAuthorizer, additional ...agent.Tool) []agent.Tool {
+		tools := newToolset(cwd, access, authorizeNetwork, additional...)
+		if access == fullToolAccess {
+			*captured = tools
+		}
+		return tools
+	}
+}
+
+func additionalTools(_ string, _ toolAccess, _ tool.NetworkAuthorizer, additional ...agent.Tool) []agent.Tool {
+	return additional
 }

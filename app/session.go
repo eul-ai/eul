@@ -18,7 +18,6 @@ type sessionRunner interface {
 
 type agentSession struct {
 	engine          *agent.Engine
-	tools           []agent.Tool
 	subagents       *subagent.Manager
 	backendRuntime  backend.Runtime
 	terminalOptions terminal.Options
@@ -55,7 +54,6 @@ func newSessionTools(
 	tools := newToolset(
 		config.cwd,
 		fullToolAccess,
-		config.noSandbox,
 		authorizeNetwork,
 		tool.NewLaunchSubagents(manager, thinkingLevels, settings),
 		tool.NewWaitForSubagent(manager),
@@ -132,7 +130,6 @@ func newAgentSessionComponents(
 	engine := agent.New(provider, tools, options)
 	session := &agentSession{
 		engine:         engine,
-		tools:          tools,
 		subagents:      subagents,
 		backendRuntime: backendRuntime,
 		settings:       settings,

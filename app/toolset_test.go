@@ -15,7 +15,7 @@ func TestBuildToolset(t *testing.T) {
 		{name: "subagent access", access: subagentToolAccess, want: []string{"bash", "read"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			tools := buildToolset(t.TempDir(), test.access, true, nil)
+			tools := buildToolset(t.TempDir(), test.access, nil)
 			names := make([]string, len(tools))
 			for index, current := range tools {
 				names[index] = current.Definition().Name

@@ -12,12 +12,11 @@ const (
 	subagentToolAccess
 )
 
-type toolsetFactory func(string, toolAccess, bool, tool.NetworkAuthorizer, ...agent.Tool) []agent.Tool
+type toolsetFactory func(string, toolAccess, tool.NetworkAuthorizer, ...agent.Tool) []agent.Tool
 
 func buildToolset(
 	cwd string,
 	access toolAccess,
-	_ bool,
 	authorizeNetwork tool.NetworkAuthorizer,
 	additional ...agent.Tool,
 ) []agent.Tool {

@@ -23,7 +23,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	runtime := environment{
 		stdin:  strings.NewReader(""),
 		stdout: io.Discard,
-		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...agent.Tool) []agent.Tool {
+		newToolset: func(string, toolAccess, tool.NetworkAuthorizer, ...agent.Tool) []agent.Tool {
 			return nil
 		},
 	}
@@ -94,12 +94,11 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 
 func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 	cwd := t.TempDir()
+	var tools []agent.Tool
 	runtime := environment{
-		stdin:  strings.NewReader(""),
-		stdout: io.Discard,
-		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...agent.Tool) []agent.Tool {
-			return nil
-		},
+		stdin:      strings.NewReader(""),
+		stdout:     io.Discard,
+		newToolset: captureTools(&tools, additionalTools),
 	}
 	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
@@ -118,8 +117,7 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 	if err := session.terminalOptions.StateChanges.Notify(sessionStoreTestTerminalCheckpoint(t, "prompt"), false); err != nil {
 		t.Fatal(err)
 	}
-	launch := tool.NewLaunchSubagents(session.subagents, map[subagent.Profile][]agent.ThinkingLevel{subagent.ProfileMain: agent.ThinkingLevels()}, session.settings)
-	if _, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`), nil); err != nil {
+	if _, err := executeTool(tools, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect"}]}`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -145,12 +143,11 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 
 func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testing.T) {
 	cwd := t.TempDir()
+	var tools []agent.Tool
 	runtime := environment{
-		stdin:  strings.NewReader(""),
-		stdout: io.Discard,
-		newToolset: func(string, toolAccess, bool, tool.NetworkAuthorizer, ...agent.Tool) []agent.Tool {
-			return nil
-		},
+		stdin:      strings.NewReader(""),
+		stdout:     io.Discard,
+		newToolset: captureTools(&tools, additionalTools),
 	}
 	newBackendRuntime := func() *fakeBackendRuntime {
 		return &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
@@ -169,8 +166,7 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	launch := tool.NewLaunchSubagents(first.subagents, map[subagent.Profile][]agent.ThinkingLevel{subagent.ProfileMain: agent.ThinkingLevels()}, first.settings)
-	if _, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"running","prompt":"running"}]}`), nil); err != nil {
+	if _, err := executeTool(tools, "launch_subagents", `{"tasks":[{"description":"running","prompt":"running"}]}`); err != nil {
 		t.Fatal(err)
 	}
 	terminalCheckpoint := sessionStoreTestTerminalCheckpoint(t, "active prompt")

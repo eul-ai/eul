@@ -156,9 +156,7 @@ func (launcher subagentLauncher) run(_ context.Context, args launchArguments, up
 	for _, job := range jobs {
 		fmt.Fprintf(&output, "\n- %s (%s, %s thinking): %s", job.ID, job.ModelProfile, job.ThinkingLevel, job.Description)
 	}
-	if updates != nil {
-		updates.SetFinal(launchPresentation(len(jobs), fmt.Sprintf("Started %d subagent(s).", len(jobs))))
-	}
+	updates.SetFinal(launchPresentation(len(jobs), fmt.Sprintf("Started %d subagent(s).", len(jobs))))
 	return successResult(output.String()), nil
 }
 
@@ -182,7 +180,7 @@ func (launcher subagentLauncher) resolve(task subagent.Task) (subagent.Task, err
 
 func (launch launchTool) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
 	result, err := launch.spec.Execute(ctx, arguments, updates)
-	if result.IsError && updates != nil {
+	if result.IsError {
 		updates.SetFinal(agent.ToolPresentation{Markdown: true, Lines: []string{"No subagents were started."}})
 	}
 	return result, err
