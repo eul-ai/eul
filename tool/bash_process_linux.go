@@ -9,8 +9,8 @@ import (
 	"syscall"
 )
 
-func newBashProcess(ctx context.Context, shell, source string, network bool) *exec.Cmd {
-	command := exec.CommandContext(ctx, shell, "-c", source)
+func newBashProcess(ctx context.Context, source string, network bool) *exec.Cmd {
+	command := exec.CommandContext(ctx, bashShell, "-c", source)
 	attributes := &syscall.SysProcAttr{Setpgid: true}
 	if network {
 		command.SysProcAttr = attributes

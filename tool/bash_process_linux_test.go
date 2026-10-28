@@ -10,7 +10,7 @@ import (
 )
 
 func TestBashProcessConfiguresNetworkNamespace(t *testing.T) {
-	sandboxed := newBashProcess(context.Background(), "bash", "true", false)
+	sandboxed := newBashProcess(context.Background(), "true", false)
 	attributes := sandboxed.SysProcAttr
 	wantFlags := uintptr(syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET)
 	if attributes == nil || attributes.Cloneflags != wantFlags || !attributes.Setpgid {
@@ -23,7 +23,7 @@ func TestBashProcessConfiguresNetworkNamespace(t *testing.T) {
 		t.Fatalf("GID mappings = %+v, setgroups = %t", attributes.GidMappings, attributes.GidMappingsEnableSetgroups)
 	}
 
-	allowed := newBashProcess(context.Background(), "bash", "true", true)
+	allowed := newBashProcess(context.Background(), "true", true)
 	if allowed.SysProcAttr == nil || allowed.SysProcAttr.Cloneflags != 0 || !allowed.SysProcAttr.Setpgid {
 		t.Fatalf("network-enabled process attributes = %+v", allowed.SysProcAttr)
 	}
