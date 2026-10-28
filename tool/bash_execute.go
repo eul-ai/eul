@@ -2,7 +2,6 @@ package tool
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -14,30 +13,22 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-func (b *bashTool) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
-	if err := ctx.Err(); err != nil {
-		return agent.ToolResult{}, err
-	}
-
-	args, err := decodeArguments[bashArguments](arguments)
-	if err != nil {
-		return errorResult(bashToolName, err), nil
-	}
+func (b bashTool) run(ctx context.Context, args bashArguments, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if strings.TrimSpace(args.Command) == "" {
-		return errorResult(bashToolName, fmt.Errorf("command is required and must be nonempty")), nil
+		return agent.ToolResult{}, errors.New("command is required and must be nonempty")
 	}
 
-	timeout := b.defaultTimeout
+	timeout := defaultBashTimeout
 	if args.Timeout != nil {
 		seconds, err := args.Timeout.Int64()
 		if err != nil {
-			return errorResult(bashToolName, fmt.Errorf("timeout must be an integer")), nil
+			return agent.ToolResult{}, errors.New("timeout must be an integer")
 		}
 		if seconds <= 0 {
-			return errorResult(bashToolName, fmt.Errorf("timeout must be positive")), nil
+			return agent.ToolResult{}, errors.New("timeout must be positive")
 		}
-		if time.Duration(seconds) > b.maxTimeout/time.Second {
-			return errorResult(bashToolName, fmt.Errorf("timeout must not exceed %s (requested: %ds)", b.maxTimeout, seconds)), nil
+		if time.Duration(seconds) > maximumBashTimeout/time.Second {
+			return agent.ToolResult{}, fmt.Errorf("timeout must not exceed %s (requested: %ds)", maximumBashTimeout, seconds)
 		}
 		timeout = time.Duration(seconds) * time.Second
 	}
@@ -48,17 +39,17 @@ func (b *bashTool) Execute(ctx context.Context, arguments json.RawMessage, updat
 	case args.Network:
 		allowed, err := b.authorizeNetwork(ctx, args.Command)
 		if err != nil {
-			return errorResult(bashToolName, fmt.Errorf("authorize network access: %w", err)), err
+			return agent.ToolResult{}, fmt.Errorf("authorize network access: %w", err)
 		}
 		if !allowed {
-			return errorResult(bashToolName, errors.New("network access denied")), nil
+			return agent.ToolResult{}, errors.New("network access denied")
 		}
 	}
 
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	command := newBashProcess(runCtx, b.shell, args.Command, args.Network)
+	command := newBashProcess(runCtx, bashShell, args.Command, args.Network)
 	command.Cancel = func() error {
 		err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 		if errors.Is(err, syscall.ESRCH) {
@@ -69,7 +60,7 @@ func (b *bashTool) Execute(ctx context.Context, arguments json.RawMessage, updat
 	command.Dir = b.workspace.cwd
 	command.Stdin = nil
 	command.Env = os.Environ()
-	command.WaitDelay = b.waitDelay
+	command.WaitDelay = bashWaitDelay
 
 	capture := newTailCapture(defaultMaxBytes)
 	started := time.Now()
@@ -82,23 +73,20 @@ func (b *bashTool) Execute(ctx context.Context, arguments json.RawMessage, updat
 			setFinalBashPresentation(updates, args.Command, "", "", time.Since(started), timeout)
 			return result, contextErr
 		}
+		setFinalBashPresentation(updates, args.Command, "", "", time.Since(started), timeout)
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-			result := errorResult(bashToolName, fmt.Errorf("timed out after %s before shell started; exit status: unavailable", timeout))
-			setFinalBashPresentation(updates, args.Command, "", "", time.Since(started), timeout)
-			return result, nil
+			return agent.ToolResult{}, fmt.Errorf("timed out after %s before shell started; exit status: unavailable", timeout)
 		}
 		operation := "shell"
 		if !args.Network {
 			operation = "network-isolated shell"
 		}
-		result := errorResult(bashToolName, fmt.Errorf("failed to start %s: %w; exit status: unavailable", operation, err))
-		setFinalBashPresentation(updates, args.Command, "", "", time.Since(started), timeout)
-		return result, nil
+		return agent.ToolResult{}, fmt.Errorf("failed to start %s: %w; exit status: unavailable", operation, err)
 	}
 	streamer.start()
 
 	waitErr := command.Wait()
-	updateErr := streamer.stop()
+	streamer.stop()
 	output, captureTruncated := capture.String()
 	exitStatus := -1
 	if command.ProcessState != nil {
@@ -117,7 +105,7 @@ func (b *bashTool) Execute(ctx context.Context, arguments json.RawMessage, updat
 		status = fmt.Sprintf("[exit status: %d; canceled]", exitStatus)
 		isError = true
 	case errors.Is(waitErr, exec.ErrWaitDelay):
-		status = fmt.Sprintf("[exit status: %d; output pipes remained open past %s]", exitStatus, b.waitDelay)
+		status = fmt.Sprintf("[exit status: %d; output pipes remained open past %s]", exitStatus, bashWaitDelay)
 		isError = true
 	}
 
@@ -131,11 +119,5 @@ func (b *bashTool) Execute(ctx context.Context, arguments json.RawMessage, updat
 	}
 	result := agent.ToolResult{Output: boundTail(text, notice), IsError: isError}
 	setFinalBashPresentation(updates, args.Command, output, strings.Trim(status, "[]"), time.Since(started), timeout)
-	if updateErr != nil {
-		return result, updateErr
-	}
-	if parentErr != nil {
-		return result, parentErr
-	}
-	return result, nil
+	return result, parentErr
 }

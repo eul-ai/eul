@@ -45,8 +45,7 @@ func TestWritePresentationStreamsBoundedPreviewWithoutWriting(t *testing.T) {
 		"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
 	}, "\n")
 	raw := `{"path":"preview.txt","content":"` + strings.ReplaceAll(content, "\n", `\n`)
-	snapshot := presentationSnapshot{Arguments: parseStreamingJSONObject(raw)}
-	presentation := writeTool.Presentation(snapshot)
+	presentation := writeTool.Presentation(raw)
 	if presentation.Title != "write" || presentation.Arguments != "preview.txt" || !presentation.LinesTruncated || len(presentation.Lines) != 11 || presentation.Lines[0] != "one" || presentation.Lines[9] != "ten" {
 		t.Fatalf("presentation = %+v", presentation)
 	}
@@ -55,8 +54,11 @@ func TestWritePresentationStreamsBoundedPreviewWithoutWriting(t *testing.T) {
 	}
 
 	huge := strings.Repeat("界", writePresentationMaxBytes)
-	hugeSnapshot := presentationSnapshot{Arguments: map[string]any{"path": "huge.txt", "content": huge}}
-	hugePresentation := writeTool.Presentation(hugeSnapshot)
+	hugeArguments, err := json.Marshal(map[string]any{"path": "huge.txt", "content": huge})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hugePresentation := writeTool.Presentation(string(hugeArguments))
 	if len(strings.Join(hugePresentation.Lines, "\n")) > writePresentationMaxBytes || !hugePresentation.LinesTruncated {
 		t.Fatalf("huge presentation bytes=%d lines=%+v", len(strings.Join(hugePresentation.Lines, "\n")), hugePresentation.Lines)
 	}

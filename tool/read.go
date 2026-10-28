@@ -3,10 +3,10 @@ package tool
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"unicode/utf8"
@@ -26,10 +26,6 @@ var readToolDefinition = agent.ToolDefinition{
 	}, "path", "offset", "limit"),
 }
 
-type readTool struct {
-	workspace workspace
-}
-
 type readArguments struct {
 	Path   string `json:"path"`
 	Offset *int   `json:"offset"`
@@ -37,102 +33,72 @@ type readArguments struct {
 }
 
 func NewRead(cwd string) Tool {
-	return &readTool{workspace: newWorkspace(cwd)}
+	return spec[readArguments]{
+		definition: readToolDefinition,
+		present:    presentRead,
+		run:        newWorkspace(cwd).read,
+	}
 }
 
-func (*readTool) Definition() agent.ToolDefinition {
-	return readToolDefinition
-}
-
-func (*readTool) Presentation(snapshot presentationSnapshot) agent.ToolPresentation {
-	arguments := ""
-	if path := snapshotString(snapshot, "path"); path != "" {
-		arguments = displayToolArgument(path)
-	}
-
-	offset, hasOffset := int64(0), false
-	if number, ok := snapshot.Arguments["offset"].(json.Number); ok {
-		if value, err := number.Int64(); err == nil {
-			offset, hasOffset = value, true
-		}
-	}
-	limit, hasLimit := int64(0), false
-	if number, ok := snapshot.Arguments["limit"].(json.Number); ok {
-		if value, err := number.Int64(); err == nil {
-			limit, hasLimit = value, true
-		}
-	}
-	if hasOffset || hasLimit {
-		start := int64(1)
-		if hasOffset {
-			start = offset
+func presentRead(args readArguments) agent.ToolPresentation {
+	arguments := displayToolArgument(args.Path)
+	if args.Offset != nil || args.Limit != nil {
+		start := 1
+		if args.Offset != nil {
+			start = *args.Offset
 		}
 		arguments += fmt.Sprintf(":%d", start)
-		if hasLimit {
-			arguments += fmt.Sprintf("-%d", start+limit-1)
+		if args.Limit != nil {
+			arguments += fmt.Sprintf("-%d", start+*args.Limit-1)
 		}
 	}
-
-	return agent.ToolPresentation{Title: readToolName, Arguments: arguments}
+	return agent.ToolPresentation{Arguments: arguments}
 }
 
-func (r *readTool) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
-	if err := ctx.Err(); err != nil {
+func (w workspace) read(ctx context.Context, args readArguments, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
+	offset, err := optionalPositive(args.Offset, 1, math.MaxInt, "offset")
+	if err != nil {
 		return agent.ToolResult{}, err
-	}
-
-	args, err := decodeArguments[readArguments](arguments)
-	if err != nil {
-		return errorResult(readToolName, err), nil
-	}
-	offset, err := optionalPositive(args.Offset, 1, int(^uint(0)>>1), "offset")
-	if err != nil {
-		return errorResult(readToolName, err), nil
 	}
 	limit, err := optionalPositive(args.Limit, defaultMaxLines, defaultMaxLines, "limit")
 	if err != nil {
-		return errorResult(readToolName, err), nil
+		return agent.ToolResult{}, err
 	}
 
-	path, err := r.workspace.resolve(args.Path)
+	path, err := w.resolve(args.Path)
 	if err != nil {
-		return errorResult(readToolName, err), nil
+		return agent.ToolResult{}, err
 	}
 
 	// Opening a FIFO or device can block, so reject nonregular paths before
 	// os.Open and recheck the descriptor after opening to catch path replacement.
 	info, err := os.Stat(path)
 	if err != nil {
-		return errorResult(readToolName, err), nil
+		return agent.ToolResult{}, err
 	}
 	if !info.Mode().IsRegular() {
-		return errorResult(readToolName, fmt.Errorf("%s is not a regular file", r.workspace.display(path))), nil
+		return agent.ToolResult{}, fmt.Errorf("%s is not a regular file", w.display(path))
 	}
 
 	file, err := os.Open(path)
 	if err != nil {
-		return errorResult(readToolName, err), nil
+		return agent.ToolResult{}, err
 	}
 	defer file.Close()
 	openedInfo, err := file.Stat()
 	if err != nil {
-		return errorResult(readToolName, err), nil
+		return agent.ToolResult{}, err
 	}
 	if !openedInfo.Mode().IsRegular() {
-		return errorResult(readToolName, fmt.Errorf("%s is not a regular file", r.workspace.display(path))), nil
+		return agent.ToolResult{}, fmt.Errorf("%s is not a regular file", w.display(path))
 	}
 
 	output, err := scanReadRange(ctx, file, offset, limit)
-	if err != nil {
-		var contextErr *readContextError
-		switch {
-		case errors.As(err, &contextErr):
-			return agent.ToolResult{}, contextErr.cause
-		case errors.Is(err, errReadBinary):
-			return errorResult(readToolName, fmt.Errorf("%s: binary file is not supported", r.workspace.display(path))), nil
-		default:
-			return errorResult(readToolName, err), nil
-		}
+	switch {
+	case errors.Is(err, errReadBinary):
+		return agent.ToolResult{}, fmt.Errorf("%s: binary file is not supported", w.display(path))
+	case err != nil:
+		return agent.ToolResult{}, err
 	}
 	return successResult(output), nil
 }

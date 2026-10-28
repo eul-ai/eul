@@ -17,8 +17,8 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-func newTestBash(cwd string) *bashTool {
-	return newBash(cwd, func(context.Context, string) (bool, error) {
+func newTestBash(cwd string) Tool {
+	return NewBash(cwd, func(context.Context, string) (bool, error) {
 		return true, nil
 	})
 }
@@ -64,10 +64,9 @@ func TestBashAcceptsIntegerAndNumericStringTimeout(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		arguments json.RawMessage
-		timeout   any
 	}{
-		{name: "integer", arguments: json.RawMessage(`{"command":"printf ok","timeout":1,"network":true}`), timeout: json.Number("1")},
-		{name: "numeric string", arguments: json.RawMessage(`{"command":"printf ok","timeout":"1","network":true}`), timeout: "1"},
+		{name: "integer", arguments: json.RawMessage(`{"command":"printf ok","timeout":1,"network":true}`)},
+		{name: "numeric string", arguments: json.RawMessage(`{"command":"printf ok","timeout":"1","network":true}`)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			bashTool := newTestBash(t.TempDir())
@@ -82,7 +81,7 @@ func TestBashAcceptsIntegerAndNumericStringTimeout(t *testing.T) {
 				t.Fatalf("presentation = %+v, final calls = %d", presentation, finalCalls)
 			}
 
-			initial := bashTool.Presentation(presentationSnapshot{Arguments: map[string]any{"command": "printf ok", "timeout": test.timeout}})
+			initial := bashTool.Presentation(string(test.arguments))
 			if initial.Timeout != time.Second {
 				t.Fatalf("initial presentation = %+v", initial)
 			}
@@ -171,19 +170,16 @@ func TestBashStreamsOutputBeforeCommandCompletes(t *testing.T) {
 	}
 }
 
-func TestBashUpdateFailureCancelsCommandAndReturnsError(t *testing.T) {
+func TestBashUpdateFailureCancelsCommand(t *testing.T) {
 	bashTool := newTestBash(t.TempDir())
-	bashTool.defaultTimeout = 5 * time.Second
-	bashTool.maxTimeout = 5 * time.Second
-	updateErr := errors.New("update failed")
 	started := time.Now()
 	result, err := bashTool.Execute(
 		context.Background(),
 		json.RawMessage(`{"command":"printf started; while :; do :; done","network":true}`),
-		toolUpdateSinkFunc(func(agent.ToolPresentation) error { return updateErr }),
+		toolUpdateSinkFunc(func(agent.ToolPresentation) error { return errors.New("update failed") }),
 	)
-	if !errors.Is(err, updateErr) {
-		t.Fatalf("error = %v, want %v", err, updateErr)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if elapsed := time.Since(started); elapsed > 2*time.Second {
 		t.Fatalf("update failure took %s", elapsed)
@@ -232,12 +228,9 @@ func TestBashTimeoutIsRecoverableAndRetainsOutput(t *testing.T) {
 	t.Setenv("EUL_CHILD_RELEASE", releasePath)
 	t.Setenv("EUL_CHILD_SURVIVED", survivedPath)
 	bashTool := newTestBash(cwd)
-	bashTool.defaultTimeout = 500 * time.Millisecond
-	bashTool.maxTimeout = time.Second
-	bashTool.waitDelay = 20 * time.Millisecond
 
 	command := `printf 'before-timeout\n'; (: > "$EUL_CHILD_READY"; while [ ! -e "$EUL_CHILD_RELEASE" ]; do sleep 0.01; done; : > "$EUL_CHILD_SURVIVED") & wait`
-	arguments, err := json.Marshal(map[string]any{"command": command, "network": true})
+	arguments, err := json.Marshal(map[string]any{"command": command, "timeout": 1, "network": true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,14 +240,14 @@ func TestBashTimeoutIsRecoverableAndRetainsOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if elapsed := time.Since(started); elapsed > 2*time.Second {
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
 		t.Fatalf("timeout took %s", elapsed)
 	}
 	if !result.IsError || !strings.Contains(result.Output, "before-timeout") || !strings.Contains(result.Output, "exit status:") {
 		t.Fatalf("timeout result = %+v", result)
 	}
 	presentation, finalCalls := updates.finalPresentation()
-	if finalCalls != 1 || !slices.Equal(presentation.Lines, []string{"before-timeout"}) || presentation.Timeout != 500*time.Millisecond || presentation.Elapsed <= 0 {
+	if finalCalls != 1 || !slices.Equal(presentation.Lines, []string{"before-timeout"}) || presentation.Timeout != time.Second || presentation.Elapsed <= 0 {
 		t.Fatalf("timeout presentation = %+v, final calls = %d", presentation, finalCalls)
 	}
 	if _, err := os.Stat(readyPath); err != nil {
@@ -272,8 +265,6 @@ func TestBashParentCancellationIsFatalAndReported(t *testing.T) {
 	t.Setenv("EUL_CHILD_RELEASE", releasePath)
 	t.Setenv("EUL_CHILD_SURVIVED", survivedPath)
 	bashTool := newTestBash(cwd)
-	bashTool.defaultTimeout = 5 * time.Second
-	bashTool.maxTimeout = 5 * time.Second
 	ctx, cancel := context.WithCancel(context.Background())
 	type outcome struct {
 		result agent.ToolResult
@@ -330,7 +321,7 @@ func TestBashOutputKeepsBoundedTail(t *testing.T) {
 func TestBashValidationAndStartFailuresAreRecoverableAndBounded(t *testing.T) {
 	cwd := t.TempDir()
 	bashTool := newTestBash(cwd)
-	bashTool.shell = filepath.Join(cwd, "missing-bash")
+	t.Setenv("PATH", t.TempDir())
 
 	updates := &recordingBashUpdates{}
 	result, err := bashTool.Execute(context.Background(), json.RawMessage(`{"command":"echo no","network":true}`), updates)

@@ -3,7 +3,7 @@ package tool
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/eul-ai/eul/agent"
@@ -23,10 +23,6 @@ var editToolDefinition = agent.ToolDefinition{
 	}, "path", "old_text", "new_text", "all"),
 }
 
-type editTool struct {
-	workspace workspace
-}
-
 type editArguments struct {
 	Path    string  `json:"path"`
 	OldText *string `json:"old_text"`
@@ -35,48 +31,34 @@ type editArguments struct {
 }
 
 func NewEdit(cwd string) Tool {
-	return &editTool{workspace: newWorkspace(cwd)}
-}
-
-func (*editTool) Definition() agent.ToolDefinition {
-	return editToolDefinition
-}
-
-func (*editTool) Presentation(snapshot presentationSnapshot) agent.ToolPresentation {
-	return editPresentation(snapshotString(snapshot, "path"))
+	return spec[editArguments]{
+		definition: editToolDefinition,
+		present: func(args editArguments) agent.ToolPresentation {
+			return editPresentation(args.Path)
+		},
+		run: newWorkspace(cwd).edit,
+	}
 }
 
 func editPresentation(path string) agent.ToolPresentation {
-	arguments := ""
-	if path != "" {
-		arguments = displayToolArgument(path)
-	}
-	return agent.ToolPresentation{Title: editToolName, Arguments: arguments}
+	return agent.ToolPresentation{Title: editToolName, Arguments: displayToolArgument(path)}
 }
 
-func (e *editTool) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
-	if err := ctx.Err(); err != nil {
-		return agent.ToolResult{}, err
-	}
-
-	args, err := decodeArguments[editArguments](arguments)
-	if err != nil {
-		return errorResult(editToolName, err), nil
-	}
+func (w workspace) edit(ctx context.Context, args editArguments, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if args.OldText == nil || *args.OldText == "" {
-		return errorResult(editToolName, fmt.Errorf("old_text is required and must be nonempty")), nil
+		return agent.ToolResult{}, errors.New("old_text is required and must be nonempty")
 	}
 	if args.NewText == nil {
-		return errorResult(editToolName, fmt.Errorf("new_text is required and must be a string")), nil
+		return agent.ToolResult{}, errors.New("new_text is required and must be a string")
 	}
 
-	requestedPath, err := e.workspace.resolve(args.Path)
+	requestedPath, err := w.resolve(args.Path)
 	if err != nil {
-		return errorResult(editToolName, err), nil
+		return agent.ToolResult{}, err
 	}
 	snapshot, err := textfile.Load(requestedPath)
 	if err != nil {
-		return errorResult(editToolName, fmt.Errorf("%s: %w", e.workspace.display(requestedPath), err)), nil
+		return agent.ToolResult{}, fmt.Errorf("%s: %w", w.display(requestedPath), err)
 	}
 	original := snapshot.Data
 	if err := ctx.Err(); err != nil {
@@ -86,13 +68,13 @@ func (e *editTool) Execute(ctx context.Context, arguments json.RawMessage, updat
 	oldBytes := []byte(*args.OldText)
 	matches := bytes.Count(original, oldBytes)
 	if matches == 0 {
-		return errorResult(editToolName, fmt.Errorf("old_text was not found in %s", e.workspace.display(requestedPath))), nil
+		return agent.ToolResult{}, fmt.Errorf("old_text was not found in %s", w.display(requestedPath))
 	}
 	if matches > 1 && !args.All {
-		return errorResult(editToolName, fmt.Errorf("old_text occurs %d times in %s; expected exactly once when all is false", matches, e.workspace.display(requestedPath))), nil
+		return agent.ToolResult{}, fmt.Errorf("old_text occurs %d times in %s; expected exactly once when all is false", matches, w.display(requestedPath))
 	}
 	if *args.OldText == *args.NewText {
-		return successResult(fmt.Sprintf("no changes needed in %s", escapeOutputName(e.workspace.display(requestedPath)))), nil
+		return successResult(fmt.Sprintf("no changes needed in %s", escapeOutputName(w.display(requestedPath)))), nil
 	}
 
 	replacementCount := 1
@@ -104,10 +86,10 @@ func (e *editTool) Execute(ctx context.Context, arguments json.RawMessage, updat
 		return agent.ToolResult{}, err
 	}
 	if err := textfile.Replace(snapshot, replacement); err != nil {
-		return errorResult(editToolName, err), nil
+		return agent.ToolResult{}, err
 	}
 	presentation := editPresentation(args.Path)
 	presentation.Diff = buildFileDiff(original, replacement)
 	updates.SetFinal(presentation)
-	return successResult(fmt.Sprintf("replaced text in %s", escapeOutputName(e.workspace.display(requestedPath)))), nil
+	return successResult(fmt.Sprintf("replaced text in %s", escapeOutputName(w.display(requestedPath)))), nil
 }

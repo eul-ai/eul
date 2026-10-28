@@ -148,19 +148,19 @@ func TestScanReadRangeValidatesTheFullStream(t *testing.T) {
 func TestReadPresentationShowsRequestedLineRange(t *testing.T) {
 	tests := []struct {
 		name      string
-		arguments map[string]any
+		arguments string
 		want      string
 	}{
-		{name: "offset and limit", arguments: map[string]any{"path": "demo.go", "offset": json.Number("120"), "limit": json.Number("210")}, want: "demo.go:120-329"},
-		{name: "offset", arguments: map[string]any{"path": "demo.go", "offset": json.Number("120")}, want: "demo.go:120"},
-		{name: "limit", arguments: map[string]any{"path": "demo.go", "limit": json.Number("210")}, want: "demo.go:1-210"},
-		{name: "default range", arguments: map[string]any{"path": "demo.go", "offset": nil, "limit": nil}, want: "demo.go"},
+		{name: "offset and limit", arguments: `{"path":"demo.go","offset":120,"limit":210}`, want: "demo.go:120-329"},
+		{name: "offset", arguments: `{"path":"demo.go","offset":120}`, want: "demo.go:120"},
+		{name: "limit", arguments: `{"path":"demo.go","limit":210}`, want: "demo.go:1-210"},
+		{name: "default range", arguments: `{"path":"demo.go","offset":null,"limit":null}`, want: "demo.go"},
 	}
 
 	readTool := NewRead(t.TempDir())
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			presentation := readTool.Presentation(presentationSnapshot{Arguments: test.arguments})
+			presentation := readTool.Presentation(test.arguments)
 			if presentation.Title != "read" || presentation.Arguments != test.want {
 				t.Fatalf("presentation = %+v, want arguments %q", presentation, test.want)
 			}

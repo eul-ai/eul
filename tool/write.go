@@ -2,7 +2,7 @@ package tool
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,43 +26,25 @@ var writeToolDefinition = agent.ToolDefinition{
 	}, "path", "content"),
 }
 
-type writeTool struct {
-	workspace workspace
-}
-
 type writeArguments struct {
 	Path    string  `json:"path"`
 	Content *string `json:"content"`
 }
 
 func NewWrite(cwd string) Tool {
-	return &writeTool{workspace: newWorkspace(cwd)}
+	return spec[writeArguments]{
+		definition: writeToolDefinition,
+		present:    presentWrite,
+		run:        newWorkspace(cwd).write,
+	}
 }
 
-func (*writeTool) Definition() agent.ToolDefinition {
-	return writeToolDefinition
-}
-
-func (*writeTool) Presentation(snapshot presentationSnapshot) agent.ToolPresentation {
-	arguments := ""
-	if path := snapshotString(snapshot, "path"); path != "" {
-		arguments = displayToolArgument(path)
+func presentWrite(args writeArguments) agent.ToolPresentation {
+	presentation := agent.ToolPresentation{Arguments: displayToolArgument(args.Path)}
+	if args.Content != nil {
+		presentation.Lines, presentation.LinesTruncated = writePreview(*args.Content)
 	}
-
-	content, exists := snapshot.Arguments["content"]
-	if !exists {
-		return agent.ToolPresentation{Title: writeToolName, Arguments: arguments}
-	}
-	text, ok := content.(string)
-	if !ok {
-		if snapshot.Complete {
-			return agent.ToolPresentation{Title: writeToolName, Arguments: arguments, Lines: []string{"[invalid content argument]"}}
-		}
-		return agent.ToolPresentation{Title: writeToolName, Arguments: arguments}
-	}
-
-	lines, truncated := writePreview(text)
-	return agent.ToolPresentation{Title: writeToolName, Arguments: arguments, Lines: lines, LinesTruncated: truncated}
+	return presentation
 }
 
 func writePreview(content string) ([]string, bool) {
@@ -129,40 +111,32 @@ func writePreviewByteMarker(total int) string {
 	return fmt.Sprintf("… (preview truncated, %d total %s)", total, unit)
 }
 
-func (w *writeTool) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
-	if err := ctx.Err(); err != nil {
-		return agent.ToolResult{}, err
-	}
-
-	args, err := decodeArguments[writeArguments](arguments)
-	if err != nil {
-		return errorResult(writeToolName, err), nil
-	}
+func (w workspace) write(ctx context.Context, args writeArguments, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if args.Content == nil {
-		return errorResult(writeToolName, fmt.Errorf("content is required and must be a string")), nil
+		return agent.ToolResult{}, errors.New("content is required and must be a string")
 	}
 
-	path, err := w.workspace.resolve(args.Path)
+	path, err := w.resolve(args.Path)
 	if err != nil {
-		return errorResult(writeToolName, err), nil
+		return agent.ToolResult{}, err
 	}
 
 	info, statErr := os.Stat(path)
 	if statErr == nil && !info.Mode().IsRegular() {
-		return errorResult(writeToolName, fmt.Errorf("%s is not a regular file", w.workspace.display(path))), nil
+		return agent.ToolResult{}, fmt.Errorf("%s is not a regular file", w.display(path))
 	}
 	if statErr != nil && !os.IsNotExist(statErr) {
-		return errorResult(writeToolName, statErr), nil
+		return agent.ToolResult{}, statErr
 	}
 	if os.IsNotExist(statErr) {
 		linkInfo, linkErr := os.Lstat(path)
 		if linkErr == nil && linkInfo.Mode()&os.ModeSymlink != 0 {
-			return errorResult(writeToolName, fmt.Errorf("%s is a dangling symlink", w.workspace.display(path))), nil
+			return agent.ToolResult{}, fmt.Errorf("%s is a dangling symlink", w.display(path))
 		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
-		return errorResult(writeToolName, err), nil
+		return agent.ToolResult{}, err
 	}
 
 	if err := ctx.Err(); err != nil {
@@ -176,8 +150,8 @@ func (w *writeTool) Execute(ctx context.Context, arguments json.RawMessage, _ ag
 	}
 
 	if fileWriteErr != nil {
-		return errorResult(writeToolName, fileWriteErr), nil
+		return agent.ToolResult{}, fileWriteErr
 	}
 
-	return successResult(fmt.Sprintf("wrote %d bytes to %s", len(*args.Content), escapeOutputName(w.workspace.display(path)))), nil
+	return successResult(fmt.Sprintf("wrote %d bytes to %s", len(*args.Content), escapeOutputName(w.display(path)))), nil
 }

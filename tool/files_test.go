@@ -102,11 +102,11 @@ func (r failingReader) Read([]byte) (int, error) {
 }
 
 func TestFileToolPresentationsSeparateTitleAndArguments(t *testing.T) {
-	snapshot := presentationSnapshot{Arguments: map[string]any{"path": "demo.go"}}
+	raw := `{"path":"demo.go"}`
 	presentations := []agent.ToolPresentation{
-		NewRead(t.TempDir()).Presentation(snapshot),
-		NewWrite(t.TempDir()).Presentation(snapshot),
-		NewEdit(t.TempDir()).Presentation(snapshot),
+		NewRead(t.TempDir()).Presentation(raw),
+		NewWrite(t.TempDir()).Presentation(raw),
+		NewEdit(t.TempDir()).Presentation(raw),
 		bashPresentation("go test ./...", defaultBashTimeout),
 	}
 	wantTitles := []string{"read", "write", "edit", "bash"}
@@ -121,12 +121,12 @@ func TestFileToolPresentationsSeparateTitleAndArguments(t *testing.T) {
 func TestBashPresentationShowsTimeout(t *testing.T) {
 	bashTool := NewBash(t.TempDir(), nil)
 
-	defaultPresentation := bashTool.Presentation(presentationSnapshot{Arguments: map[string]any{"command": "sleep 1", "timeout": nil}})
+	defaultPresentation := bashTool.Presentation(`{"command":"sleep 1","timeout":null}`)
 	if defaultPresentation.Timeout != defaultBashTimeout {
 		t.Fatalf("default presentation = %+v", defaultPresentation)
 	}
 
-	customPresentation := bashTool.Presentation(presentationSnapshot{Arguments: map[string]any{"command": "sleep 1", "timeout": json.Number("30")}})
+	customPresentation := bashTool.Presentation(`{"command":"sleep 1","timeout":30}`)
 	if customPresentation.Timeout != 30*time.Second {
 		t.Fatalf("custom presentation = %+v", customPresentation)
 	}

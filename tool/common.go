@@ -112,11 +112,6 @@ func escapeOutputName(name string) string {
 	return replacer.Replace(name)
 }
 
-func snapshotString(snapshot presentationSnapshot, name string) string {
-	value, _ := snapshot.Arguments[name].(string)
-	return value
-}
-
 func displayToolArgument(value string) string {
 	if strings.IndexFunc(value, unicode.IsSpace) >= 0 || strings.IndexFunc(value, unicode.IsControl) >= 0 {
 		return strconv.Quote(value)

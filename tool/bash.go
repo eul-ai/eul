@@ -11,9 +11,10 @@ import (
 
 const (
 	bashToolName       = "bash"
+	bashShell          = "bash"
 	defaultBashTimeout = 120 * time.Second
 	maximumBashTimeout = time.Hour
-	defaultWaitDelay   = time.Second
+	bashWaitDelay      = time.Second
 	bashPreviewLines   = 5
 	bashUpdateInterval = 100 * time.Millisecond
 )
@@ -32,11 +33,7 @@ type NetworkAuthorizer func(context.Context, string) (bool, error)
 
 type bashTool struct {
 	workspace        workspace
-	shell            string
 	authorizeNetwork NetworkAuthorizer
-	defaultTimeout   time.Duration
-	maxTimeout       time.Duration
-	waitDelay        time.Duration
 }
 
 type bashArguments struct {
@@ -47,49 +44,28 @@ type bashArguments struct {
 
 // NewBash returns an unsandboxed Bash tool when authorizeNetwork is nil.
 func NewBash(cwd string, authorizeNetwork NetworkAuthorizer) Tool {
-	return newBash(cwd, authorizeNetwork)
-}
-
-func newBash(cwd string, authorizeNetwork NetworkAuthorizer) *bashTool {
-	return &bashTool{
-		workspace:        newWorkspace(cwd),
-		shell:            bashToolName,
-		authorizeNetwork: authorizeNetwork,
-		defaultTimeout:   defaultBashTimeout,
-		maxTimeout:       maximumBashTimeout,
-		waitDelay:        defaultWaitDelay,
+	bash := bashTool{workspace: newWorkspace(cwd), authorizeNetwork: authorizeNetwork}
+	return spec[bashArguments]{
+		definition: bashToolDefinition,
+		present:    presentBash,
+		run:        bash.run,
 	}
 }
 
-func (b *bashTool) sandboxed() bool {
+func (b bashTool) sandboxed() bool {
 	return b.authorizeNetwork != nil
 }
 
-func (*bashTool) Definition() agent.ToolDefinition {
-	return bashToolDefinition
-}
-
-func (b *bashTool) Presentation(snapshot presentationSnapshot) agent.ToolPresentation {
-	timeout := b.defaultTimeout
-	var number json.Number
-	switch value := snapshot.Arguments["timeout"].(type) {
-	case json.Number:
-		number = value
-	case string:
-		number = json.Number(value)
+func presentBash(args bashArguments) agent.ToolPresentation {
+	timeout := defaultBashTimeout
+	if args.Timeout != nil {
+		if seconds, err := args.Timeout.Int64(); err == nil {
+			timeout = time.Duration(seconds) * time.Second
+		}
 	}
-	if seconds, err := number.Int64(); err == nil {
-		timeout = time.Duration(seconds) * time.Second
-	}
-
-	return bashPresentation(snapshotString(snapshot, "command"), timeout)
+	return bashPresentation(args.Command, timeout)
 }
 
 func bashPresentation(command string, timeout time.Duration) agent.ToolPresentation {
-	arguments := ""
-	if command != "" {
-		arguments = displayToolArgument(command)
-	}
-
-	return agent.ToolPresentation{Title: bashToolName, Arguments: arguments, Timeout: timeout}
+	return agent.ToolPresentation{Title: bashToolName, Arguments: displayToolArgument(command), Timeout: timeout}
 }

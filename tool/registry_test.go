@@ -18,7 +18,7 @@ type fakeTool struct {
 
 func (t fakeTool) Definition() agent.ToolDefinition { return t.definition }
 
-func (fakeTool) Presentation(presentationSnapshot) agent.ToolPresentation {
+func (fakeTool) Presentation(string) agent.ToolPresentation {
 	return agent.ToolPresentation{}
 }
 
@@ -27,15 +27,6 @@ func (t fakeTool) Execute(ctx context.Context, arguments json.RawMessage, _ agen
 		return agent.ToolResult{}, nil
 	}
 	return t.execute(ctx, arguments)
-}
-
-type presentingTool struct {
-	fakeTool
-	present func(presentationSnapshot) agent.ToolPresentation
-}
-
-func (t presentingTool) Presentation(snapshot presentationSnapshot) agent.ToolPresentation {
-	return t.present(snapshot)
 }
 
 func mustRegistry(t *testing.T, tools ...Tool) *Registry {
@@ -90,21 +81,26 @@ func TestRegistryRejectsInvalidDefinitions(t *testing.T) {
 	}
 }
 
-func TestRegistryParsesStreamingArgumentsForPresentation(t *testing.T) {
-	var presented presentationSnapshot
-	registry := mustRegistry(t, presentingTool{
-		fakeTool: fakeTool{definition: agent.ToolDefinition{Name: "write"}},
-		present: func(snapshot presentationSnapshot) agent.ToolPresentation {
-			presented = snapshot
-			return agent.ToolPresentation{Title: "write"}
+func TestRegistryPresentsPartialArgumentsLeniently(t *testing.T) {
+	type arguments struct {
+		Path    string `json:"path"`
+		Count   int    `json:"count"`
+		Content string `json:"content"`
+	}
+	var presented arguments
+	registry := mustRegistry(t, spec[arguments]{
+		definition: agent.ToolDefinition{Name: "write"},
+		present: func(args arguments) agent.ToolPresentation {
+			presented = args
+			return agent.ToolPresentation{}
 		},
 	})
 
 	presentation := registry.Presentation(agent.ToolCallSnapshot{
-		ID: "call", Name: "write", RawArguments: `{"path":"demo.go","content":"partial`,
+		ID: "call", Name: "write", RawArguments: `{"path":"demo.go","count":"many","content":"partial`,
 	})
-	if presentation.Title != "write" || presented.Arguments["path"] != "demo.go" || presented.Arguments["content"] != "partial" {
-		t.Fatalf("presentation=%+v snapshot=%+v", presentation, presented)
+	if presentation.Title != "write" || presented != (arguments{Path: "demo.go", Content: "partial"}) {
+		t.Fatalf("presentation=%+v arguments=%+v", presentation, presented)
 	}
 }
 

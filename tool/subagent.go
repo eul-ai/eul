@@ -117,37 +117,40 @@ type cancelArguments struct {
 }
 
 type launchTool struct {
-	manager    *subagent.Manager
-	definition agent.ToolDefinition
-}
-
-type waitTool struct {
-	manager *subagent.Manager
-}
-
-type cancelTool struct {
-	manager *subagent.Manager
+	spec[launchArguments]
 }
 
 func NewLaunchSubagents(manager *subagent.Manager) Tool {
-	return &launchTool{manager: manager, definition: launchDefinitionFor(manager)}
+	return launchTool{spec[launchArguments]{
+		definition: launchDefinitionFor(manager),
+		present: func(args launchArguments) agent.ToolPresentation {
+			return launchPresentation(len(args.Tasks), fmt.Sprintf("Starting %d subagent(s).", len(args.Tasks)))
+		},
+		run: func(_ context.Context, args launchArguments, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
+			jobs, err := manager.Start(toSubagentTasks(args.Tasks))
+			if err != nil {
+				return agent.ToolResult{}, err
+			}
+
+			var output strings.Builder
+			output.WriteString("Started subagents:")
+			for _, job := range jobs {
+				fmt.Fprintf(&output, "\n- %s (%s, %s thinking): %s", job.ID, job.ModelProfile, job.ThinkingLevel, strings.TrimSpace(job.Description))
+			}
+			if updates != nil {
+				updates.SetFinal(launchPresentation(len(jobs), fmt.Sprintf("Started %d subagent(s).", len(jobs))))
+			}
+			return successResult(output.String()), nil
+		},
+	}}
 }
 
-func NewWaitForSubagent(manager *subagent.Manager) Tool {
-	return &waitTool{manager: manager}
-}
-
-func NewCancelSubagents(manager *subagent.Manager) Tool {
-	return &cancelTool{manager: manager}
-}
-
-func (launch *launchTool) Definition() agent.ToolDefinition {
-	return launch.definition
-}
-
-func (launch *launchTool) Presentation(snapshot presentationSnapshot) agent.ToolPresentation {
-	values, _ := snapshot.Arguments["tasks"].([]any)
-	return launchPresentation(len(values), fmt.Sprintf("Starting %d subagent(s).", len(values)))
+func (launch launchTool) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
+	result, err := launch.spec.Execute(ctx, arguments, updates)
+	if result.IsError && updates != nil {
+		updates.SetFinal(agent.ToolPresentation{Title: launchToolName, Markdown: true, Lines: []string{"No subagents were started."}})
+	}
+	return result, err
 }
 
 func launchPresentation(count int, message string) agent.ToolPresentation {
@@ -159,97 +162,39 @@ func launchPresentation(count int, message string) agent.ToolPresentation {
 	}
 }
 
-func launchFailurePresentation() agent.ToolPresentation {
-	return agent.ToolPresentation{
-		Title:    launchToolName,
-		Markdown: true,
-		Lines:    []string{"No subagents were started."},
+func NewWaitForSubagent(manager *subagent.Manager) Tool {
+	return spec[waitArguments]{
+		definition: waitDefinition,
+		present: func(args waitArguments) agent.ToolPresentation {
+			return waitPresentation(args, "Waiting for a subagent completion.")
+		},
+		run: func(ctx context.Context, args waitArguments, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
+			timeoutMS, err := optionalPositive(args.TimeoutMS, defaultWaitTimeoutMS, maximumWaitTimeoutMS, "timeout_ms")
+			if err != nil {
+				return agent.ToolResult{}, err
+			}
+
+			waitCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
+			defer cancel()
+			outcome, err := manager.Wait(waitCtx)
+			if err != nil {
+				return agent.ToolResult{}, err
+			}
+
+			message := waitResultMessage(outcome)
+			updates.SetFinal(waitPresentation(args, message))
+			return successResult(message), nil
+		},
 	}
 }
 
-func (launch *launchTool) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
-	if err := ctx.Err(); err != nil {
-		return agent.ToolResult{}, err
-	}
-
-	args, err := decodeArguments[launchArguments](arguments)
-	if err != nil {
-		if updates != nil {
-			updates.SetFinal(launchFailurePresentation())
-		}
-		return errorResult(launchToolName, err), nil
-	}
-
-	jobs, err := launch.manager.Start(toSubagentTasks(args.Tasks))
-	if err != nil {
-		if updates != nil {
-			updates.SetFinal(launchFailurePresentation())
-		}
-		return errorResult(launchToolName, err), nil
-	}
-
-	var output strings.Builder
-	output.WriteString("Started subagents:")
-	for _, job := range jobs {
-		fmt.Fprintf(&output, "\n- %s (%s, %s thinking): %s", job.ID, job.ModelProfile, job.ThinkingLevel, strings.TrimSpace(job.Description))
-	}
-	if updates != nil {
-		updates.SetFinal(launchPresentation(len(jobs), fmt.Sprintf("Started %d subagent(s).", len(jobs))))
-	}
-	return successResult(output.String()), nil
-}
-
-func (*waitTool) Definition() agent.ToolDefinition {
-	return waitDefinition
-}
-
-func (*waitTool) Presentation(snapshot presentationSnapshot) agent.ToolPresentation {
-	var timeout time.Duration
-	if number, ok := snapshot.Arguments["timeout_ms"].(json.Number); ok {
-		if milliseconds, err := number.Int64(); err == nil {
-			timeout = time.Duration(milliseconds) * time.Millisecond
-		}
-	}
-
-	return waitPresentation(timeout, "Waiting for a subagent completion.")
-}
-
-func waitPresentation(timeout time.Duration, message string) agent.ToolPresentation {
+func waitPresentation(args waitArguments, message string) agent.ToolPresentation {
 	arguments := ""
-	if timeout > 0 {
-		arguments = fmt.Sprintf("(%s timeout)", timeout)
+	if args.TimeoutMS != nil && *args.TimeoutMS > 0 {
+		arguments = fmt.Sprintf("(%s timeout)", time.Duration(*args.TimeoutMS)*time.Millisecond)
 	}
 
 	return agent.ToolPresentation{Title: waitToolName, Arguments: arguments, Markdown: true, Lines: []string{message}}
-}
-
-func (wait *waitTool) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
-	args, err := decodeArguments[waitArguments](arguments)
-	if err != nil {
-		return errorResult(waitToolName, err), nil
-	}
-	timeoutMS, err := optionalPositive(args.TimeoutMS, defaultWaitTimeoutMS, maximumWaitTimeoutMS, "timeout_ms")
-	if err != nil {
-		return errorResult(waitToolName, err), nil
-	}
-
-	waitCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
-	defer cancel()
-	outcome, err := wait.manager.Wait(waitCtx)
-	if err != nil {
-		if ctx.Err() != nil {
-			return agent.ToolResult{}, ctx.Err()
-		}
-		return errorResult(waitToolName, err), nil
-	}
-
-	message := waitResultMessage(outcome)
-	var timeout time.Duration
-	if args.TimeoutMS != nil {
-		timeout = time.Duration(timeoutMS) * time.Millisecond
-	}
-	updates.SetFinal(waitPresentation(timeout, message))
-	return successResult(message), nil
 }
 
 func waitResultMessage(outcome subagent.WaitOutcome) string {
@@ -265,35 +210,20 @@ func waitResultMessage(outcome subagent.WaitOutcome) string {
 	}
 }
 
-func (*cancelTool) Definition() agent.ToolDefinition {
-	return cancelDefinition
-}
-
-func (*cancelTool) Presentation(snapshot presentationSnapshot) agent.ToolPresentation {
-	values, _ := snapshot.Arguments["ids"].([]any)
-	lines := make([]string, 0, len(values))
-	for _, value := range values {
-		if id, ok := value.(string); ok {
-			lines = append(lines, id)
-		}
+func NewCancelSubagents(manager *subagent.Manager) Tool {
+	return spec[cancelArguments]{
+		definition: cancelDefinition,
+		present: func(args cancelArguments) agent.ToolPresentation {
+			return agent.ToolPresentation{Markdown: true, Lines: args.IDs}
+		},
+		run: func(_ context.Context, args cancelArguments, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
+			canceled, err := manager.Cancel(args.IDs)
+			if err != nil {
+				return agent.ToolResult{}, err
+			}
+			return successResult("Canceling subagents:\n- " + strings.Join(canceled, "\n- ")), nil
+		},
 	}
-	return agent.ToolPresentation{Title: cancelToolName, Markdown: true, Lines: lines}
-}
-
-func (cancel *cancelTool) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
-	if err := ctx.Err(); err != nil {
-		return agent.ToolResult{}, err
-	}
-
-	args, err := decodeArguments[cancelArguments](arguments)
-	if err != nil {
-		return errorResult(cancelToolName, err), nil
-	}
-	canceled, err := cancel.manager.Cancel(args.IDs)
-	if err != nil {
-		return errorResult(cancelToolName, err), nil
-	}
-	return successResult("Canceling subagents:\n- " + strings.Join(canceled, "\n- ")), nil
 }
 
 func toSubagentTasks(tasks []subagentTask) []subagent.Task {

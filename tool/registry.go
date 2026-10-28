@@ -1,12 +1,10 @@
 package tool
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 
@@ -21,13 +19,8 @@ var errUnknownTool = errors.New("tool: unknown tool")
 // concurrently for calls from the same provider response.
 type Tool interface {
 	Definition() agent.ToolDefinition
-	Presentation(presentationSnapshot) agent.ToolPresentation
+	Presentation(rawArguments string) agent.ToolPresentation
 	Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error)
-}
-
-type presentationSnapshot struct {
-	Arguments map[string]any
-	Complete  bool
 }
 
 type Registry struct {
@@ -74,10 +67,7 @@ func (r *Registry) Presentation(snapshot agent.ToolCallSnapshot) agent.ToolPrese
 		return agent.ToolPresentation{Title: snapshot.Name}
 	}
 
-	presentation := registered.Presentation(presentationSnapshot{
-		Arguments: parseStreamingJSONObject(snapshot.RawArguments),
-		Complete:  snapshot.Complete,
-	})
+	presentation := registered.Presentation(snapshot.RawArguments)
 	if presentation.Title == "" {
 		presentation.Title = snapshot.Name
 	}
@@ -134,24 +124,4 @@ func cloneJSONSchema(schema agent.JSONSchema) agent.JSONSchema {
 		}
 	}
 	return schema
-}
-
-func decodeArguments[T any](arguments json.RawMessage) (T, error) {
-	var value T
-	decoder := json.NewDecoder(bytes.NewReader(arguments))
-	decoder.DisallowUnknownFields()
-
-	if err := decoder.Decode(&value); err != nil {
-		return value, fmt.Errorf("tool: decode arguments: %w", err)
-	}
-
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return value, errors.New("tool: arguments contain multiple JSON values")
-		}
-		return value, fmt.Errorf("tool: decode trailing arguments: %w", err)
-	}
-
-	return value, nil
 }

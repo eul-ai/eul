@@ -123,7 +123,7 @@ func TestSubagentLaunchFinalizesFailedPresentation(t *testing.T) {
 	if finalCalls != 1 {
 		t.Fatalf("final presentation calls = %d", finalCalls)
 	}
-	initial := launch.Presentation(presentationSnapshot{Arguments: map[string]any{"tasks": []any{map[string]any{}}}})
+	initial := launch.Presentation(`{"tasks":[{}]}`)
 	if final.Equal(initial) {
 		t.Fatal("failed launch retained its pending presentation")
 	}
@@ -141,12 +141,12 @@ func TestSubagentWaitDefaultTimeout(t *testing.T) {
 func TestSubagentWaitPresentationShowsProvidedTimeout(t *testing.T) {
 	wait := NewWaitForSubagent(nil)
 
-	defaultPresentation := wait.Presentation(presentationSnapshot{Arguments: map[string]any{"timeout_ms": nil}})
+	defaultPresentation := wait.Presentation(`{"timeout_ms":null}`)
 	if defaultPresentation.Arguments != "" {
 		t.Fatalf("default presentation = %+v", defaultPresentation)
 	}
 
-	customPresentation := wait.Presentation(presentationSnapshot{Arguments: map[string]any{"timeout_ms": json.Number("1500")}})
+	customPresentation := wait.Presentation(`{"timeout_ms":1500}`)
 	if !strings.Contains(customPresentation.Arguments, (1500 * time.Millisecond).String()) {
 		t.Fatalf("custom presentation = %+v", customPresentation)
 	}
