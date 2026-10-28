@@ -2,21 +2,14 @@ package app
 
 import (
 	"bufio"
-	"bytes"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
-	"time"
-	"unicode/utf8"
 )
-
-const maxMessageHistoryEntryBytes = 2*1024*1024 + 1024
 
 type messageHistoryStore struct {
 	path string
@@ -24,7 +17,6 @@ type messageHistoryStore struct {
 
 type messageHistoryEntry struct {
 	SessionID string `json:"session_id"`
-	Timestamp int64  `json:"ts"`
 	Text      string `json:"text"`
 }
 
@@ -34,7 +26,7 @@ func newMessageHistoryStore(home string) *messageHistoryStore {
 
 // Load returns the entries of other sessions followed by those of sessionID,
 // so the session's own prompts are recalled first.
-func (store *messageHistoryStore) Load(sessionID string) (entries []string, err error) {
+func (store *messageHistoryStore) Load(sessionID string) ([]string, error) {
 	file, err := os.Open(store.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -42,47 +34,40 @@ func (store *messageHistoryStore) Load(sessionID string) (entries []string, err 
 	if err != nil {
 		return nil, fmt.Errorf("open message history: %w", err)
 	}
-	defer func() {
-		err = errors.Join(err, releaseMessageHistoryFile(file))
-	}()
+	defer file.Close()
 
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_SH); err != nil {
 		return nil, fmt.Errorf("lock message history: %w", err)
 	}
 
-	var own []string
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, bufio.MaxScanTokenSize), maxMessageHistoryEntryBytes)
-	for scanner.Scan() {
-		entry, err := decodeMessageHistoryEntry(scanner.Bytes())
-		if err != nil {
-			return nil, err
-		}
-		if entry.SessionID == sessionID {
+	var others, own []string
+	reader := bufio.NewReader(file)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		var entry messageHistoryEntry
+		switch {
+		case json.Unmarshal(line, &entry) != nil:
+		case entry.SessionID == sessionID:
 			own = append(own, entry.Text)
-			continue
+		default:
+			others = append(others, entry.Text)
 		}
-		entries = append(entries, entry.Text)
+
+		if errors.Is(readErr, io.EOF) {
+			return append(others, own...), nil
+		}
+		if readErr != nil {
+			return nil, fmt.Errorf("read message history: %w", readErr)
+		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read message history: %w", err)
-	}
-	return append(entries, own...), nil
 }
 
 func (store *messageHistoryStore) Append(sessionID, text string) (err error) {
-	entry := messageHistoryEntry{SessionID: sessionID, Timestamp: time.Now().Unix(), Text: text}
-	if err := entry.validate(); err != nil {
-		return err
-	}
-	encoded, err := json.Marshal(entry)
+	encoded, err := json.Marshal(messageHistoryEntry{SessionID: sessionID, Text: text})
 	if err != nil {
 		return fmt.Errorf("encode message history: %w", err)
 	}
 	encoded = append(encoded, '\n')
-	if len(encoded) > maxMessageHistoryEntryBytes {
-		return errors.New("message history entry is too large")
-	}
 
 	if err := os.MkdirAll(filepath.Dir(store.path), 0o700); err != nil {
 		return fmt.Errorf("create message history directory: %w", err)
@@ -92,12 +77,9 @@ func (store *messageHistoryStore) Append(sessionID, text string) (err error) {
 		return fmt.Errorf("open message history: %w", err)
 	}
 	defer func() {
-		err = errors.Join(err, releaseMessageHistoryFile(file))
+		err = errors.Join(err, file.Close())
 	}()
 
-	if err := file.Chmod(0o600); err != nil {
-		return fmt.Errorf("secure message history: %w", err)
-	}
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
 		return fmt.Errorf("lock message history: %w", err)
 	}
@@ -108,57 +90,4 @@ func (store *messageHistoryStore) Append(sessionID, text string) (err error) {
 		return fmt.Errorf("sync message history: %w", err)
 	}
 	return nil
-}
-
-func (entry messageHistoryEntry) validate() error {
-	switch {
-	case !validSessionID(entry.SessionID):
-		return errors.New("message history entry has an invalid session ID")
-	case entry.Timestamp <= 0:
-		return errors.New("message history entry has an invalid timestamp")
-	case strings.TrimSpace(entry.Text) == "" || !utf8.ValidString(entry.Text) || strings.IndexByte(entry.Text, 0) >= 0:
-		return errors.New("message history entry has invalid text")
-	}
-	return nil
-}
-
-func decodeMessageHistoryEntry(encoded []byte) (messageHistoryEntry, error) {
-	decoder := json.NewDecoder(bytes.NewReader(encoded))
-	decoder.DisallowUnknownFields()
-
-	var entry messageHistoryEntry
-	if err := decoder.Decode(&entry); err != nil {
-		return messageHistoryEntry{}, fmt.Errorf("decode message history: %w", err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return messageHistoryEntry{}, errors.New("decode message history: multiple JSON values")
-		}
-		return messageHistoryEntry{}, fmt.Errorf("decode message history: %w", err)
-	}
-	if err := entry.validate(); err != nil {
-		return messageHistoryEntry{}, err
-	}
-	return entry, nil
-}
-
-func releaseMessageHistoryFile(file *os.File) error {
-	unlockErr := syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-	closeErr := file.Close()
-	if unlockErr != nil {
-		return fmt.Errorf("unlock message history: %w", unlockErr)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close message history: %w", closeErr)
-	}
-	return nil
-}
-
-func validSessionID(id string) bool {
-	if len(id) != 32 {
-		return false
-	}
-	_, err := hex.DecodeString(id)
-	return err == nil && strings.ToLower(id) == id
 }

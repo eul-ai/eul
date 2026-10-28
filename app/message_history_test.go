@@ -45,6 +45,22 @@ func TestMessageHistoryStoreLoadsOwnSessionLast(t *testing.T) {
 	}
 }
 
+func TestMessageHistoryStoreSkipsUndecodableLines(t *testing.T) {
+	store := newMessageHistoryStore(t.TempDir())
+	body := "not json\n" + `{"session_id":"other","text":"kept"}` + "\n{\"text\":"
+	if err := os.WriteFile(store.path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := store.Load("session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(entries, []string{"kept"}) {
+		t.Fatalf("entries = %q", entries)
+	}
+}
+
 func TestMessageHistoryStoreSerializesConcurrentAppends(t *testing.T) {
 	store := newMessageHistoryStore(t.TempDir())
 
