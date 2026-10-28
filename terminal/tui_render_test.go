@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/terminal/text"
 )
 
 func renderFrame(model *tuiModel) string {
@@ -45,7 +46,7 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 	}
 
 	spinner, activity, right := renderStatus(model, model.width)
-	status := ansiForeground(currentTheme.accent) + spinner + ansiForeground(currentTheme.muted) + activity + strings.Repeat(" ", model.width-cellWidth(spinner+activity)-cellWidth(right)) + right
+	status := ansiForeground(currentTheme.accent) + spinner + ansiForeground(currentTheme.muted) + activity + strings.Repeat(" ", model.width-text.Width(spinner+activity)-text.Width(right)) + right
 	if !strings.Contains(frame, status) || strings.Count(frame, "\x1b[12;") != 1 {
 		t.Fatalf("status metadata is not independently right-aligned with an accented spinner: %q", frame)
 	}
@@ -94,12 +95,12 @@ func TestRenderFrameShowsPermission(t *testing.T) {
 	if len(input.lines) < 2 || strings.TrimSpace(input.lines[0]) != "" || strings.TrimSpace(input.lines[len(input.lines)-1]) != "" {
 		t.Fatalf("permission spacing = %q", input.lines)
 	}
-	descriptionIndex := slices.IndexFunc(input.styledLines, func(line styledLine) bool { return len(line.spans) > 0 && line.spans[0].text == "bash" })
+	descriptionIndex := slices.IndexFunc(input.styledLines, func(line styledLine) bool { return len(line.spans) > 0 && line.spans[0].Text == "bash" })
 	if descriptionIndex < 0 {
 		t.Fatalf("permission description missing: %q", input.lines)
 	}
 	description := input.styledLines[descriptionIndex]
-	if len(description.spans) != 3 || description.spans[0].text != "bash" || description.spans[0].style.foreground != inlineForegroundAccent || description.spans[2].style.foreground != inlineForegroundDefault {
+	if len(description.spans) != 3 || description.spans[0].Text != "bash" || description.spans[0].Style.Foreground != text.ForegroundAccent || description.spans[2].Style.Foreground != text.ForegroundDefault {
 		t.Fatalf("permission description = %+v", description.spans)
 	}
 	detailIndex := slices.IndexFunc(input.styledLines, func(line styledLine) bool { return line.text == model.permission.detail })
@@ -113,8 +114,8 @@ func TestRenderFrameShowsPermission(t *testing.T) {
 	buttons := input.lines[noticeIndex+2]
 	buttonIndex := strings.Index(buttons, "[")
 	descriptionIndexInLine := strings.Index(input.lines[descriptionIndex], model.permission.subject)
-	buttonIndent := cellWidth(buttons[:max(buttonIndex, 0)])
-	descriptionIndent := cellWidth(input.lines[descriptionIndex][:max(descriptionIndexInLine, 0)])
+	buttonIndent := text.Width(buttons[:max(buttonIndex, 0)])
+	descriptionIndent := text.Width(input.lines[descriptionIndex][:max(descriptionIndexInLine, 0)])
 	if strings.TrimSpace(buttons) == "" || buttonIndex < 0 || descriptionIndexInLine < 0 || buttonIndent != descriptionIndent {
 		t.Fatalf("permission button alignment = %q, description = %q", buttons, input.lines[descriptionIndex])
 	}

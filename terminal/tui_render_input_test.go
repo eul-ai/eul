@@ -6,6 +6,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/filesearch"
+	"github.com/eul-ai/eul/terminal/text"
 )
 
 func TestMultilineInputExpandsEditorAndMovesCursor(t *testing.T) {
@@ -115,7 +116,7 @@ func TestInputRendersImagesInline(t *testing.T) {
 	if len(input.lines) != 1 || !strings.Contains(input.lines[0], firstText) || strings.Index(input.lines[0], secondText) <= strings.Index(input.lines[0], firstText) {
 		t.Fatalf("input = %+v", input)
 	}
-	if input.cursorColumn != cellWidth(input.lines[0])+1 {
+	if input.cursorColumn != text.Width(input.lines[0])+1 {
 		t.Fatalf("cursor = %d", input.cursorColumn)
 	}
 }
@@ -132,7 +133,7 @@ func TestInputWrapsInlineImageAsUnit(t *testing.T) {
 	if len(input.lines) != 2 || input.lines[0] != "> 12345" || strings.TrimSpace(input.lines[1]) == "" {
 		t.Fatalf("input = %+v", input)
 	}
-	if input.cursorRow != 1 || input.cursorColumn != cellWidth(input.lines[1])+1 {
+	if input.cursorRow != 1 || input.cursorColumn != text.Width(input.lines[1])+1 {
 		t.Fatalf("cursor = %d,%d", input.cursorRow, input.cursorColumn)
 	}
 }

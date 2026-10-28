@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/eul-ai/eul/filesearch"
+	"github.com/eul-ai/eul/terminal/text"
 )
 
 type tuiLayout struct {
@@ -151,8 +152,8 @@ func wrappedPermissionDetail(permission permissionModel, width int) []string {
 	if permission.detail == "" {
 		return nil
 	}
-	contentWidth := max(1, width-4-cellWidth(permission.detailPrefix))
-	return wrapText(permission.detail, contentWidth)
+	contentWidth := max(1, width-4-text.Width(permission.detailPrefix))
+	return text.Wrap(permission.detail, contentWidth)
 }
 
 func renderPermission(model *tuiModel, width, maximumHeight int) renderedInput {
@@ -167,15 +168,15 @@ func renderPermission(model *tuiModel, width, maximumHeight int) renderedInput {
 	commandStyle := panelStyle
 	commandStyle.foreground = currentTheme.markdownCode
 
-	var descriptionSpans []inlineSpan
+	var descriptionSpans []text.Span
 	if model.permission.subject != "" {
-		descriptionSpans = append(descriptionSpans, inlineSpan{text: model.permission.subject, style: inlineStyle{bold: true, foreground: inlineForegroundAccent}})
+		descriptionSpans = append(descriptionSpans, text.Span{Text: model.permission.subject, Style: text.Style{Bold: true, Foreground: text.ForegroundAccent}})
 	}
 	if model.permission.subject != "" && model.permission.description != "" {
-		descriptionSpans = append(descriptionSpans, inlineSpan{text: " "})
+		descriptionSpans = append(descriptionSpans, text.Span{Text: " "})
 	}
 	if model.permission.description != "" {
-		descriptionSpans = append(descriptionSpans, inlineSpan{text: model.permission.description})
+		descriptionSpans = append(descriptionSpans, text.Span{Text: model.permission.description})
 	}
 	description := styledLine{spans: descriptionSpans, style: panelStyle, padding: 2}
 	blank := styledLine{style: panelStyle}
@@ -187,7 +188,7 @@ func renderPermission(model *tuiModel, width, maximumHeight int) renderedInput {
 	end := min(len(detailLines), start+capacity)
 	details := make([]styledLine, 0, end-start)
 	for index, detail := range detailLines[start:end] {
-		prefix := strings.Repeat(" ", cellWidth(model.permission.detailPrefix))
+		prefix := strings.Repeat(" ", text.Width(model.permission.detailPrefix))
 		if index == 0 && start == 0 {
 			prefix = model.permission.detailPrefix
 		}
@@ -233,23 +234,23 @@ func renderPermission(model *tuiModel, width, maximumHeight int) renderedInput {
 }
 
 func permissionButtons(selected PermissionDecision, style lineStyle) styledLine {
-	spans := []inlineSpan{
-		{text: "› [d]eny once", style: inlineStyle{bold: true, foreground: inlineForegroundError}},
-		{text: "     [a]llow once"},
-		{text: "     allow for [s]ession"},
+	spans := []text.Span{
+		{Text: "› [d]eny once", Style: text.Style{Bold: true, Foreground: text.ForegroundError}},
+		{Text: "     [a]llow once"},
+		{Text: "     allow for [s]ession"},
 	}
 	switch selected {
 	case PermissionAllowOnce:
-		spans = []inlineSpan{
-			{text: "  [d]eny once"},
-			{text: "   › [a]llow once", style: inlineStyle{bold: true, foreground: inlineForegroundSuccess}},
-			{text: "     allow for [s]ession"},
+		spans = []text.Span{
+			{Text: "  [d]eny once"},
+			{Text: "   › [a]llow once", Style: text.Style{Bold: true, Foreground: text.ForegroundSuccess}},
+			{Text: "     allow for [s]ession"},
 		}
 	case PermissionAllowSession:
-		spans = []inlineSpan{
-			{text: "  [d]eny once"},
-			{text: "     [a]llow once"},
-			{text: "   › allow for [s]ession", style: inlineStyle{bold: true, foreground: inlineForegroundSuccess}},
+		spans = []text.Span{
+			{Text: "  [d]eny once"},
+			{Text: "     [a]llow once"},
+			{Text: "   › allow for [s]ession", Style: text.Style{Bold: true, Foreground: text.ForegroundSuccess}},
 		}
 	}
 	style.foreground = currentTheme.muted
@@ -314,7 +315,7 @@ func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {
 			if item.kind == editorItemPendingImage {
 				label = "[loading image]"
 			}
-			labelWidth := cellWidth(label)
+			labelWidth := text.Width(label)
 			if lineWidth > 0 && lineWidth+labelWidth > contentWidth {
 				cursorAtItem := index == model.cursor
 				flush()
@@ -324,7 +325,7 @@ func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {
 				}
 			}
 			displayWidth := min(labelWidth, contentWidth)
-			line.WriteString(truncateCells(label, displayWidth, false))
+			line.WriteString(text.Truncate(label, displayWidth, false))
 			lineWidth += displayWidth
 			if lineWidth == contentWidth {
 				flush()
@@ -336,7 +337,7 @@ func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {
 		if !unicode.IsSpace(character) && (index == 0 || !isEditorWord(model.input[index-1])) {
 			wordWidth := 0
 			for wordEnd := index; wordEnd < len(model.input) && isEditorWord(model.input[wordEnd]); wordEnd++ {
-				wordWidth += runeWidth(model.input[wordEnd].character)
+				wordWidth += text.RuneWidth(model.input[wordEnd].character)
 			}
 			if lineWidth > 0 && lineWidth+wordWidth > contentWidth {
 				cursorAtItem := index == model.cursor
@@ -348,7 +349,7 @@ func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {
 			}
 		}
 
-		characterWidth := runeWidth(character)
+		characterWidth := text.RuneWidth(character)
 		if lineWidth > 0 && lineWidth+characterWidth > contentWidth {
 			cursorAtItem := index == model.cursor
 			flush()
@@ -372,7 +373,7 @@ func renderInput(model *tuiModel, width, maximumHeight int) renderedInput {
 		if index == 0 {
 			prefix = firstPrefix
 		}
-		lines[index] = truncateCells(prefix+content, width, false)
+		lines[index] = text.Truncate(prefix+content, width, false)
 	}
 
 	height := min(maximumHeight, len(lines))
@@ -453,7 +454,7 @@ func renderCommandPicker(model *tuiModel, height int) []styledLine {
 	for _, match := range matches[:min(height, len(matches))] {
 		description := ""
 		if model.width >= 30 {
-			description = truncateCells(match.description, model.width/2, true)
+			description = text.Truncate(match.description, model.width/2, true)
 		}
 		line := styledLine{
 			prefixText: "  ",
@@ -513,7 +514,7 @@ func renderFilePicker(model *tuiModel, height int) []styledLine {
 		line := styledLine{
 			prefixText:      "  ",
 			spans:           filePickerNameSpans(match),
-			rightText:       truncateCells(parent, max(0, model.width/2), true),
+			rightText:       text.Truncate(parent, max(0, model.width/2), true),
 			rightForeground: &currentTheme.muted,
 			style:           lineStyle{foreground: currentTheme.foreground},
 		}
@@ -559,7 +560,7 @@ func filePickerParent(display string) string {
 	return trimmed[:index]
 }
 
-func filePickerNameSpans(match filesearch.Match) []inlineSpan {
+func filePickerNameSpans(match filesearch.Match) []text.Span {
 	name := match.Name
 	if match.IsDir {
 		name += "/"
@@ -573,17 +574,13 @@ func filePickerNameSpans(match filesearch.Match) []inlineSpan {
 		}
 	}
 
-	spans := make([]inlineSpan, 0, len([]rune(name)))
+	spans := make([]text.Span, 0, len([]rune(name)))
 	for index, character := range []rune(name) {
-		style := inlineStyle{}
+		style := text.Style{}
 		if _, ok := matched[index]; ok {
-			style = inlineStyle{bold: true, foreground: inlineForegroundAccent}
+			style = text.Style{Bold: true, Foreground: text.ForegroundAccent}
 		}
-		if len(spans) > 0 && spans[len(spans)-1].style == style {
-			spans[len(spans)-1].text += string(character)
-			continue
-		}
-		spans = append(spans, inlineSpan{text: string(character), style: style})
+		spans = text.AppendSpan(spans, string(character), style)
 	}
 	return spans
 }

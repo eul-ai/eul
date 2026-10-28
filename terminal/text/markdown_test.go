@@ -1,4 +1,4 @@
-package terminal
+package text
 
 import (
 	"os"
@@ -77,17 +77,17 @@ func TestMarkdownFixtureStructure(t *testing.T) {
 }
 
 func TestWrapMarkdownHeadings(t *testing.T) {
-	got := wrapMarkdown("# Main *title*\n### Detail `code`\nparagraph", 80)
-	want := []formattedLine{
-		{text: "Main title", spans: []inlineSpan{
-			{text: "Main ", style: inlineStyle{bold: true, foreground: inlineForegroundAccent}},
-			{text: "title", style: inlineStyle{bold: true, italic: true, foreground: inlineForegroundAccent}},
+	got := WrapMarkdown("# Main *title*\n### Detail `code`\nparagraph", 80)
+	want := []Line{
+		{Spans: []Span{
+			{Text: "Main ", Style: Style{Bold: true, Foreground: ForegroundAccent}},
+			{Text: "title", Style: Style{Bold: true, Italic: true, Foreground: ForegroundAccent}},
 		}},
-		{text: "Detail code", spans: []inlineSpan{
-			{text: "Detail ", style: inlineStyle{bold: true}},
-			{text: "code", style: inlineStyle{bold: true, code: true}},
+		{Spans: []Span{
+			{Text: "Detail ", Style: Style{Bold: true}},
+			{Text: "code", Style: Style{Bold: true, Code: true}},
 		}},
-		{text: "paragraph", spans: []inlineSpan{{text: "paragraph", style: inlineStyle{}}}},
+		{Spans: []Span{{Text: "paragraph", Style: Style{}}}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("lines = %+v, want %+v", got, want)
@@ -95,20 +95,20 @@ func TestWrapMarkdownHeadings(t *testing.T) {
 }
 
 func TestWrapMarkdownHeadingMarkers(t *testing.T) {
-	got := wrapMarkdown("   ## indented\n####### plain\n###plain", 80)
+	got := WrapMarkdown("   ## indented\n####### plain\n###plain", 80)
 	if len(got) != 3 {
 		t.Fatalf("lines = %+v", got)
 	}
-	if got[0].text != "indented" || len(got[0].spans) != 1 || got[0].spans[0].style != (inlineStyle{bold: true, foreground: inlineForegroundAccent}) {
+	if got[0].Text() != "indented" || len(got[0].Spans) != 1 || got[0].Spans[0].Style != (Style{Bold: true, Foreground: ForegroundAccent}) {
 		t.Fatalf("heading = %+v", got[0])
 	}
-	if got[1].text != "####### plain" || got[2].text != "###plain" {
+	if got[1].Text() != "####### plain" || got[2].Text() != "###plain" {
 		t.Fatalf("non-headings = %+v", got[1:])
 	}
 }
 
 func TestWrapMarkdownListItemsUseHangingIndent(t *testing.T) {
-	got := wrapMarkdown("- **alpha beta**\n10. gamma delta\n  - child next", 9)
+	got := WrapMarkdown("- **alpha beta**\n10. gamma delta\n  - child next", 9)
 	wantText := []string{
 		"- alpha",
 		"  beta",
@@ -121,19 +121,19 @@ func TestWrapMarkdownListItemsUseHangingIndent(t *testing.T) {
 		t.Fatalf("lines = %+v", got)
 	}
 	for index, want := range wantText {
-		if got[index].text != want {
+		if got[index].Text() != want {
 			t.Fatalf("line %d = %+v, want text %q", index, got[index], want)
 		}
-		if index%2 == 1 && (!got[index].breakBefore.continuation || got[index].breakBefore.separator != " ") {
+		if index%2 == 1 && (!got[index].Break.Continuation || got[index].Break.Separator != " ") {
 			t.Fatalf("line %d lost continuation metadata: %+v", index, got[index])
 		}
 	}
 	betaBold := false
-	for _, span := range got[1].spans {
-		betaBold = betaBold || span.text == "beta" && span.style.bold
+	for _, span := range got[1].Spans {
+		betaBold = betaBold || span.Text == "beta" && span.Style.Bold
 	}
 	if !betaBold {
-		t.Fatalf("wrapped item lost inline style: %+v", got[1])
+		t.Fatalf("wrapped item lost inline Style: %+v", got[1])
 	}
 }
 
@@ -162,12 +162,12 @@ func TestParseMarkdownListItemMarkers(t *testing.T) {
 }
 
 func TestWrapMarkdownThematicBreaks(t *testing.T) {
-	got := wrapMarkdown("before\n---\n * * * \n  ___\nafter", 8)
-	if len(got) != 5 || got[0].text != "before" || got[4].text != "after" {
+	got := WrapMarkdown("before\n---\n * * * \n  ___\nafter", 8)
+	if len(got) != 5 || got[0].Text() != "before" || got[4].Text() != "after" {
 		t.Fatalf("lines = %+v", got)
 	}
 	for index := 1; index <= 3; index++ {
-		if got[index].text != "────────" || !got[index].thematicBreak {
+		if got[index].Text() != "────────" || !got[index].ThematicBreak {
 			t.Fatalf("line %d = %+v", index, got[index])
 		}
 	}
@@ -182,29 +182,29 @@ func TestMarkdownThematicBreakMarkers(t *testing.T) {
 }
 
 func TestWrapMarkdownBlockQuotes(t *testing.T) {
-	got := wrapMarkdown("> alpha **beta** gamma\n>\n> > nested", 12)
+	got := WrapMarkdown("> alpha **beta** gamma\n>\n> > nested", 12)
 	wantText := []string{"│ alpha beta", "│ gamma", "│", "│ │ nested"}
 	if len(got) != len(wantText) {
 		t.Fatalf("lines = %+v", got)
 	}
 	for index, want := range wantText {
-		if got[index].text != want {
+		if got[index].Text() != want {
 			t.Fatalf("line %d = %+v, want text %q", index, got[index], want)
 		}
-		if len(got[index].spans) == 0 || got[index].spans[0].style.foreground != inlineForegroundMuted {
+		if len(got[index].Spans) == 0 || got[index].Spans[0].Style.Foreground != ForegroundMuted {
 			t.Fatalf("line %d has no muted quote gutter: %+v", index, got[index])
 		}
 	}
-	if !got[1].breakBefore.continuation || got[1].breakBefore.separator != " " {
+	if !got[1].Break.Continuation || got[1].Break.Separator != " " {
 		t.Fatalf("wrapped quote line = %+v", got[1])
 	}
 
 	betaBold := false
-	for _, span := range got[0].spans {
-		betaBold = betaBold || span.text == "beta" && span.style.bold
+	for _, span := range got[0].Spans {
+		betaBold = betaBold || span.Text == "beta" && span.Style.Bold
 	}
 	if !betaBold {
-		t.Fatalf("quoted content lost inline style: %+v", got[0])
+		t.Fatalf("quoted content lost inline Style: %+v", got[0])
 	}
 }
 
@@ -230,7 +230,7 @@ func TestParseMarkdownBlockQuoteMarkers(t *testing.T) {
 }
 
 func TestWrapMarkdownTable(t *testing.T) {
-	got := wrapMarkdown("| Name | State | Count |\n| :--- | :---: | ---: |\n| **alpha** | `ok` | 2 |", 80)
+	got := WrapMarkdown("| Name | State | Count |\n| :--- | :---: | ---: |\n| **alpha** | `ok` | 2 |", 80)
 	wantText := []string{
 		" Name  │ State │ Count ",
 		"───────┼───────┼───────",
@@ -240,18 +240,18 @@ func TestWrapMarkdownTable(t *testing.T) {
 		t.Fatalf("lines = %+v", got)
 	}
 	for index, want := range wantText {
-		if got[index].text != want {
-			t.Fatalf("line %d = %q, want %q", index, got[index].text, want)
+		if got[index].Text() != want {
+			t.Fatalf("line %d = %q, want %q", index, got[index].Text(), want)
 		}
 	}
 
 	var headerBold, bodyBold, bodyCode bool
-	for _, span := range got[0].spans {
-		headerBold = headerBold || span.text == "Name" && span.style.bold
+	for _, span := range got[0].Spans {
+		headerBold = headerBold || span.Text == "Name" && span.Style.Bold
 	}
-	for _, span := range got[2].spans {
-		bodyBold = bodyBold || span.text == "alpha" && span.style.bold
-		bodyCode = bodyCode || span.text == "ok" && span.style.code
+	for _, span := range got[2].Spans {
+		bodyBold = bodyBold || span.Text == "alpha" && span.Style.Bold
+		bodyCode = bodyCode || span.Text == "ok" && span.Style.Code
 	}
 	if !headerBold || !bodyBold || !bodyCode {
 		t.Fatalf("table styles = %+v", got)
@@ -259,7 +259,7 @@ func TestWrapMarkdownTable(t *testing.T) {
 }
 
 func TestWrapMarkdownTableWrapsCells(t *testing.T) {
-	got := wrapMarkdown("| First | Second |\n| --- | --- |\n| abcdef | ghijkl |", 11)
+	got := WrapMarkdown("| First | Second |\n| --- | --- |\n| abcdef | ghijkl |", 11)
 	wantText := []string{
 		" Fir │ Sec ",
 		" st  │ ond ",
@@ -271,23 +271,23 @@ func TestWrapMarkdownTableWrapsCells(t *testing.T) {
 		t.Fatalf("lines = %+v", got)
 	}
 	for index, want := range wantText {
-		if got[index].text != want || cellWidth(got[index].text) > 11 {
+		if got[index].Text() != want || Width(got[index].Text()) > 11 {
 			t.Fatalf("line %d = %+v, want text %q", index, got[index], want)
 		}
 	}
-	if !got[1].breakBefore.continuation || !got[4].breakBefore.continuation {
+	if !got[1].Break.Continuation || !got[4].Break.Continuation {
 		t.Fatalf("wrapped table lines lost continuation metadata: %+v", got)
 	}
 }
 
 func TestWrapMarkdownTableStacksInNarrowWidth(t *testing.T) {
-	got := wrapMarkdown("| Name | State | Count |\n| --- | --- | ---: |\n| alpha | `ok` | 2 |", 16)
+	got := WrapMarkdown("| Name | State | Count |\n| --- | --- | ---: |\n| alpha | `ok` | 2 |", 16)
 	wantText := []string{"Name: alpha", "State: ok", "Count: 2"}
 	if len(got) != len(wantText) {
 		t.Fatalf("lines = %+v", got)
 	}
 	for index, want := range wantText {
-		if got[index].text != want {
+		if got[index].Text() != want {
 			t.Fatalf("line %d = %+v, want text %q", index, got[index], want)
 		}
 	}
@@ -311,28 +311,28 @@ func TestSplitMarkdownTableRowHandlesEscapedPipes(t *testing.T) {
 }
 
 func TestWrapMarkdownRejectsInvalidTableDelimiter(t *testing.T) {
-	got := wrapMarkdown("| A | B |\n| -- | --- |", 80)
-	if len(got) != 2 || got[0].text != "| A | B |" || got[1].text != "| -- | --- |" {
+	got := WrapMarkdown("| A | B |\n| -- | --- |", 80)
+	if len(got) != 2 || got[0].Text() != "| A | B |" || got[1].Text() != "| -- | --- |" {
 		t.Fatalf("lines = %+v", got)
 	}
 }
 
 func TestWrapMarkdownRejectsIndentedTable(t *testing.T) {
-	got := wrapMarkdown("    | A | B |\n    | --- | --- |", 80)
-	if len(got) != 2 || got[0].text != "    | A | B |" || got[1].text != "    | --- | --- |" {
+	got := WrapMarkdown("    | A | B |\n    | --- | --- |", 80)
+	if len(got) != 2 || got[0].Text() != "    | A | B |" || got[1].Text() != "    | --- | --- |" {
 		t.Fatalf("lines = %+v", got)
 	}
 }
 
 func TestParseInlineMarkdown(t *testing.T) {
-	got := parseInlineMarkdown("plain **bold** *italic* ***both***")
-	want := []inlineSpan{
-		{text: "plain ", style: inlineStyle{}},
-		{text: "bold", style: inlineStyle{bold: true}},
-		{text: " ", style: inlineStyle{}},
-		{text: "italic", style: inlineStyle{italic: true}},
-		{text: " ", style: inlineStyle{}},
-		{text: "both", style: inlineStyle{bold: true, italic: true}},
+	got := ParseInline("plain **bold** *italic* ***both***")
+	want := []Span{
+		{Text: "plain ", Style: Style{}},
+		{Text: "bold", Style: Style{Bold: true}},
+		{Text: " ", Style: Style{}},
+		{Text: "italic", Style: Style{Italic: true}},
+		{Text: " ", Style: Style{}},
+		{Text: "both", Style: Style{Bold: true, Italic: true}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("spans = %+v, want %+v", got, want)
@@ -340,14 +340,14 @@ func TestParseInlineMarkdown(t *testing.T) {
 }
 
 func TestParseInlineMarkdownLinks(t *testing.T) {
-	got := parseInlineMarkdown("Read [the **docs**](https://example.com/docs) or visit https://example.com.")
-	want := []inlineSpan{
-		{text: "Read ", style: inlineStyle{}},
-		{text: "the ", style: inlineStyle{link: "https://example.com/docs"}},
-		{text: "docs", style: inlineStyle{bold: true, link: "https://example.com/docs"}},
-		{text: " or visit ", style: inlineStyle{}},
-		{text: "https://example.com", style: inlineStyle{link: "https://example.com"}},
-		{text: ".", style: inlineStyle{}},
+	got := ParseInline("Read [the **docs**](https://example.com/docs) or visit https://example.com.")
+	want := []Span{
+		{Text: "Read ", Style: Style{}},
+		{Text: "the ", Style: Style{Link: "https://example.com/docs"}},
+		{Text: "docs", Style: Style{Bold: true, Link: "https://example.com/docs"}},
+		{Text: " or visit ", Style: Style{}},
+		{Text: "https://example.com", Style: Style{Link: "https://example.com"}},
+		{Text: ".", Style: Style{}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("spans = %+v, want %+v", got, want)
@@ -357,35 +357,35 @@ func TestParseInlineMarkdownLinks(t *testing.T) {
 func TestParseInlineMarkdownLinkDestinations(t *testing.T) {
 	tests := []struct {
 		input string
-		want  []inlineSpan
+		want  []Span
 	}{
 		{
 			input: "[https://inner.example](https://outer.example)",
-			want:  []inlineSpan{{text: "https://inner.example", style: inlineStyle{link: "https://outer.example"}}},
+			want:  []Span{{Text: "https://inner.example", Style: Style{Link: "https://outer.example"}}},
 		},
 		{
 			input: "https://example.com/foo(bar)",
-			want:  []inlineSpan{{text: "https://example.com/foo(bar)", style: inlineStyle{link: "https://example.com/foo(bar)"}}},
+			want:  []Span{{Text: "https://example.com/foo(bar)", Style: Style{Link: "https://example.com/foo(bar)"}}},
 		},
 		{
 			input: "<mailto:user@example.com>",
-			want:  []inlineSpan{{text: "mailto:user@example.com", style: inlineStyle{link: "mailto:user@example.com"}}},
+			want:  []Span{{Text: "mailto:user@example.com", Style: Style{Link: "mailto:user@example.com"}}},
 		},
 	}
 	for _, test := range tests {
-		if got := parseInlineMarkdown(test.input); !reflect.DeepEqual(got, test.want) {
-			t.Errorf("parseInlineMarkdown(%q) = %+v, want %+v", test.input, got, test.want)
+		if got := ParseInline(test.input); !reflect.DeepEqual(got, test.want) {
+			t.Errorf("ParseInline(%q) = %+v, want %+v", test.input, got, test.want)
 		}
 	}
 }
 
 func TestParseInlineMarkdownCodeSpans(t *testing.T) {
-	got := parseInlineMarkdown("Use `**name**` and ``a`b``")
-	want := []inlineSpan{
-		{text: "Use ", style: inlineStyle{}},
-		{text: "**name**", style: inlineStyle{code: true}},
-		{text: " and ", style: inlineStyle{}},
-		{text: "a`b", style: inlineStyle{code: true}},
+	got := ParseInline("Use `**name**` and ``a`b``")
+	want := []Span{
+		{Text: "Use ", Style: Style{}},
+		{Text: "**name**", Style: Style{Code: true}},
+		{Text: " and ", Style: Style{}},
+		{Text: "a`b", Style: Style{Code: true}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("spans = %+v, want %+v", got, want)
@@ -393,23 +393,23 @@ func TestParseInlineMarkdownCodeSpans(t *testing.T) {
 }
 
 func TestParseInlineMarkdownPreservesCodeFences(t *testing.T) {
-	got := parseInlineMarkdown("```bash\nabc\n```")
-	want := []inlineSpan{{text: "```bash\nabc\n```", style: inlineStyle{}}}
+	got := ParseInline("```bash\nabc\n```")
+	want := []Span{{Text: "```bash\nabc\n```", Style: Style{}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("spans = %+v, want %+v", got, want)
 	}
 }
 
 func TestWrapMarkdownFencedCode(t *testing.T) {
-	got := wrapMarkdown("before **bold**\n```go\nfmt.Println(`value`)\n\n```\nafter", 80)
-	want := []formattedLine{
-		{text: "before bold", spans: []inlineSpan{
-			{text: "before ", style: inlineStyle{}},
-			{text: "bold", style: inlineStyle{bold: true}},
+	got := WrapMarkdown("before **bold**\n```go\nfmt.Println(`value`)\n\n```\nafter", 80)
+	want := []Line{
+		{Spans: []Span{
+			{Text: "before ", Style: Style{}},
+			{Text: "bold", Style: Style{Bold: true}},
 		}},
-		{text: "fmt.Println(`value`)", fencedCode: true},
-		{fencedCode: true},
-		{text: "after", spans: []inlineSpan{{text: "after", style: inlineStyle{}}}},
+		{Spans: []Span{{Text: "fmt.Println(`value`)"}}, FencedCode: true},
+		{FencedCode: true},
+		{Spans: []Span{{Text: "after", Style: Style{}}}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("lines = %+v, want %+v", got, want)
@@ -417,10 +417,10 @@ func TestWrapMarkdownFencedCode(t *testing.T) {
 }
 
 func TestWrapMarkdownFencedCodeUsesAvailableWidth(t *testing.T) {
-	got := wrapMarkdown("```\nabcdefgh\n```", 6)
-	want := []formattedLine{
-		{text: "abcdef", fencedCode: true},
-		{text: "gh", breakBefore: lineBreak{continuation: true}, fencedCode: true},
+	got := WrapMarkdown("```\nabcdefgh\n```", 6)
+	want := []Line{
+		{Spans: []Span{{Text: "abcdef"}}, FencedCode: true},
+		{Spans: []Span{{Text: "gh"}}, Break: Break{Continuation: true}, FencedCode: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("lines = %+v, want %+v", got, want)
@@ -428,11 +428,11 @@ func TestWrapMarkdownFencedCodeUsesAvailableWidth(t *testing.T) {
 }
 
 func TestParseInlineMarkdownNestedCodeInEmphasis(t *testing.T) {
-	got := parseInlineMarkdown("**`backend/codex/api/models.go`** and *`SIGWINCH`*")
-	want := []inlineSpan{
-		{text: "backend/codex/api/models.go", style: inlineStyle{bold: true, code: true}},
-		{text: " and ", style: inlineStyle{}},
-		{text: "SIGWINCH", style: inlineStyle{italic: true, code: true}},
+	got := ParseInline("**`backend/codex/api/models.go`** and *`SIGWINCH`*")
+	want := []Span{
+		{Text: "backend/codex/api/models.go", Style: Style{Bold: true, Code: true}},
+		{Text: " and ", Style: Style{}},
+		{Text: "SIGWINCH", Style: Style{Italic: true, Code: true}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("spans = %+v, want %+v", got, want)
@@ -440,12 +440,12 @@ func TestParseInlineMarkdownNestedCodeInEmphasis(t *testing.T) {
 }
 
 func TestParseInlineMarkdownPreservesUnmatchedMarkers(t *testing.T) {
-	got := parseInlineMarkdown("keep **open and *unfinished and `code")
-	if text := inlineSpanText(got); text != "keep **open and *unfinished and `code" {
+	got := ParseInline("keep **open and *unfinished and `code")
+	if text := Plain(got); text != "keep **open and *unfinished and `code" {
 		t.Fatalf("text = %q", text)
 	}
 	for _, span := range got {
-		if span.style != (inlineStyle{}) {
+		if span.Style != (Style{}) {
 			t.Fatalf("unexpected styled span: %+v", span)
 		}
 	}
@@ -453,20 +453,20 @@ func TestParseInlineMarkdownPreservesUnmatchedMarkers(t *testing.T) {
 
 func TestWrapInlineMarkdownCodeMarkersDoNotUseWidth(t *testing.T) {
 	lines := wrapInlineMarkdown("`abcde`", 5)
-	if len(lines) != 1 || lines[0].text != "abcde" || len(lines[0].spans) != 1 || !lines[0].spans[0].style.code {
+	if len(lines) != 1 || lines[0].Text() != "abcde" || len(lines[0].Spans) != 1 || !lines[0].Spans[0].Style.Code {
 		t.Fatalf("lines = %+v", lines)
 	}
 }
 
 func TestWrapInlineMarkdownUsesRenderedWidth(t *testing.T) {
 	lines := wrapInlineMarkdown("**abcd** *ef*", 5)
-	if len(lines) != 2 || lines[0].text != "abcd" || lines[1].text != "ef" {
+	if len(lines) != 2 || lines[0].Text() != "abcd" || lines[1].Text() != "ef" {
 		t.Fatalf("lines = %+v", lines)
 	}
-	if len(lines[0].spans) != 1 || !lines[0].spans[0].style.bold {
-		t.Fatalf("first line spans = %+v", lines[0].spans)
+	if len(lines[0].Spans) != 1 || !lines[0].Spans[0].Style.Bold {
+		t.Fatalf("first line spans = %+v", lines[0].Spans)
 	}
-	if len(lines[1].spans) != 1 || !lines[1].spans[0].style.italic || lines[1].breakBefore.separator != " " {
+	if len(lines[1].Spans) != 1 || !lines[1].Spans[0].Style.Italic || lines[1].Break.Separator != " " {
 		t.Fatalf("second line = %+v", lines[1])
 	}
 }
@@ -478,10 +478,10 @@ func TestWrapInlineMarkdownUsesWordBoundaries(t *testing.T) {
 		t.Fatalf("lines = %+v", lines)
 	}
 	for index, text := range want {
-		if lines[index].text != text {
+		if lines[index].Text() != text {
 			t.Fatalf("line %d = %+v, want text %q", index, lines[index], text)
 		}
-		if index > 0 && (!lines[index].breakBefore.continuation || lines[index].breakBefore.separator != " ") {
+		if index > 0 && (!lines[index].Break.Continuation || lines[index].Break.Separator != " ") {
 			t.Fatalf("line %d does not preserve its soft-wrap separator: %+v", index, lines[index])
 		}
 	}
@@ -489,46 +489,46 @@ func TestWrapInlineMarkdownUsesWordBoundaries(t *testing.T) {
 
 func TestWrapInlineMarkdownHardWrapsLongWords(t *testing.T) {
 	lines := wrapInlineMarkdown("**abcdefgh**", 5)
-	if len(lines) != 2 || lines[0].text != "abcde" || lines[1].text != "fgh" {
+	if len(lines) != 2 || lines[0].Text() != "abcde" || lines[1].Text() != "fgh" {
 		t.Fatalf("lines = %+v", lines)
 	}
-	if !lines[1].breakBefore.continuation || lines[1].breakBefore.separator != "" {
+	if !lines[1].Break.Continuation || lines[1].Break.Separator != "" {
 		t.Fatalf("long word continuation = %+v", lines[1])
 	}
 	for index, line := range lines {
-		if len(line.spans) != 1 || !line.spans[0].style.bold {
-			t.Fatalf("line %d lost its style: %+v", index, line)
+		if len(line.Spans) != 1 || !line.Spans[0].Style.Bold {
+			t.Fatalf("line %d lost its Style: %+v", index, line)
 		}
 	}
 }
 
 func TestWrapInlineMarkdownUsesCellWidthAtWordBoundaries(t *testing.T) {
 	lines := wrapInlineMarkdown("界界 test", 5)
-	if len(lines) != 2 || lines[0].text != "界界" || lines[1].text != "test" || lines[1].breakBefore.separator != " " {
+	if len(lines) != 2 || lines[0].Text() != "界界" || lines[1].Text() != "test" || lines[1].Break.Separator != " " {
 		t.Fatalf("lines = %+v", lines)
 	}
 }
 
 func TestWrapInlineMarkdownPreservesWhitespaceBreaks(t *testing.T) {
 	lines := wrapInlineMarkdown("a\tb\nc", 4)
-	if len(lines) != 3 || lines[0].text != "a" || lines[1].text != "b" || lines[2].text != "c" {
+	if len(lines) != 3 || lines[0].Text() != "a" || lines[1].Text() != "b" || lines[2].Text() != "c" {
 		t.Fatalf("lines = %+v", lines)
 	}
-	if !lines[1].breakBefore.continuation || lines[1].breakBefore.separator != "    " || lines[2].breakBefore != (lineBreak{}) {
+	if !lines[1].Break.Continuation || lines[1].Break.Separator != "    " || lines[2].Break != (Break{}) {
 		t.Fatalf("breaks = %+v", lines)
 	}
 }
 
 func TestWrapInlineSpansKeepsZeroWidthRunesOnFullLines(t *testing.T) {
-	bold := inlineStyle{bold: true}
-	italic := inlineStyle{italic: true}
-	lines := wrapInlineSpans([]inlineSpan{
-		{text: "ab界", style: bold},
-		{text: "\u0301cd", style: italic},
+	bold := Style{Bold: true}
+	italic := Style{Italic: true}
+	lines := WrapSpans([]Span{
+		{Text: "ab界", Style: bold},
+		{Text: "\u0301cd", Style: italic},
 	}, 4)
-	want := []formattedLine{
-		{text: "ab界\u0301", spans: []inlineSpan{{text: "ab界", style: bold}, {text: "\u0301", style: italic}}},
-		{text: "cd", spans: []inlineSpan{{text: "cd", style: italic}}, breakBefore: lineBreak{continuation: true}},
+	want := []Line{
+		{Spans: []Span{{Text: "ab界", Style: bold}, {Text: "\u0301", Style: italic}}},
+		{Spans: []Span{{Text: "cd", Style: italic}}, Break: Break{Continuation: true}},
 	}
 	if !reflect.DeepEqual(lines, want) {
 		t.Fatalf("lines = %+v, want %+v", lines, want)
@@ -538,12 +538,12 @@ func TestWrapInlineSpansKeepsZeroWidthRunesOnFullLines(t *testing.T) {
 func TestInlineSpanWrappingNormalizesInvalidUTF8(t *testing.T) {
 	invalid := string([]byte{'a', 0xff, 'b'})
 	lines := wrapInlineMarkdown(invalid, 2)
-	if len(lines) != 2 || lines[0].text != "a�" || lines[1].text != "b" {
+	if len(lines) != 2 || lines[0].Text() != "a�" || lines[1].Text() != "b" {
 		t.Fatalf("lines = %+v", lines)
 	}
 
-	spans := truncateInlineSpans([]inlineSpan{{text: invalid}}, 2)
-	if len(spans) != 1 || spans[0].text != "a�" {
+	spans := TruncateSpans([]Span{{Text: invalid}}, 2)
+	if len(spans) != 1 || spans[0].Text != "a�" {
 		t.Fatalf("spans = %+v", spans)
 	}
 }

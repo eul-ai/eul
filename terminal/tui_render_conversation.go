@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/terminal/text"
 )
 
 const (
@@ -25,51 +26,48 @@ func conversationViewport(lines []styledLine, scrollTop, height int) []styledLin
 	return visible
 }
 
-func wrapHardConversationText(text string, width int) []formattedLine {
-	var lines []formattedLine
-	for _, paragraph := range strings.Split(text, "\n") {
-		for index, wrapped := range wrapText(paragraph, width) {
-			lines = append(lines, formattedLine{text: wrapped, breakBefore: lineBreak{continuation: index > 0}})
+func styledLines(lines []text.Line, style lineStyle, padding int) []styledLine {
+	styled := make([]styledLine, len(lines))
+	for index, line := range lines {
+		styled[index] = styledLine{text: line.Text(), spans: line.Spans, style: style, padding: padding, breakBefore: line.Break}
+	}
+	return styled
+}
+
+func hardWrappedLines(value string, width int, style lineStyle, padding int) []styledLine {
+	var lines []styledLine
+	for _, paragraph := range strings.Split(value, "\n") {
+		for index, wrapped := range text.Wrap(paragraph, width) {
+			lines = append(lines, styledLine{text: wrapped, style: style, padding: padding, breakBefore: text.Break{Continuation: index > 0}})
 		}
 	}
 	return lines
 }
 
-func wrapConversationProse(text string, width int) []formattedLine {
-	lines := wrapInlineSpans([]inlineSpan{{text: text}}, width)
-	for index := range lines {
-		lines[index].spans = nil
-	}
-	return lines
-}
-
-func contentDisplaySpans(content []agent.ContentPart) []inlineSpan {
-	var spans []inlineSpan
+func contentDisplaySpans(content []agent.ContentPart) []text.Span {
+	var spans []text.Span
 	for _, part := range content {
 		switch part.Kind {
 		case agent.ContentPartText:
-			for _, span := range parseInlineMarkdown(part.Text) {
-				appendInlineSpan(&spans, span.text, span.style)
+			for _, span := range text.ParseInline(part.Text) {
+				spans = text.AppendSpan(spans, span.Text, span.Style)
 			}
 		case agent.ContentPartImage:
-			spans = append(spans, inlineSpan{text: imageAttachmentLabel, atomic: true})
+			spans = append(spans, text.Span{Text: imageAttachmentLabel, Atomic: true})
 		}
 	}
 	return spans
 }
 
 func displayContent(content []agent.ContentPart) string {
-	return inlineSpanText(contentDisplaySpans(content))
+	return text.Plain(contentDisplaySpans(content))
 }
 
 func conversationBlockLines(block conversationBlock, width int) []styledLine {
 	style := blockPresentation(block.kind)
-	text := block.text
+	value := block.text
 	if block.kind == blockReasoning {
-		text = strings.Trim(text, "\n")
-	}
-	if block.kind == blockUser && len(block.content) > 0 {
-		text = displayContent(block.content)
+		value = strings.Trim(value, "\n")
 	}
 
 	padding := conversationPadding
@@ -85,74 +83,56 @@ func conversationBlockLines(block conversationBlock, width int) []styledLine {
 		lines = append(lines, toolConversationLines(block, contentWidth, style, padding)...)
 		lines = append(lines, styledLine{style: style, padding: padding})
 	case block.kind == blockUser && len(block.content) > 0 && contentHasImage(block.content):
-		for _, line := range wrapInlineSpans(contentDisplaySpans(block.content), contentWidth) {
-			lines = append(lines, styledLine{
-				text: line.text, spans: line.spans, style: style, padding: padding,
-				breakBefore: line.breakBefore,
-			})
-		}
+		lines = append(lines, styledLines(text.WrapSpans(contentDisplaySpans(block.content), contentWidth), style, padding)...)
 	case block.kind == blockUser && len(block.content) > 0:
 		lines = append(lines, markdownConversationLines(contentText(block.content), contentWidth, style, padding)...)
 	case isInlineMarkdownBlock(block.kind):
-		lines = append(lines, markdownConversationLines(text, contentWidth, style, padding)...)
+		lines = append(lines, markdownConversationLines(value, contentWidth, style, padding)...)
 	default:
-		for _, line := range wrapConversationProse(text, contentWidth) {
-			lines = append(lines, styledLine{
-				text: line.text, style: style, padding: padding,
-				breakBefore: line.breakBefore,
-			})
+		for _, line := range text.WrapSpans([]text.Span{{Text: value}}, contentWidth) {
+			lines = append(lines, styledLine{text: line.Text(), style: style, padding: padding, breakBefore: line.Break})
 		}
 	}
 	return lines
 }
 
-func markdownConversationLines(text string, width int, style lineStyle, padding int) []styledLine {
-	var lines []styledLine
-	for _, line := range wrapMarkdown(text, width) {
-		lineStyle := style
-		styled := styledLine{
-			text: line.text, spans: line.spans, style: lineStyle, padding: padding,
-			breakBefore: line.breakBefore,
-		}
+func markdownConversationLines(source string, width int, style lineStyle, padding int) []styledLine {
+	lines := text.WrapMarkdown(source, width)
+	styled := styledLines(lines, style, padding)
+	for index, line := range lines {
 		switch {
-		case line.fencedCode:
-			styled.style.foreground = currentTheme.markdownCode
-			styled.style.bold = false
-			styled.style.italic = false
-		case line.thematicBreak:
-			styled.style.foreground = currentTheme.muted
-			styled.style.bold = false
-			styled.style.italic = false
+		case line.FencedCode:
+			styled[index].style.foreground = currentTheme.markdownCode
+		case line.ThematicBreak:
+			styled[index].style.foreground = currentTheme.muted
+		default:
+			continue
 		}
-		lines = append(lines, styled)
+		styled[index].style.bold = false
+		styled[index].style.italic = false
 	}
-	return lines
+	return styled
 }
 
 func toolConversationLines(block conversationBlock, width int, style lineStyle, padding int) []styledLine {
-	titleForeground := inlineForegroundAccent
+	titleForeground := text.ForegroundAccent
 	if block.kind == blockToolError {
-		titleForeground = inlineForegroundError
+		titleForeground = text.ForegroundError
 	}
-	heading := []inlineSpan{{text: block.tool.Title, style: inlineStyle{bold: true, foreground: titleForeground}}}
+	heading := []text.Span{{Text: block.tool.Title, Style: text.Style{Bold: true, Foreground: titleForeground}}}
 	if block.tool.Arguments != "" {
-		appendInlineSpan(&heading, " "+block.tool.Arguments, inlineStyle{})
+		heading = text.AppendSpan(heading, " "+block.tool.Arguments, text.Style{})
 	}
 	outcome := block.toolOutcome
 	if outcome == "" && block.kind == blockToolPending {
 		outcome = block.tool.Outcome
 	}
 	if outcome != "" {
-		appendInlineSpan(&heading, " — "+outcome, inlineStyle{foreground: titleForeground})
+		heading = text.AppendSpan(heading, " — "+outcome, text.Style{Foreground: titleForeground})
 	}
 
 	lines := make([]styledLine, 0, len(block.tool.Lines)+len(block.tool.Diff)+4)
-	for _, line := range wrapInlineSpans(heading, width) {
-		lines = append(lines, styledLine{
-			text: line.text, spans: line.spans, style: style, padding: padding,
-			breakBefore: line.breakBefore,
-		})
-	}
+	lines = append(lines, styledLines(text.WrapSpans(heading, width), style, padding)...)
 	if len(block.tool.Lines) == 0 && len(block.tool.Diff) == 0 && block.tool.Elapsed == 0 {
 		return lines
 	}
@@ -165,15 +145,10 @@ func toolConversationLines(block conversationBlock, width int, style lineStyle, 
 		if block.tool.Markdown {
 			bodyLines = append(bodyLines, markdownConversationLines(body, width, style, padding)...)
 		} else {
-			for _, line := range wrapHardConversationText(body, width) {
-				bodyLines = append(bodyLines, styledLine{
-					text: line.text, style: style, padding: padding,
-					breakBefore: line.breakBefore,
-				})
-			}
+			bodyLines = append(bodyLines, hardWrappedLines(body, width, style, padding)...)
 		}
 		if block.tool.LinesTruncated {
-			markerLines := len(wrapText(block.tool.Lines[len(block.tool.Lines)-1], width))
+			markerLines := len(text.Wrap(block.tool.Lines[len(block.tool.Lines)-1], width))
 			for index := max(0, len(bodyLines)-markerLines); index < len(bodyLines); index++ {
 				bodyLines[index].style.foreground = currentTheme.muted
 			}
@@ -214,10 +189,10 @@ func toolConversationLines(block conversationBlock, width int, style lineStyle, 
 
 func toolOmissionMarker(omitted, width int) string {
 	marker := fmt.Sprintf("... (%d earlier lines)", omitted)
-	if cellWidth(marker) <= width {
+	if text.Width(marker) <= width {
 		return marker
 	}
-	return truncateCells(fmt.Sprintf("... (+%d)", omitted), width, false)
+	return text.Truncate(fmt.Sprintf("... (+%d)", omitted), width, false)
 }
 
 func toolDiffConversationLines(diff []agent.ToolDiffLine, width int, style lineStyle, padding int) []styledLine {
@@ -246,8 +221,7 @@ func toolDiffConversationLines(diff []agent.ToolDiffLine, width int, style lineS
 		if lineNumber > 0 {
 			lineNumberText = fmt.Sprintf("%*d", lineNumberWidth, lineNumber)
 		}
-		text := prefix + lineNumberText + " " + line.Text
-		for _, wrapped := range wrapText(text, width) {
+		for _, wrapped := range text.Wrap(prefix+lineNumberText+" "+line.Text, width) {
 			lines = append(lines, styledLine{text: wrapped, style: lineStyle, padding: padding})
 		}
 	}

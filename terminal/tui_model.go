@@ -7,6 +7,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/subagent"
+	"github.com/eul-ai/eul/terminal/text"
 )
 
 const (
@@ -434,7 +435,7 @@ func (m *tuiModel) showPermission(request PermissionRequest, index, total int) {
 		subject:      singleLine(request.Subject, 120),
 		description:  singleLine(request.Description, 500),
 		detail:       sanitizeAssistantText(request.Detail),
-		detailPrefix: truncateCells(replaceControls(request.DetailPrefix), 20, false),
+		detailPrefix: text.Truncate(replaceControls(request.DetailPrefix), 20, false),
 		notice:       singleLine(request.Notice, 500),
 		index:        index,
 		total:        total,

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/terminal/text"
 )
 
 func TestRendererOnlyWritesChangedRows(t *testing.T) {
@@ -237,10 +238,10 @@ func TestRenderFrameHandlesTinyDimensions(t *testing.T) {
 }
 
 func TestCellWidthHandlesCombiningAndWideRunes(t *testing.T) {
-	if got := cellWidth("e\u0301界"); got != 3 {
-		t.Fatalf("cellWidth() = %d", got)
+	if got := text.Width("e\u0301界"); got != 3 {
+		t.Fatalf("text.Width() = %d", got)
 	}
-	if got := truncateCells("ab界cd", 4, false); got != "ab界" {
-		t.Fatalf("truncateCells() = %q", got)
+	if got := text.Truncate("ab界cd", 4, false); got != "ab界" {
+		t.Fatalf("text.Truncate() = %q", got)
 	}
 }

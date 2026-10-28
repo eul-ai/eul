@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/eul-ai/eul/terminal/keys"
+	"github.com/eul-ai/eul/terminal/text"
 )
 
 const mouseWheelScrollLines = 1
@@ -135,7 +136,7 @@ func selectedTextFromLinesWithSeparators(lines []string, bounds selectionBounds,
 			selected.WriteString(separator(row))
 		}
 		columns := selectedColumns(lines[row], row, bounds)
-		line := sliceCells(lines[row], columns.start, columns.end)
+		line := text.Slice(lines[row], columns.start, columns.end)
 		line = strings.TrimRightFunc(line, unicode.IsSpace)
 		selected.WriteString(trimLeftPadding(line, leftPadding))
 	}
@@ -151,7 +152,7 @@ func trimLeftPadding(line string, padding int) string {
 }
 
 func selectedColumns(line string, row int, bounds selectionBounds) cellRange {
-	width := cellWidth(line)
+	width := text.Width(line)
 	start := 0
 	end := width
 	if row == bounds.start.row {
@@ -167,7 +168,7 @@ func cellRangeAt(line string, column int) (int, int) {
 	column = max(0, column)
 	position := 0
 	for _, character := range line {
-		width := runeWidth(character)
+		width := text.RuneWidth(character)
 		if width == 0 {
 			continue
 		}
@@ -177,33 +178,6 @@ func cellRangeAt(line string, column int) (int, int) {
 		position += width
 	}
 	return position, position
-}
-
-func sliceCells(value string, start, end int) string {
-	if start >= end {
-		return ""
-	}
-
-	var result strings.Builder
-	position := 0
-	selectedBase := false
-	for _, character := range value {
-		width := runeWidth(character)
-		if width == 0 {
-			if selectedBase {
-				result.WriteRune(character)
-			}
-			continue
-		}
-
-		next := position + width
-		selectedBase = position < end && next > start
-		if selectedBase {
-			result.WriteRune(character)
-		}
-		position = next
-	}
-	return result.String()
 }
 
 func highlightCells(value string, start, end int) string {
@@ -229,7 +203,7 @@ func highlightCells(value string, start, end int) string {
 		}
 
 		character, size := utf8.DecodeRuneInString(value[index:])
-		width := runeWidth(character)
+		width := text.RuneWidth(character)
 		selected := highlighted
 		if width > 0 {
 			selected = position < end && position+width > start
@@ -296,7 +270,7 @@ func selectionForScreenRow(model *tuiModel, layout tuiLayout, row int, line stri
 	line = strings.TrimRightFunc(line, unicode.IsSpace)
 	columns := selectedColumns(line, selectionRow, bounds)
 	if bounds.start.conversation {
-		columns.start = max(columns.start, min(conversationPadding, cellWidth(line)))
+		columns.start = max(columns.start, min(conversationPadding, text.Width(line)))
 	}
 	return columns, columns.end > columns.start
 }

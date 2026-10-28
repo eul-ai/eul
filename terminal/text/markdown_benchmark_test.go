@@ -1,4 +1,4 @@
-package terminal
+package text
 
 import (
 	"fmt"
@@ -10,14 +10,14 @@ func BenchmarkParseInlineMarkdownPlainText(b *testing.B) {
 	for _, words := range []int{1_000, 10_000} {
 		b.Run(fmt.Sprintf("words-%d", words), func(b *testing.B) {
 			text := strings.Repeat("word ", words)
-			var spans []inlineSpan
+			var spans []Span
 
 			b.ReportAllocs()
 			for b.Loop() {
-				spans = parseInlineMarkdown(text)
+				spans = ParseInline(text)
 			}
 
-			if len(spans) != 1 || spans[0].text != text {
+			if len(spans) != 1 || spans[0].Text != text {
 				b.Fatal("parsed plain text changed")
 			}
 		})
@@ -33,7 +33,7 @@ func BenchmarkWrapInlineMarkdown(b *testing.B) {
 		{name: "long-word-50000", text: strings.Repeat("a", 50_000)},
 	} {
 		b.Run(test.name, func(b *testing.B) {
-			var lines []formattedLine
+			var lines []Line
 
 			b.ReportAllocs()
 			for b.Loop() {

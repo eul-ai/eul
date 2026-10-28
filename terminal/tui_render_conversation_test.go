@@ -10,6 +10,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/terminal/keys"
+	"github.com/eul-ai/eul/terminal/text"
 )
 
 func TestConversationBlocksUseCurrentTheme(t *testing.T) {
@@ -76,7 +77,7 @@ func TestConversationProseWrapsAtWordBoundaries(t *testing.T) {
 	if len(lines) != 2 || lines[0].text != "alpha" || lines[1].text != "beta" {
 		t.Fatalf("lines = %+v", lines)
 	}
-	if !lines[1].breakBefore.continuation || lines[1].breakBefore.separator != " " {
+	if !lines[1].breakBefore.Continuation || lines[1].breakBefore.Separator != " " {
 		t.Fatalf("soft-wrapped line = %+v", lines[1])
 	}
 }
@@ -114,7 +115,7 @@ func TestAssistantFencedCodeUsesCodePresentation(t *testing.T) {
 	}
 
 	code := lines[1]
-	if code.prefixText != "" || code.style.foreground != currentTheme.markdownCode || len(code.spans) != 0 {
+	if code.prefixText != "" || code.style.foreground != currentTheme.markdownCode || len(code.spans) != 1 || code.spans[0].Style != (text.Style{}) {
 		t.Fatalf("code style = %+v", code)
 	}
 

@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/eul-ai/eul/terminal/text"
 )
 
 func renderStatus(model *tuiModel, width int) (string, string, string) {
@@ -16,7 +18,7 @@ func renderStatus(model *tuiModel, width int) (string, string, string) {
 		modelText += " fast"
 	}
 	if model.sessionID != "" {
-		modelText += " · session " + truncateCells(model.sessionID, 8, false)
+		modelText += " · session " + text.Truncate(model.sessionID, 8, false)
 	}
 	contextLong, contextShort := contextText(model.contextTokens, model.contextWindow)
 	usageLong, usageShort := providerUsageText(model.providerUsage, time.Now())
@@ -44,11 +46,11 @@ func renderStatus(model *tuiModel, width int) (string, string, string) {
 		if right != "" && left != "" {
 			gap = 1
 		}
-		if cellWidth(left)+gap+cellWidth(right) <= width {
+		if text.Width(left)+gap+text.Width(right) <= width {
 			return spinner, activity, right
 		}
 	}
-	return spinner, truncateCells(activity, width-cellWidth(spinner), true), ""
+	return spinner, text.Truncate(activity, width-text.Width(spinner), true), ""
 }
 
 func providerUsageText(usage ProviderUsage, now time.Time) (string, string) {

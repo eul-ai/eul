@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/eul-ai/eul/terminal/text"
 )
 
 type terminalFrame struct {
@@ -231,7 +233,7 @@ func renderConversationBlock(block conversationBlock, width int) renderedConvers
 	separators := make([]string, len(lines))
 	for index, line := range lines {
 		plain[index] = renderedLineText(line, width)
-		separators[index] = line.breakBefore.sourceSeparator()
+		separators[index] = line.breakBefore.SourceSeparator()
 	}
 	block.tool = block.tool.Clone()
 	return renderedConversationBlock{block: block, lines: lines, plain: plain, separators: separators}
@@ -304,8 +306,8 @@ func composeFrameRows(model *tuiModel, prepared renderPreparation) []styledLine 
 		} else {
 			bottom := max(0, len(prepared.conversationLines)-layout.conversationHeight)
 			if prepared.scrollTop < bottom {
-				indicator := truncateCells(" ↓ more (alt+↓) ", width, false)
-				remaining := width - cellWidth(indicator)
+				indicator := text.Truncate(" ↓ more (alt+↓) ", width, false)
+				remaining := width - text.Width(indicator)
 				left := remaining / 2
 				topRule.text = strings.Repeat("─", left) + indicator + strings.Repeat("─", remaining-left)
 			}
@@ -347,8 +349,8 @@ func permissionRule(permission permissionModel, width int) string {
 		label += fmt.Sprintf(" (%d of %d)", permission.index, permission.total)
 	}
 	prefix := "── " + label + " "
-	prefix = truncateCells(prefix, width, true)
-	return prefix + strings.Repeat("─", max(0, width-cellWidth(prefix)))
+	prefix = text.Truncate(prefix, width, true)
+	return prefix + strings.Repeat("─", max(0, width-text.Width(prefix)))
 }
 
 func encodeFrameRows(model *tuiModel, layout tuiLayout, rows []styledLine) ([]string, []string) {

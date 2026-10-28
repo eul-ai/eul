@@ -8,6 +8,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/subagent"
+	"github.com/eul-ai/eul/terminal/text"
 )
 
 func TestRunningSubagentsRenderAboveInput(t *testing.T) {
@@ -61,11 +62,11 @@ func TestSubagentStatusesUseStateColorsAndFreezeCompletedElapsed(t *testing.T) {
 	}
 
 	lines := renderSubagents(model, 4)
-	wantForegrounds := []inlineForeground{
-		inlineForegroundAccent,
-		inlineForegroundOrange,
-		inlineForegroundSuccess,
-		inlineForegroundError,
+	wantForegrounds := []text.Foreground{
+		text.ForegroundAccent,
+		text.ForegroundOrange,
+		text.ForegroundSuccess,
+		text.ForegroundError,
 	}
 	wantColors := []terminalColor{
 		currentTheme.accent,
@@ -74,8 +75,8 @@ func TestSubagentStatusesUseStateColorsAndFreezeCompletedElapsed(t *testing.T) {
 		currentTheme.error,
 	}
 	for index, line := range lines {
-		if line.spans[3].style.foreground != wantForegrounds[index] {
-			t.Fatalf("line %d foreground = %v", index, line.spans[3].style.foreground)
+		if line.spans[3].Style.Foreground != wantForegrounds[index] {
+			t.Fatalf("line %d foreground = %v", index, line.spans[3].Style.Foreground)
 		}
 		var rendered strings.Builder
 		renderLine(&rendered, 1, model.width, line)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/subagent"
+	"github.com/eul-ai/eul/terminal/text"
 )
 
 type subagentRow struct {
@@ -73,15 +74,15 @@ func appendSubagentSection(lines []styledLine, category string, jobs []subagentR
 		case job.Usage.TotalTokens > 0:
 			details = append(details, formatTokens(job.Usage.TotalTokens)+" processed")
 		}
-		spans := []inlineSpan{
-			{text: category + " · ", style: inlineStyle{foreground: inlineForegroundDefault}},
-			{text: job.ID, style: inlineStyle{bold: true}},
-			{text: "  "},
-			{text: state, style: inlineStyle{foreground: subagentStateForeground(job.State)}},
-			{text: " (" + strings.Join(details, ", ") + ")"},
+		spans := []text.Span{
+			{Text: category + " · ", Style: text.Style{Foreground: text.ForegroundDefault}},
+			{Text: job.ID, Style: text.Style{Bold: true}},
+			{Text: "  "},
+			{Text: state, Style: text.Style{Foreground: subagentStateForeground(job.State)}},
+			{Text: " (" + strings.Join(details, ", ") + ")"},
 		}
 		if job.Task != "" {
-			spans = append(spans, inlineSpan{text: " — " + job.Task})
+			spans = append(spans, text.Span{Text: " — " + job.Task})
 		}
 		lines = append(lines, styledLine{
 			spans:   spans,
@@ -92,18 +93,18 @@ func appendSubagentSection(lines []styledLine, category string, jobs []subagentR
 	return lines
 }
 
-func subagentStateForeground(state subagent.State) inlineForeground {
+func subagentStateForeground(state subagent.State) text.Foreground {
 	switch state {
 	case subagent.StateRunning:
-		return inlineForegroundAccent
+		return text.ForegroundAccent
 	case subagent.StateCanceling, subagent.StateCanceled:
-		return inlineForegroundOrange
+		return text.ForegroundOrange
 	case subagent.StateComplete:
-		return inlineForegroundSuccess
+		return text.ForegroundSuccess
 	case subagent.StateFailed, subagent.StateInterrupted:
-		return inlineForegroundError
+		return text.ForegroundError
 	default:
-		return inlineForegroundDefault
+		return text.ForegroundDefault
 	}
 }
 
