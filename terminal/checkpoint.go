@@ -240,7 +240,7 @@ func restoreModelCheckpoint(model *tuiModel, checkpoint Checkpoint) {
 		model.blocks[index] = conversationBlock{
 			kind:        kind,
 			text:        sanitizeAssistantText(block.Text),
-			content:     sanitizeContent(restoreCheckpointContent(block.Content)),
+			content:     displayParts(restoreCheckpointContent(block.Content)),
 			toolCallID:  block.ToolCallID,
 			tool:        sanitizeToolPresentation(agent.ToolCall{ID: block.ToolCallID}, block.Tool),
 			toolOutcome: sanitizeAssistantText(outcome),

@@ -41,7 +41,7 @@ func (c *tuiController) runAction(ctx context.Context, action tuiAction) (bool, 
 	case tuiActionSteer:
 		accepted := false
 		if len(c.model.steering.deferred) == 0 && c.controls.Steer != nil {
-			accepted = c.controls.Steer(cloneTerminalContent(action.content))
+			accepted = c.controls.Steer(action.content)
 		}
 		c.model.enqueueSteering(action.content, accepted)
 	case tuiActionDequeue:

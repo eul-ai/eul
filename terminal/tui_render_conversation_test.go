@@ -507,7 +507,7 @@ func TestPendingImageSteeringRendersAndDelivers(t *testing.T) {
 		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("png")}},
 	}
 	model := newTUIModel(40, 8, Options{})
-	model.steering.accepted = [][]agent.ContentPart{cloneTerminalContent(content)}
+	model.steering.accepted = [][]agent.ContentPart{content}
 	controller := tuiController{model: model}
 
 	lines := modelConversationLines(model, 40)
@@ -517,7 +517,7 @@ func TestPendingImageSteeringRendersAndDelivers(t *testing.T) {
 	if _, err := controller.handleAgentEvent(engineMessage{event: &agent.Event{Kind: agent.EventSteering, Content: content}}); err != nil {
 		t.Fatal(err)
 	}
-	if len(model.steering.pending()) != 0 || len(model.blocks) != 1 || !contentEqual(model.blocks[0].content, content) {
+	if len(model.steering.pending()) != 0 || len(model.blocks) != 1 || !slices.Equal(model.blocks[0].content, displayParts(content)) {
 		t.Fatalf("steering = %+v, blocks = %+v", model.steering.pending(), model.blocks)
 	}
 }

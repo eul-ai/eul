@@ -234,14 +234,13 @@ func renderConversationBlock(block conversationBlock, width int) renderedConvers
 		separators[index] = line.breakBefore.sourceSeparator()
 	}
 	block.tool = block.tool.Clone()
-	block.content = cloneTerminalContent(block.content)
 	return renderedConversationBlock{block: block, lines: lines, plain: plain, separators: separators}
 }
 
 func conversationBlocksEqual(left, right conversationBlock) bool {
 	return left.kind == right.kind &&
 		left.text == right.text &&
-		contentEqual(left.content, right.content) &&
+		slices.Equal(left.content, right.content) &&
 		left.toolCallID == right.toolCallID &&
 		left.toolOutcome == right.toolOutcome &&
 		left.tool.Equal(right.tool)

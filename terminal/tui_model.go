@@ -457,7 +457,7 @@ func (m *tuiModel) finishPendingTools(outcome string) {
 
 func (m *tuiModel) appendUserContent(content []agent.ContentPart) {
 	m.closeStream()
-	content = sanitizeContent(content)
+	content = displayParts(content)
 	m.blocks = append(m.blocks, conversationBlock{kind: blockUser, text: contentText(content), content: content})
 	m.conversationChanged()
 }

@@ -24,7 +24,7 @@ func TestSteeringCoordinatorTracksAcceptedAndDeferredMessages(t *testing.T) {
 	engine := &fakeEngine{
 		steerFunction: func(content []agent.ContentPart) bool {
 			if contentText(content) == "accepted" {
-				engineQueue = append(engineQueue, cloneTerminalContent(content))
+				engineQueue = append(engineQueue, content)
 				return true
 			}
 			return false
@@ -53,10 +53,9 @@ func TestSteeringCoordinatorTracksAcceptedAndDeferredMessages(t *testing.T) {
 }
 
 func TestSteeringCoordinatorRestoresImagesToEditor(t *testing.T) {
-	image := &agent.Image{MediaType: "image/png", Data: []byte("png")}
 	queued := []agent.ContentPart{
 		{Kind: agent.ContentPartText, Text: "describe "},
-		{Kind: agent.ContentPartImage, Image: image},
+		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("png")}},
 	}
 	model := newTUIModel(80, 24, Options{})
 	if err := model.insertInput("draft"); err != nil {
@@ -64,7 +63,6 @@ func TestSteeringCoordinatorRestoresImagesToEditor(t *testing.T) {
 	}
 
 	model.restoreSteering([][]agent.ContentPart{queued})
-	image.Data[0] = 'x'
 
 	content := editorContent(model.input)
 	if len(content) != 3 || content[0].Text != "describe " || content[1].Image == nil || string(content[1].Image.Data) != "png" || content[2].Text != "\n\ndraft" {

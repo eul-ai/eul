@@ -82,7 +82,7 @@ func (m *tuiModel) imageCount() int {
 func (m *tuiModel) imageBytes() int {
 	total := 0
 	for _, item := range m.input {
-		if item.kind == editorItemImage && item.image != nil {
+		if item.kind == editorItemImage {
 			total += len(item.image.Data)
 		}
 	}
@@ -385,19 +385,6 @@ func textContent(text string) []agent.ContentPart {
 	return []agent.ContentPart{{Kind: agent.ContentPartText, Text: text}}
 }
 
-func cloneTerminalContent(content []agent.ContentPart) []agent.ContentPart {
-	cloned := make([]agent.ContentPart, len(content))
-	for index, part := range content {
-		cloned[index] = part
-		if part.Image != nil {
-			image := *part.Image
-			image.Data = append([]byte(nil), image.Data...)
-			cloned[index].Image = &image
-		}
-	}
-	return cloned
-}
-
 func contentEqual(left, right []agent.ContentPart) bool {
 	if len(left) != len(right) {
 		return false
@@ -419,14 +406,12 @@ func contentEqual(left, right []agent.ContentPart) bool {
 	return true
 }
 
-func sanitizeContent(content []agent.ContentPart) []agent.ContentPart {
-	content = cloneTerminalContent(content)
-	for index := range content {
-		if content[index].Kind == agent.ContentPartText {
-			content[index].Text = sanitizeAssistantText(content[index].Text)
-		}
+func displayParts(content []agent.ContentPart) []agent.ContentPart {
+	parts := make([]agent.ContentPart, len(content))
+	for index, part := range content {
+		parts[index] = agent.ContentPart{Kind: part.Kind, Text: sanitizeAssistantText(part.Text)}
 	}
-	return content
+	return parts
 }
 
 func editorItemsFromContent(content []agent.ContentPart) []editorItem {
@@ -436,12 +421,7 @@ func editorItemsFromContent(content []agent.ContentPart) []editorItem {
 		case agent.ContentPartText:
 			items = append(items, editorItemsFromText(part.Text)...)
 		case agent.ContentPartImage:
-			if part.Image == nil {
-				continue
-			}
-			image := *part.Image
-			image.Data = append([]byte(nil), image.Data...)
-			items = append(items, editorItem{kind: editorItemImage, image: &image})
+			items = append(items, editorItem{kind: editorItemImage, image: part.Image})
 		}
 	}
 	return items
@@ -463,13 +443,8 @@ func editorContent(items []editorItem) []agent.ContentPart {
 		case editorItemRune:
 			text.WriteRune(item.character)
 		case editorItemImage:
-			if item.image == nil {
-				continue
-			}
 			flushText()
-			image := *item.image
-			image.Data = append([]byte(nil), image.Data...)
-			content = append(content, agent.ContentPart{Kind: agent.ContentPartImage, Image: &image})
+			content = append(content, agent.ContentPart{Kind: agent.ContentPartImage, Image: item.image})
 		}
 	}
 	flushText()
@@ -512,7 +487,6 @@ func (m *tuiModel) resolveImage(requestID uint64, image agent.Image) error {
 		return errImagesTooLarge
 	}
 
-	image.Data = append([]byte(nil), image.Data...)
 	m.input[index] = editorItem{kind: editorItemImage, image: &image}
 	m.clearInputPickers()
 	if !m.running {

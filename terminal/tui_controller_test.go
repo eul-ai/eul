@@ -72,7 +72,7 @@ func TestTUIControllerPastesClipboardImage(t *testing.T) {
 func TestTUIControllerQueuesClipboardImageWhileRunning(t *testing.T) {
 	var steered []agent.ContentPart
 	engine := &fakeEngine{steerFunction: func(content []agent.ContentPart) bool {
-		steered = cloneTerminalContent(content)
+		steered = content
 		return true
 	}}
 	model := newTUIModel(80, 24, Options{})
@@ -1332,7 +1332,7 @@ func TestTUIControllerQueuesAndDequeuesSteering(t *testing.T) {
 	var queued [][]agent.ContentPart
 	engine := &fakeEngine{
 		steerFunction: func(content []agent.ContentPart) bool {
-			queued = append(queued, cloneTerminalContent(content))
+			queued = append(queued, content)
 			return true
 		},
 		clearFunction: func() [][]agent.ContentPart {
@@ -1469,12 +1469,12 @@ func TestTUIControllerStartsDeferredImageSteering(t *testing.T) {
 	}
 	started := make(chan []agent.ContentPart, 1)
 	engine := &fakeEngine{runContentFunction: func(_ context.Context, content []agent.ContentPart, _ agent.EventSink) (agent.RunResult, error) {
-		started <- cloneTerminalContent(content)
+		started <- content
 		return agent.RunResult{}, nil
 	}}
 	messages := make(chan engineMessage, 1)
 	model := newTUIModel(80, 24, Options{})
-	model.steering.deferred = [][]agent.ContentPart{cloneTerminalContent(content)}
+	model.steering.deferred = [][]agent.ContentPart{content}
 	controller := tuiController{
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: messages, stopped: make(chan struct{}),
@@ -1499,7 +1499,7 @@ func TestTUIControllerStartsDeferredImageSteering(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("deferred turn did not finish")
 	}
-	if len(model.steering.pending()) != 0 || len(model.blocks) != 1 || !contentEqual(model.blocks[0].content, content) {
+	if len(model.steering.pending()) != 0 || len(model.blocks) != 1 || !slices.Equal(model.blocks[0].content, displayParts(content)) {
 		t.Fatalf("steering = %+v, blocks = %+v", model.steering.pending(), model.blocks)
 	}
 }

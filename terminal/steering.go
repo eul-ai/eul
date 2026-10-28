@@ -13,11 +13,11 @@ type steeringCoordinator struct {
 
 func (coordinator *steeringCoordinator) enqueue(content []agent.ContentPart, accepted bool) {
 	if len(coordinator.deferred) == 0 && accepted {
-		coordinator.accepted = append(coordinator.accepted, cloneTerminalContent(content))
+		coordinator.accepted = append(coordinator.accepted, content)
 		return
 	}
 
-	coordinator.deferred = append(coordinator.deferred, cloneTerminalContent(content))
+	coordinator.deferred = append(coordinator.deferred, content)
 }
 
 func (coordinator *steeringCoordinator) delivered(content []agent.ContentPart) bool {
@@ -39,11 +39,11 @@ func (coordinator *steeringCoordinator) nextDeferred() ([]agent.ContentPart, boo
 	content := coordinator.deferred[0]
 	coordinator.deferred[0] = nil
 	coordinator.deferred = coordinator.deferred[1:]
-	return cloneTerminalContent(content), true
+	return content, true
 }
 
 func (coordinator *steeringCoordinator) restoreDeferred(content []agent.ContentPart) {
-	coordinator.deferred = append([][]agent.ContentPart{cloneTerminalContent(content)}, coordinator.deferred...)
+	coordinator.deferred = append([][]agent.ContentPart{content}, coordinator.deferred...)
 }
 
 func (coordinator *steeringCoordinator) restore(clear func() [][]agent.ContentPart) [][]agent.ContentPart {
