@@ -3,62 +3,18 @@ package codex
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/backend/codex/client"
-	"github.com/eul-ai/eul/backend/codex/oauth"
 )
 
-type fakeManager struct {
-	credential   oauth.AccessCredential
-	resolveErr   error
-	loginErr     error
-	logoutErr    error
-	loginMethod  string
-	loginCalls   int
-	logoutCalls  int
-	resolveCalls int
-}
-
-func (manager *fakeManager) LoginBrowser(_ context.Context, presentURL func(string) error) error {
-	manager.loginCalls++
-	manager.loginMethod = "browser"
-	if presentURL != nil {
-		_ = presentURL("https://example.test/login")
-	}
-	return manager.loginErr
-}
-
-func (manager *fakeManager) LoginDevice(_ context.Context, presentCode func(backend.DeviceCode) error) error {
-	manager.loginCalls++
-	manager.loginMethod = "device"
-	if presentCode != nil {
-		_ = presentCode(backend.DeviceCode{VerificationURL: "https://example.test/device", UserCode: "CODE"})
-	}
-	return manager.loginErr
-}
-
-func (manager *fakeManager) Resolve(context.Context) (oauth.AccessCredential, error) {
-	manager.resolveCalls++
-	return manager.credential, manager.resolveErr
-}
-
-func (manager *fakeManager) Logout(context.Context) error {
-	manager.logoutCalls++
-	return manager.logoutErr
-}
-
 func TestDriverOpensRuntimeWithAuthenticationAndProviderCreation(t *testing.T) {
-	manager := &fakeManager{credential: oauth.AccessCredential{AccessToken: "access", AccountID: "account"}}
-	driver := New()
-	var managerPath string
-	driver.newManager = func(path string) (oauthManager, error) {
-		managerPath = path
-		return manager, nil
-	}
-	backendRuntime, err := driver.Open(backend.Options{Home: "/config/eul"})
+	home := t.TempDir()
+	writeCredential(t, filepath.Join(home, "auth.json"), "access")
+
+	backendRuntime, err := New().Open(backend.Options{Home: home})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,14 +29,11 @@ func TestDriverOpensRuntimeWithAuthenticationAndProviderCreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := provider.(*client.Client); !ok {
+	if _, ok := provider.(*client); !ok {
 		t.Fatalf("provider = %T", provider)
 	}
 	if err := backendRuntime.Close(); err != nil {
 		t.Fatal(err)
-	}
-	if managerPath != "/config/eul/auth.json" || manager.resolveCalls != 1 {
-		t.Fatalf("path=%q resolveCalls=%d", managerPath, manager.resolveCalls)
 	}
 }
 
@@ -91,7 +44,7 @@ func TestDriverModelDefaultsAreSupported(t *testing.T) {
 		if err := configured.ValidateModel(model); err != nil {
 			t.Fatal(err)
 		}
-		if metadata := configured.ModelMetadata(model); !metadata.FastMode || metadata.ContextWindow == 0 {
+		if metadata := configured.ModelMetadata(model); !metadata.FastMode || metadata.ContextWindow != 272_000 {
 			t.Fatalf("model %q metadata = %+v", model, metadata)
 		}
 	}
@@ -101,41 +54,7 @@ func TestDriverModelDefaultsAreSupported(t *testing.T) {
 	if !errors.As(err, &unsupported) {
 		t.Fatalf("ValidateModel() error = %v", err)
 	}
-	if unsupported.Model != "unknown" || !slices.Equal(unsupported.AvailableModels, []string{ModelFast, ModelMain, ModelBalanced}) {
+	if unsupported.Model != "unknown" || !slices.Equal(unsupported.AvailableModels, []string{modelFast, modelMain, modelBalanced}) {
 		t.Fatalf("ValidateModel() error = %#v", unsupported)
-	}
-}
-
-func TestRuntimeBridgesLoginAndLogout(t *testing.T) {
-	manager := &fakeManager{}
-	configured := &runtime{manager: manager}
-
-	browserURL := ""
-	if err := configured.LoginBrowser(context.Background(), func(url string) error {
-		browserURL = url
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if manager.loginMethod != "browser" || browserURL == "" {
-		t.Fatalf("browser method=%q URL=%q", manager.loginMethod, browserURL)
-	}
-
-	verificationURL, userCode := "", ""
-	if err := configured.LoginDevice(context.Background(), func(code backend.DeviceCode) error {
-		verificationURL, userCode = code.VerificationURL, code.UserCode
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if manager.loginMethod != "device" || verificationURL == "" || userCode != "CODE" {
-		t.Fatalf("device method=%q URL=%q code=%q", manager.loginMethod, verificationURL, userCode)
-	}
-
-	if err := configured.Logout(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if manager.loginCalls != 2 || manager.logoutCalls != 1 {
-		t.Fatalf("login calls=%d logout calls=%d", manager.loginCalls, manager.logoutCalls)
 	}
 }

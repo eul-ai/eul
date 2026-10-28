@@ -2,32 +2,19 @@ package codex
 
 import (
 	"context"
+	"maps"
+	"net/http"
 	"path/filepath"
+	"slices"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/backend/codex/client"
 	"github.com/eul-ai/eul/backend/codex/oauth"
 )
 
-const (
-	ID            = "openai-codex"
-	Name          = "OpenAI Codex"
-	ModelFast     = client.ModelGPT56Luna
-	ModelBalanced = client.ModelGPT56Terra
-	ModelMain     = client.ModelGPT56Sol
-)
+const ID = "openai-codex"
 
-type oauthManager interface {
-	LoginBrowser(context.Context, func(string) error) error
-	LoginDevice(context.Context, func(backend.DeviceCode) error) error
-	Resolve(context.Context) (oauth.AccessCredential, error)
-	Logout(context.Context) error
-}
-
-type Driver struct {
-	newManager func(string) (oauthManager, error)
-}
+type Driver struct{}
 
 var (
 	_ backend.Driver                = (*Driver)(nil)
@@ -42,46 +29,28 @@ var (
 )
 
 func New() *Driver {
-	return &Driver{
-		newManager: func(path string) (oauthManager, error) {
-			return oauth.NewManager(path, oauth.Options{}), nil
-		},
-	}
+	return &Driver{}
 }
 
 func (*Driver) Descriptor() backend.Descriptor {
 	return backend.Descriptor{
 		ID:   ID,
-		Name: Name,
+		Name: "OpenAI Codex",
 		DefaultModels: backend.ModelDefaults{
-			Main:     ModelMain,
-			Fast:     ModelFast,
-			Balanced: ModelBalanced,
+			Main:     modelMain,
+			Fast:     modelFast,
+			Balanced: modelBalanced,
 		},
 	}
 }
 
-func (driver *Driver) Open(options backend.Options) (backend.Runtime, error) {
-	manager, err := driver.newManager(filepath.Join(options.Home, "auth.json"))
-	if err != nil {
-		return nil, err
-	}
-	source := oauthTokenSource{manager: manager}
-	usage, err := client.NewUsage(source)
-	if err != nil {
-		return nil, err
-	}
-	return &runtime{
-		manager:     manager,
-		tokenSource: source,
-		usageClient: usage,
-	}, nil
+func (*Driver) Open(options backend.Options) (backend.Runtime, error) {
+	return &runtime{manager: oauth.NewManager(filepath.Join(options.Home, "auth.json"), oauth.Options{})}, nil
 }
 
 type runtime struct {
-	manager     oauthManager
-	tokenSource client.TokenSource
-	usageClient *client.UsageClient
+	manager    *oauth.Manager
+	httpClient *http.Client
 }
 
 func (configured *runtime) LoginBrowser(ctx context.Context, presentURL func(string) error) error {
@@ -102,47 +71,20 @@ func (configured *runtime) CheckCredentials(ctx context.Context) error {
 }
 
 func (configured *runtime) NewProvider() (agent.Provider, error) {
-	return client.New(configured.tokenSource)
+	return newClient(configured.manager, configured.httpClient), nil
 }
 
-func (configured *runtime) ModelMetadata(model string) backend.ModelMetadata {
-	metadata := client.MetadataFor(model)
-	return backend.ModelMetadata{
-		ContextWindow:  metadata.ContextWindow,
-		ThinkingLevels: metadata.ThinkingLevels,
-		FastMode:       metadata.FastMode,
-	}
+func (*runtime) ModelMetadata(model string) backend.ModelMetadata {
+	return modelMetadata(model)
 }
 
 func (*runtime) ValidateModel(model string) error {
-	switch model {
-	case ModelFast, ModelBalanced, ModelMain:
+	if _, ok := models[model]; ok {
 		return nil
-	default:
-		return backend.NewModelNotSupportedError("openai codex", model, []string{
-			ModelFast,
-			ModelBalanced,
-			ModelMain,
-		})
 	}
-}
-
-func (configured *runtime) Usage(ctx context.Context) (backend.AccountUsage, error) {
-	return configured.usageClient.Usage(ctx)
+	return backend.NewModelNotSupportedError("openai codex", model, slices.Collect(maps.Keys(models)))
 }
 
 func (*runtime) Close() error {
 	return nil
-}
-
-type oauthTokenSource struct {
-	manager oauthManager
-}
-
-func (source oauthTokenSource) Token(ctx context.Context) (client.Credential, error) {
-	credential, err := source.manager.Resolve(ctx)
-	if err != nil {
-		return client.Credential{}, err
-	}
-	return client.Credential{AccessToken: credential.AccessToken, AccountID: credential.AccountID}, nil
 }
