@@ -3,7 +3,6 @@ package terminal
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 
 	"github.com/eul-ai/eul/agent"
 )
@@ -15,7 +14,7 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 	}
 	switch action.kind {
 	case tuiActionCommand, tuiActionExit, tuiActionResume, tuiActionSetThinking:
-		return exit, c.saveDraft(false)
+		return exit, c.saveDraft()
 	}
 	return exit, nil
 }
@@ -33,19 +32,19 @@ func (c *tuiController) runAction(ctx context.Context, action tuiAction) (bool, 
 	case tuiActionCancel:
 		c.interruptTurn()
 	case tuiActionSubmit:
-		if err := c.startTurn(ctx, action.content); err != nil {
+		if err := c.startTurn(action.content); err != nil {
 			return false, err
 		}
 		c.cancelClipboardRequests()
 		c.model.finishSubmission(action.content)
 	case tuiActionSteer:
-		accepted := false
-		if len(c.model.steering.deferred) == 0 && c.controls.Steer != nil {
-			accepted = c.controls.Steer(action.content)
+		if err := c.model.session.Send(action.content); err != nil {
+			return false, err
 		}
-		c.model.enqueueSteering(action.content, accepted)
+		c.model.syncConversation()
+		c.model.syncQueue()
 	case tuiActionDequeue:
-		c.restoreQueuedInput()
+		c.model.restoreQueued(c.model.session.TakeQueued())
 	case tuiActionSetThinking:
 		if err := c.controls.SetThinkingLevel(action.thinkingLevel); err != nil {
 			setInputError(c.model, err)
@@ -76,60 +75,20 @@ func (c *tuiController) runAction(ctx context.Context, action tuiAction) (bool, 
 	return false, nil
 }
 
-func (c *tuiController) startTurn(ctx context.Context, content []agent.ContentPart) error {
-	if c.operations.RunTurn == nil {
-		return errors.New("agent turns are unavailable")
-	}
-	c.model.beginTurnOperation()
-	if err := c.saveDraft(true); err != nil {
-		c.model.rollbackTurnStart()
+func (c *tuiController) startTurn(content []agent.ContentPart) error {
+	if err := c.model.session.Send(content); err != nil {
 		return err
 	}
-	c.model.appendUserContent(content)
-
-	run := c.operations.RunTurn
-	c.launch(ctx, func(ctx context.Context, sink agent.EventSink) error {
-		return run(ctx, content, sink)
-	})
+	c.model.beginTurn(activityThinking)
 	return nil
 }
 
-func (c *tuiController) startCompaction(ctx context.Context) error {
-	if c.operations.Compact == nil {
-		return errors.New("compaction is unavailable")
-	}
-	c.model.beginCompaction()
-	if err := c.saveDraft(true); err != nil {
+func (c *tuiController) startCompaction() error {
+	if err := c.model.session.Compact(); err != nil {
 		return err
 	}
-
-	c.launch(ctx, c.operations.Compact)
+	c.model.beginTurn(activityCompacting)
 	return nil
-}
-
-func (c *tuiController) launch(ctx context.Context, operation func(context.Context, agent.EventSink) error) {
-	turnContext, cancel := context.WithCancel(ctx)
-	c.turnCancel = cancel
-	observe := c.model.session.Sink
-	go runEngineOperation(turnContext, c.engineMessages, c.stopped, func(emit agent.EventSink) error {
-		return operation(turnContext, observe(emit))
-	})
-}
-
-func (c *tuiController) startDeferredTurn(ctx context.Context) error {
-	content, ok := c.model.nextDeferredSteering()
-	if !ok {
-		return nil
-	}
-	if err := c.startTurn(ctx, content); err != nil {
-		c.model.restoreDeferredSteering(content)
-		return err
-	}
-	return nil
-}
-
-func (c *tuiController) restoreQueuedInput() {
-	c.model.restoreSteering(c.model.clearSteering(c.controls.ClearSteering))
 }
 
 func (c *tuiController) interruptTurn() {
@@ -139,13 +98,10 @@ func (c *tuiController) interruptTurn() {
 
 func (c *tuiController) cancelTurn() {
 	c.respondPermissions(PermissionDenyOnce)
-	c.restoreQueuedInput()
-	if c.turnCancel != nil {
-		c.turnCancel()
-	}
+	c.model.restoreQueued(c.model.session.Interrupt())
 	c.model.activity = activity{kind: activityCanceling}
 }
 
-func (c *tuiController) saveDraft(active bool) error {
-	return c.model.session.SaveDraft(c.model.draft(), active)
+func (c *tuiController) saveDraft() error {
+	return c.model.session.SaveDraft(c.model.draft())
 }

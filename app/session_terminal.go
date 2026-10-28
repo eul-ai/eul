@@ -3,14 +3,10 @@ package app
 import (
 	"context"
 	"os"
-	"slices"
-	"strings"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/session"
-	"github.com/eul-ai/eul/skill"
-	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
 )
 
@@ -19,9 +15,7 @@ type terminalOptionsBuilder struct {
 	interrupts         <-chan os.Signal
 	metadata           backend.ModelMetadata
 	loadUsage          func(context.Context) (backend.AccountUsage, error)
-	subagents          *subagent.Manager
 	permissionRequests <-chan terminal.PermissionRequest
-	engine             *agent.Engine
 	settings           *agent.Settings
 	goal               *agent.Goal
 	conversation       *session.Session
@@ -36,20 +30,7 @@ type terminalOptionsBuilder struct {
 func (source terminalOptionsBuilder) options() terminal.Options {
 	thinkingLevel, _ := source.settings.Snapshot()
 	return terminal.Options{
-		Operations: terminal.Operations{
-			RunTurn: func(ctx context.Context, content []agent.ContentPart, sink agent.EventSink) error {
-				content, err := expandSkillContent(content, source.config.skills)
-				if err != nil {
-					return err
-				}
-				_, err = source.engine.Run(ctx, content, sink)
-				return err
-			},
-			Compact: source.engine.Compact,
-		},
 		Controls: terminal.Controls{
-			Steer:            source.engine.Steer,
-			ClearSteering:    source.engine.ClearSteering,
 			SetGoal:          source.goal.Set,
 			Goal:             source.goal.State,
 			ClearGoal:        source.goal.Clear,
@@ -75,29 +56,8 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 		},
 		Events: terminal.Events{
 			Interrupts:         source.interrupts,
-			Subagents:          source.subagents,
 			PermissionRequests: source.permissionRequests,
 		},
 		Services: terminal.Services{LoadUsage: source.loadUsage},
 	}
-}
-
-func expandSkillContent(content []agent.ContentPart, skills []skill.Skill) ([]agent.ContentPart, error) {
-	for index, part := range content {
-		switch {
-		case part.Kind == agent.ContentPartImage:
-			return content, nil
-		case strings.TrimSpace(part.Text) == "":
-			continue
-		}
-
-		expanded, err := skill.Expand(part.Text, skills)
-		if err != nil {
-			return nil, err
-		}
-		content = slices.Clone(content)
-		content[index].Text = expanded
-		return content, nil
-	}
-	return content, nil
 }

@@ -133,7 +133,7 @@ func (permission permissionState) view() permissionView {
 }
 
 type operationModel struct {
-	steering    steeringCoordinator
+	queued      [][]agent.ContentPart
 	permission  permissionState
 	running     bool
 	interrupted bool
@@ -208,44 +208,6 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 	return model
 }
 
-func (m *tuiModel) pendingSteering() [][]agent.ContentPart {
-	return m.steering.pending()
-}
-
-func (m *tuiModel) enqueueSteering(content []agent.ContentPart, accepted bool) {
-	m.steering.enqueue(content, accepted)
-	m.conversationChanged()
-}
-
-func (m *tuiModel) deliverSteering(content []agent.ContentPart) bool {
-	if !m.steering.delivered(content) {
-		return false
-	}
-	m.conversationChanged()
-	return true
-}
-
-func (m *tuiModel) nextDeferredSteering() ([]agent.ContentPart, bool) {
-	content, ok := m.steering.nextDeferred()
-	if ok {
-		m.conversationChanged()
-	}
-	return content, ok
-}
-
-func (m *tuiModel) restoreDeferredSteering(content []agent.ContentPart) {
-	m.steering.restoreDeferred(content)
-	m.conversationChanged()
-}
-
-func (m *tuiModel) clearSteering(clear func() [][]agent.ContentPart) [][]agent.ContentPart {
-	messages := m.steering.restore(clear)
-	if len(messages) > 0 {
-		m.conversationChanged()
-	}
-	return messages
-}
-
 func (m *tuiModel) syncConversation() {
 	entries, changed := m.session.Sync(m.entries)
 	if !changed {
@@ -260,6 +222,11 @@ func (m *tuiModel) appendEntry(kind session.EntryKind, text string) {
 	m.syncConversation()
 }
 
+func (m *tuiModel) syncQueue() {
+	m.queued = m.session.Queued()
+	m.conversationChanged()
+}
+
 func (m *tuiModel) conversationChanged() {
 	m.conversationVersion++
 }
@@ -269,9 +236,8 @@ func (m *tuiModel) applyAgentEvent(event agent.Event) {
 
 	switch event.Kind {
 	case agent.EventSteering:
-		if m.deliverSteering(event.Content) {
-			m.setActiveActivity(activity{kind: activityThinking})
-		}
+		m.syncQueue()
+		m.setActiveActivity(activity{kind: activityThinking})
 	case agent.EventAssistantReasoning:
 		m.setActiveActivity(activity{kind: activityThinking})
 	case agent.EventAssistantText:
@@ -313,7 +279,10 @@ func (m *tuiModel) setActiveActivity(next activity) {
 	}
 }
 
-func (m *tuiModel) restoreSteering(messages [][]agent.ContentPart) {
+// restoreQueued puts prompts taken from the session's queue back into the
+// editor, ahead of the current input.
+func (m *tuiModel) restoreQueued(messages [][]agent.ContentPart) {
+	m.syncQueue()
 	if len(messages) == 0 {
 		return
 	}
@@ -335,39 +304,28 @@ func (m *tuiModel) restoreSteering(messages [][]agent.ContentPart) {
 	m.clearInputPickers()
 }
 
-func (m *tuiModel) appendUserContent(content []agent.ContentPart) {
-	m.session.AppendUser(content)
+func (m *tuiModel) beginTurn(kind activityKind) {
+	m.running = true
+	m.interrupted = false
+	m.activity = activity{kind: kind}
+	m.refreshCommandPickerAvailability()
 	m.syncConversation()
 }
 
-func (m *tuiModel) beginTurnOperation() {
-	m.running = true
-	m.refreshCommandPickerAvailability()
-	m.interrupted = false
-	m.activity = activity{kind: activityThinking}
-}
-
-func (m *tuiModel) rollbackTurnStart() {
-	m.running = false
-	m.activity = activity{kind: activityReady}
-	m.refreshCommandPickerAvailability()
-}
-
-func (m *tuiModel) beginCompaction() {
-	m.running = true
-	m.refreshCommandPickerAvailability()
-	m.interrupted = false
-	m.activity = activity{kind: activityCompacting}
-}
-
+// finishTurn follows the session, which may already run a turn sent after
+// the one that settled.
 func (m *tuiModel) finishTurn(runErr error) {
-	m.running = false
+	m.running = m.session.Running()
+	m.interrupted = false
 	m.refreshCommandPickerAvailability()
-	m.session.FinishTurn(m.interrupted, runErr)
 	m.syncConversation()
 
-	m.activity = activity{kind: activityReady}
-	if !m.interrupted && runErr != nil {
+	switch {
+	case m.running:
+		m.activity = activity{kind: activityThinking}
+	case runErr != nil:
 		m.activity = activity{kind: activityError, detail: singleLine(runErr.Error(), 500)}
+	default:
+		m.activity = activity{kind: activityReady}
 	}
 }

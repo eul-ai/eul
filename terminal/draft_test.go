@@ -15,10 +15,10 @@ func TestDraftRoundTrip(t *testing.T) {
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)
 	}
-	model.steering.accepted = [][]agent.ContentPart{testTextContent("accepted")}
-	model.steering.deferred = [][]agent.ContentPart{testTextContent("deferred")}
+	draft := model.draft()
+	draft.QueuedInputs = []string{"accepted", "deferred"}
 
-	encoded, err := json.Marshal(model.draft())
+	encoded, err := json.Marshal(draft)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,8 +27,8 @@ func TestDraftRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	conversation := &testSession{}
-	conversation.AppendUser(textContent("prompt"))
+	conversation := newFakeSession()
+	conversation.transcript.AppendUser(textContent("prompt"))
 	restored := newTestModel(100, 30, Options{
 		Session:        conversation,
 		Config:         Config{Draft: decoded, ContextTokens: 42},
@@ -63,22 +63,16 @@ func TestDraftProjectsImagesOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	model.moveLeft()
-	model.steering.accepted = [][]agent.ContentPart{{
-		{Kind: agent.ContentPartText, Text: "queued "},
-		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("queued")}},
-	}, {
-		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("other")}},
-	}}
 
 	draft := model.draft()
-	if draft.Input != "before after" || draft.Cursor != len([]rune("before afte")) || !slices.Equal(draft.QueuedInputs, []string{"queued "}) {
+	if draft.Input != "before after" || draft.Cursor != len([]rune("before afte")) {
 		t.Fatalf("draft = %+v", draft)
 	}
 	encoded, err := json.Marshal(draft)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), "cG5n") || strings.Contains(string(encoded), "cXVldWVk") || strings.Contains(string(encoded), "b3RoZXI=") {
+	if strings.Contains(string(encoded), "cG5n") {
 		t.Fatalf("draft image was persisted: %s", encoded)
 	}
 }

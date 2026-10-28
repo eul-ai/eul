@@ -46,12 +46,11 @@ func TestResumeCommandListsSessionsWithoutStoreDependency(t *testing.T) {
 		t.Fatal(err)
 	}
 	controller := tuiController{
-		model:      model,
-		renderer:   &tuiRenderer{},
-		operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}),
-		output:         io.Discard,
-		engineMessages: make(chan engineMessage, 1),
-		stopped:        make(chan struct{}),
+		model:    model,
+		renderer: &tuiRenderer{},
+		controls: controlsFor(&fakeEngine{}),
+		output:   io.Discard,
+		stopped:  make(chan struct{}),
 		sessions: Sessions{List: func(context.Context) ([]session.Summary, error) {
 			return []session.Summary{{ID: "session", Description: "prompt"}}, nil
 		}},

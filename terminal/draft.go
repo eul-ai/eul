@@ -7,19 +7,7 @@ import (
 )
 
 func (m *tuiModel) draft() session.Draft {
-	var queuedInputs []string
-	for _, content := range m.pendingSteering() {
-		text := contentText(content)
-		if strings.TrimSpace(text) != "" {
-			queuedInputs = append(queuedInputs, text)
-		}
-	}
-
-	return session.Draft{
-		Input:        m.inputText(),
-		Cursor:       m.textCursor(),
-		QueuedInputs: queuedInputs,
-	}
+	return session.Draft{Input: m.inputText(), Cursor: m.textCursor()}
 }
 
 func (m *tuiModel) restoreDraft(draft session.Draft) {

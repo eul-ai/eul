@@ -9,6 +9,7 @@ import (
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/filesearch"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal/clipboard"
 	"github.com/eul-ai/eul/terminal/keys"
@@ -21,9 +22,8 @@ const (
 	tuiEventInterrupt
 	tuiEventResize
 	tuiEventKey
-	tuiEventEngine
+	tuiEventSession
 	tuiEventProviderUsage
-	tuiEventSubagentStatus
 	tuiEventPermission
 	tuiEventClipboardImage
 	tuiEventFileSearch
@@ -33,29 +33,26 @@ const (
 )
 
 type tuiEvent struct {
-	kind           tuiEventKind
-	key            keys.Event
-	engine         engineMessage
-	providerUsage  providerUsageMessage
-	subagentStatus subagent.Status
-	permission     PermissionRequest
-	image          agent.Image
-	requestID      uint64
-	fileSearch     filesearch.Result
-	err            error
+	kind          tuiEventKind
+	key           keys.Event
+	update        session.Update
+	providerUsage providerUsageMessage
+	permission    PermissionRequest
+	image         agent.Image
+	requestID     uint64
+	fileSearch    filesearch.Result
+	err           error
 }
 
 type controllerOptions struct {
 	model           *tuiModel
 	output          io.Writer
 	outputFD        int
-	engineMessages  chan<- engineMessage
 	stopped         <-chan struct{}
 	fileSearch      *filesearch.Searcher
 	loadUsage       func(context.Context) (backend.AccountUsage, error)
 	usageResults    chan<- providerUsageMessage
 	clipboardImages chan<- tuiEvent
-	operations      Operations
 	controls        Controls
 	sessions        Sessions
 	messageHistory  MessageHistory
@@ -65,11 +62,9 @@ func newTUIController(config controllerOptions) *tuiController {
 	return &tuiController{
 		model:              config.model,
 		renderer:           &tuiRenderer{},
-		operations:         config.operations,
 		controls:           config.controls,
 		output:             config.output,
 		outputFD:           config.outputFD,
-		engineMessages:     config.engineMessages,
 		stopped:            config.stopped,
 		fileSearch:         config.fileSearch,
 		loadUsage:          config.loadUsage,
@@ -86,11 +81,9 @@ func newTUIController(config controllerOptions) *tuiController {
 type tuiController struct {
 	model                        *tuiModel
 	renderer                     *tuiRenderer
-	operations                   Operations
 	controls                     Controls
 	output                       io.Writer
 	outputFD                     int
-	engineMessages               chan<- engineMessage
 	stopped                      <-chan struct{}
 	fileSearch                   *filesearch.Searcher
 	loadUsage                    func(context.Context) (backend.AccountUsage, error)
@@ -103,7 +96,6 @@ type tuiController struct {
 	clipboardImages              chan<- tuiEvent
 	clipboardRequests            map[uint64]context.CancelFunc
 	nextClipboardID              uint64
-	turnCancel                   context.CancelFunc
 	exitAfterTurn                bool
 	exitAfterTurnErr             error
 	outcome                      RunOutcome
@@ -115,7 +107,7 @@ type tuiController struct {
 func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, error) {
 	done, err := c.dispatch(ctx, event)
 	switch event.kind {
-	case tuiEventKey, tuiEventInterrupt, tuiEventParentCanceled, tuiEventEngine:
+	case tuiEventKey, tuiEventInterrupt, tuiEventParentCanceled, tuiEventSession:
 		c.model.session.SetDraft(c.model.draft())
 	}
 	return done, err
@@ -131,12 +123,10 @@ func (c *tuiController) dispatch(ctx context.Context, event tuiEvent) (bool, err
 		return c.handleResize()
 	case tuiEventKey:
 		return c.handleKey(ctx, event.key)
-	case tuiEventEngine:
-		return c.handleEngineMessage(ctx, event.engine)
+	case tuiEventSession:
+		return c.handleUpdate(ctx, event.update)
 	case tuiEventProviderUsage:
 		return c.handleProviderUsage(event.providerUsage)
-	case tuiEventSubagentStatus:
-		return c.handleSubagentStatus(event.subagentStatus)
 	case tuiEventPermission:
 		return c.handlePermission(event.permission)
 	case tuiEventClipboardImage:
@@ -158,7 +148,7 @@ func (c *tuiController) dispatch(ctx context.Context, event tuiEvent) (bool, err
 func (c *tuiController) handleParentCanceled(parentErr error) (bool, error) {
 	c.cancelClipboardRequests()
 	if !c.model.running {
-		if err := c.saveDraft(false); err != nil {
+		if err := c.saveDraft(); err != nil {
 			return false, err
 		}
 		return true, parentErr
@@ -174,7 +164,7 @@ func (c *tuiController) handleParentCanceled(parentErr error) (bool, error) {
 func (c *tuiController) handleInterrupt() (bool, error) {
 	action, err := reduceInterrupt(c.model)
 	if err != nil {
-		if saveErr := c.saveDraft(false); saveErr != nil {
+		if saveErr := c.saveDraft(); saveErr != nil {
 			return false, saveErr
 		}
 		return false, err
@@ -204,7 +194,7 @@ func (c *tuiController) handleKey(ctx context.Context, key keys.Event) (bool, er
 	action, err := handleKeyInput(c.model, key, c.renderer.frame)
 	if err != nil {
 		if !c.model.running {
-			if saveErr := c.saveDraft(false); saveErr != nil {
+			if saveErr := c.saveDraft(); saveErr != nil {
 				return false, saveErr
 			}
 		}
@@ -259,17 +249,21 @@ func (c *tuiController) flushMessageHistory() error {
 	return nil
 }
 
-func (c *tuiController) handleEngineMessage(ctx context.Context, message engineMessage) (bool, error) {
-	if !message.done {
-		c.model.applyAgentEvent(*message.event)
-		c.dirty = true
-		return false, nil
+func (c *tuiController) handleUpdate(ctx context.Context, update session.Update) (bool, error) {
+	switch update.Kind {
+	case session.UpdateEvent:
+		c.model.applyAgentEvent(update.Event)
+	case session.UpdateSubagents:
+		c.model.subagentStatus = sanitizeSubagentStatus(update.Subagents)
+	case session.UpdateSettled:
+		return c.handleSettled(ctx, update.Err)
 	}
 
-	if c.turnCancel != nil {
-		c.turnCancel()
-		c.turnCancel = nil
-	}
+	c.dirty = true
+	return false, nil
+}
+
+func (c *tuiController) handleSettled(ctx context.Context, runErr error) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return true, err
 	}
@@ -277,20 +271,9 @@ func (c *tuiController) handleEngineMessage(ctx context.Context, message engineM
 		return true, c.exitAfterTurnErr
 	}
 
-	interrupted := c.model.interrupted
-	if interrupted || message.err != nil {
-		c.model.restoreSteering(c.model.clearSteering(c.controls.ClearSteering))
-	}
-	c.model.finishTurn(message.err)
-	if err := c.saveDraft(false); err != nil {
-		return false, err
-	}
+	c.model.restoreQueued(c.model.session.TakeQueued())
+	c.model.finishTurn(runErr)
 	c.requestUsage(ctx)
-	if !interrupted && message.err == nil {
-		if err := c.startDeferredTurn(ctx); err != nil {
-			return false, err
-		}
-	}
 	c.dirty = true
 	return false, nil
 }
@@ -316,12 +299,6 @@ func (c *tuiController) handleProviderUsage(message providerUsageMessage) (bool,
 		c.model.providerUsage = message.usage
 	}
 
-	c.dirty = true
-	return false, nil
-}
-
-func (c *tuiController) handleSubagentStatus(status subagent.Status) (bool, error) {
-	c.model.subagentStatus = sanitizeSubagentStatus(status)
 	c.dirty = true
 	return false, nil
 }

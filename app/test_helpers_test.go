@@ -82,16 +82,31 @@ func startTestSession(t *testing.T, launcher *launcher, settings session.Setting
 	return session
 }
 
-func savePrompt(t *testing.T, options terminal.Options, prompt string, active bool) {
+func savePrompt(t *testing.T, options terminal.Options, prompt string) {
 	t.Helper()
-	options.Session.AppendUser([]agent.ContentPart{{Kind: agent.ContentPartText, Text: prompt}})
-	if err := options.Session.SaveDraft(session.Draft{}, active); err != nil {
+	options.Session.Append(session.EntryUser, prompt)
+	if err := options.Session.SaveDraft(session.Draft{}); err != nil {
 		t.Fatal(err)
 	}
 }
 
+// markActive rewrites saved session metadata as if a turn was running.
+func markActive(t *testing.T, encoded []byte) []byte {
+	t.Helper()
+	var metadata map[string]any
+	if err := json.Unmarshal(encoded, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	metadata["active"] = true
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
 func sessionClosed(options terminal.Options) bool {
-	return options.Session.SaveDraft(session.Draft{}, false) != nil
+	return options.Session.SaveDraft(session.Draft{}) != nil
 }
 
 func transcriptHas(options terminal.Options, kind session.EntryKind, text string) bool {

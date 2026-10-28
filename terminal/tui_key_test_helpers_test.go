@@ -18,50 +18,36 @@ func commandAction(name, arg string) tuiAction {
 	return tuiAction{kind: tuiActionCommand, command: slashCommands[index], text: arg}
 }
 
-func handleKey(
-	ctx context.Context,
-	model *tuiModel,
-	engine fakeEngineAPI,
-	key keys.Event,
-	messages chan<- engineMessage,
-	stopped <-chan struct{},
-	turnCancel *context.CancelFunc,
-) (bool, error) {
-	renderer := &tuiRenderer{}
-	_ = renderModel(renderer, model)
-	var setThinkingLevel func(agent.ThinkingLevel) error
+func appendUser(model *tuiModel, content []agent.ContentPart) {
+	session := testSession(model)
+	session.mu.Lock()
+	session.transcript.AppendUser(content)
+	session.mu.Unlock()
+	model.syncConversation()
+}
+
+func newTestController(model *tuiModel) *tuiController {
+	return &tuiController{
+		model:             model,
+		renderer:          &tuiRenderer{},
+		controls:          controlsFor(&fakeEngine{}),
+		output:            io.Discard,
+		stopped:           make(chan struct{}),
+		clipboardRequests: map[uint64]context.CancelFunc{},
+	}
+}
+
+func handleKey(ctx context.Context, model *tuiModel, key keys.Event) (bool, error) {
+	controller := newTestController(model)
+	_ = renderModel(controller.renderer, model)
 	if model.thinkingSelectionAvailable {
-		setThinkingLevel = func(agent.ThinkingLevel) error { return nil }
+		controller.controls.SetThinkingLevel = func(agent.ThinkingLevel) error { return nil }
 	}
-	controller := tuiController{
-		model:      model,
-		renderer:   renderer,
-		operations: operationsFor(engine),
-		controls: Controls{
-			Steer:            engine.Steer,
-			ClearSteering:    engine.ClearSteering,
-			SetGoal:          engine.SetGoal,
-			Goal:             engine.Goal,
-			ClearGoal:        engine.ClearGoal,
-			SetThinkingLevel: setThinkingLevel,
-		},
-		output:         io.Discard,
-		engineMessages: messages,
-		stopped:        stopped,
-		turnCancel:     *turnCancel,
-	}
-	exit, err := controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: key})
-	*turnCancel = controller.turnCancel
-	return exit, err
+	return controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: key})
 }
 
 func handleModelKey(model *tuiModel, key keys.Event, setThinkingLevel func(agent.ThinkingLevel) error) (bool, error) {
-	messages := make(chan engineMessage, 1)
-	stopped := make(chan struct{})
-	defer close(stopped)
-	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: Controls{SetThinkingLevel: setThinkingLevel}, output: io.Discard,
-		engineMessages: messages, stopped: stopped,
-	}
+	controller := newTestController(model)
+	controller.controls = Controls{SetThinkingLevel: setThinkingLevel}
 	return controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: key})
 }

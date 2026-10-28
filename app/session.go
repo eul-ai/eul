@@ -40,7 +40,14 @@ func newStoredAgentSession(
 		return nil, err
 	}
 
-	stored.conversation = session.New(handle, stored.engine, stored.subagents, stored.agentSettings, config.warnings)
+	stored.conversation = session.New(session.Config{
+		Handle:    handle,
+		Engine:    stored.engine,
+		Subagents: stored.subagents,
+		Settings:  stored.agentSettings,
+		Skills:    config.skills,
+		Warnings:  config.warnings,
+	})
 	options.conversation = stored.conversation
 	options.messageHistory = terminal.MessageHistory{
 		Entries: historyEntries,
@@ -145,9 +152,7 @@ func newAgentSessionComponents(
 		interrupts:         interrupts,
 		metadata:           main,
 		loadUsage:          runtime.Usage,
-		subagents:          subagents,
 		permissionRequests: permissionRequests,
-		engine:             engine,
 		settings:           settings,
 		goal:               goal,
 	}

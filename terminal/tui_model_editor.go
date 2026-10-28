@@ -1,7 +1,6 @@
 package terminal
 
 import (
-	"bytes"
 	"errors"
 	"strings"
 	"unicode"
@@ -378,27 +377,6 @@ func contentText(content []agent.ContentPart) string {
 
 func textContent(text string) []agent.ContentPart {
 	return []agent.ContentPart{{Kind: agent.ContentPartText, Text: text}}
-}
-
-func contentEqual(left, right []agent.ContentPart) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index].Kind != right[index].Kind || left[index].Text != right[index].Text {
-			return false
-		}
-		leftImage := left[index].Image
-		rightImage := right[index].Image
-		switch {
-		case leftImage == nil && rightImage == nil:
-		case leftImage == nil || rightImage == nil:
-			return false
-		case leftImage.MediaType != rightImage.MediaType || !bytes.Equal(leftImage.Data, rightImage.Data):
-			return false
-		}
-	}
-	return true
 }
 
 func editorItemsFromContent(content []agent.ContentPart) []editorItem {

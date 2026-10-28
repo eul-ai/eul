@@ -31,7 +31,7 @@ func TestMouseWheelScrollsConversationWithoutNavigatingHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	frame := buildTerminalFrame(model)
-	model.running = true
+	setRunning(model)
 	bottom := frame.conversationTop
 	model.scrollTop = bottom
 	if bottom == 0 {
@@ -114,7 +114,7 @@ func TestMouseDragCopiesMarkdownSource(t *testing.T) {
 
 func TestMouseDragCopiesRenderedTextForImageMessages(t *testing.T) {
 	model := newTestModel(40, 10, Options{})
-	model.appendUserContent([]agent.ContentPart{
+	appendUser(model, []agent.ContentPart{
 		{Kind: agent.ContentPartText, Text: "see **this** "},
 		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png"}},
 	})
@@ -252,12 +252,11 @@ func TestFullScreenModeEnablesAndDisablesMouseReporting(t *testing.T) {
 }
 
 func handleModelMouse(model *tuiModel, output *bytes.Buffer, frame terminalFrame, mouse keys.Mouse) (bool, error) {
-	messages := make(chan engineMessage, 1)
 	stopped := make(chan struct{})
 	defer close(stopped)
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{frame: frame}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: output,
-		engineMessages: messages, stopped: stopped,
+		model: model, renderer: &tuiRenderer{frame: frame}, controls: controlsFor(&fakeEngine{}), output: output,
+		stopped: stopped,
 	}
 	return controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.MouseInput, Mouse: mouse}})
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -39,42 +40,38 @@ func TestRunTUIParentCancellationWinsOverEOF(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var output bytes.Buffer
-	_, err := runTest(ctx, strings.NewReader(""), &output, optionsForEngine(&fakeEngine{}, Options{}))
+	_, err := runTest(ctx, strings.NewReader(""), &output, Options{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("runTest() error = %v", err)
 	}
 }
 
 func TestRunTUIParentCancellationWinsAfterActiveEOF(t *testing.T) {
-	started := make(chan struct{})
-	turnCanceled := make(chan struct{})
-	release := make(chan struct{})
-	engine := &fakeEngine{runContentFunction: func(ctx context.Context, _ []agent.ContentPart, _ agent.EventSink) (agent.RunResult, error) {
-		close(started)
-		<-ctx.Done()
-		close(turnCanceled)
-		<-release
-		return agent.RunResult{}, ctx.Err()
-	}}
+	fake := newFakeSession()
+	fake.calls = make(chan string, 2)
 	reader, writer := io.Pipe()
 	defer reader.Close()
 	var output bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := runTest(ctx, reader, &output, optionsForEngine(engine, Options{}))
+		_, err := runTest(ctx, reader, &output, Options{Session: fake})
 		done <- err
 	}()
 	if _, err := io.WriteString(writer, "wait\r"); err != nil {
 		t.Fatal(err)
 	}
-	<-started
+	if call := <-fake.calls; call != "start" {
+		t.Fatalf("call = %q", call)
+	}
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
-	<-turnCanceled
+	if call := <-fake.calls; call != "interrupt" {
+		t.Fatalf("call = %q", call)
+	}
 	cancel()
-	close(release)
+	fake.updates <- fake.settle(context.Canceled)
 
 	select {
 	case err := <-done:
@@ -89,24 +86,18 @@ func TestRunTUIParentCancellationWinsAfterActiveEOF(t *testing.T) {
 func TestRunTUIRendersSubagentUpdatesWhileIdle(t *testing.T) {
 	reader, writer := io.Pipe()
 	defer reader.Close()
-	manager := subagent.NewManager(func(ctx context.Context, _ subagent.Task, _ func(agent.Usage)) (string, error) {
-		<-ctx.Done()
-		return "", ctx.Err()
-	}, subagent.Checkpoint{})
-	defer manager.Close()
+	fake := newFakeSession()
 	output := newSignalingWriter("subagent-1")
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := runTest(context.Background(), reader, output, optionsForEngine(&fakeEngine{}, Options{
-			Events: Events{Subagents: manager},
-		}))
+		_, err := runTest(context.Background(), reader, output, Options{Session: fake})
 		done <- err
 	}()
 
-	if _, err := manager.Start([]subagent.Task{{Description: "inspect", Prompt: "inspect"}}); err != nil {
-		t.Fatal(err)
-	}
+	fake.updates <- session.Update{Kind: session.UpdateSubagents, Subagents: subagent.Status{
+		Active: []subagent.JobStatus{{ID: "subagent-1", Description: "inspect", State: subagent.StateRunning}},
+	}}
 	select {
 	case <-output.seen:
 	case <-time.After(2 * time.Second):
@@ -130,7 +121,10 @@ func TestRunTUILoadsProviderUsageAtStartupAndAfterTurn(t *testing.T) {
 	defer reader.Close()
 	calls := make(chan struct{}, 3)
 	output := newSignalingWriter("usage 25%")
+	fake := newFakeSession()
+	fake.calls = make(chan string, 1)
 	options := Options{
+		Session: fake,
 		Services: Services{LoadUsage: func(context.Context) (backend.AccountUsage, error) {
 			calls <- struct{}{}
 			return backend.AccountUsage{Windows: []backend.UsageWindow{{Duration: 5 * time.Hour, UsedPercent: 25}}}, nil
@@ -139,7 +133,7 @@ func TestRunTUILoadsProviderUsageAtStartupAndAfterTurn(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := runTest(context.Background(), reader, output, optionsForEngine(&fakeEngine{}, options))
+		_, err := runTest(context.Background(), reader, output, options)
 		done <- err
 	}()
 
@@ -156,6 +150,8 @@ func TestRunTUILoadsProviderUsageAtStartupAndAfterTurn(t *testing.T) {
 	if _, err := io.WriteString(writer, "hello\r"); err != nil {
 		t.Fatal(err)
 	}
+	<-fake.calls
+	fake.updates <- fake.settle(nil)
 	select {
 	case <-calls:
 	case <-time.After(2 * time.Second):
@@ -190,7 +186,7 @@ func TestRunTUIWaitsForProviderUsageCleanup(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := runTest(context.Background(), reader, io.Discard, optionsForEngine(&fakeEngine{}, Options{
+		_, err := runTest(context.Background(), reader, io.Discard, Options{
 			Services: Services{LoadUsage: func(ctx context.Context) (backend.AccountUsage, error) {
 				close(started)
 				<-ctx.Done()
@@ -198,7 +194,7 @@ func TestRunTUIWaitsForProviderUsageCleanup(t *testing.T) {
 				<-release
 				return backend.AccountUsage{}, ctx.Err()
 			}},
-		}))
+		})
 		done <- err
 	}()
 
@@ -234,116 +230,84 @@ func TestRunTUIWaitsForProviderUsageCleanup(t *testing.T) {
 func TestRunTUIReturnsInputReadFailure(t *testing.T) {
 	readErr := errors.New("read failed")
 	var output bytes.Buffer
-	_, err := runTest(context.Background(), terminalErrorReader{err: readErr}, &output, optionsForEngine(&fakeEngine{}, Options{}))
+	_, err := runTest(context.Background(), terminalErrorReader{err: readErr}, &output, Options{})
 	if !errors.Is(err, readErr) {
 		t.Fatalf("runTest() error = %v", err)
 	}
 }
 
 func TestHandleKeyRunsTurnAndAppliesOrderedEvents(t *testing.T) {
-	engine := &fakeEngine{runContentFunction: func(_ context.Context, content []agent.ContentPart, sink agent.EventSink) (agent.RunResult, error) {
-		if prompt := contentText(content); prompt != "hello" {
-			t.Fatalf("prompt = %q", prompt)
-		}
-		if err := sink(agent.Event{Kind: agent.EventAssistantText, Text: "answer"}); err != nil {
-			return agent.RunResult{}, err
-		}
-		if err := sink(agent.Event{Kind: agent.EventContextUsage, Usage: agent.Usage{TotalTokens: 42}}); err != nil {
-			return agent.RunResult{}, err
-		}
-		return agent.RunResult{Text: "answer"}, nil
-	}}
 	model := newTestModel(80, 24, Options{})
 	if err := model.insertInput("hello"); err != nil {
 		t.Fatal(err)
 	}
-	messages := make(chan engineMessage, 10)
-	stopped := make(chan struct{})
-	defer close(stopped)
-	var cancel context.CancelFunc
+	controller := newTestController(model)
+	ctx := context.Background()
 
-	exit, err := handleKey(context.Background(), model, engine, keys.Event{Code: keys.Enter}, messages, stopped, &cancel)
-	if err != nil || exit || !model.running {
-		t.Fatalf("handleKey() exit=%v err=%v running=%v", exit, err, model.running)
+	exit, err := controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Enter}})
+	if err != nil || exit || !model.running || !slices.Equal(contentTexts(testSession(model).sent), []string{"hello"}) {
+		t.Fatalf("enter exit=%v err=%v running=%v sent=%+v", exit, err, model.running, testSession(model).sent)
 	}
 
-	for {
-		select {
-		case message := <-messages:
-			if message.done {
-				cancel()
-				model.finishTurn(message.err)
-				if model.running || model.activity.kind != activityReady || model.contextTokens != 42 {
-					t.Fatalf("model after turn = %+v", model)
-				}
-				if len(model.entries) != 2 || model.entries[0].Kind != session.EntryUser || model.entries[1].Text != "answer" {
-					t.Fatalf("blocks = %+v", model.entries)
-				}
-				return
-			}
-			model.applyAgentEvent(*message.event)
-		case <-time.After(2 * time.Second):
-			t.Fatal("turn did not complete")
+	fake := testSession(model)
+	for _, update := range []session.Update{
+		fake.event(agent.Event{Kind: agent.EventAssistantText, Text: "answer"}),
+		fake.event(agent.Event{Kind: agent.EventContextUsage, Usage: agent.Usage{TotalTokens: 42}}),
+		fake.settle(nil),
+	} {
+		if _, err := controller.transition(ctx, sessionEvent(update)); err != nil {
+			t.Fatal(err)
 		}
+	}
+	if model.running || model.activity.kind != activityReady || model.contextTokens != 42 {
+		t.Fatalf("model after turn = %+v", model)
+	}
+	if len(model.entries) != 2 || model.entries[0].Kind != session.EntryUser || model.entries[1].Text != "answer" {
+		t.Fatalf("blocks = %+v", model.entries)
 	}
 }
 
 func TestHandleKeyCancelsIncompleteToolTurnWithoutResettingConversation(t *testing.T) {
-	started := make(chan struct{})
-	engine := &fakeEngine{}
-	engine.runContentFunction = func(ctx context.Context, _ []agent.ContentPart, sink agent.EventSink) (agent.RunResult, error) {
-		if err := sink(agent.Event{Kind: agent.EventContextUsage, Usage: agent.Usage{TotalTokens: 456}}); err != nil {
-			return agent.RunResult{}, err
-		}
-		if err := sink(agent.Event{Kind: agent.EventToolExecute, Call: agent.ToolCall{ID: "call-1", Name: "write"}}); err != nil {
-			return agent.RunResult{}, err
-		}
-		close(started)
-		<-ctx.Done()
-		return agent.RunResult{}, ctx.Err()
-	}
 	model := newTestModel(80, 24, Options{})
 	model.contextTokens = 123
 	if err := model.insertInput("wait"); err != nil {
 		t.Fatal(err)
 	}
-	messages := make(chan engineMessage, 10)
-	stopped := make(chan struct{})
-	defer close(stopped)
-	var cancel context.CancelFunc
+	controller := newTestController(model)
+	ctx := context.Background()
+	fake := testSession(model)
 
-	if _, err := handleKey(context.Background(), model, engine, keys.Event{Code: keys.Enter}, messages, stopped, &cancel); err != nil {
+	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Enter}}); err != nil {
 		t.Fatal(err)
 	}
-	<-started
-	if _, err := handleKey(context.Background(), model, engine, keys.Event{Code: keys.CtrlC}, messages, stopped, &cancel); err != nil {
-		t.Fatal(err)
-	}
-	if model.activity.kind != activityCanceling {
-		t.Fatalf("activity = %+v", model.activity)
-	}
-
-	timeout := time.After(2 * time.Second)
-	for {
-		select {
-		case message := <-messages:
-			if !message.done {
-				model.applyAgentEvent(*message.event)
-				continue
-			}
-			model.finishTurn(message.err)
-			last := model.entries[len(model.entries)-1]
-			if model.contextTokens != 456 || model.activity.kind != activityReady || last.Kind != session.EntryInfo {
-				t.Fatalf("context=%d activity=%+v blocks=%+v", model.contextTokens, model.activity, model.entries)
-			}
-			return
-		case <-timeout:
-			t.Fatal("canceled turn did not complete")
+	for _, update := range []session.Update{
+		fake.event(agent.Event{Kind: agent.EventContextUsage, Usage: agent.Usage{TotalTokens: 456}}),
+		fake.event(agent.Event{Kind: agent.EventToolExecute, Call: agent.ToolCall{ID: "call-1", Name: "write"}}),
+	} {
+		if _, err := controller.transition(ctx, sessionEvent(update)); err != nil {
+			t.Fatal(err)
 		}
+	}
+	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.CtrlC}}); err != nil {
+		t.Fatal(err)
+	}
+	if model.activity.kind != activityCanceling || !fake.interrupted {
+		t.Fatalf("activity = %+v, interrupted = %v", model.activity, fake.interrupted)
+	}
+
+	if _, err := controller.transition(ctx, sessionEvent(fake.settle(context.Canceled))); err != nil {
+		t.Fatal(err)
+	}
+	last := model.entries[len(model.entries)-1]
+	if model.contextTokens != 456 || model.activity.kind != activityReady || last.Kind != session.EntryInfo {
+		t.Fatalf("context=%d activity=%+v blocks=%+v", model.contextTokens, model.activity, model.entries)
 	}
 }
 
 func runTest(ctx context.Context, input io.Reader, output io.Writer, options Options) (RunOutcome, error) {
+	if options.Session == nil {
+		options.Session = newFakeSession()
+	}
 	runner := &Runner{output: output, outputFD: -1, keys: make(chan keys.Event, 64), stopped: make(chan struct{})}
 	defer close(runner.stopped)
 	go keys.Read(input, runner.keys, runner.stopped)
@@ -387,16 +351,12 @@ func TestHandleKeyCtrlCClearsInputBeforeExiting(t *testing.T) {
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)
 	}
-	messages := make(chan engineMessage, 1)
-	stopped := make(chan struct{})
-	defer close(stopped)
-	var cancel context.CancelFunc
 
-	exit, err := handleKey(context.Background(), model, &fakeEngine{}, keys.Event{Code: keys.CtrlC}, messages, stopped, &cancel)
+	exit, err := handleKey(context.Background(), model, keys.Event{Code: keys.CtrlC})
 	if err != nil || exit || len(model.input) != 0 {
 		t.Fatalf("first Ctrl-C: exit=%v err=%v input=%q", exit, err, model.inputText())
 	}
-	exit, err = handleKey(context.Background(), model, &fakeEngine{}, keys.Event{Code: keys.CtrlC}, messages, stopped, &cancel)
+	exit, err = handleKey(context.Background(), model, keys.Event{Code: keys.CtrlC})
 	if exit || !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("second Ctrl-C: exit=%v err=%v", exit, err)
 	}
@@ -411,16 +371,15 @@ func TestHandleKeyShiftTabCyclesThinkingLevel(t *testing.T) {
 			return nil
 		}},
 	})
-	messages := make(chan engineMessage, 1)
 	stopped := make(chan struct{})
 	defer close(stopped)
 
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: Controls{SetThinkingLevel: func(level agent.ThinkingLevel) error {
+		model: model, renderer: &tuiRenderer{}, controls: Controls{SetThinkingLevel: func(level agent.ThinkingLevel) error {
 			configured = level
 			return nil
 		}}, output: io.Discard,
-		engineMessages: messages, stopped: stopped,
+		stopped: stopped,
 	}
 	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.ShiftTab}})
 	if err != nil || exit || model.thinkingLevel != agent.ThinkingHigh || configured != agent.ThinkingHigh {
@@ -433,12 +392,11 @@ func TestHandleKeyShiftTabCyclesThinkingLevel(t *testing.T) {
 
 func TestHandleKeyCtrlLRequestsFullRedraw(t *testing.T) {
 	model := newTestModel(80, 24, Options{})
-	messages := make(chan engineMessage, 1)
 	stopped := make(chan struct{})
 	defer close(stopped)
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
-		engineMessages: messages, stopped: stopped,
+		model: model, renderer: &tuiRenderer{}, controls: controlsFor(&fakeEngine{}), output: io.Discard,
+		stopped: stopped,
 	}
 
 	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.CtrlL}})
@@ -448,18 +406,12 @@ func TestHandleKeyCtrlLRequestsFullRedraw(t *testing.T) {
 }
 
 func TestHandleKeyCommands(t *testing.T) {
-	engine := &fakeEngine{}
 	model := newTestModel(80, 24, Options{})
-	messages := make(chan engineMessage, 1)
-	stopped := make(chan struct{})
-	defer close(stopped)
-	var cancel context.CancelFunc
-
 	for _, command := range []string{"/help", "/unknown"} {
 		if err := model.insertInput(command); err != nil {
 			t.Fatal(err)
 		}
-		if exit, err := handleKey(context.Background(), model, engine, keys.Event{Code: keys.Enter}, messages, stopped, &cancel); err != nil || exit {
+		if exit, err := handleKey(context.Background(), model, keys.Event{Code: keys.Enter}); err != nil || exit {
 			t.Fatalf("command %q exit=%v err=%v", command, exit, err)
 		}
 	}
@@ -470,14 +422,14 @@ func TestHandleKeyCommands(t *testing.T) {
 	if err := model.insertInput("/exit"); err != nil {
 		t.Fatal(err)
 	}
-	if exit, err := handleKey(context.Background(), model, engine, keys.Event{Code: keys.Enter}, messages, stopped, &cancel); err != nil || !exit {
+	if exit, err := handleKey(context.Background(), model, keys.Event{Code: keys.Enter}); err != nil || !exit {
 		t.Fatalf("exit command exit=%v err=%v", exit, err)
 	}
 
 	if err := model.insertInput("/new"); err != nil {
 		t.Fatal(err)
 	}
-	exit, err := handleKey(context.Background(), model, engine, keys.Event{Code: keys.Enter}, messages, stopped, &cancel)
+	exit, err := handleKey(context.Background(), model, keys.Event{Code: keys.Enter})
 	if err != nil || !exit {
 		t.Fatalf("new command exit=%v err=%v", exit, err)
 	}
@@ -487,25 +439,24 @@ func TestHandleKeyCommands(t *testing.T) {
 }
 
 func TestRunTUISubmitsInitialPrompt(t *testing.T) {
-	submitted := make(chan string, 1)
-	engine := &fakeEngine{runContentFunction: func(_ context.Context, content []agent.ContentPart, _ agent.EventSink) (agent.RunResult, error) {
-		submitted <- contentText(content)
-		return agent.RunResult{}, nil
-	}}
-
-	var output bytes.Buffer
-	options := optionsForEngine(engine, Options{})
+	fake := newFakeSession()
+	fake.calls = make(chan string, 2)
+	options := Options{Session: fake}
 	options.Config.InitialPrompt = "investigate the store"
-	if _, err := runTest(context.Background(), strings.NewReader(""), &output, options); err != nil {
+	done := make(chan error, 1)
+	go func() {
+		_, err := runTest(context.Background(), strings.NewReader(""), io.Discard, options)
+		done <- err
+	}()
+
+	if call := <-fake.calls; call != "start" {
+		t.Fatalf("call = %q", call)
+	}
+	fake.updates <- fake.settle(nil)
+	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-
-	select {
-	case got := <-submitted:
-		if got != "investigate the store" {
-			t.Fatalf("initial prompt = %q", got)
-		}
-	default:
-		t.Fatal("the initial prompt was not submitted")
+	if sent := contentTexts(fake.sent); !slices.Equal(sent, []string{"investigate the store"}) {
+		t.Fatalf("sent = %q", sent)
 	}
 }

@@ -26,7 +26,7 @@ func TestPermissionKeysTakePriority(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			model := newTestModel(80, 24, Options{})
-			model.running = true
+			setRunning(model)
 			model.permission.queue = []PermissionRequest{{Title: "Network access", Detail: "git push"}}
 			if err := model.insertInput("queued steering"); err != nil {
 				t.Fatal(err)
@@ -55,7 +55,7 @@ func TestIdlePermissionCtrlCDeniesRequest(t *testing.T) {
 
 func TestPermissionSelectionAndScrolling(t *testing.T) {
 	model := newTestModel(40, 12, Options{})
-	model.running = true
+	setRunning(model)
 	model.permission.queue = []PermissionRequest{{
 		Title:  "Permission requested",
 		Detail: strings.Repeat("long command ", 30),
@@ -119,7 +119,7 @@ func TestFilePickerKeysTakePriorityOverEditorActions(t *testing.T) {
 
 func TestFilePickerRemainsUsableWhileRunning(t *testing.T) {
 	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
-	model.running = true
+	setRunning(model)
 	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "@"}); err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestReduceKeyActions(t *testing.T) {
 		{
 			name: "cancel",
 			setup: func(t *testing.T, model *tuiModel) {
-				model.running = true
+				setRunning(model)
 				model.activity = activity{kind: activityThinking}
 			},
 			key:      keys.Event{Code: keys.CtrlC},
@@ -257,7 +257,7 @@ func TestReduceKeyActions(t *testing.T) {
 		{
 			name: "cancel with escape",
 			setup: func(t *testing.T, model *tuiModel) {
-				model.running = true
+				setRunning(model)
 				model.activity = activity{kind: activityThinking}
 			},
 			key:      keys.Event{Code: keys.Escape},
@@ -411,7 +411,7 @@ func TestReduceKeyActions(t *testing.T) {
 		{
 			name: "running edits draft",
 			setup: func(t *testing.T, model *tuiModel) {
-				model.running = true
+				setRunning(model)
 			},
 			key: keys.Event{Code: keys.Text, Text: "draft"},
 			check: func(t *testing.T, model *tuiModel) {
@@ -423,7 +423,7 @@ func TestReduceKeyActions(t *testing.T) {
 		{
 			name: "running queues steering",
 			setup: func(t *testing.T, model *tuiModel) {
-				model.running = true
+				setRunning(model)
 				if err := model.insertInput("steer"); err != nil {
 					t.Fatal(err)
 				}
@@ -440,7 +440,7 @@ func TestReduceKeyActions(t *testing.T) {
 		{
 			name: "running shows help",
 			setup: func(t *testing.T, model *tuiModel) {
-				model.running = true
+				setRunning(model)
 				if err := model.insertInput("/help"); err != nil {
 					t.Fatal(err)
 				}
@@ -456,7 +456,7 @@ func TestReduceKeyActions(t *testing.T) {
 		{
 			name: "running shows goal",
 			setup: func(t *testing.T, model *tuiModel) {
-				model.running = true
+				setRunning(model)
 				if err := model.insertInput("/goal"); err != nil {
 					t.Fatal(err)
 				}
@@ -472,7 +472,7 @@ func TestReduceKeyActions(t *testing.T) {
 		{
 			name: "running sets goal",
 			setup: func(t *testing.T, model *tuiModel) {
-				model.running = true
+				setRunning(model)
 				if err := model.insertInput("/goal finish migration"); err != nil {
 					t.Fatal(err)
 				}
@@ -490,7 +490,7 @@ func TestReduceKeyActions(t *testing.T) {
 		{
 			name: "running clears goal",
 			setup: func(t *testing.T, model *tuiModel) {
-				model.running = true
+				setRunning(model)
 				if err := model.insertInput("/goal clear"); err != nil {
 					t.Fatal(err)
 				}
@@ -508,7 +508,7 @@ func TestReduceKeyActions(t *testing.T) {
 		{
 			name: "running retains command",
 			setup: func(t *testing.T, model *tuiModel) {
-				model.running = true
+				setRunning(model)
 				if err := model.insertInput("/new"); err != nil {
 					t.Fatal(err)
 				}
@@ -529,7 +529,7 @@ func TestReduceKeyActions(t *testing.T) {
 				}},
 			},
 			setup: func(t *testing.T, model *tuiModel) {
-				model.running = true
+				setRunning(model)
 				model.activity = activity{kind: activityThinking}
 			},
 			key:       keys.Event{Code: keys.ShiftTab},

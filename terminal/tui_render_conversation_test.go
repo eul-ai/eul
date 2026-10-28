@@ -1,7 +1,6 @@
 package terminal
 
 import (
-	"context"
 	"slices"
 	"strconv"
 	"strings"
@@ -447,11 +446,9 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 		t.Fatal("width change did not invalidate cached blocks")
 	}
 
-	model.steering.accepted = [][]agent.ContentPart{testTextContent("inspect another file")}
-	model.conversationChanged()
+	setQueue(model, testTextContent("inspect another file"))
 	assertCachedConversationMatchesUncached(t, renderer, model)
-	model.steering.accepted = nil
-	model.conversationChanged()
+	setQueue(model)
 	assertCachedConversationMatchesUncached(t, renderer, model)
 
 	model.selection = textSelection{
@@ -475,10 +472,10 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 
 func TestPendingSteeringRendersAndDeliversInTranscriptOrder(t *testing.T) {
 	model := newTestModel(40, 8, Options{})
-	model.appendUserContent(textContent("initial"))
-	model.beginTurnOperation()
+	appendUser(model, textContent("initial"))
+	setRunning(model)
 	streamAssistantText(model, "answer")
-	model.steering.accepted = [][]agent.ContentPart{testTextContent("redirect")}
+	setQueue(model, testTextContent("redirect"))
 	streamAssistantText(model, " continues")
 
 	lines := modelConversationLines(model, 40)
@@ -496,8 +493,8 @@ func TestPendingSteeringRendersAndDeliversInTranscriptOrder(t *testing.T) {
 	}
 
 	applyEvent(model, agent.Event{Kind: agent.EventSteering, Content: testTextContent("redirect")})
-	if len(model.steering.pending()) != 0 || len(model.entries) != 3 || model.entries[2].Kind != session.EntryUser || model.entries[2].Text != "redirect" {
-		t.Fatalf("steering=%+v blocks=%+v", model.steering.pending(), model.entries)
+	if len(model.queued) != 0 || len(model.entries) != 3 || model.entries[2].Kind != session.EntryUser || model.entries[2].Text != "redirect" {
+		t.Fatalf("queued=%+v blocks=%+v", model.queued, model.entries)
 	}
 }
 
@@ -507,28 +504,28 @@ func TestPendingImageSteeringRendersAndDelivers(t *testing.T) {
 		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("png")}},
 	}
 	model := newTestModel(40, 8, Options{})
-	model.steering.accepted = [][]agent.ContentPart{content}
+	setQueue(model, content)
 
 	lines := modelConversationLines(model, 40)
 	if slices.IndexFunc(lines, func(line styledLine) bool { return strings.Contains(line.text, imageAttachmentLabel) }) < 0 {
 		t.Fatalf("queued image lines = %+v", lines)
 	}
 	applyEvent(model, agent.Event{Kind: agent.EventSteering, Content: content})
-	if len(model.steering.pending()) != 0 || len(model.entries) != 1 || !slices.Equal(model.entries[0].Content, []agent.ContentPart{{Kind: agent.ContentPartText, Text: "describe "}, {Kind: agent.ContentPartImage}}) {
-		t.Fatalf("steering = %+v, blocks = %+v", model.steering.pending(), model.entries)
+	if len(model.queued) != 0 || len(model.entries) != 1 || !slices.Equal(model.entries[0].Content, []agent.ContentPart{{Kind: agent.ContentPartText, Text: "describe "}, {Kind: agent.ContentPartImage}}) {
+		t.Fatalf("queued = %+v, blocks = %+v", model.queued, model.entries)
 	}
 }
 
 func TestGoalContinuationHasDistinctTranscriptBlock(t *testing.T) {
 	model := newTestModel(40, 8, Options{})
-	model.appendUserContent(textContent("initial"))
-	model.beginTurnOperation()
+	appendUser(model, textContent("initial"))
+	setRunning(model)
 	streamAssistantText(model, "first response")
-	model.steering.accepted = [][]agent.ContentPart{testTextContent("same text")}
+	setQueue(model, testTextContent("same text"))
 
 	applyEvent(model, agent.Event{Kind: agent.EventGoalContinuation, Text: "same text"})
-	if len(model.steering.pending()) != 1 || len(model.entries) != 3 || model.entries[2].Kind != session.EntryInfo {
-		t.Fatalf("steering=%+v blocks=%+v", model.steering.pending(), model.entries)
+	if len(model.queued) != 1 || len(model.entries) != 3 || model.entries[2].Kind != session.EntryInfo {
+		t.Fatalf("queued=%+v blocks=%+v", model.queued, model.entries)
 	}
 	streamAssistantText(model, "second response")
 	if len(model.entries) != 4 || model.entries[3].Kind != session.EntryAssistant {
@@ -618,21 +615,6 @@ func TestTUIToolActivityOmitsArguments(t *testing.T) {
 	block := sanitizeEntry(model.entries[0])
 	if strings.Contains(block.Tool.Arguments, "\n") || len(block.Tool.Arguments) > maxToolPresentationSummaryBytes || model.activity.detail != "read" {
 		t.Fatalf("presentation=%+v activity=%q", block.Tool, model.activity.detail)
-	}
-}
-
-func TestInterruptedTurnClosesPendingToolBlocks(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
-	model.running = true
-	model.interrupted = true
-	applyEvent(model, agent.Event{
-		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "write-1", Name: "write"},
-		Presentation: agent.ToolPresentation{Lines: []string{"partial"}},
-	})
-	model.finishTurn(context.Canceled)
-	block := model.entries[0]
-	if block.Kind != session.EntryToolError {
-		t.Fatalf("block = %+v", block)
 	}
 }
 

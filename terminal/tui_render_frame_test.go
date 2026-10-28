@@ -14,7 +14,7 @@ import (
 
 func TestRendererOnlyWritesChangedRows(t *testing.T) {
 	model := newTestModel(40, 8, Options{Config: Config{Model: "model"}})
-	model.running = true
+	setRunning(model)
 	model.activity = activity{kind: activityThinking}
 	var renderer tuiRenderer
 

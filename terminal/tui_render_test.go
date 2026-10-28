@@ -64,7 +64,7 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 
 func TestRenderFrameShowsPermission(t *testing.T) {
 	model := newTestModel(72, 12, Options{})
-	model.running = true
+	setRunning(model)
 	model.permission.queue = []PermissionRequest{{
 		Title:        "Network access requested",
 		Subject:      "bash",

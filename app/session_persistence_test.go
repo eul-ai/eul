@@ -29,7 +29,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	if _, err := first.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "first prompt"}}, func(agent.Event) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	savePrompt(t, first.terminalOptions, "first prompt", false)
+	savePrompt(t, first.terminalOptions, "first prompt")
 	sessionID := first.terminalOptions.Config.SessionID
 	if err := first.finish(nil); err != nil {
 		t.Fatal(err)
@@ -74,7 +74,7 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 	launcher := testLauncher(t, cwd, caller.runtime())
 	idle := startTestSession(t, launcher, session.Settings{Models: backend.Models{Main: "model"}, ThinkingLevel: agent.ThinkingHigh, WorkingDirectory: cwd})
 	defer idle.finish(nil)
-	savePrompt(t, idle.terminalOptions, "prompt", false)
+	savePrompt(t, idle.terminalOptions, "prompt")
 	if _, err := caller.call(idle, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect"}]}`); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 	if _, err := caller.call(first, "launch_subagents", `{"tasks":[{"description":"running","prompt":"running"}]}`); err != nil {
 		t.Fatal(err)
 	}
-	savePrompt(t, first.terminalOptions, "active prompt", true)
+	savePrompt(t, first.terminalOptions, "active prompt")
 	sessionID := first.terminalOptions.Config.SessionID
 	directory := sessionDirectory(t, launcher, sessionID)
 	crashed := make(map[string][]byte)
@@ -120,6 +120,7 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 		}
 		crashed[name] = content
 	}
+	crashed["meta.json"] = markActive(t, crashed["meta.json"])
 	if err := first.finish(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +173,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	if selected.config.Provider != "alternate" {
 		t.Fatalf("provider = %q", selected.config.Provider)
 	}
-	savePrompt(t, selected.terminalOptions, "saved prompt", false)
+	savePrompt(t, selected.terminalOptions, "saved prompt")
 	sessionID := selected.terminalOptions.Config.SessionID
 	if err := selected.finish(nil); err != nil {
 		t.Fatal(err)

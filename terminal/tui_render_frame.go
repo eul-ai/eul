@@ -204,8 +204,7 @@ func (r *tuiRenderer) flattenConversation(model *tuiModel) {
 		appendBlank()
 	}
 
-	pendingSteering := model.pendingSteering()
-	totalBlocks := len(r.conversationBlocks) + len(pendingSteering)
+	totalBlocks := len(r.conversationBlocks) + len(model.queued)
 	appendedBlocks := 0
 	appendBlock := func(rendered renderedConversationBlock) {
 		if rendered.markdown != "" {
@@ -222,7 +221,7 @@ func (r *tuiRenderer) flattenConversation(model *tuiModel) {
 	for _, rendered := range r.conversationBlocks {
 		appendBlock(rendered)
 	}
-	for _, content := range pendingSteering {
+	for _, content := range model.queued {
 		appendBlock(renderConversationBlock(session.Entry{Kind: session.EntryInfo, Text: "Queued: " + displayContent(content) + " (alt+↑ to restore)"}, model.width))
 	}
 	for range conversationVerticalPadding {

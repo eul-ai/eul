@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/filesearch"
 	"github.com/eul-ai/eul/terminal/keys"
@@ -23,12 +22,6 @@ const (
 	providerUsageTimeout = 10 * time.Second
 	renderDelay          = time.Second / 60
 )
-
-type engineMessage struct {
-	event *agent.Event
-	err   error
-	done  bool
-}
 
 type providerUsageMessage struct {
 	usage backend.AccountUsage
@@ -114,16 +107,9 @@ func wrapRestoreError(err error) error {
 
 func (runner *Runner) run(ctx context.Context, options Options, width, height int) (RunOutcome, error) {
 	model := newTUIModel(width, height, options)
-	subagents := options.Events.Subagents
-	var subagentChanges <-chan struct{}
-	if subagents != nil {
-		subagentChanges = subagents.Changes()
-		model.subagentStatus = sanitizeSubagentStatus(subagents.Snapshot())
-	}
 	fileSearch := filesearch.New(options.Config.WorkingDirectory)
 	defer fileSearch.Close()
 	fileSearchResults := fileSearch.Results()
-	engineMessages := make(chan engineMessage, 256)
 	clipboardImages := make(chan tuiEvent, maxAttachedImages)
 	usageResults := make(chan providerUsageMessage, 1)
 
@@ -148,13 +134,11 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 		model:           model,
 		output:          runner.output,
 		outputFD:        runner.outputFD,
-		engineMessages:  engineMessages,
 		stopped:         runner.stopped,
 		fileSearch:      fileSearch,
 		loadUsage:       options.Services.LoadUsage,
 		usageResults:    usageResults,
 		clipboardImages: clipboardImages,
-		operations:      options.Operations,
 		controls:        options.Controls,
 		sessions:        options.Sessions,
 		messageHistory:  options.MessageHistory,
@@ -179,6 +163,7 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 	}
 
 	interrupts := options.Events.Interrupts
+	updates := options.Session.Updates()
 	permissionRequests := options.Events.PermissionRequests
 	parentDone := ctx.Done()
 	for {
@@ -197,13 +182,10 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 			event = tuiEvent{kind: tuiEventResize}
 		case key := <-runner.keys:
 			event = tuiEvent{kind: tuiEventKey, key: key}
-		case message := <-engineMessages:
-			event = tuiEvent{kind: tuiEventEngine, engine: message}
+		case update := <-updates:
+			event = tuiEvent{kind: tuiEventSession, update: update}
 		case message := <-usageResults:
 			event = tuiEvent{kind: tuiEventProviderUsage, providerUsage: message}
-		case <-subagentChanges:
-			subagentChanges = subagents.Changes()
-			event = tuiEvent{kind: tuiEventSubagentStatus, subagentStatus: subagents.Snapshot()}
 		case request, ok := <-permissionRequests:
 			if !ok {
 				permissionRequests = nil
@@ -224,7 +206,6 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 
 		done, err := controller.transition(ctx, event)
 		if err != nil {
-			cancelActiveTurn(controller.turnCancel, engineMessages)
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return RunOutcome{}, ctxErr
 			}
@@ -249,20 +230,6 @@ func submitInitialPrompt(ctx context.Context, controller *tuiController, model *
 	return controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Enter}})
 }
 
-func cancelActiveTurn(cancel context.CancelFunc, messages <-chan engineMessage) {
-	if cancel == nil {
-		return
-	}
-
-	cancel()
-	for {
-		message := <-messages
-		if message.done {
-			return
-		}
-	}
-}
-
 func renderIfDirty(renderer *tuiRenderer, model *tuiModel, output io.Writer, dirty *bool, forceRedraw bool) error {
 	if !*dirty {
 		return nil
@@ -277,21 +244,4 @@ func renderIfDirty(renderer *tuiRenderer, model *tuiModel, output io.Writer, dir
 	renderer.commit(next)
 	*dirty = false
 	return nil
-}
-
-func runEngineOperation(ctx context.Context, messages chan<- engineMessage, stopped <-chan struct{}, operation func(agent.EventSink) error) {
-	err := operation(func(event agent.Event) error {
-		select {
-		case messages <- engineMessage{event: &event}:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-stopped:
-			return context.Canceled
-		}
-	})
-	select {
-	case messages <- engineMessage{err: err, done: true}:
-	case <-stopped:
-	}
 }

@@ -11,7 +11,6 @@ import (
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/skill"
-	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal/keys"
 )
 
@@ -24,23 +23,20 @@ var (
 )
 
 type Session interface {
-	Sink(agent.EventSink) agent.EventSink
+	Updates() <-chan session.Update
+	Send([]agent.ContentPart) error
+	Compact() error
+	Interrupt() [][]agent.ContentPart
+	TakeQueued() [][]agent.ContentPart
+	Queued() [][]agent.ContentPart
+	Running() bool
 	Sync([]session.Entry) ([]session.Entry, bool)
 	Append(session.EntryKind, string)
-	AppendUser([]agent.ContentPart)
-	FinishTurn(interrupted bool, err error)
 	SetDraft(session.Draft)
-	SaveDraft(session.Draft, bool) error
-}
-
-type Operations struct {
-	RunTurn func(context.Context, []agent.ContentPart, agent.EventSink) error
-	Compact func(context.Context, agent.EventSink) error
+	SaveDraft(session.Draft) error
 }
 
 type Controls struct {
-	Steer            func([]agent.ContentPart) bool
-	ClearSteering    func() [][]agent.ContentPart
 	SetGoal          func(string) error
 	Goal             func() (agent.GoalState, bool)
 	ClearGoal        func()
@@ -105,7 +101,6 @@ type MessageHistory struct {
 
 type Events struct {
 	Interrupts         <-chan os.Signal
-	Subagents          *subagent.Manager
 	PermissionRequests <-chan PermissionRequest
 }
 
@@ -115,7 +110,6 @@ type Services struct {
 
 type Options struct {
 	Config         Config
-	Operations     Operations
 	Controls       Controls
 	Session        Session
 	Sessions       Sessions

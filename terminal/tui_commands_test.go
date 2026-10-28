@@ -202,7 +202,7 @@ func TestCommandPickerEscapeDismissesUntilEdit(t *testing.T) {
 
 func TestHiddenCommandPickerDoesNotInterceptEscape(t *testing.T) {
 	model := newTestModel(80, 5, Options{})
-	model.running = true
+	setRunning(model)
 	if err := model.insertInput("/"); err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestHiddenCommandPickerDoesNotInterceptEscape(t *testing.T) {
 
 func TestCommandPickerOnlySuggestsRunnableCommandsDuringTurn(t *testing.T) {
 	model := newTestModel(80, 24, Options{})
-	model.running = true
+	setRunning(model)
 	if err := model.insertInput("/"); err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestCommandPickerOnlySuggestsRunnableCommandsDuringTurn(t *testing.T) {
 
 func TestCommandPickerSuggestsRunnableCommandDuringTurn(t *testing.T) {
 	model := newTestModel(80, 24, Options{})
-	model.running = true
+	setRunning(model)
 	if err := model.insertInput("/he"); err != nil {
 		t.Fatal(err)
 	}

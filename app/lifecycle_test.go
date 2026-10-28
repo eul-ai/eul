@@ -65,7 +65,7 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 			if options.Config.Model != "main-model" || options.Config.ThinkingLevel != agent.ThinkingLow || !options.Config.FastMode {
 				t.Fatalf("new options = model %q, thinking %q, fast %v", options.Config.Model, options.Config.ThinkingLevel, options.Config.FastMode)
 			}
-			savePrompt(t, options, "new session prompt", false)
+			savePrompt(t, options, "new session prompt")
 			return terminal.RunOutcome{Action: terminal.RunExit}, nil
 		},
 	}}
@@ -261,7 +261,7 @@ func createTargetSession(t *testing.T, launcher *launcher, cwd string, prompt st
 		ThinkingLevel:    agent.ThinkingMedium,
 		FastMode:         true,
 	})
-	savePrompt(t, target.terminalOptions, prompt, false)
+	savePrompt(t, target.terminalOptions, prompt)
 	if err := target.finish(nil); err != nil {
 		t.Fatal(err)
 	}

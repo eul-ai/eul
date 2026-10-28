@@ -146,8 +146,8 @@ func (c *tuiController) startNewSession(context.Context, string) (bool, error) {
 	return true, nil
 }
 
-func (c *tuiController) compact(ctx context.Context, _ string) (bool, error) {
-	return false, c.startCompaction(ctx)
+func (c *tuiController) compact(context.Context, string) (bool, error) {
+	return false, c.startCompaction()
 }
 
 func (c *tuiController) toggleFastMode(context.Context, string) (bool, error) {
@@ -166,7 +166,7 @@ func (c *tuiController) exit(context.Context, string) (bool, error) {
 	return true, nil
 }
 
-func (c *tuiController) goal(ctx context.Context, objective string) (bool, error) {
+func (c *tuiController) goal(_ context.Context, objective string) (bool, error) {
 	switch objective {
 	case "":
 		c.showGoal()
@@ -188,7 +188,7 @@ func (c *tuiController) goal(ctx context.Context, objective string) (bool, error
 		c.model.appendEntry(session.EntryInfo, "Goal set: "+objective)
 		return false, nil
 	}
-	return false, c.startTurn(ctx, textContent(objective))
+	return false, c.startTurn(textContent(objective))
 }
 
 func (c *tuiController) showGoal() {
@@ -221,8 +221,8 @@ func (c *tuiController) clearGoal() {
 	c.model.appendEntry(session.EntryInfo, "No goal is set")
 }
 
-func (c *tuiController) loadSkill(ctx context.Context, prompt string) (bool, error) {
-	return false, c.startTurn(ctx, textContent(prompt))
+func (c *tuiController) loadSkill(_ context.Context, prompt string) (bool, error) {
+	return false, c.startTurn(textContent(prompt))
 }
 
 func commandReference(input []rune, cursor int) (int, int, string, bool) {
