@@ -469,7 +469,9 @@ func (m *Manager) AcknowledgeCompletions(messageIDs []uint64) error {
 		}
 	}
 	m.inbox = append([]Completion(nil), m.inbox[len(messageIDs):]...)
-	m.publishLocked()
+	if !m.closed {
+		m.publishLocked()
+	}
 	return nil
 }
 

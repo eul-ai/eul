@@ -335,6 +335,23 @@ func TestInboxAcknowledgesOnlyExactPrefix(t *testing.T) {
 	}
 }
 
+func TestAcknowledgeCompletionsAfterCloseDoesNotPublish(t *testing.T) {
+	manager := NewManager(Config{Runner: RunFunc(func(context.Context, RunRequest, func(Progress)) (agent.RunResult, error) {
+		return agent.RunResult{Text: "done"}, nil
+	})})
+	if _, err := manager.Start(testTasks(1)); err != nil {
+		t.Fatal(err)
+	}
+	status := waitForStatus(t, manager, func(status Status) bool { return len(status.PendingCompletions) == 1 })
+	if err := manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.AcknowledgeCompletions([]uint64{status.PendingCompletions[0].MessageID}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func testTasks(count int) []Task {
 	tasks := make([]Task, count)
 	for index := range tasks {
