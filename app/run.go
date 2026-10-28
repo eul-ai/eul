@@ -188,11 +188,8 @@ func runSessions(
 }
 
 func optionsFromRecord(record sessionRecord) Options {
-	models := record.models()
 	return Options{
-		Model:            &models.main,
-		FastModel:        &models.fast,
-		BalancedModel:    &models.balanced,
+		Models:           record.Models,
 		ThinkingLevel:    record.ThinkingLevel,
 		FastMode:         record.FastMode,
 		WorkingDirectory: record.WorkingDirectory,
@@ -201,9 +198,7 @@ func optionsFromRecord(record sessionRecord) Options {
 
 func optionsFromConfig(config resolvedConfig) Options {
 	return Options{
-		Model:            &config.models.main,
-		FastModel:        &config.models.fast,
-		BalancedModel:    &config.models.balanced,
+		Models:           config.models,
 		ThinkingLevel:    config.thinkingLevel,
 		FastMode:         config.fastMode,
 		WorkingDirectory: config.cwd,

@@ -36,7 +36,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 			return agent.Response{Text: "second answer", State: []byte("next-state")}, nil
 		}))
 	}
-	config := resolvedConfig{provider: "test", models: modelSet{main: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
+	config := resolvedConfig{provider: "test", models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
 	home := t.TempDir()
 	store := newSessionStore(home)
 	messageHistory := newMessageHistoryStore(home)
@@ -101,7 +101,7 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 	backendRuntime := testBackendRuntime(providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
 		return agent.Response{Text: "result for " + request.Inputs[0].PlainText()}, nil
 	}))
-	config := resolvedConfig{provider: "test", models: modelSet{main: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
+	config := resolvedConfig{provider: "test", models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
 	home := t.TempDir()
 	store := newSessionStore(home)
 	messageHistory := newMessageHistoryStore(home)
@@ -151,7 +151,7 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 			return agent.Response{}, ctx.Err()
 		}))
 	}
-	config := resolvedConfig{provider: "test", models: modelSet{main: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
+	config := resolvedConfig{provider: "test", models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
 	home := t.TempDir()
 	store := newSessionStore(home)
 	messageHistory := newMessageHistoryStore(home)
@@ -219,9 +219,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 
 	config, handle, selected, err := resolveInitialSession(context.Background(), Options{
 		Provider:      "alternate",
-		Model:         stringPointer("selected-model"),
-		FastModel:     stringPointer("selected-fast-model"),
-		BalancedModel: stringPointer("selected-balanced-model"),
+		Models:        backend.Models{Main: "selected-model", Fast: "selected-fast-model", Balanced: "selected-balanced-model"},
 		ThinkingLevel: agent.ThinkingHigh,
 	}, runtime, store)
 	if err != nil {
@@ -254,7 +252,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer handle.Close()
-	if restored.provider != "alternate" || restored.models != (modelSet{main: "selected-model", fast: "selected-fast-model", balanced: "selected-balanced-model"}) || selected.ID != "alternate" {
+	if restored.provider != "alternate" || restored.models != (backend.Models{Main: "selected-model", Fast: "selected-fast-model", Balanced: "selected-balanced-model"}) || selected.ID != "alternate" {
 		t.Fatalf("restored=%+v provider=%q", restored, selected.ID)
 	}
 }
@@ -262,7 +260,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	cwd := t.TempDir()
 	store := newSessionStore(t.TempDir())
-	corrupt, err := store.Create("test", cwd, modelSet{main: "model", fast: "fast-model", balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "corrupt"), false)
+	corrupt, err := store.Create("test", cwd, backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "corrupt"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +271,7 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	if err := os.WriteFile(corruptPath, []byte(`{"version":99}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	valid, err := store.Create("test", cwd, modelSet{main: "model", fast: "persisted-fast", balanced: "persisted-balanced"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "valid"), false)
+	valid, err := store.Create("test", cwd, backend.Models{Main: "model", Fast: "persisted-fast", Balanced: "persisted-balanced"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "valid"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +290,7 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	if len(config.warnings) != 1 {
 		t.Fatalf("warnings = %v", config.warnings)
 	}
-	if config.models != (modelSet{main: "model", fast: "persisted-fast", balanced: "persisted-balanced"}) {
+	if config.models != (backend.Models{Main: "model", Fast: "persisted-fast", Balanced: "persisted-balanced"}) {
 		t.Fatalf("restored models = %+v", config)
 	}
 }

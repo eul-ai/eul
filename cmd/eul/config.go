@@ -9,6 +9,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/app"
+	"github.com/eul-ai/eul/backend"
 )
 
 type reportedFlagError struct {
@@ -86,9 +87,7 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (app.Options, e
 
 	return app.Options{
 		Provider:         *provider,
-		Model:            optionalFlagValue(*model, explicit["model"]),
-		FastModel:        optionalFlagValue(*fastModel, explicit["fast-model"]),
-		BalancedModel:    optionalFlagValue(*balancedModel, explicit["balanced-model"]),
+		Models:           backend.Models{Main: *model, Fast: *fastModel, Balanced: *balancedModel},
 		ThinkingLevel:    thinkingLevel,
 		FastMode:         *fast,
 		WorkingDirectory: *cwd,
@@ -97,13 +96,6 @@ func parseAgentArguments(arguments []string, runtime appRuntime) (app.Options, e
 		SessionID:        resume.sessionID,
 		Prompt:           *prompt,
 	}, nil
-}
-
-func optionalFlagValue(value string, set bool) *string {
-	if !set {
-		return nil
-	}
-	return &value
 }
 
 func resolveEULHome(runtime appRuntime) (string, error) {

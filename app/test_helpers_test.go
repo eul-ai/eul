@@ -59,7 +59,7 @@ func testBackend(id string, runtime *backend.Runtime) backend.Backend {
 	return backend.Backend{
 		ID:     id,
 		Name:   "Test Provider",
-		Models: backend.ModelDefaults{Main: "gpt-5.6-sol", Fast: "gpt-5.6-luna", Balanced: "gpt-5.6-terra"},
+		Models: backend.Models{Main: "gpt-5.6-sol", Fast: "gpt-5.6-luna", Balanced: "gpt-5.6-terra"},
 		Open: func(context.Context, string) (*backend.Runtime, error) {
 			return runtime, nil
 		},
@@ -96,10 +96,6 @@ func resolveTestConfig(options Options, env environment) (resolvedConfig, error)
 		return resolvedConfig{}, err
 	}
 	return resolveConfig(options, env, selected)
-}
-
-func stringPointer(value string) *string {
-	return &value
 }
 
 func sessionStoreTestAgentCheckpoint(t testing.TB) agent.Checkpoint {

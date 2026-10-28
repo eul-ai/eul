@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
 )
@@ -59,17 +60,13 @@ func newSessionStore(home string) *sessionStore {
 func (store *sessionStore) Create(
 	provider string,
 	cwd string,
-	models modelSet,
+	models backend.Models,
 	thinkingLevel agent.ThinkingLevel,
 	agentCheckpoint agent.Checkpoint,
 	subagentCheckpoint subagent.Checkpoint,
 	terminalCheckpoint terminal.Checkpoint,
 	fastMode bool,
 ) (*sessionHandle, error) {
-	if err := models.validate(); err != nil {
-		return nil, err
-	}
-
 	workspaceDirectory := store.workspaceDirectory(cwd)
 	if err := secureSessionDirectory(store.root); err != nil {
 		return nil, err
@@ -106,9 +103,7 @@ func (store *sessionStore) Create(
 			Status:           sessionIdle,
 			Provider:         provider,
 			WorkingDirectory: cwd,
-			Model:            models.main,
-			FastModel:        models.fast,
-			BalancedModel:    models.balanced,
+			Models:           models,
 			ThinkingLevel:    thinkingLevel,
 			FastMode:         fastMode,
 			Description:      terminalCheckpoint.Description(),

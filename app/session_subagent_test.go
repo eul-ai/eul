@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/tool"
 )
@@ -37,7 +38,7 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 	})
 
 	config, err := resolveTestConfig(Options{
-		Model:         stringPointer("gpt-5.6-sol"),
+		Models:        backend.Models{Main: "gpt-5.6-sol"},
 		ThinkingLevel: agent.ThinkingXHigh,
 		FastMode:      true,
 	}, runtime)
@@ -170,9 +171,7 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	})
 
 	config, err := resolveTestConfig(Options{
-		Model:         stringPointer("model"),
-		FastModel:     stringPointer("fast-model"),
-		BalancedModel: stringPointer("balanced-model"),
+		Models:        backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"},
 		ThinkingLevel: agent.ThinkingHigh,
 		FastMode:      true,
 	}, runtime)

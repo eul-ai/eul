@@ -64,8 +64,6 @@ func TestRunConfigurationAndUsageErrors(t *testing.T) {
 	}{
 		{name: "help", arguments: []string{"--help"}, wantCode: exitSuccess},
 		{name: "missing authentication", missingAuth: true, wantCode: exitFailure},
-		{name: "explicit empty model", arguments: []string{"--model="}, wantCode: exitFailure},
-		{name: "model whitespace", arguments: []string{"--model", "bad model"}, wantCode: exitFailure},
 		{name: "invalid thinking level", arguments: []string{"--thinking", "extreme"}, wantCode: exitUsage},
 		{name: "removed effort flag", arguments: []string{"--effort", "high"}, wantCode: exitUsage},
 		{name: "prompt argument", arguments: []string{"prompt"}, wantCode: exitUsage},
@@ -118,7 +116,7 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer, environment map[strin
 	selected := backend.Backend{
 		ID:     "test",
 		Name:   "Test Provider",
-		Models: backend.ModelDefaults{Main: "gpt-5.6-sol", Fast: "gpt-5.6-luna", Balanced: "gpt-5.6-terra"},
+		Models: backend.Models{Main: "gpt-5.6-sol", Fast: "gpt-5.6-luna", Balanced: "gpt-5.6-terra"},
 		Open: func(context.Context, string) (*backend.Runtime, error) {
 			return backendRuntime, nil
 		},

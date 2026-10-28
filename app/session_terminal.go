@@ -70,7 +70,7 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 		StateChanges:   terminalStateChanges(source.checkpoints),
 		MessageHistory: source.messageHistory,
 		Config: terminal.Config{
-			Model:              source.config.models.main,
+			Model:              source.config.models.Main,
 			WorkingDirectory:   source.config.cwd,
 			ThinkingLevel:      thinkingLevel,
 			ThinkingLevels:     source.metadata.ThinkingLevels,

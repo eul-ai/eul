@@ -15,7 +15,7 @@ func New() backend.Backend {
 	return backend.Backend{
 		ID:   ID,
 		Name: "OpenAI Codex",
-		Models: backend.ModelDefaults{
+		Models: backend.Models{
 			Main:     modelMain,
 			Fast:     modelFast,
 			Balanced: modelBalanced,

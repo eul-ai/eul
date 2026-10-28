@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
 )
@@ -19,7 +20,7 @@ func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
 		return agent.Response{}, nil
 	}))
 	var tools []agent.Tool
-	session, err := newAgentSession(resolvedConfig{models: modelSet{main: "model", fast: "model", balanced: "model"}, cwd: t.TempDir()}, environment{newToolset: captureTools(&tools, buildToolset)}, backendRuntime)
+	session, err := newAgentSession(resolvedConfig{models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, cwd: t.TempDir()}, environment{newToolset: captureTools(&tools, buildToolset)}, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +58,7 @@ func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
 func TestAgentSessionRoutesSubagentNetworkApprovalToTerminal(t *testing.T) {
 	backendRuntime := testBackendRuntime(networkBashChildProvider("child approved", nil))
 	var tools []agent.Tool
-	session, err := newAgentSession(resolvedConfig{models: modelSet{main: "model", fast: "model", balanced: "model"}, cwd: t.TempDir()}, environment{newToolset: captureTools(&tools, buildToolset)}, backendRuntime)
+	session, err := newAgentSession(resolvedConfig{models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, cwd: t.TempDir()}, environment{newToolset: captureTools(&tools, buildToolset)}, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +98,7 @@ func TestAgentSessionSharesNetworkSessionApprovalWithSubagents(t *testing.T) {
 	childCompleted := make(chan struct{})
 	backendRuntime := testBackendRuntime(networkBashChildProvider("child approved", childCompleted))
 	var tools []agent.Tool
-	session, err := newAgentSession(resolvedConfig{models: modelSet{main: "model", fast: "model", balanced: "model"}, cwd: t.TempDir()}, environment{newToolset: captureTools(&tools, buildToolset)}, backendRuntime)
+	session, err := newAgentSession(resolvedConfig{models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, cwd: t.TempDir()}, environment{newToolset: captureTools(&tools, buildToolset)}, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}

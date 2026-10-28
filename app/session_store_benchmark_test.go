@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
 )
@@ -24,7 +25,7 @@ func BenchmarkSessionStoreStateOnlySave(b *testing.B) {
 			handle, err := store.Create(
 				"test",
 				b.TempDir(),
-				modelSet{main: "main-model", fast: "fast-model", balanced: "balanced-model"},
+				backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"},
 				agent.ThinkingHigh,
 				agentCheckpoint,
 				subagent.EmptyCheckpoint(),
@@ -65,7 +66,7 @@ func BenchmarkSessionStoreAppendOneBlock(b *testing.B) {
 				handle, err := store.Create(
 					"test",
 					filepath.Join(home, "workspace"),
-					modelSet{main: "main-model", fast: "fast-model", balanced: "balanced-model"},
+					backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"},
 					agent.ThinkingHigh,
 					agentCheckpoint,
 					subagent.EmptyCheckpoint(),
@@ -98,7 +99,7 @@ func BenchmarkSessionStoreList(b *testing.B) {
 			handle, err := store.Create(
 				"test",
 				cwd,
-				modelSet{main: "main-model", fast: "fast-model", balanced: "balanced-model"},
+				backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"},
 				agent.ThinkingHigh,
 				sessionStoreTestAgentCheckpoint(b),
 				subagent.EmptyCheckpoint(),
@@ -137,7 +138,7 @@ func BenchmarkSessionStoreReplay(b *testing.B) {
 			handle, err := store.Create(
 				"test",
 				b.TempDir(),
-				modelSet{main: "main-model", fast: "fast-model", balanced: "balanced-model"},
+				backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"},
 				agent.ThinkingHigh,
 				agentCheckpoint,
 				subagent.EmptyCheckpoint(),
@@ -186,7 +187,7 @@ func BenchmarkSessionStoreReplayDeltaChain(b *testing.B) {
 	handle, err := store.Create(
 		"test",
 		b.TempDir(),
-		modelSet{main: "main-model", fast: "fast-model", balanced: "balanced-model"},
+		backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"},
 		agent.ThinkingHigh,
 		agentCheckpoint,
 		subagent.EmptyCheckpoint(),

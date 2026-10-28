@@ -9,16 +9,14 @@ import (
 	"github.com/eul-ai/eul/tool"
 )
 
-func (models modelSet) forProfile(profile subagent.Profile) string {
+func modelForProfile(models backend.Models, profile subagent.Profile) string {
 	switch profile {
 	case subagent.ProfileFast:
-		return models.fast
+		return models.Fast
 	case subagent.ProfileBalanced:
-		return models.balanced
-	case subagent.ProfileMain:
-		return models.main
+		return models.Balanced
 	default:
-		return models.main
+		return models.Main
 	}
 }
 

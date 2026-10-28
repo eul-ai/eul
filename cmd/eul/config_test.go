@@ -9,11 +9,8 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/app"
+	"github.com/eul-ai/eul/backend"
 )
-
-func stringPointer(value string) *string {
-	return &value
-}
 
 func TestParseAgentArguments(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -35,9 +32,7 @@ func TestParseAgentArguments(t *testing.T) {
 	}
 	want := app.Options{
 		Provider:         "test",
-		Model:            stringPointer("gpt-5.6-sol"),
-		FastModel:        stringPointer("gpt-5.6-luna"),
-		BalancedModel:    stringPointer("gpt-5.6-terra"),
+		Models:           backend.Models{Main: "gpt-5.6-sol", Fast: "gpt-5.6-luna", Balanced: "gpt-5.6-terra"},
 		ThinkingLevel:    agent.ThinkingHigh,
 		FastMode:         true,
 		WorkingDirectory: "project",
@@ -57,7 +52,7 @@ func TestParseAgentArgumentsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Provider != "" || got.Model != nil || got.ThinkingLevel != agent.ThinkingMedium {
+	if got.Provider != "" || got.Models != (backend.Models{}) || got.ThinkingLevel != agent.ThinkingMedium {
 		t.Fatalf("parsed defaults = %+v", got)
 	}
 }

@@ -24,7 +24,7 @@ func engineOptions(config resolvedConfig, model string, settings *agent.Settings
 }
 
 func childEngineOptions(config resolvedConfig, profile subagent.Profile, thinkingLevel agent.ThinkingLevel, fastMode bool) agent.Options {
-	options := engineOptions(config, config.models.forProfile(profile), agent.NewSettings(thinkingLevel, fastMode))
+	options := engineOptions(config, modelForProfile(config.models, profile), agent.NewSettings(thinkingLevel, fastMode))
 	options.Instructions += "\n\n" + childAgentInstructions
 	return options
 }

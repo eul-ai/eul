@@ -14,7 +14,7 @@ import (
 type Backend struct {
 	ID     string
 	Name   string
-	Models ModelDefaults
+	Models Models
 	// Open checks credentials and loads the model catalog. home is the resolved
 	// absolute Eul application directory.
 	Open func(ctx context.Context, home string) (*Runtime, error)

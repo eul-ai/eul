@@ -15,10 +15,10 @@ import (
 )
 
 func TestModelSetSelectsSubagentProfiles(t *testing.T) {
-	models := modelSet{
-		main:     "main-model",
-		balanced: "balanced-model",
-		fast:     "fast-model",
+	models := backend.Models{
+		Main:     "main-model",
+		Balanced: "balanced-model",
+		Fast:     "fast-model",
 	}
 	for _, test := range []struct {
 		profile subagent.Profile
@@ -28,7 +28,7 @@ func TestModelSetSelectsSubagentProfiles(t *testing.T) {
 		{profile: subagent.ProfileBalanced, want: "balanced-model"},
 		{profile: subagent.ProfileMain, want: "main-model"},
 	} {
-		if got := models.forProfile(test.profile); got != test.want {
+		if got := modelForProfile(models, test.profile); got != test.want {
 			t.Fatalf("profile %q selected %q, want %q", test.profile, got, test.want)
 		}
 	}
@@ -36,7 +36,7 @@ func TestModelSetSelectsSubagentProfiles(t *testing.T) {
 
 func TestNewAgentSessionRejectsUnsupportedModel(t *testing.T) {
 	_, err := newAgentSession(resolvedConfig{
-		models: modelSet{main: "unknown", fast: "model", balanced: "model"},
+		models: backend.Models{Main: "unknown", Fast: "model", Balanced: "model"},
 		cwd:    t.TempDir(),
 	}, environment{}, testBackendRuntime(emptyProvider()))
 	var unsupported *backend.ModelNotSupportedError
@@ -68,7 +68,7 @@ func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 	cwd := t.TempDir()
 	skills := []skill.Skill{{Name: "review", Description: "Review code"}}
 	warnings := []string{"Skipped skill invalid: malformed"}
-	session, err := newAgentSession(resolvedConfig{models: modelSet{main: "model", fast: "model", balanced: "model"}, thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills, warnings: warnings}, environment{}, backendRuntime)
+	session, err := newAgentSession(resolvedConfig{models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills, warnings: warnings}, environment{}, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 	}))
 	var tools []agent.Tool
 	session, err := newAgentSession(resolvedConfig{
-		models: modelSet{main: "model", fast: "model", balanced: "model"},
+		models: backend.Models{Main: "model", Fast: "model", Balanced: "model"},
 		cwd:    t.TempDir(),
 	}, environment{newToolset: captureTools(&tools, buildToolset)}, backendRuntime)
 	if err != nil {
@@ -153,7 +153,7 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 func TestNewAgentSessionRejectsUnsupportedFastMode(t *testing.T) {
 	backendRuntime := &backend.Runtime{Provider: emptyProvider(), Catalog: map[string]backend.ModelMetadata{"model": {}}}
 	session, err := newAgentSession(resolvedConfig{
-		models:   modelSet{main: "model", fast: "model", balanced: "model"},
+		models:   backend.Models{Main: "model", Fast: "model", Balanced: "model"},
 		fastMode: true,
 		cwd:      t.TempDir(),
 	}, environment{}, backendRuntime)
@@ -176,7 +176,7 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 	var tools []agent.Tool
 	runtime := environment{newToolset: captureTools(&tools, additionalTools)}
 	session, err := newAgentSession(resolvedConfig{
-		models:        modelSet{main: "main", fast: "fast", balanced: "balanced"},
+		models:        backend.Models{Main: "main", Fast: "fast", Balanced: "balanced"},
 		thinkingLevel: agent.ThinkingHigh,
 		cwd:           t.TempDir(),
 	}, runtime, backendRuntime)
@@ -209,7 +209,7 @@ func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 	var tools []agent.Tool
 	runtime := environment{newToolset: captureTools(&tools, additionalTools)}
 	session, err := newAgentSession(resolvedConfig{
-		models:        modelSet{main: "main", fast: "fast", balanced: "balanced"},
+		models:        backend.Models{Main: "main", Fast: "fast", Balanced: "balanced"},
 		thinkingLevel: agent.ThinkingHigh,
 		cwd:           t.TempDir(),
 	}, runtime, backendRuntime)
@@ -252,7 +252,7 @@ func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 		return agent.Response{}, nil
 	}))
 	cwd := t.TempDir()
-	session, err := newAgentSession(resolvedConfig{models: modelSet{main: "model", fast: "model", balanced: "model"}, cwd: cwd}, runtime, backendRuntime)
+	session, err := newAgentSession(resolvedConfig{models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, cwd: cwd}, runtime, backendRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}

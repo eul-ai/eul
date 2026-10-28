@@ -38,9 +38,7 @@ type sessionMetadata struct {
 	Status           sessionStatus       `json:"status"`
 	Provider         string              `json:"provider"`
 	WorkingDirectory string              `json:"working_directory"`
-	Model            string              `json:"model"`
-	FastModel        string              `json:"fast_model"`
-	BalancedModel    string              `json:"balanced_model"`
+	Models           backend.Models      `json:"models"`
 	ThinkingLevel    agent.ThinkingLevel `json:"thinking_level"`
 	FastMode         bool                `json:"fast_mode,omitempty"`
 	Description      string              `json:"description,omitempty"`
@@ -67,14 +65,6 @@ type sessionTranscriptHead struct {
 	BlockCount int    `json:"block_count"`
 	BaseBytes  int64  `json:"base_bytes"`
 	DeltaBytes int64  `json:"delta_bytes"`
-}
-
-func (record sessionRecord) models() modelSet {
-	return modelSet{
-		main:     record.Model,
-		fast:     record.FastModel,
-		balanced: record.BalancedModel,
-	}
 }
 
 type sessionSummary struct {
@@ -189,12 +179,8 @@ func decodeSessionMetadataField(decoder *json.Decoder, metadata *sessionMetadata
 		return true, decoder.Decode(&metadata.Provider)
 	case "working_directory":
 		return true, decoder.Decode(&metadata.WorkingDirectory)
-	case "model":
-		return true, decoder.Decode(&metadata.Model)
-	case "fast_model":
-		return true, decoder.Decode(&metadata.FastModel)
-	case "balanced_model":
-		return true, decoder.Decode(&metadata.BalancedModel)
+	case "models":
+		return true, decoder.Decode(&metadata.Models)
 	case "thinking_level":
 		return true, decoder.Decode(&metadata.ThinkingLevel)
 	case "fast_mode":
@@ -229,12 +215,6 @@ func (metadata sessionMetadata) validate() error {
 		return fmt.Errorf("session provider %q is invalid", metadata.Provider)
 	case !filepath.IsAbs(metadata.WorkingDirectory) || filepath.Clean(metadata.WorkingDirectory) != metadata.WorkingDirectory:
 		return errors.New("session working directory is not canonical")
-	case strings.TrimSpace(metadata.Model) == "":
-		return errors.New("session model is empty")
-	case strings.TrimSpace(metadata.FastModel) == "":
-		return errors.New("session fast model is empty")
-	case strings.TrimSpace(metadata.BalancedModel) == "":
-		return errors.New("session balanced model is empty")
 	case !metadata.ThinkingLevel.Valid():
 		return errors.New("session thinking level is invalid")
 	}

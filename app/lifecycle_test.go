@@ -107,7 +107,7 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open new session record: %v", err)
 	}
-	if newRecord.record.Model != "main-model" || newRecord.record.FastModel != "fast-model" || newRecord.record.BalancedModel != "balanced-model" || newRecord.record.ThinkingLevel != agent.ThinkingLow || !newRecord.record.FastMode {
+	if newRecord.record.Models.Main != "main-model" || newRecord.record.Models.Fast != "fast-model" || newRecord.record.Models.Balanced != "balanced-model" || newRecord.record.ThinkingLevel != agent.ThinkingLow || !newRecord.record.FastMode {
 		t.Fatalf("new session record = %+v", newRecord.record)
 	}
 	if err := newRecord.Close(); err != nil {
@@ -131,7 +131,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 	target, err := store.Create(
 		"test",
 		targetCWD,
-		modelSet{main: "resume-main", fast: "resume-fast", balanced: "resume-balanced"},
+		backend.Models{Main: "resume-main", Fast: "resume-fast", Balanced: "resume-balanced"},
 		agent.ThinkingMedium,
 		sessionStoreTestAgentCheckpoint(t),
 		subagent.EmptyCheckpoint(),
@@ -191,7 +191,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen resumed record: %v", err)
 	}
-	if reopened.record.ID != targetID || reopened.record.Model != "resume-main" || reopened.record.FastModel != "resume-fast" || reopened.record.BalancedModel != "resume-balanced" || reopened.record.ThinkingLevel != agent.ThinkingMedium || !reopened.record.FastMode {
+	if reopened.record.ID != targetID || reopened.record.Models.Main != "resume-main" || reopened.record.Models.Fast != "resume-fast" || reopened.record.Models.Balanced != "resume-balanced" || reopened.record.ThinkingLevel != agent.ThinkingMedium || !reopened.record.FastMode {
 		t.Fatalf("resumed record = %+v", reopened.record)
 	}
 	if err := reopened.Close(); err != nil {
@@ -266,9 +266,7 @@ func newLifecycleRuntime(t *testing.T, cwd string, selected backend.Backend) env
 func resolveLifecycleConfig(t *testing.T, env environment, main, fast, balanced string, thinking agent.ThinkingLevel, cwd string) resolvedConfig {
 	t.Helper()
 	config, err := resolveTestConfig(Options{
-		Model:            stringPointer(main),
-		FastModel:        stringPointer(fast),
-		BalancedModel:    stringPointer(balanced),
+		Models:           backend.Models{Main: main, Fast: fast, Balanced: balanced},
 		ThinkingLevel:    thinking,
 		WorkingDirectory: cwd,
 	}, env)

@@ -1,16 +1,26 @@
 package backend
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 
 	"github.com/eul-ai/eul/agent"
 )
 
-type ModelDefaults struct {
-	Main     string
-	Fast     string
-	Balanced string
+type Models struct {
+	Main     string `json:"main"`
+	Fast     string `json:"fast"`
+	Balanced string `json:"balanced"`
+}
+
+// WithDefaults replaces empty models with the provider defaults. Fast and
+// balanced models fall back to the main model.
+func (models Models) WithDefaults(defaults Models) Models {
+	models.Main = cmp.Or(models.Main, defaults.Main)
+	models.Fast = cmp.Or(models.Fast, defaults.Fast, models.Main)
+	models.Balanced = cmp.Or(models.Balanced, defaults.Balanced, models.Main)
+	return models
 }
 
 type ModelMetadata struct {

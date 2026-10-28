@@ -71,10 +71,10 @@ func newAgentSession(config resolvedConfig, env environment, runtime *backend.Ru
 	return session, nil
 }
 
-func resolveModelMetadata(runtime *backend.Runtime, models modelSet) (map[subagent.Profile]backend.ModelMetadata, error) {
+func resolveModelMetadata(runtime *backend.Runtime, models backend.Models) (map[subagent.Profile]backend.ModelMetadata, error) {
 	metadata := make(map[subagent.Profile]backend.ModelMetadata, 3)
 	for _, profile := range []subagent.Profile{subagent.ProfileMain, subagent.ProfileFast, subagent.ProfileBalanced} {
-		model, err := runtime.Model(models.forProfile(profile))
+		model, err := runtime.Model(modelForProfile(models, profile))
 		if err != nil {
 			return nil, fmt.Errorf("%s model: %w", profile, err)
 		}
@@ -95,7 +95,7 @@ func newAgentSessionComponents(
 	}
 	main := metadata[subagent.ProfileMain]
 	if config.fastMode && !main.FastMode {
-		return nil, terminalOptionsBuilder{}, fmt.Errorf("fast mode is unavailable for model %q", config.models.main)
+		return nil, terminalOptionsBuilder{}, fmt.Errorf("fast mode is unavailable for model %q", config.models.Main)
 	}
 	warnings := append([]string(nil), config.warnings...)
 	authorizeNetwork, permissionRequests := newNetworkPermissionBroker(config.noSandbox)
@@ -103,7 +103,7 @@ func newAgentSessionComponents(
 
 	goal := &agent.Goal{}
 	tools, subagents := newSessionTools(config, env, runtime.Provider, metadata, settings, authorizeNetwork, goal)
-	options := engineOptions(config, config.models.main, settings)
+	options := engineOptions(config, config.models.Main, settings)
 	options.Checkpointing = checkpointing
 	options.Inbox = tool.NewSubagentInbox(subagents)
 	options.Goal = goal

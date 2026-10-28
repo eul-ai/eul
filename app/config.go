@@ -6,8 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
-	"unicode"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
@@ -16,9 +14,7 @@ import (
 
 type Options struct {
 	Provider         string
-	Model            *string
-	FastModel        *string
-	BalancedModel    *string
+	Models           backend.Models
 	ThinkingLevel    agent.ThinkingLevel
 	FastMode         bool
 	WorkingDirectory string
@@ -48,31 +44,9 @@ type environment struct {
 	newToolset  toolsetFactory
 }
 
-type modelSet struct {
-	main     string
-	fast     string
-	balanced string
-}
-
-func (models modelSet) validate() error {
-	for _, value := range []struct {
-		name  string
-		model string
-	}{
-		{name: "main", model: models.main},
-		{name: "fast", model: models.fast},
-		{name: "balanced", model: models.balanced},
-	} {
-		if err := validateModel(value.model); err != nil {
-			return fmt.Errorf("%s model: %w", value.name, err)
-		}
-	}
-	return nil
-}
-
 type resolvedConfig struct {
 	provider            string
-	models              modelSet
+	models              backend.Models
 	thinkingLevel       agent.ThinkingLevel
 	fastMode            bool
 	cwd                 string
@@ -84,14 +58,9 @@ type resolvedConfig struct {
 }
 
 func resolveConfig(options Options, env environment, selected backend.Backend) (resolvedConfig, error) {
-	thinkingLevel := options.ThinkingLevel
-	if thinkingLevel == "" {
-		thinkingLevel = agent.DefaultThinkingLevel
-	}
-
-	models, err := resolveModelSet(options, selected.Models)
-	if err != nil {
-		return resolvedConfig{}, err
+	models := options.Models.WithDefaults(selected.Models)
+	if models.Main == "" {
+		return resolvedConfig{}, errors.New("main model is required; use --model")
 	}
 
 	cwd, err := resolveCWD(options.WorkingDirectory, env.getwd)
@@ -111,7 +80,7 @@ func resolveConfig(options Options, env environment, selected backend.Backend) (
 	return resolvedConfig{
 		provider:            selected.ID,
 		models:              models,
-		thinkingLevel:       thinkingLevel,
+		thinkingLevel:       options.ThinkingLevel,
 		fastMode:            options.FastMode,
 		cwd:                 cwd,
 		projectInstructions: projectInstructions,
@@ -120,52 +89,6 @@ func resolveConfig(options Options, env environment, selected backend.Backend) (
 		noSandbox:           options.NoSandbox,
 		prompt:              options.Prompt,
 	}, nil
-}
-
-func resolveModelSet(options Options, defaults backend.ModelDefaults) (modelSet, error) {
-	main, err := resolveConfiguredModel(options.Model, defaults.Main, "", "")
-	if err != nil {
-		return modelSet{}, err
-	}
-	fast, err := resolveConfiguredModel(options.FastModel, defaults.Fast, main, "fast model")
-	if err != nil {
-		return modelSet{}, err
-	}
-	balanced, err := resolveConfiguredModel(options.BalancedModel, defaults.Balanced, main, "balanced model")
-	if err != nil {
-		return modelSet{}, err
-	}
-	return modelSet{main: main, fast: fast, balanced: balanced}, nil
-}
-
-func resolveConfiguredModel(override *string, providerDefault, fallback, name string) (string, error) {
-	value := providerDefault
-	if override != nil {
-		value = *override
-	} else if value == "" {
-		value = fallback
-	}
-	if err := validateModel(value); err != nil {
-		if name == "" {
-			return "", err
-		}
-		return "", fmt.Errorf("%s: %w", name, err)
-	}
-	return value, nil
-}
-
-func validateModel(model string) error {
-	if strings.TrimSpace(model) == "" {
-		return errors.New("model is required; use --model or configure the selected provider")
-	}
-
-	if model != strings.TrimSpace(model) || strings.IndexFunc(model, func(character rune) bool {
-		return unicode.IsControl(character) || unicode.IsSpace(character)
-	}) >= 0 {
-		return errors.New("model must not contain whitespace or control characters")
-	}
-
-	return nil
 }
 
 func resolveUserHome(userHomeDir func() (string, error)) string {

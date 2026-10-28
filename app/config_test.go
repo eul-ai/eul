@@ -20,19 +20,17 @@ func TestResolveConfigLoadsDefaultAndExplicitModels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if defaults.models != (modelSet{main: "gpt-5.6-sol", fast: "gpt-5.6-luna", balanced: "gpt-5.6-terra"}) || defaults.thinkingLevel != agent.DefaultThinkingLevel {
+	if defaults.models != (backend.Models{Main: "gpt-5.6-sol", Fast: "gpt-5.6-luna", Balanced: "gpt-5.6-terra"}) {
 		t.Fatalf("resolved defaults = %+v", defaults)
 	}
 
 	explicit, err := resolveTestConfig(Options{
-		Model:         stringPointer("main-model"),
-		FastModel:     stringPointer("fast-model"),
-		BalancedModel: stringPointer("balanced-model"),
+		Models: backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"},
 	}, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if explicit.models != (modelSet{main: "main-model", fast: "fast-model", balanced: "balanced-model"}) {
+	if explicit.models != (backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"}) {
 		t.Fatalf("config = %+v", explicit)
 	}
 
@@ -42,24 +40,12 @@ func TestResolveConfigLoadsDefaultAndExplicitModels(t *testing.T) {
 	}
 }
 
-func TestResolveModelSetFallsBackToPrimary(t *testing.T) {
-	models, err := resolveModelSet(Options{}, backend.ModelDefaults{Main: "main-model"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if models != (modelSet{main: "main-model", fast: "main-model", balanced: "main-model"}) {
-		t.Fatalf("models = %+v", models)
-	}
-}
-
-func TestResolveConfigRejectsExplicitEmptyProfileModels(t *testing.T) {
+func TestResolveConfigRequiresMainModel(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(t.TempDir(), &stdout, &stderr)
-	empty := ""
-	for _, options := range []Options{{Model: &empty}, {FastModel: &empty}, {BalancedModel: &empty}} {
-		if _, err := resolveTestConfig(options, runtime); err == nil {
-			t.Fatalf("options %+v error = %v", options, err)
-		}
+	runtime.backends[0].Models = backend.Models{}
+	if _, err := resolveTestConfig(Options{Models: backend.Models{Fast: "fast-model"}}, runtime); err == nil {
+		t.Fatal("missing main model was accepted")
 	}
 }
 
@@ -85,7 +71,7 @@ func TestResolveConfigLoadsOnlyGenericSkillLocations(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runtime := testRuntime(root, &stdout, &stderr)
 	runtime.userHomeDir = func() (string, error) { return home, nil }
-	config, err := resolveTestConfig(Options{Model: stringPointer("model"), WorkingDirectory: "project"}, runtime)
+	config, err := resolveTestConfig(Options{Models: backend.Models{Main: "model"}, WorkingDirectory: "project"}, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +91,7 @@ func TestResolveConfigSkipsGlobalSkillsWhenHomeIsUnavailable(t *testing.T) {
 	runtime := testRuntime(cwd, &stdout, &stderr)
 	runtime.userHomeDir = func() (string, error) { return "", errors.New("home unavailable") }
 
-	config, err := resolveTestConfig(Options{Model: stringPointer("model")}, runtime)
+	config, err := resolveTestConfig(Options{Models: backend.Models{Main: "model"}}, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,14 +127,14 @@ func TestResolveConfigLoadsProjectAndResolvesWorkingDirectory(t *testing.T) {
 	runtime := testRuntime(root, &stdout, &stderr)
 
 	config, err := resolveTestConfig(Options{
-		Model:            stringPointer("gpt-5.6-sol"),
+		Models:           backend.Models{Main: "gpt-5.6-sol"},
 		ThinkingLevel:    agent.ThinkingMax,
 		WorkingDirectory: "project",
 	}, runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.models.main != "gpt-5.6-sol" || config.thinkingLevel != agent.ThinkingMax || config.cwd != cwd || config.projectInstructions != "Project rules." {
+	if config.models.Main != "gpt-5.6-sol" || config.thinkingLevel != agent.ThinkingMax || config.cwd != cwd || config.projectInstructions != "Project rules." {
 		t.Fatalf("config = %+v", config)
 	}
 }

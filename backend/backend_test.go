@@ -42,6 +42,16 @@ func TestRuntimeModelReportsAvailableModels(t *testing.T) {
 	}
 }
 
+func TestModelsWithDefaults(t *testing.T) {
+	defaults := Models{Main: "default-main", Fast: "default-fast", Balanced: "default-balanced"}
+	if got := (Models{Fast: "fast"}).WithDefaults(defaults); got != (Models{Main: "default-main", Fast: "fast", Balanced: "default-balanced"}) {
+		t.Fatalf("models with provider defaults = %+v", got)
+	}
+	if got := (Models{Main: "main"}).WithDefaults(Models{}); got != (Models{Main: "main", Fast: "main", Balanced: "main"}) {
+		t.Fatalf("models without provider defaults = %+v", got)
+	}
+}
+
 func TestValidID(t *testing.T) {
 	for _, id := range []string{"openai-codex", "provider.v2", "a_1"} {
 		if !ValidID(id) {
