@@ -12,12 +12,10 @@ import (
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
-var errSSEIncomplete = errors.New("chat completions SSE stream ended without a terminal event")
-
 type completionChunk struct {
-	Choices []completionChoice `json:"choices"`
-	Usage   *completionUsage   `json:"usage"`
-	Error   *apiError          `json:"error"`
+	Choices []completionChoice    `json:"choices"`
+	Usage   *completionUsage      `json:"usage"`
+	Error   *backendhttp.APIError `json:"error"`
 }
 
 type completionChoice struct {
@@ -77,7 +75,7 @@ func readCompletionSSE(reader io.Reader, maximum int64, observer agent.StreamObs
 		return streamResult{}, fmt.Errorf("read Chat Completions SSE: %w", err)
 	}
 	if !done && decoder.finishReason == "" {
-		return streamResult{}, errSSEIncomplete
+		return streamResult{}, backendhttp.ErrIncompleteStream
 	}
 	return decoder.finish()
 }
@@ -95,7 +93,7 @@ func (decoder *streamDecoder) handleData(data []byte) (bool, error) {
 		return false, fmt.Errorf("decode Chat Completions SSE event: %w", err)
 	}
 	if chunk.Error != nil {
-		return false, &responseFailureError{message: "chat completions SSE error: " + backendhttp.FormatAPIError(*chunk.Error), detail: *chunk.Error}
+		return false, backendhttp.NewFailureError("chat completions SSE error", *chunk.Error)
 	}
 	if chunk.Usage != nil {
 		decoder.usage = chunk.Usage
@@ -171,7 +169,7 @@ func (decoder *streamDecoder) deliverToolCall(call streamedToolCall, complete bo
 
 func (decoder *streamDecoder) finish() (streamResult, error) {
 	if decoder.finishReason == "" {
-		return streamResult{}, errSSEIncomplete
+		return streamResult{}, backendhttp.ErrIncompleteStream
 	}
 	switch decoder.finishReason {
 	case "stop", "tool_calls", "content_filter":

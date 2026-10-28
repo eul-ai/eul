@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 type fragmentedReader struct {
@@ -106,7 +107,7 @@ func TestReadMessagesSSEClassifiesContextWindowStop(t *testing.T) {
 		sseMessageStop(),
 	)
 	_, err := readMessagesSSE(strings.NewReader(stream), 1024, agent.StreamObserver{})
-	if err == nil || !contextLimitError(err) {
+	if !backendhttp.IsContextLimit(err) {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -154,7 +155,7 @@ func TestReadMessagesSSERetriesAfterDelivery(t *testing.T) {
 		sseContentBlockDelta(0, streamDelta{Type: "text_delta", Text: "partial"}),
 	)
 	_, err := readMessagesSSE(strings.NewReader(stream), 1<<20, agent.StreamObserver{Text: func(string) error { return nil }})
-	if !errors.Is(err, errSSEIncomplete) {
+	if !errors.Is(err, backendhttp.ErrIncompleteStream) {
 		t.Fatalf("error = %v", err)
 	}
 	if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {

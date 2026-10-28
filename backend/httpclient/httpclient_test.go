@@ -104,27 +104,28 @@ func TestReadSSE(t *testing.T) {
 func TestParseRetryAfter(t *testing.T) {
 	now := time.Date(2026, time.August, 15, 12, 0, 0, 0, time.UTC)
 	for _, test := range []struct {
-		value string
-		want  time.Duration
+		header http.Header
+		want   time.Duration
 	}{
-		{value: "2", want: 2 * time.Second},
-		{value: now.Add(3 * time.Second).Format(http.TimeFormat), want: 3 * time.Second},
-		{value: now.Add(-time.Second).Format(http.TimeFormat)},
-		{value: "invalid"},
+		{header: http.Header{"Retry-After": {"2"}}, want: 2 * time.Second},
+		{header: http.Header{"Retry-After": {now.Add(3 * time.Second).Format(http.TimeFormat)}}, want: 3 * time.Second},
+		{header: http.Header{"Retry-After": {now.Add(-time.Second).Format(http.TimeFormat)}}},
+		{header: http.Header{"Retry-After": {"invalid"}}},
+		{header: http.Header{"Retry-After-Ms": {"1500"}, "Retry-After": {"2"}}, want: 1500 * time.Millisecond},
 	} {
-		if got := ParseRetryAfter(test.value, now); got != test.want {
-			t.Fatalf("ParseRetryAfter(%q) = %s, want %s", test.value, got, test.want)
+		if got := parseRetryAfter(test.header, now); got != test.want {
+			t.Fatalf("parseRetryAfter(%v) = %s, want %s", test.header, got, test.want)
 		}
 	}
 }
 
 func TestRetryClassificationAndDelay(t *testing.T) {
 	for _, status := range []int{http.StatusRequestTimeout, http.StatusConflict, http.StatusTooManyRequests, http.StatusInternalServerError} {
-		if !RetryableHTTPStatus(status) {
+		if !retryableHTTPStatus(status) {
 			t.Fatalf("status %d is not retryable", status)
 		}
 	}
-	if RetryableHTTPStatus(http.StatusBadRequest) {
+	if retryableHTTPStatus(http.StatusBadRequest) {
 		t.Fatal("bad request is retryable")
 	}
 
@@ -135,38 +136,36 @@ func TestRetryClassificationAndDelay(t *testing.T) {
 		&net.DNSError{IsTimeout: true},
 		http2StreamError{Code: 2},
 	} {
-		if !RetryableNetworkError(err) {
+		if !retryableNetworkError(err) {
 			t.Fatalf("network error %T is not retryable", err)
 		}
 	}
-	if RetryableNetworkError(errors.New("permanent")) {
+	if retryableNetworkError(errors.New("permanent")) {
 		t.Fatal("permanent error is retryable")
 	}
 
-	const base = time.Second
-	const maximum = 8 * time.Second
-	for attempt, nominal := range []time.Duration{base, 2 * base, 4 * base, maximum, maximum} {
-		delay := RetryDelay(attempt+1, base, maximum)
-		if delay < nominal*3/4 || delay > maximum || nominal < maximum && delay > nominal*5/4 {
-			t.Fatalf("RetryDelay(%d) = %s for nominal %s", attempt+1, delay, nominal)
+	for attempt, nominal := range []time.Duration{baseRetryDelay, 2 * baseRetryDelay, 4 * baseRetryDelay} {
+		delay := retryDelay(attempt+1, 0)
+		if delay < nominal*3/4 || delay > nominal*5/4 {
+			t.Fatalf("retryDelay(%d) = %s for nominal %s", attempt+1, delay, nominal)
 		}
 	}
-	if delay := RetryDelayWithHint(1, base, maximum, 2*maximum); delay != maximum {
-		t.Fatalf("RetryDelayWithHint() = %s", delay)
+	if delay := retryDelay(1, 2*maxRetryDelay); delay != maxRetryDelay {
+		t.Fatalf("retryDelay() with hint = %s", delay)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	classified := ClassifyTransportError(ctx, io.EOF)
-	if !classified.ReturnDirectly || !errors.Is(classified.Cause, context.Canceled) {
+	classified := classifyTransportError(ctx, io.EOF)
+	if !classified.returnDirectly || !errors.Is(classified.cause, context.Canceled) {
 		t.Fatalf("caller context classification = %+v", classified)
 	}
-	classified = ClassifyTransportError(context.Background(), context.DeadlineExceeded)
-	if classified.ReturnDirectly || !classified.Retryable || !errors.Is(classified.Cause, context.DeadlineExceeded) {
+	classified = classifyTransportError(context.Background(), context.DeadlineExceeded)
+	if classified.returnDirectly || !classified.retryable || !errors.Is(classified.cause, context.DeadlineExceeded) {
 		t.Fatalf("deadline classification = %+v", classified)
 	}
-	classified = ClassifyTransportError(context.Background(), errors.New("permanent"))
-	if classified.ReturnDirectly || classified.Retryable {
+	classified = classifyTransportError(context.Background(), errors.New("permanent"))
+	if classified.returnDirectly || classified.retryable {
 		t.Fatalf("permanent classification = %+v", classified)
 	}
 }

@@ -59,18 +59,18 @@ func (client *UsageClient) Usage(ctx context.Context) (backend.AccountUsage, err
 
 	body, truncated, err := backendhttp.ReadBounded(response.Body, backendhttp.MaxResponseBytes)
 	if err != nil {
-		if classified := client.requests.contextError(ctx, err, "read usage response"); classified != nil {
-			return backend.AccountUsage{}, classified
+		if contextErr := ctx.Err(); contextErr != nil {
+			return backend.AccountUsage{}, contextErr
 		}
-		return backend.AccountUsage{}, client.requests.errorf("read usage response: %v", err)
+		return backend.AccountUsage{}, openAIErrors.Wrapf(err, "read usage response: %v", err)
 	}
 	if truncated {
-		return backend.AccountUsage{}, client.requests.errorf("usage response exceeds %d bytes", backendhttp.MaxResponseBytes)
+		return backend.AccountUsage{}, openAIErrors.Errorf("usage response exceeds %d bytes", backendhttp.MaxResponseBytes)
 	}
 
 	var wire usageResponse
 	if err := json.Unmarshal(body, &wire); err != nil {
-		return backend.AccountUsage{}, client.requests.errorf("decode usage response: %v", err)
+		return backend.AccountUsage{}, openAIErrors.Errorf("decode usage response: %v", err)
 	}
 	return normalizeProviderUsage(wire)
 }
@@ -78,7 +78,7 @@ func (client *UsageClient) Usage(ctx context.Context) (backend.AccountUsage, err
 func (client *UsageClient) get(ctx context.Context, credential Credential) (*http.Response, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/wham/usage", nil)
 	if err != nil {
-		return nil, client.requests.errorf("create usage request: %v", err)
+		return nil, openAIErrors.Errorf("create usage request: %v", err)
 	}
 	setCredentialHeaders(request, credential)
 	request.Header.Set("Accept", "application/json")
@@ -88,12 +88,12 @@ func (client *UsageClient) get(ctx context.Context, credential Credential) (*htt
 		if contextErr := ctx.Err(); contextErr != nil {
 			return nil, contextErr
 		}
-		return nil, client.requests.wrapf(err, "usage request failed: %v", err)
+		return nil, openAIErrors.Wrapf(err, "usage request failed: %v", err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		defer response.Body.Close()
 		err := backendhttp.ReadHTTPStatusError(response)
-		return nil, client.requests.wrapf(err, "%v", err)
+		return nil, openAIErrors.Wrapf(err, "%v", err)
 	}
 	return response, nil
 }

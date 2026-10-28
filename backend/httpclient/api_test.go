@@ -34,15 +34,25 @@ func TestAPIErrorCodeAndClassification(t *testing.T) {
 			t.Fatalf("code for %s = %q, want %q", test.input, detail.Code, test.want)
 		}
 	}
-	if !IsRetryableAPIError(APIError{Code: "429"}) || !IsRetryableAPIError(APIError{Type: "overloaded_error"}) {
+	if !retryableAPIError(APIError{Code: "429"}) || !retryableAPIError(APIError{Type: "overloaded_error"}) {
 		t.Fatal("transient API error was not classified as retryable")
 	}
-	if !IsContextLimitAPIError(APIError{Type: "invalid_request_error", Message: "maximum context exceeded"}) {
+	if !contextLimitAPIError(APIError{Type: "invalid_request_error", Message: "maximum context exceeded"}) {
 		t.Fatal("context limit API error was not classified")
+	}
+	if contextLimitAPIError(APIError{Type: "invalid_request_error", Message: "max_tokens is too large: too many tokens requested"}) {
+		t.Fatal("output token error was classified as an input context limit")
 	}
 }
 
-func TestAPIErrorConfigDecodesResponseAndRetryPolicy(t *testing.T) {
+func TestFormatAPIErrorIncludesProviderDetail(t *testing.T) {
+	detail := APIError{Code: "400", Message: "Provider returned error", Metadata: json.RawMessage(`{"provider_name":"Google AI Studio","raw":"{\"message\":\"Corrupted thought signature\"}"}`)}
+	if formatted := FormatAPIError(detail); !strings.Contains(formatted, "Google AI Studio") || !strings.Contains(formatted, "Corrupted thought signature") {
+		t.Fatalf("formatted = %q", formatted)
+	}
+}
+
+func TestAPIErrorConfigDecodesResponseAndRetryHint(t *testing.T) {
 	body := &trackingReadCloser{Reader: strings.NewReader(`{"error":{"type":"rate_limit_error","code":429,"message":"slow down","metadata":{"provider":"test"}}}`)}
 	client := &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{
@@ -57,26 +67,54 @@ func TestAPIErrorConfigDecodesResponseAndRetryPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	formatted := false
-	config := APIErrorConfig{
-		Prefix: "provider",
-		FormatDetail: func(detail APIError) string {
-			formatted = true
-			return FormatAPIError(detail)
-		},
-	}
-	_, err = config.Do(context.Background(), client, request, "request")
+	_, err = APIErrorConfig{Prefix: "provider"}.Do(context.Background(), client, request, "request")
 	var responseErr *APIResponseError
-	if !errors.As(err, &responseErr) || responseErr.StatusCode() != http.StatusTooManyRequests || responseErr.RetryAfter() != 2*time.Second || responseErr.Detail().Code != "429" || string(responseErr.Detail().Metadata) != `{"provider":"test"}` || !body.closed || !formatted {
-		t.Fatalf("response error = %#v, closed=%t, formatted=%t", err, body.closed, formatted)
+	if !errors.As(err, &responseErr) || responseErr.statusCode != http.StatusTooManyRequests || responseErr.retryAfter != 2*time.Second || responseErr.detail.Code != "429" || string(responseErr.detail.Metadata) != `{"provider":"test"}` || !body.closed {
+		t.Fatalf("response error = %#v, closed=%t", err, body.closed)
 	}
 
-	policy := RetryPolicy{MaximumAttempts: 20, BaseDelay: time.Millisecond, MaximumDelay: time.Second}
-	if delay, retry := policy.Next(err, 1, true); !retry || delay != time.Second {
+	if delay, retry := RetryGeneration(err, 1); !retry || delay != 2*time.Second {
 		t.Fatalf("retry = %t after %s", retry, delay)
 	}
-	if _, retry := policy.Next(err, 20, true); retry {
+	if _, retry := RetryGeneration(err, maxGenerationAttempts); retry {
 		t.Fatal("retry policy exceeded its attempt limit")
+	}
+}
+
+func TestRetryGenerationAllowsExtendedRecovery(t *testing.T) {
+	transient := APIErrorConfig{}.retryableWrapf(errors.New("temporary"), "temporary")
+	delay, retry := RetryGeneration(transient, maxGenerationAttempts-1)
+	if !retry {
+		t.Fatal("retry policy stopped before the final attempt")
+	}
+	if delay < maxRetryDelay*3/4 {
+		t.Fatalf("final retry delay = %s", delay)
+	}
+}
+
+func TestRetryGenerationClassifiesStreamErrors(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		err         error
+		wantRetry   bool
+		wantContext bool
+	}{
+		{name: "incomplete stream", err: ErrIncompleteStream, wantRetry: true},
+		{name: "context window", err: ErrContextLimit, wantContext: true},
+		{name: "server failure", err: NewFailureError("failed", APIError{Type: "server_error"}), wantRetry: true},
+		{name: "overloaded failure", err: NewFailureError("failed", APIError{Type: "api_error"}), wantRetry: true},
+		{name: "context failure", err: NewFailureError("failed", APIError{Code: "context_length_exceeded"}), wantContext: true},
+		{name: "permanent failure", err: NewFailureError("failed", APIError{Type: "invalid_request_error", Message: "bad request"})},
+		{name: "observer", err: NewObserverError("deliver text", ErrIncompleteStream)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, retry := RetryGeneration(test.err, 1); retry != test.wantRetry {
+				t.Fatalf("RetryGeneration() = %t, want %t", retry, test.wantRetry)
+			}
+			if got := IsContextLimit(test.err); got != test.wantContext {
+				t.Fatalf("IsContextLimit() = %t, want %t", got, test.wantContext)
+			}
+		})
 	}
 }
 

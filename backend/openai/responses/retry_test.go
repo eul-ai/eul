@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/eul-ai/eul/agent"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
@@ -65,8 +66,8 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
-		if err == nil || !client.IsContextLimitError(err) {
-			t.Fatalf("Generate() error = %v, should compact = %t", err, client.IsContextLimitError(err))
+		if err == nil || !backendhttp.IsContextLimit(err) {
+			t.Fatalf("Generate() error = %v, should compact = %t", err, backendhttp.IsContextLimit(err))
 		}
 		if _, retry := client.RetryGeneration(err, 1); retry {
 			t.Fatal("context limit error was classified as a transient retry")
@@ -79,8 +80,8 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
-		if err == nil || !client.IsContextLimitError(err) {
-			t.Fatalf("Generate() error = %v, should compact = %t", err, client.IsContextLimitError(err))
+		if err == nil || !backendhttp.IsContextLimit(err) {
+			t.Fatalf("Generate() error = %v, should compact = %t", err, backendhttp.IsContextLimit(err))
 		}
 	})
 
@@ -93,8 +94,8 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
-		if err == nil || !client.IsContextLimitError(err) {
-			t.Fatalf("Generate() error = %v, should compact = %t", err, client.IsContextLimitError(err))
+		if err == nil || !backendhttp.IsContextLimit(err) {
+			t.Fatalf("Generate() error = %v, should compact = %t", err, backendhttp.IsContextLimit(err))
 		}
 	})
 
@@ -104,8 +105,8 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
-		if err == nil || !client.IsContextLimitError(err) {
-			t.Fatalf("Generate() error = %v, should compact = %t", err, client.IsContextLimitError(err))
+		if err == nil || !backendhttp.IsContextLimit(err) {
+			t.Fatalf("Generate() error = %v, should compact = %t", err, backendhttp.IsContextLimit(err))
 		}
 	})
 }
@@ -185,7 +186,7 @@ func TestClientRetriesTerminalFailureAfterDelivery(t *testing.T) {
 		delivered++
 		return nil
 	}, nil, nil)
-	var failure *responseFailureError
+	var failure *backendhttp.FailureError
 	if delivered != 1 || !errors.As(err, &failure) {
 		t.Fatalf("deliveries=%d error=%v", delivered, err)
 	}
@@ -305,21 +306,10 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		delay, retry := client.RetryGeneration(err, 1)
-		if err == nil || !retry || delay != generationRetryPolicy.MaximumDelay {
+		if err == nil || !retry || delay != 5*time.Minute {
 			t.Fatalf("Generate() error = %v, delay = %s, retry = %t", err, delay, retry)
 		}
 	})
-}
-
-func TestGenerationRetryAllowsExtendedRecovery(t *testing.T) {
-	transient := backendhttp.APIErrorConfig{}.RetryableWrapf(errors.New("temporary"), "temporary")
-	delay, retry := (&Client{}).RetryGeneration(transient, generationRetryPolicy.MaximumAttempts-1)
-	if !retry {
-		t.Fatal("retry policy stopped before the final attempt")
-	}
-	if delay < generationRetryPolicy.MaximumDelay*3/4 {
-		t.Fatalf("final retry delay = %s", delay)
-	}
 }
 
 func TestClientDoesNotRetryPermanentOrObserverErrors(t *testing.T) {
@@ -330,7 +320,7 @@ func TestClientDoesNotRetryPermanentOrObserverErrors(t *testing.T) {
 	if _, retry := client.RetryGeneration(err, 1); err == nil || retry {
 		t.Fatalf("HTTP error = %v, retry = %t", err, retry)
 	}
-	if client.IsContextLimitError(err) {
+	if backendhttp.IsContextLimit(err) {
 		t.Fatalf("permanent HTTP error was classified for compaction: %v", err)
 	}
 
@@ -341,10 +331,5 @@ func TestClientDoesNotRetryPermanentOrObserverErrors(t *testing.T) {
 	_, err = generate(client, context.Background(), baseRequest(), func(string) error { return sinkErr }, nil, nil)
 	if _, retry := client.RetryGeneration(err, 1); !errors.Is(err, sinkErr) || retry {
 		t.Fatalf("observer error = %v, retry = %t", err, retry)
-	}
-
-	transient := backendhttp.APIErrorConfig{}.RetryableWrapf(errors.New("temporary"), "temporary")
-	if _, retry := client.RetryGeneration(transient, generationRetryPolicy.MaximumAttempts); retry {
-		t.Fatal("retry policy exceeded maximum attempts")
 	}
 }

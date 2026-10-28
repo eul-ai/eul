@@ -14,33 +14,11 @@ import (
 
 type createResponseEnvelope struct {
 	Status            string                     `json:"status"`
-	Error             *responseError             `json:"error"`
+	Error             *backendhttp.APIError      `json:"error"`
 	IncompleteDetails *incompleteResponseDetails `json:"incomplete_details"`
 	Output            []json.RawMessage          `json:"output"`
 	Usage             *responseUsage             `json:"usage"`
 }
-
-type responseError struct {
-	backendhttp.APIError
-	Metadata responseErrorMetadata `json:"metadata"`
-}
-
-type responseErrorMetadata struct {
-	ProviderName string          `json:"provider_name"`
-	Raw          json.RawMessage `json:"raw"`
-}
-
-func responseErrorFromAPI(detail backendhttp.APIError) responseError {
-	var metadata responseErrorMetadata
-	_ = json.Unmarshal(detail.Metadata, &metadata)
-	return responseError{APIError: detail, Metadata: metadata}
-}
-
-func formatHTTPErrorDetail(detail backendhttp.APIError) string {
-	return formatResponseError(responseErrorFromAPI(detail))
-}
-
-type errorCode = backendhttp.APIErrorCode
 
 type incompleteResponseDetails struct {
 	Reason string `json:"reason"`
@@ -111,10 +89,7 @@ func normalizeResponse(response createResponseEnvelope) (string, []agent.ToolCal
 
 func validateCompletedResponse(response createResponseEnvelope) error {
 	if response.Error != nil {
-		return &responseFailureError{
-			message: "response failed: " + formatResponseError(*response.Error),
-			detail:  *response.Error,
-		}
+		return backendhttp.NewFailureError("response failed", *response.Error)
 	}
 
 	if response.Status != "completed" {
@@ -202,48 +177,4 @@ func normalizeUsage(usage *responseUsage) (agent.Usage, error) {
 		OutputTokens: usage.OutputTokens,
 		TotalTokens:  total,
 	}, nil
-}
-
-func formatResponseError(response responseError) string {
-	parts := make([]string, 0, 3)
-	if response.Type != "" {
-		parts = append(parts, response.Type)
-	}
-	if response.Code != "" {
-		parts = append(parts, string(response.Code))
-	}
-
-	detail := strings.Join(parts, "/")
-	if detail != "" && response.Message != "" {
-		detail += ": "
-	}
-	detail += response.Message
-
-	providerDetail := formatProviderError(response.Metadata)
-	switch {
-	case providerDetail == "":
-		return detail
-	case detail == "":
-		return providerDetail
-	default:
-		return detail + "; " + providerDetail
-	}
-}
-
-func formatProviderError(metadata responseErrorMetadata) string {
-	name := strings.TrimSpace(metadata.ProviderName)
-	detail := strings.TrimSpace(string(metadata.Raw))
-	var decoded string
-	if json.Unmarshal(metadata.Raw, &decoded) == nil {
-		detail = strings.TrimSpace(decoded)
-	}
-
-	switch {
-	case name == "":
-		return detail
-	case detail == "":
-		return name
-	default:
-		return name + ": " + detail
-	}
 }

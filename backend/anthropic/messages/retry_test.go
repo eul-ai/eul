@@ -69,17 +69,10 @@ func TestHTTPErrorRetryAndContextClassification(t *testing.T) {
 			if retry && delay != 2*time.Second {
 				t.Fatalf("retry delay = %s", delay)
 			}
-			if got := client.IsContextLimitError(err); got != test.wantContext {
-				t.Fatalf("IsContextLimitError() = %v, want %v", got, test.wantContext)
+			if got := backendhttp.IsContextLimit(err); got != test.wantContext {
+				t.Fatalf("IsContextLimit() = %v, want %v", got, test.wantContext)
 			}
 		})
-	}
-}
-
-func TestContextLimitAPIErrorDoesNotClassifyOutputTokenError(t *testing.T) {
-	detail := apiError{Type: "invalid_request_error", Message: "max_tokens is too large: too many tokens requested"}
-	if backendhttp.IsContextLimitAPIError(detail) {
-		t.Fatal("output token error was classified as an input context limit")
 	}
 }
 

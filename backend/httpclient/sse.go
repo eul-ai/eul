@@ -71,14 +71,14 @@ func CompleteJSONSSE[T any](
 		return zero, config.ErrorConfig.Wrapf(err, "%v", err)
 	}
 
-	classified := ClassifyTransportError(ctx, err)
-	if classified.ReturnDirectly {
-		return zero, classified.Cause
+	classified := classifyTransportError(ctx, err)
+	if classified.returnDirectly {
+		return zero, classified.cause
 	}
-	if classified.Retryable {
-		return zero, config.ErrorConfig.RetryableWrapf(err, "%v", err)
+	if classified.retryable {
+		return zero, config.ErrorConfig.retryableWrapf(err, "%v", err)
 	}
-	return zero, config.ErrorConfig.Wrapf(classified.Cause, "%v", err)
+	return zero, config.ErrorConfig.Wrapf(classified.cause, "%v", err)
 }
 
 func ReadSSE(reader io.Reader, maximum int64, handle func([]byte) (bool, error)) (bool, error) {

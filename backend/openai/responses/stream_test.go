@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 func TestResponsesSSEOrdersCompletedItemsByOutputIndex(t *testing.T) {
@@ -62,7 +63,7 @@ func TestResponsesSSERetriesAfterDelivery(t *testing.T) {
 				},
 			}
 			_, err := readResponsesSSE(strings.NewReader(test.body), 1024, observer)
-			if deliveries != 1 || !errors.Is(err, errResponsesSSEIncomplete) {
+			if deliveries != 1 || !errors.Is(err, backendhttp.ErrIncompleteStream) {
 				t.Fatalf("deliveries=%d error=%v", deliveries, err)
 			}
 			if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {

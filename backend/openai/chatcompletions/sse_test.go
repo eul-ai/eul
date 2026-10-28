@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 type fragmentedReader struct {
@@ -152,7 +153,7 @@ func TestReadCompletionSSESerializesEmptyReasoningContentWhenRequested(t *testin
 
 func TestReadCompletionSSERequiresFinishReason(t *testing.T) {
 	_, err := readCompletionSSE(strings.NewReader("data: {\"choices\":[]}\n\ndata: [DONE]\n\n"), 1024, agent.StreamObserver{}, false)
-	if !errors.Is(err, errSSEIncomplete) {
+	if !errors.Is(err, backendhttp.ErrIncompleteStream) {
 		t.Fatalf("error = %v", err)
 	}
 	if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {
@@ -163,7 +164,7 @@ func TestReadCompletionSSERequiresFinishReason(t *testing.T) {
 func TestReadCompletionSSERetriesAfterDelivery(t *testing.T) {
 	stream := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n"
 	_, err := readCompletionSSE(strings.NewReader(stream), 1024, agent.StreamObserver{Text: func(string) error { return nil }}, false)
-	if !errors.Is(err, errSSEIncomplete) {
+	if !errors.Is(err, backendhttp.ErrIncompleteStream) {
 		t.Fatalf("error = %v", err)
 	}
 	if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {

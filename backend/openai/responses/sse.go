@@ -12,8 +12,6 @@ import (
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
-var errResponsesSSEIncomplete = errors.New("responses SSE stream ended without a terminal response")
-
 type streamObserver struct {
 	observer     agent.StreamObserver
 	sawDelta     bool
@@ -27,15 +25,15 @@ type responseStreamResult struct {
 }
 
 type responseStreamEvent struct {
-	Type        string          `json:"type"`
-	OutputIndex int             `json:"output_index"`
-	Response    json.RawMessage `json:"response"`
-	Item        json.RawMessage `json:"item"`
-	Delta       string          `json:"delta"`
-	Arguments   string          `json:"arguments"`
-	Error       *responseError  `json:"error"`
-	Code        errorCode       `json:"code"`
-	Message     string          `json:"message"`
+	Type        string                   `json:"type"`
+	OutputIndex int                      `json:"output_index"`
+	Response    json.RawMessage          `json:"response"`
+	Item        json.RawMessage          `json:"item"`
+	Delta       string                   `json:"delta"`
+	Arguments   string                   `json:"arguments"`
+	Error       *backendhttp.APIError    `json:"error"`
+	Code        backendhttp.APIErrorCode `json:"code"`
+	Message     string                   `json:"message"`
 }
 
 type streamedOutputItem struct {
@@ -57,7 +55,7 @@ func readResponsesSSE(reader io.Reader, maximum int64, observer agent.StreamObse
 	if err != nil {
 		err = fmt.Errorf("read Responses SSE: %w", err)
 	} else if !done {
-		err = errResponsesSSEIncomplete
+		err = backendhttp.ErrIncompleteStream
 	}
 	if err != nil {
 		return responseStreamResult{}, err
@@ -229,18 +227,9 @@ func (decoder *responseStreamDecoder) terminal(event responseStreamEvent) (creat
 }
 
 func streamError(event responseStreamEvent) error {
-	errorDetail := responseError{APIError: backendhttp.APIError{Code: event.Code, Message: event.Message}}
-	if event.Error != nil && formatResponseError(*event.Error) != "" {
-		errorDetail = *event.Error
+	detail := backendhttp.APIError{Code: event.Code, Message: event.Message}
+	if event.Error != nil && backendhttp.FormatAPIError(*event.Error) != "" {
+		detail = *event.Error
 	}
-
-	detail := formatResponseError(errorDetail)
-	if detail == "" {
-		detail = "unspecified error"
-	}
-
-	return &responseFailureError{
-		message: "responses SSE error: " + detail,
-		detail:  errorDetail,
-	}
+	return backendhttp.NewFailureError("responses SSE error", detail)
 }

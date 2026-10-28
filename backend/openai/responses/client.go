@@ -50,12 +50,9 @@ func New(options Options) (*Client, error) {
 	}
 
 	return &Client{
-		httpClient: backendhttp.CloneNoRedirects(options.HTTPClient, backendhttp.DefaultGenerationHTTPTimeout),
-		endpoint:   options.Endpoint,
-		errorConfig: backendhttp.APIErrorConfig{
-			Prefix:       strings.TrimSpace(options.ErrorPrefix),
-			FormatDetail: formatHTTPErrorDetail,
-		},
+		httpClient:                backendhttp.CloneNoRedirects(options.HTTPClient, backendhttp.DefaultGenerationHTTPTimeout),
+		endpoint:                  options.Endpoint,
+		errorConfig:               backendhttp.APIErrorConfig{Prefix: strings.TrimSpace(options.ErrorPrefix)},
 		prepareRequest:            options.PrepareRequest,
 		requestOptions:            options.RequestOptions,
 		encodeInboxAsAgentMessage: options.EncodeInboxAsAgentMessage,

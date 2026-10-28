@@ -10,6 +10,8 @@ import (
 
 const baseURL = "https://chatgpt.com/backend-api"
 
+var openAIErrors = backendhttp.APIErrorConfig{Prefix: "openai"}
+
 type Credential struct {
 	AccessToken string
 	AccountID   string
@@ -58,38 +60,5 @@ func (client *requestClient) resolveCredential(ctx context.Context) (Credential,
 	if contextErr := ctx.Err(); contextErr != nil {
 		return Credential{}, contextErr
 	}
-	return Credential{}, client.wrapf(err, "resolve authentication: %v", err)
+	return Credential{}, openAIErrors.Wrapf(err, "resolve authentication: %v", err)
 }
-
-func (client *requestClient) contextError(ctx context.Context, err error, operation string) error {
-	if contextErr := ctx.Err(); contextErr != nil {
-		return contextErr
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return client.wrapf(context.DeadlineExceeded, "%s: %v", operation, err)
-	}
-	if errors.Is(err, context.Canceled) {
-		return client.wrapf(context.Canceled, "%s: %v", operation, err)
-	}
-	return nil
-}
-
-func (client *requestClient) errorf(format string, arguments ...any) error {
-	return errors.New(client.errorMessage(format, arguments...))
-}
-
-func (client *requestClient) wrapf(cause error, format string, arguments ...any) error {
-	return &wrappedError{message: client.errorMessage(format, arguments...), cause: cause}
-}
-
-func (client *requestClient) errorMessage(format string, arguments ...any) string {
-	return backendhttp.FormatErrorMessage("openai", format, arguments...)
-}
-
-type wrappedError struct {
-	message string
-	cause   error
-}
-
-func (err *wrappedError) Error() string { return err.message }
-func (err *wrappedError) Unwrap() error { return err.cause }

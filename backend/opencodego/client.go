@@ -2,35 +2,25 @@ package opencodego
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend/compaction"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 type protocolClient interface {
 	Generate(context.Context, agent.Request, agent.StreamObserver) (agent.Response, error)
-	RetryGeneration(error, int) (time.Duration, bool)
 	ShouldCompactState(agent.Request) bool
 	SemanticCompact(context.Context, agent.Request) (agent.CompactResponse, error)
-	IsContextLimitError(error) bool
 }
 
 type provider struct {
 	models  map[string]modelInfo
 	clients map[protocol]protocolClient
 }
-
-type routedError struct {
-	client protocolClient
-	cause  error
-}
-
-func (err *routedError) Error() string { return err.cause.Error() }
-func (err *routedError) Unwrap() error { return err.cause }
 
 func newProvider(apiKey, baseURL string, httpClient *http.Client, models map[string]modelInfo) (*provider, error) {
 	clients, err := newProtocolClients(apiKey, baseURL, httpClient, models)
@@ -57,19 +47,11 @@ func (provider *provider) Generate(ctx context.Context, request agent.Request, o
 	if err != nil {
 		return agent.Response{}, err
 	}
-	response, err := selected.Generate(ctx, request, observer)
-	if err != nil {
-		return agent.Response{}, &routedError{client: selected, cause: err}
-	}
-	return response, nil
+	return selected.Generate(ctx, request, observer)
 }
 
-func (provider *provider) RetryGeneration(err error, failedAttempts int) (time.Duration, bool) {
-	var routed *routedError
-	if !errors.As(err, &routed) {
-		return 0, false
-	}
-	return routed.client.RetryGeneration(routed.cause, failedAttempts)
+func (*provider) RetryGeneration(err error, failedAttempts int) (time.Duration, bool) {
+	return backendhttp.RetryGeneration(err, failedAttempts)
 }
 
 func (provider *provider) ShouldCompact(request agent.Request, usage agent.Usage) bool {
@@ -90,23 +72,11 @@ func (provider *provider) Compact(ctx context.Context, request agent.Request) (a
 	if err != nil {
 		return agent.CompactResponse{}, err
 	}
-	response, err := selected.SemanticCompact(ctx, request)
-	if err != nil {
-		return agent.CompactResponse{}, &routedError{client: selected, cause: err}
-	}
-	return response, nil
+	return selected.SemanticCompact(ctx, request)
 }
 
-func (provider *provider) ShouldCompactAfterError(request agent.Request, err error) bool {
-	_, selected, lookupErr := provider.modelClient(request.Model)
-	if lookupErr != nil {
-		return false
-	}
-	var routed *routedError
-	if !errors.As(err, &routed) || routed.client != selected {
-		return false
-	}
-	return selected.IsContextLimitError(routed.cause)
+func (*provider) ShouldCompactAfterError(_ agent.Request, err error) bool {
+	return backendhttp.IsContextLimit(err)
 }
 
 var (

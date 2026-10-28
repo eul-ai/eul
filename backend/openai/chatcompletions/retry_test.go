@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 func TestHTTPErrorRetryAndContextClassification(t *testing.T) {
@@ -58,8 +59,8 @@ func TestHTTPErrorRetryAndContextClassification(t *testing.T) {
 			if _, retry := client.RetryGeneration(err, 1); retry != test.wantRetry {
 				t.Fatalf("RetryGeneration() = %v, want %v", retry, test.wantRetry)
 			}
-			if got := client.IsContextLimitError(err); got != test.wantContext {
-				t.Fatalf("IsContextLimitError() = %v, want %v", got, test.wantContext)
+			if got := backendhttp.IsContextLimit(err); got != test.wantContext {
+				t.Fatalf("IsContextLimit() = %v, want %v", got, test.wantContext)
 			}
 		})
 	}

@@ -13,22 +13,14 @@ import (
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
-var errSSEIncomplete = errors.New("anthropic messages SSE stream ended without message_stop")
-
-type contextWindowExceededError struct{}
-
-func (contextWindowExceededError) Error() string {
-	return "anthropic message exceeded the model context window"
-}
-
 type streamEvent struct {
-	Type         string          `json:"type"`
-	Index        int             `json:"index,omitempty"`
-	Message      *streamMessage  `json:"message,omitempty"`
-	ContentBlock json.RawMessage `json:"content_block,omitempty"`
-	Delta        streamDelta     `json:"delta,omitempty"`
-	Usage        *wireUsage      `json:"usage,omitempty"`
-	Error        *apiError       `json:"error,omitempty"`
+	Type         string                `json:"type"`
+	Index        int                   `json:"index,omitempty"`
+	Message      *streamMessage        `json:"message,omitempty"`
+	ContentBlock json.RawMessage       `json:"content_block,omitempty"`
+	Delta        streamDelta           `json:"delta,omitempty"`
+	Usage        *wireUsage            `json:"usage,omitempty"`
+	Error        *backendhttp.APIError `json:"error,omitempty"`
 }
 
 type streamMessage struct {
@@ -83,7 +75,7 @@ func readMessagesSSE(reader io.Reader, maximum int64, observer agent.StreamObser
 		return streamResult{}, fmt.Errorf("read Anthropic Messages SSE: %w", err)
 	}
 	if !done {
-		return streamResult{}, errSSEIncomplete
+		return streamResult{}, backendhttp.ErrIncompleteStream
 	}
 	return decoder.finish()
 }
@@ -98,11 +90,11 @@ func (decoder *streamDecoder) handleData(data []byte) (bool, error) {
 		return false, fmt.Errorf("decode Anthropic Messages SSE event: %w", err)
 	}
 	if event.Type == "error" {
-		detail := apiError{}
+		detail := backendhttp.APIError{}
 		if event.Error != nil {
 			detail = *event.Error
 		}
-		return false, &responseFailureError{message: "anthropic messages SSE error: " + backendhttp.FormatAPIError(detail), detail: detail}
+		return false, backendhttp.NewFailureError("anthropic messages SSE error", detail)
 	}
 
 	switch event.Type {
@@ -219,12 +211,12 @@ func (decoder *streamDecoder) deliverToolCall(block *blockAccumulator, complete 
 
 func (decoder *streamDecoder) finish() (streamResult, error) {
 	if !decoder.stopped || decoder.stopReason == "" {
-		return streamResult{}, errSSEIncomplete
+		return streamResult{}, backendhttp.ErrIncompleteStream
 	}
 	switch decoder.stopReason {
 	case "end_turn", "stop_sequence", "tool_use", "refusal":
 	case "model_context_window_exceeded":
-		return streamResult{}, contextWindowExceededError{}
+		return streamResult{}, backendhttp.ErrContextLimit
 	case "max_tokens", "pause_turn":
 		return streamResult{}, fmt.Errorf("anthropic message stopped with reason %q", decoder.stopReason)
 	default:

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 	"github.com/eul-ai/eul/backend/openai/responses"
 )
 
@@ -54,12 +55,12 @@ func (c *Client) Compact(ctx context.Context, request agent.Request) (agent.Comp
 	return c.responses.Compact(ctx, request)
 }
 
-func (c *Client) RetryGeneration(err error, failedAttempts int) (time.Duration, bool) {
-	return c.responses.RetryGeneration(err, failedAttempts)
+func (*Client) RetryGeneration(err error, failedAttempts int) (time.Duration, bool) {
+	return backendhttp.RetryGeneration(err, failedAttempts)
 }
 
-func (c *Client) ShouldCompactAfterError(_ agent.Request, err error) bool {
-	return c.responses.IsContextLimitError(err)
+func (*Client) ShouldCompactAfterError(_ agent.Request, err error) bool {
+	return backendhttp.IsContextLimit(err)
 }
 
 func (c *Client) responsesRequestOptions(request agent.Request) (responses.RequestOptions, error) {

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -48,48 +47,49 @@ func FormatAPIError(detail APIError) string {
 	if detail.Code != "" {
 		parts = append(parts, string(detail.Code))
 	}
-	prefix := strings.Join(parts, "/")
-	if prefix == "" {
-		return detail.Message
+	text := strings.Join(parts, "/")
+	if text != "" && detail.Message != "" {
+		text += ": "
 	}
-	if detail.Message == "" {
-		return prefix
+	text += detail.Message
+
+	provider := formatProviderError(detail.Metadata)
+	switch {
+	case provider == "":
+		return text
+	case text == "":
+		return provider
+	default:
+		return text + "; " + provider
 	}
-	return prefix + ": " + detail.Message
 }
 
-func IsContextLimitAPIError(detail APIError) bool {
-	code := strings.ToLower(string(detail.Code))
-	typeName := strings.ToLower(detail.Type)
-	if code == "context_length_exceeded" || typeName == "context_length_exceeded" {
-		return true
+func formatProviderError(metadata json.RawMessage) string {
+	var provider struct {
+		Name string          `json:"provider_name"`
+		Raw  json.RawMessage `json:"raw"`
 	}
-	if typeName != "invalid_request_error" && code != "invalid_request_error" && code != "bad_request" {
-		return false
-	}
-	message := strings.ToLower(detail.Message)
-	return strings.Contains(message, "context length") ||
-		strings.Contains(message, "maximum context") ||
-		strings.Contains(message, "prompt is too long")
-}
+	_ = json.Unmarshal(metadata, &provider)
 
-func IsRetryableAPIError(detail APIError) bool {
-	if code, err := strconv.Atoi(string(detail.Code)); err == nil && RetryableHTTPStatus(code) {
-		return true
+	name := strings.TrimSpace(provider.Name)
+	detail := strings.TrimSpace(string(provider.Raw))
+	var decoded string
+	if json.Unmarshal(provider.Raw, &decoded) == nil {
+		detail = strings.TrimSpace(decoded)
 	}
-	for _, value := range []string{detail.Type, string(detail.Code)} {
-		switch strings.ToLower(value) {
-		case "server_error", "service_unavailable_error", "server_is_overloaded", "rate_limit", "rate_limit_error", "rate_limit_exceeded", "api_error", "overloaded_error":
-			return true
-		}
+
+	switch {
+	case name == "":
+		return detail
+	case detail == "":
+		return name
+	default:
+		return name + ": " + detail
 	}
-	return false
 }
 
 type APIErrorConfig struct {
-	Prefix          string
-	ParseRetryAfter func(http.Header, time.Time) time.Duration
-	FormatDetail    func(APIError) string
+	Prefix string
 }
 
 type APIResponseError struct {
@@ -100,11 +100,10 @@ type APIResponseError struct {
 	cause      error
 }
 
-func (err *APIResponseError) Error() string             { return err.message }
-func (err *APIResponseError) Unwrap() error             { return err.cause }
-func (err *APIResponseError) StatusCode() int           { return err.statusCode }
-func (err *APIResponseError) RetryAfter() time.Duration { return err.retryAfter }
-func (err *APIResponseError) Detail() APIError          { return err.detail }
+func (err *APIResponseError) Error() string    { return err.message }
+func (err *APIResponseError) Unwrap() error    { return err.cause }
+func (err *APIResponseError) StatusCode() int  { return err.statusCode }
+func (err *APIResponseError) Detail() APIError { return err.detail }
 
 type wrappedError struct {
 	message string
@@ -124,14 +123,14 @@ func (err *retryableOperationError) Unwrap() error { return err.cause }
 func (config APIErrorConfig) Do(ctx context.Context, client *http.Client, request *http.Request, operation string) (*http.Response, error) {
 	response, err := client.Do(request)
 	if err != nil {
-		classified := ClassifyTransportError(ctx, err)
-		if classified.ReturnDirectly {
-			return nil, classified.Cause
+		classified := classifyTransportError(ctx, err)
+		if classified.returnDirectly {
+			return nil, classified.cause
 		}
-		if classified.Retryable {
-			return nil, config.RetryableWrapf(classified.Cause, "%s failed: %v", operation, err)
+		if classified.retryable {
+			return nil, config.retryableWrapf(classified.cause, "%s failed: %v", operation, err)
 		}
-		return nil, config.Wrapf(classified.Cause, "%s failed: %v", operation, err)
+		return nil, config.Wrapf(classified.cause, "%s failed: %v", operation, err)
 	}
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
 		return response, nil
@@ -153,11 +152,7 @@ func (config APIErrorConfig) decodeAPIResponseError(response *http.Response) err
 			Error APIError `json:"error"`
 		}
 		if json.Unmarshal(body, &envelope) == nil {
-			formatDetail := config.FormatDetail
-			if formatDetail == nil {
-				formatDetail = FormatAPIError
-			}
-			if formatted := formatDetail(envelope.Error); formatted != "" {
+			if formatted := FormatAPIError(envelope.Error); formatted != "" {
 				detail = envelope.Error
 				detailText = formatted
 			}
@@ -173,12 +168,6 @@ func (config APIErrorConfig) decodeAPIResponseError(response *http.Response) err
 }
 
 func (config APIErrorConfig) responseError(response *http.Response, cause error, detail APIError, format string, arguments ...any) error {
-	parseRetryAfter := config.ParseRetryAfter
-	if parseRetryAfter == nil {
-		parseRetryAfter = func(headers http.Header, now time.Time) time.Duration {
-			return ParseRetryAfter(headers.Get("Retry-After"), now)
-		}
-	}
 	return &APIResponseError{
 		message:    config.message(format, arguments...),
 		statusCode: response.StatusCode,
@@ -196,34 +185,10 @@ func (config APIErrorConfig) Wrapf(cause error, format string, arguments ...any)
 	return &wrappedError{message: config.message(format, arguments...), cause: cause}
 }
 
-func (config APIErrorConfig) RetryableWrapf(cause error, format string, arguments ...any) error {
+func (config APIErrorConfig) retryableWrapf(cause error, format string, arguments ...any) error {
 	return &retryableOperationError{cause: config.Wrapf(cause, format, arguments...)}
 }
 
 func (config APIErrorConfig) message(format string, arguments ...any) string {
 	return FormatErrorMessage(config.Prefix, format, arguments...)
-}
-
-func IsRetryableOperation(err error) bool {
-	var retryable *retryableOperationError
-	return errors.As(err, &retryable)
-}
-
-type RetryPolicy struct {
-	MaximumAttempts int
-	BaseDelay       time.Duration
-	MaximumDelay    time.Duration
-}
-
-func (policy RetryPolicy) Next(err error, failedAttempts int, retryable bool) (time.Duration, bool) {
-	if failedAttempts >= policy.MaximumAttempts || !retryable {
-		return 0, false
-	}
-
-	var retryAfter time.Duration
-	var hinted interface{ RetryAfter() time.Duration }
-	if errors.As(err, &hinted) {
-		retryAfter = hinted.RetryAfter()
-	}
-	return RetryDelayWithHint(failedAttempts, policy.BaseDelay, policy.MaximumDelay, retryAfter), true
 }
