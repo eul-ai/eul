@@ -69,13 +69,9 @@ func (tracker *toolEventTracker) emitLocked(event Event) error {
 func (tracker *toolEventTracker) presentation(snapshot ToolCallSnapshot) ToolPresentation {
 	tool, ok := tracker.tools[snapshot.Name]
 	if !ok {
-		return ToolPresentation{Title: snapshot.Name}
+		return ToolPresentation{}
 	}
-	presentation := tool.Presentation(snapshot.RawArguments)
-	if presentation.Title == "" {
-		presentation.Title = snapshot.Name
-	}
-	return presentation
+	return tool.Presentation(snapshot.RawArguments)
 }
 
 func (tracker *toolEventTracker) observeSnapshot(snapshot ToolCallSnapshot) error {

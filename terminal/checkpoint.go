@@ -36,6 +36,7 @@ type checkpointBlock struct {
 	Text        string                  `json:"text,omitempty"`
 	Content     []checkpointContentPart `json:"content,omitempty"`
 	ToolCallID  string                  `json:"tool_call_id,omitempty"`
+	ToolName    string                  `json:"tool_name,omitempty"`
 	Tool        agent.ToolPresentation  `json:"tool,omitempty"`
 	ToolOutcome string                  `json:"tool_outcome,omitempty"`
 }
@@ -186,6 +187,7 @@ func checkpointModel(model *tuiModel, queued [][]agent.ContentPart) Checkpoint {
 			Text:        block.text,
 			Content:     checkpointContent(block.content),
 			ToolCallID:  block.toolCallID,
+			ToolName:    block.toolName,
 			Tool:        block.tool.Clone(),
 			ToolOutcome: block.tool.Outcome,
 		}
@@ -226,6 +228,7 @@ func restoreModelCheckpoint(model *tuiModel, checkpoint Checkpoint) {
 			text:       sanitizeAssistantText(block.Text),
 			content:    displayParts(restoreCheckpointContent(block.Content)),
 			toolCallID: block.ToolCallID,
+			toolName:   singleLine(block.ToolName, maxToolPresentationSummaryBytes),
 			tool:       sanitizeToolPresentation(tool),
 		}
 	}

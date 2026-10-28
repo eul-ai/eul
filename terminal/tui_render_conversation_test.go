@@ -18,9 +18,9 @@ func TestConversationBlocksUseCurrentTheme(t *testing.T) {
 		{kind: blockUser, text: "user"},
 		{kind: blockAssistant, text: "assistant"},
 		{kind: blockReasoning, text: "summary"},
-		{kind: blockToolPending, tool: agent.ToolPresentation{Title: "pending tool"}},
-		{kind: blockTool, tool: agent.ToolPresentation{Title: "successful tool"}},
-		{kind: blockToolError, tool: agent.ToolPresentation{Title: "failed tool"}},
+		{kind: blockToolPending, toolName: "pending tool"},
+		{kind: blockTool, toolName: "successful tool"},
+		{kind: blockToolError, toolName: "failed tool"},
 		{kind: blockContext, text: "context"},
 		{kind: blockError, text: "error"},
 	}, 40)
@@ -84,8 +84,8 @@ func TestConversationProseWrapsAtWordBoundaries(t *testing.T) {
 
 func TestRawToolOutputRemainsHardWrapped(t *testing.T) {
 	lines := conversationLines([]conversationBlock{{
-		kind: blockTool,
-		tool: agent.ToolPresentation{Title: "bash", Lines: []string{"abc def"}},
+		kind:     blockTool,
+		toolName: "bash", tool: agent.ToolPresentation{Lines: []string{"abc def"}},
 	}}, 7)
 	if !slices.ContainsFunc(lines, func(line styledLine) bool { return line.text == "abc d" }) {
 		t.Fatalf("lines = %+v", lines)
@@ -94,10 +94,10 @@ func TestRawToolOutputRemainsHardWrapped(t *testing.T) {
 
 func TestToolDiffRemainsHardWrapped(t *testing.T) {
 	lines := conversationLines([]conversationBlock{{
-		kind: blockTool,
+		kind:     blockTool,
+		toolName: "edit",
 		tool: agent.ToolPresentation{
-			Title: "edit",
-			Diff:  []agent.ToolDiffLine{{Kind: agent.ToolDiffLineContext, OldLine: 1, NewLine: 1, Text: "abc def"}},
+			Diff: []agent.ToolDiffLine{{Kind: agent.ToolDiffLineContext, OldLine: 1, NewLine: 1, Text: "abc def"}},
 		},
 	}}, 10)
 	if !slices.ContainsFunc(lines, func(line styledLine) bool { return line.text == " 1 abc d" }) {
@@ -172,8 +172,8 @@ func TestAssistantReasoningAndToolDetailsRenderInlineMarkdown(t *testing.T) {
 	lines := conversationLines([]conversationBlock{
 		{kind: blockReasoning, text: "**Planning**"},
 		{kind: blockAssistant, text: "Use *care* and **`code`**"},
-		{kind: blockTool, tool: agent.ToolPresentation{
-			Title: "launch_subagents", Arguments: "(3)", Markdown: true,
+		{kind: blockTool, toolName: "launch_subagents", tool: agent.ToolPresentation{
+			Arguments: "(3)", Markdown: true,
 			Lines: []string{"1. complete — Read `./terminal/api.go`"}, Outcome: "ok",
 		}},
 	}, 80)
@@ -223,9 +223,9 @@ func TestAssistantReasoningAndToolDetailsRenderInlineMarkdown(t *testing.T) {
 
 func TestToolTruncationMarkerIsMuted(t *testing.T) {
 	lines := conversationLines([]conversationBlock{{
-		kind: blockTool,
+		kind:     blockTool,
+		toolName: "write",
 		tool: agent.ToolPresentation{
-			Title:          "write",
 			Arguments:      "tool/subagent.go",
 			Lines:          []string{"package tool", "opaque-summary"},
 			LinesTruncated: true,
@@ -239,9 +239,9 @@ func TestToolTruncationMarkerIsMuted(t *testing.T) {
 
 func TestBashToolShowsOutputTailAndDuration(t *testing.T) {
 	lines := conversationLines([]conversationBlock{{
-		kind: blockTool,
+		kind:     blockTool,
+		toolName: "bash",
 		tool: agent.ToolPresentation{
-			Title:     "bash",
 			Arguments: "go test ./...",
 			Lines:     []string{"one", "two", "three", "ok github.com/eul-ai/eul/cmd", "ok github.com/eul-ai/eul/provider", "ok github.com/eul-ai/eul/terminal", "ok github.com/eul-ai/eul/tool", "ok github.com/eul-ai/eul/terminal race"},
 			TailLines: 5,
@@ -274,9 +274,9 @@ func TestBashToolShowsOutputTailAndDuration(t *testing.T) {
 
 func TestPendingBashToolShowsElapsedTime(t *testing.T) {
 	lines := conversationLines([]conversationBlock{{
-		kind: blockToolPending,
+		kind:     blockToolPending,
+		toolName: "bash",
 		tool: agent.ToolPresentation{
-			Title:   "bash",
 			Lines:   []string{"running"},
 			Elapsed: time.Second + 200*time.Millisecond,
 		},
@@ -293,9 +293,9 @@ func TestPendingBashToolShowsElapsedTime(t *testing.T) {
 
 func TestToolTailLimitCountsWrappedVisualLines(t *testing.T) {
 	lines := conversationLines([]conversationBlock{{
-		kind: blockTool,
+		kind:     blockTool,
+		toolName: "bash",
 		tool: agent.ToolPresentation{
-			Title:     "bash",
 			Lines:     []string{strings.Repeat("x", 100)},
 			TailLines: 5,
 		},
@@ -314,8 +314,8 @@ func TestToolTailLimitCountsWrappedVisualLines(t *testing.T) {
 
 func TestToolPlainTextDetailsPreserveMarkdownMarkers(t *testing.T) {
 	lines := conversationLines([]conversationBlock{{
-		kind: blockTool,
-		tool: agent.ToolPresentation{Title: "write", Arguments: "README.md", Lines: []string{"Use `literal` and **markers**"}},
+		kind:     blockTool,
+		toolName: "write", tool: agent.ToolPresentation{Arguments: "README.md", Lines: []string{"Use `literal` and **markers**"}},
 	}}, 80)
 	for _, line := range lines {
 		if line.text == "Use `literal` and **markers**" {
@@ -330,9 +330,10 @@ func TestToolPlainTextDetailsPreserveMarkdownMarkers(t *testing.T) {
 
 func TestToolDiffLinesUseAddedRemovedAndContextColors(t *testing.T) {
 	lines := conversationLines([]conversationBlock{{
-		kind: blockTool,
+		kind:     blockTool,
+		toolName: "edit",
 		tool: agent.ToolPresentation{
-			Title: "edit", Arguments: "sample.txt",
+			Arguments: "sample.txt",
 			Diff: []agent.ToolDiffLine{
 				{Kind: agent.ToolDiffLineContext, OldLine: 1, NewLine: 1, Text: "before"},
 				{Kind: agent.ToolDiffLineRemoved, OldLine: 2, Text: "old"},
@@ -372,7 +373,7 @@ func TestToolDiffLinesUseAddedRemovedAndContextColors(t *testing.T) {
 }
 
 func TestToolBlockHasHorizontalAndVerticalPadding(t *testing.T) {
-	lines := conversationLines([]conversationBlock{{kind: blockTool, tool: agent.ToolPresentation{Title: "tool output"}}}, 40)
+	lines := conversationLines([]conversationBlock{{kind: blockTool, toolName: "tool output"}}, 40)
 	if len(lines) != 3 {
 		t.Fatalf("lines = %+v", lines)
 	}
@@ -400,7 +401,7 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 	model := newTUIModel(48, 12, Options{Config: Config{Model: "model"}})
 	model.appendBlock(blockUser, "Use **bold** text")
 	model.startTool(agent.ToolCall{ID: "read-1", Name: "read"}, agent.ToolPresentation{
-		Title: "read", Arguments: "README.md", Lines: []string{"before"},
+		Arguments: "README.md", Lines: []string{"before"},
 		Diff: []agent.ToolDiffLine{{Kind: agent.ToolDiffLineAdded, NewLine: 1, Text: "old diff"}},
 	})
 	model.appendStream(blockAssistant, "Active `streaming` response")
@@ -432,7 +433,7 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 
 	model.blocks[1].kind = blockTool
 	model.blocks[1].tool = agent.ToolPresentation{
-		Title: "read", Arguments: "README.md", Lines: []string{"after"}, Outcome: "ok",
+		Arguments: "README.md", Lines: []string{"after"}, Outcome: "ok",
 		Diff: []agent.ToolDiffLine{{Kind: agent.ToolDiffLineAdded, NewLine: 1, Text: "new diff"}},
 	}
 	model.conversationChanged()
@@ -566,22 +567,22 @@ func TestTUIModelCorrelatesAndSanitizesStreamingToolBlocks(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.applyAgentEvent(agent.Event{
 		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "one", Name: "write"},
-		Presentation: agent.ToolPresentation{Title: "write", Lines: []string{"partial"}},
+		Presentation: agent.ToolPresentation{Lines: []string{"partial"}},
 	})
 	model.applyAgentEvent(agent.Event{
 		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "two", Name: "launch_subagents"},
-		Presentation: agent.ToolPresentation{Title: "launch_subagents", Lines: []string{"running"}},
+		Presentation: agent.ToolPresentation{Lines: []string{"running"}},
 	})
 	model.applyAgentEvent(agent.Event{
 		Kind: agent.EventToolUpdate, Call: agent.ToolCall{ID: "one", Name: "write"},
 		Presentation: agent.ToolPresentation{
-			Title: "write", Lines: []string{"safe\x1b[31m"},
-			Diff: []agent.ToolDiffLine{{Kind: agent.ToolDiffLineAdded, NewLine: 1, Text: "new\x1b[32m"}},
+			Lines: []string{"safe\x1b[31m"},
+			Diff:  []agent.ToolDiffLine{{Kind: agent.ToolDiffLineAdded, NewLine: 1, Text: "new\x1b[32m"}},
 		},
 	})
 	model.applyAgentEvent(agent.Event{
 		Kind: agent.EventToolEnd, Call: agent.ToolCall{ID: "two", Name: "launch_subagents"},
-		Presentation: agent.ToolPresentation{Title: "launch_subagents", Lines: []string{"complete"}},
+		Presentation: agent.ToolPresentation{Lines: []string{"complete"}},
 		Result:       agent.ToolResult{Tool: "launch_subagents"},
 	})
 
@@ -616,7 +617,7 @@ func TestTUIToolActivityOmitsArguments(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.applyAgentEvent(agent.Event{
 		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "read-1", Name: "read"},
-		Presentation: agent.ToolPresentation{Title: "read", Arguments: "first\n" + strings.Repeat("x", 1_000)},
+		Presentation: agent.ToolPresentation{Arguments: "first\n" + strings.Repeat("x", 1_000)},
 	})
 	block := model.blocks[model.toolBlockIndex("read-1")]
 	if strings.Contains(block.tool.Arguments, "\n") || len(block.tool.Arguments) > maxToolPresentationSummaryBytes || model.activity.detail != "read" {
@@ -630,7 +631,7 @@ func TestInterruptedTurnClosesPendingToolBlocks(t *testing.T) {
 	model.interrupted = true
 	model.applyAgentEvent(agent.Event{
 		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "write-1", Name: "write"},
-		Presentation: agent.ToolPresentation{Title: "write file.go", Lines: []string{"partial"}},
+		Presentation: agent.ToolPresentation{Lines: []string{"partial"}},
 	})
 	model.finishTurn(context.Canceled)
 	block := model.blocks[model.toolBlockIndex("write-1")]

@@ -22,9 +22,9 @@ func TestSpecPresentsPartialArgumentsLeniently(t *testing.T) {
 		},
 	}
 
-	presentation := tool.Presentation(`{"path":"demo.go","count":"many","content":"partial`)
-	if presentation.Title != "write" || presented != (arguments{Path: "demo.go", Content: "partial"}) {
-		t.Fatalf("presentation=%+v arguments=%+v", presentation, presented)
+	tool.Presentation(`{"path":"demo.go","count":"many","content":"partial`)
+	if presented != (arguments{Path: "demo.go", Content: "partial"}) {
+		t.Fatalf("arguments = %+v", presented)
 	}
 }
 

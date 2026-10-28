@@ -204,6 +204,9 @@ func TestVersionTwoTerminalCheckpointFixture(t *testing.T) {
 			t.Fatalf("block %d kind = %d, want %d", index, checkpoint.data.Blocks[index].Kind, kind)
 		}
 	}
+	if checkpoint.data.Blocks[3].ToolName != "edit" {
+		t.Fatalf("tool name = %q", checkpoint.data.Blocks[3].ToolName)
+	}
 	diff := checkpoint.data.Blocks[3].Tool.Diff
 	wantDiffKinds := []agent.ToolDiffLineKind{
 		agent.ToolDiffLineContext,

@@ -13,36 +13,6 @@ import (
 	"time"
 )
 
-func TestEngineUsesToolNameAsDefaultPresentationTitle(t *testing.T) {
-	provider := &scriptedProvider{t: t, steps: []providerStep{
-		func(context.Context, Request, TextSink) (Response, error) {
-			return Response{ToolCalls: []ToolCall{{ID: "call", Name: "read"}}}, nil
-		},
-		func(context.Context, Request, TextSink) (Response, error) {
-			return Response{Text: "done"}, nil
-		},
-	}}
-	toolbox := &fakeToolbox{
-		definitions: toolDefinitions("read"),
-		execute: func(context.Context, ToolCall) (ToolResult, error) {
-			return ToolResult{Output: "contents"}, nil
-		},
-	}
-	var presentations []ToolPresentation
-	engine := newTestEngine(t, provider, toolbox, Options{})
-	if _, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
-		if event.Kind == EventToolStart {
-			presentations = append(presentations, event.Presentation)
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if len(presentations) != 1 || presentations[0].Title != "read" {
-		t.Fatalf("presentations = %+v", presentations)
-	}
-}
-
 func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 	provider := &scriptedProvider{t: t, reasoning: "Assessing files"}
 	provider.steps = []providerStep{
@@ -190,12 +160,12 @@ func TestEngineUsesFinalPresentationOnlyOnToolEnd(t *testing.T) {
 		return Response{Text: "done"}, nil
 	})
 	final := ToolPresentation{
-		Title: "edit", Arguments: "demo.go",
-		Diff: []ToolDiffLine{{Kind: ToolDiffLineAdded, NewLine: 1, Text: "new"}},
+		Arguments: "demo.go",
+		Diff:      []ToolDiffLine{{Kind: ToolDiffLineAdded, NewLine: 1, Text: "new"}},
 	}
 	toolbox := &fakeToolbox{definitions: toolDefinitions("edit"), executeWithUpdates: func(_ context.Context, _ ToolCall, updates ToolUpdateSink) (ToolResult, error) {
 		updates.SetFinal(final)
-		if err := updates.Update(ToolPresentation{Title: "edit", Lines: []string{"late update"}}); err != nil {
+		if err := updates.Update(ToolPresentation{Lines: []string{"late update"}}); err != nil {
 			t.Fatalf("late update error = %v", err)
 		}
 		return ToolResult{Output: "edited demo.go"}, nil
@@ -257,13 +227,13 @@ func TestEngineStreamsToolPresentationBeforeGenerationAndExecutionFinish(t *test
 			if json.Valid([]byte(rawArguments)) {
 				content = "hello"
 			}
-			return ToolPresentation{Title: "write demo.go", Lines: []string{content}}
+			return ToolPresentation{Lines: []string{content}}
 		},
 		executeWithUpdates: func(_ context.Context, _ ToolCall, updates ToolUpdateSink) (ToolResult, error) {
 			executed = true
 			if err := updates.Update(ToolPresentation{
-				Title: "write demo.go", Lines: []string{"written"},
-				Diff: []ToolDiffLine{{Kind: ToolDiffLineAdded, NewLine: 1, Text: "written"}},
+				Lines: []string{"written"},
+				Diff:  []ToolDiffLine{{Kind: ToolDiffLineAdded, NewLine: 1, Text: "written"}},
 			}); err != nil {
 				return ToolResult{}, err
 			}
@@ -319,7 +289,7 @@ func TestEngineSerializesConcurrentToolSnapshots(t *testing.T) {
 			wait.Add(1)
 			go func() {
 				defer wait.Done()
-				if err := updates.Update(ToolPresentation{Title: "write " + string(call.Arguments), Lines: []string{line}}); err != nil {
+				if err := updates.Update(ToolPresentation{Lines: []string{line}}); err != nil {
 					t.Errorf("update %s: %v", call.Arguments, err)
 				}
 			}()
@@ -496,7 +466,7 @@ func TestEngineCancelsParallelCallsOnUpdateFailureAndPreservesResults(t *testing
 		switch call.Name {
 		case "update":
 			<-failUpdate
-			err := updates.Update(ToolPresentation{Title: "update", Lines: []string{"changed"}})
+			err := updates.Update(ToolPresentation{Lines: []string{"changed"}})
 			return ToolResult{Output: "changed"}, err
 		case "wait":
 			<-ctx.Done()

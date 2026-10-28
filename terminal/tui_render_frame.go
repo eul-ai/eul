@@ -242,6 +242,7 @@ func conversationBlocksEqual(left, right conversationBlock) bool {
 		left.text == right.text &&
 		slices.Equal(left.content, right.content) &&
 		left.toolCallID == right.toolCallID &&
+		left.toolName == right.toolName &&
 		left.tool.Equal(right.tool)
 }
 

@@ -129,7 +129,7 @@ func TestEditPublishesDiffAfterSuccessfulCommit(t *testing.T) {
 		{Kind: agent.ToolDiffLineContext, OldLine: 9, NewLine: 9, Text: "eight"},
 		{Kind: agent.ToolDiffLineContext, OldLine: 10, NewLine: 10, Text: "nine"},
 	}
-	if presentation.Title != editToolName || presentation.Arguments != "sample.txt" || !slices.Equal(presentation.Diff, wantDiff) {
+	if presentation.Arguments != "sample.txt" || !slices.Equal(presentation.Diff, wantDiff) {
 		t.Fatalf("replace presentation = %+v, want diff %+v", presentation, wantDiff)
 	}
 }

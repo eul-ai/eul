@@ -115,7 +115,6 @@ type ToolDiffLine struct {
 }
 
 type ToolPresentation struct {
-	Title          string         `json:"title"`
 	Arguments      string         `json:"arguments"`
 	Lines          []string       `json:"lines"`
 	LinesTruncated bool           `json:"lines_truncated"`
@@ -134,8 +133,7 @@ func (presentation ToolPresentation) Clone() ToolPresentation {
 }
 
 func (presentation ToolPresentation) Equal(other ToolPresentation) bool {
-	return presentation.Title == other.Title &&
-		presentation.Arguments == other.Arguments &&
+	return presentation.Arguments == other.Arguments &&
 		presentation.LinesTruncated == other.LinesTruncated &&
 		presentation.Markdown == other.Markdown &&
 		presentation.Outcome == other.Outcome &&

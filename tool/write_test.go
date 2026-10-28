@@ -44,7 +44,7 @@ func TestWritePresentationStreamsBoundedPreviewWithoutWriting(t *testing.T) {
 	}, "\n")
 	raw := `{"path":"preview.txt","content":"` + strings.ReplaceAll(content, "\n", `\n`)
 	presentation := writeTool.Presentation(raw)
-	if presentation.Title != "write" || presentation.Arguments != "preview.txt" || !presentation.LinesTruncated || len(presentation.Lines) != 11 || presentation.Lines[0] != "one" || presentation.Lines[9] != "ten" {
+	if presentation.Arguments != "preview.txt" || !presentation.LinesTruncated || len(presentation.Lines) != 11 || presentation.Lines[0] != "one" || presentation.Lines[9] != "ten" {
 		t.Fatalf("presentation = %+v", presentation)
 	}
 	if _, err := os.Stat(filepath.Join(cwd, "preview.txt")); !os.IsNotExist(err) {

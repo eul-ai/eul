@@ -5,7 +5,6 @@
       "kind": 0,
       "text": "user",
       "tool": {
-        "title": "",
         "arguments": "",
         "lines": null,
         "lines_truncated": false,
@@ -21,7 +20,6 @@
       "kind": 1,
       "text": "assistant",
       "tool": {
-        "title": "",
         "arguments": "",
         "lines": null,
         "lines_truncated": false,
@@ -37,7 +35,6 @@
       "kind": 2,
       "text": "reasoning",
       "tool": {
-        "title": "",
         "arguments": "",
         "lines": null,
         "lines_truncated": false,
@@ -54,7 +51,6 @@
       "text": "edit",
       "tool_call_id": "call-1",
       "tool": {
-        "title": "edit",
         "arguments": "file.go",
         "lines": [
           "line"
@@ -92,14 +88,14 @@
         "elapsed": 1500000000,
         "timeout": 10000000000
       },
-      "tool_outcome": "pending"
+      "tool_outcome": "pending",
+      "tool_name": "edit"
     },
     {
       "kind": 4,
       "text": "tool",
       "tool_call_id": "call-2",
       "tool": {
-        "title": "",
         "arguments": "",
         "lines": null,
         "lines_truncated": false,
@@ -117,7 +113,6 @@
       "text": "tool error",
       "tool_call_id": "call-3",
       "tool": {
-        "title": "",
         "arguments": "",
         "lines": null,
         "lines_truncated": false,
@@ -134,7 +129,6 @@
       "kind": 6,
       "text": "context",
       "tool": {
-        "title": "",
         "arguments": "",
         "lines": null,
         "lines_truncated": false,
@@ -150,7 +144,6 @@
       "kind": 7,
       "text": "error",
       "tool": {
-        "title": "",
         "arguments": "",
         "lines": null,
         "lines_truncated": false,
@@ -166,7 +159,6 @@
       "kind": 8,
       "text": "info",
       "tool": {
-        "title": "",
         "arguments": "",
         "lines": null,
         "lines_truncated": false,

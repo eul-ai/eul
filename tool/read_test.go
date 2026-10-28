@@ -166,7 +166,7 @@ func TestReadPresentationShowsRequestedLineRange(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			presentation := readTool.Presentation(test.arguments)
-			if presentation.Title != "read" || presentation.Arguments != test.want {
+			if presentation.Arguments != test.want {
 				t.Fatalf("presentation = %+v, want arguments %q", presentation, test.want)
 			}
 		})

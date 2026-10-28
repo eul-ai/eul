@@ -73,7 +73,7 @@ func presentBash(args bashArguments) agent.ToolPresentation {
 }
 
 func bashPresentation(command string, timeout time.Duration) agent.ToolPresentation {
-	return agent.ToolPresentation{Title: bashToolName, Arguments: displayToolArgument(command), Timeout: timeout}
+	return agent.ToolPresentation{Arguments: displayToolArgument(command), Timeout: timeout}
 }
 
 func (b bashTool) run(ctx context.Context, args bashArguments, updates agent.ToolUpdateSink) (agent.ToolResult, error) {

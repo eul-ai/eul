@@ -40,6 +40,7 @@ type conversationBlock struct {
 	text       string
 	content    []agent.ContentPart
 	toolCallID string
+	toolName   string
 	tool       agent.ToolPresentation
 }
 
@@ -352,6 +353,7 @@ func (m *tuiModel) startTool(call agent.ToolCall, presentation agent.ToolPresent
 	m.blocks = append(m.blocks, conversationBlock{
 		kind:       blockToolPending,
 		toolCallID: call.ID,
+		toolName:   singleLine(call.Name, maxToolPresentationSummaryBytes),
 		tool:       sanitizeToolPresentation(presentation),
 	})
 	m.conversationChanged()
@@ -397,7 +399,7 @@ func (m *tuiModel) toolBlockIndex(callID string) int {
 func (m *tuiModel) pendingToolActivity() activity {
 	for index := len(m.blocks) - 1; index >= 0; index-- {
 		if m.blocks[index].kind == blockToolPending {
-			return toolActivity(m.blocks[index].tool.Title)
+			return toolActivity(m.blocks[index].toolName)
 		}
 	}
 	return activity{kind: activityThinking}

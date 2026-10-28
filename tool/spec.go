@@ -28,9 +28,7 @@ func (s spec[A]) Presentation(rawArguments string) agent.ToolPresentation {
 	encoded, _ := json.Marshal(parseStreamingJSONObject(rawArguments))
 	_ = json.Unmarshal(encoded, &args)
 
-	presentation := s.present(args)
-	presentation.Title = s.definition.Name
-	return presentation
+	return s.present(args)
 }
 
 func (s spec[A]) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {

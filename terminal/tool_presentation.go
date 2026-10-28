@@ -28,7 +28,6 @@ func toolResultOutcome(result agent.ToolResult, presentation agent.ToolPresentat
 }
 
 func sanitizeToolPresentation(presentation agent.ToolPresentation) agent.ToolPresentation {
-	presentation.Title = singleLine(presentation.Title, maxToolPresentationSummaryBytes)
 	presentation.Arguments = singleLine(presentation.Arguments, maxToolPresentationSummaryBytes)
 	presentation.Outcome = singleLine(presentation.Outcome, maxToolPresentationSummaryBytes)
 	return presentation

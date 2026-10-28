@@ -195,12 +195,12 @@ func TestTUIModelTracksActivityAndContext(t *testing.T) {
 	if model.contextTokens != 123 {
 		t.Fatalf("context tokens = %d", model.contextTokens)
 	}
-	model.applyAgentEvent(agent.Event{Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "call-1", Name: "read"}, Presentation: agent.ToolPresentation{Title: "read", Arguments: "file.go"}})
+	model.applyAgentEvent(agent.Event{Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "call-1", Name: "read"}, Presentation: agent.ToolPresentation{Arguments: "file.go"}})
 	if model.activity.kind != activityTool || model.activity.detail != "read" || model.blocks[len(model.blocks)-1].kind != blockToolPending {
 		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.blocks)
 	}
 	toolBlocks := len(model.blocks)
-	model.applyAgentEvent(agent.Event{Kind: agent.EventToolEnd, Call: agent.ToolCall{ID: "call-1", Name: "read"}, Presentation: agent.ToolPresentation{Title: "read file.go"}, Result: agent.ToolResult{Tool: "read", IsError: true, Output: "failed"}})
+	model.applyAgentEvent(agent.Event{Kind: agent.EventToolEnd, Call: agent.ToolCall{ID: "call-1", Name: "read"}, Presentation: agent.ToolPresentation{Arguments: "file.go"}, Result: agent.ToolResult{Tool: "read", IsError: true, Output: "failed"}})
 	last := model.blocks[len(model.blocks)-1]
 	if model.activity.kind != activityThinking || len(model.blocks) != toolBlocks || last.kind != blockToolError {
 		t.Fatalf("activity = %+v, blocks = %+v", model.activity, model.blocks)

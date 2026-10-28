@@ -183,14 +183,13 @@ func (launcher subagentLauncher) resolve(task subagent.Task) (subagent.Task, err
 func (launch launchTool) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
 	result, err := launch.spec.Execute(ctx, arguments, updates)
 	if result.IsError && updates != nil {
-		updates.SetFinal(agent.ToolPresentation{Title: launchToolName, Markdown: true, Lines: []string{"No subagents were started."}})
+		updates.SetFinal(agent.ToolPresentation{Markdown: true, Lines: []string{"No subagents were started."}})
 	}
 	return result, err
 }
 
 func launchPresentation(count int, message string) agent.ToolPresentation {
 	return agent.ToolPresentation{
-		Title:     launchToolName,
 		Arguments: fmt.Sprintf("(%d)", count),
 		Markdown:  true,
 		Lines:     []string{message},
@@ -229,7 +228,7 @@ func waitPresentation(args waitArguments, message string) agent.ToolPresentation
 		arguments = fmt.Sprintf("(%s timeout)", time.Duration(*args.TimeoutMS)*time.Millisecond)
 	}
 
-	return agent.ToolPresentation{Title: waitToolName, Arguments: arguments, Markdown: true, Lines: []string{message}}
+	return agent.ToolPresentation{Arguments: arguments, Markdown: true, Lines: []string{message}}
 }
 
 func waitResultMessage(outcome subagent.WaitOutcome) string {

@@ -40,7 +40,7 @@ func NewEdit(cwd string) agent.Tool {
 }
 
 func editPresentation(path string) agent.ToolPresentation {
-	return agent.ToolPresentation{Title: editToolName, Arguments: displayToolArgument(path)}
+	return agent.ToolPresentation{Arguments: displayToolArgument(path)}
 }
 
 func (w workspace) edit(ctx context.Context, args editArguments, updates agent.ToolUpdateSink) (agent.ToolResult, error) {

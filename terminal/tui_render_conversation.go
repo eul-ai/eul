@@ -119,7 +119,7 @@ func toolConversationLines(block conversationBlock, width int, style lineStyle, 
 	if block.kind == blockToolError {
 		titleForeground = text.ForegroundError
 	}
-	heading := []text.Span{{Text: block.tool.Title, Style: text.Style{Bold: true, Foreground: titleForeground}}}
+	heading := []text.Span{{Text: block.toolName, Style: text.Style{Bold: true, Foreground: titleForeground}}}
 	if block.tool.Arguments != "" {
 		heading = text.AppendSpan(heading, " "+block.tool.Arguments, text.Style{})
 	}

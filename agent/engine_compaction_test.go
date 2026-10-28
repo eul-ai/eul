@@ -161,7 +161,7 @@ func TestEngineEventSinkFailuresPreserveResponseContinuation(t *testing.T) {
 				return sink(ToolCallSnapshot{ID: "one", Name: "write", RawArguments: `{"content":"partial"}`})
 			},
 			toolbox: &fakeToolbox{presentation: func(_, rawArguments string) ToolPresentation {
-				return ToolPresentation{Title: "write", Lines: []string{rawArguments}}
+				return ToolPresentation{Lines: []string{rawArguments}}
 			}},
 			wantPending: []Input{synthetic("one", "write")},
 		},
@@ -177,7 +177,7 @@ func TestEngineEventSinkFailuresPreserveResponseContinuation(t *testing.T) {
 			failKind: EventToolUpdate,
 			response: Response{State: []byte("calls"), ToolCalls: []ToolCall{{ID: "one", Name: "write", Arguments: json.RawMessage(`{}`)}}},
 			toolbox: &fakeToolbox{executeWithUpdates: func(_ context.Context, _ ToolCall, updates ToolUpdateSink) (ToolResult, error) {
-				_ = updates.Update(ToolPresentation{Title: "write", Lines: []string{"changed"}})
+				_ = updates.Update(ToolPresentation{Lines: []string{"changed"}})
 				return ToolResult{Output: "changed"}, nil
 			}},
 			wantPending:  []Input{{Kind: InputToolResult, CallID: "one", Tool: "write", Text: "changed", IsError: true}},
@@ -189,7 +189,7 @@ func TestEngineEventSinkFailuresPreserveResponseContinuation(t *testing.T) {
 			response: Response{State: []byte("calls"), ToolCalls: []ToolCall{{ID: "one", Name: "write", Arguments: json.RawMessage(`{}`)}}},
 			toolbox: &fakeToolbox{executeWithUpdates: func(_ context.Context, _ ToolCall, updates ToolUpdateSink) (ToolResult, error) {
 				updates.SetFinal(ToolPresentation{
-					Title: "edit", Diff: []ToolDiffLine{{Kind: ToolDiffLineAdded, NewLine: 1, Text: "changed"}},
+					Diff: []ToolDiffLine{{Kind: ToolDiffLineAdded, NewLine: 1, Text: "changed"}},
 				})
 				return ToolResult{Output: "changed"}, nil
 			}},

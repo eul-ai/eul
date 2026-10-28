@@ -101,7 +101,7 @@ func (r failingReader) Read([]byte) (int, error) {
 	return 0, r.err
 }
 
-func TestFileToolPresentationsSeparateTitleAndArguments(t *testing.T) {
+func TestFileToolPresentationArguments(t *testing.T) {
 	raw := `{"path":"demo.go"}`
 	presentations := []agent.ToolPresentation{
 		NewRead(t.TempDir()).Presentation(raw),
@@ -109,10 +109,9 @@ func TestFileToolPresentationsSeparateTitleAndArguments(t *testing.T) {
 		NewEdit(t.TempDir()).Presentation(raw),
 		bashPresentation("go test ./...", defaultBashTimeout),
 	}
-	wantTitles := []string{"read", "write", "edit", "bash"}
 	wantArguments := []string{"demo.go", "demo.go", "demo.go", `"go test ./..."`}
 	for index, presentation := range presentations {
-		if presentation.Title != wantTitles[index] || presentation.Arguments != wantArguments[index] {
+		if presentation.Arguments != wantArguments[index] {
 			t.Fatalf("presentation %d = %+v", index, presentation)
 		}
 	}
