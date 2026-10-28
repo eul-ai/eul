@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -70,15 +69,12 @@ func TestBashAcceptsIntegerAndNumericStringTimeout(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			bashTool := newTestBash(t.TempDir())
-			updates := &recordingBashUpdates{}
-
-			result, err := bashTool.Execute(context.Background(), test.arguments, updates)
+			result, err := bashTool.Execute(context.Background(), test.arguments, discardUpdates)
 			if err != nil || result.IsError || !strings.Contains(result.Output, "ok") {
 				t.Fatalf("result = %+v, err = %v", result, err)
 			}
-			presentation, finalCalls := updates.finalPresentation()
-			if finalCalls != 1 || presentation.Timeout != time.Second {
-				t.Fatalf("presentation = %+v, final calls = %d", presentation, finalCalls)
+			if result.Presentation == nil || result.Presentation.Timeout != time.Second {
+				t.Fatalf("presentation = %+v", result.Presentation)
 			}
 
 			initial := bashTool.Presentation(string(test.arguments))
@@ -105,16 +101,12 @@ func TestBashFinalPresentationShowsOutputTailAndDuration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	updates := &recordingBashUpdates{}
-	result, err := bashTool.Execute(context.Background(), arguments, updates)
-	if err != nil || result.IsError {
+	result, err := bashTool.Execute(context.Background(), arguments, discardUpdates)
+	if err != nil || result.IsError || result.Presentation == nil {
 		t.Fatalf("result = %+v, err = %v", result, err)
 	}
 
-	presentation, finalCalls := updates.finalPresentation()
-	if finalCalls != 1 {
-		t.Fatalf("SetFinal calls = %d, want 1", finalCalls)
-	}
+	presentation := *result.Presentation
 	wantLines := []string{"one", "two", "three", "four", "five", "six", "seven", "eight"}
 	if !slices.Equal(presentation.Lines, wantLines) || presentation.TailLines != bashPreviewLines || presentation.Elapsed <= 0 || presentation.Timeout != defaultBashTimeout {
 		t.Fatalf("presentation = %+v", presentation)
@@ -234,9 +226,8 @@ func TestBashTimeoutIsRecoverableAndRetainsOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	updates := &recordingBashUpdates{}
 	started := time.Now()
-	result, err := bashTool.Execute(context.Background(), arguments, updates)
+	result, err := bashTool.Execute(context.Background(), arguments, discardUpdates)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,9 +237,8 @@ func TestBashTimeoutIsRecoverableAndRetainsOutput(t *testing.T) {
 	if !result.IsError || !strings.Contains(result.Output, "before-timeout") || !strings.Contains(result.Output, "exit status:") {
 		t.Fatalf("timeout result = %+v", result)
 	}
-	presentation, finalCalls := updates.finalPresentation()
-	if finalCalls != 1 || !slices.Equal(presentation.Lines, []string{"before-timeout"}) || presentation.Timeout != time.Second || presentation.Elapsed <= 0 {
-		t.Fatalf("timeout presentation = %+v, final calls = %d", presentation, finalCalls)
+	if presentation := result.Presentation; presentation == nil || !slices.Equal(presentation.Lines, []string{"before-timeout"}) || presentation.Timeout != time.Second || presentation.Elapsed <= 0 {
+		t.Fatalf("timeout presentation = %+v", presentation)
 	}
 	if _, err := os.Stat(readyPath); err != nil {
 		t.Fatalf("child did not start: %v", err)
@@ -271,10 +261,9 @@ func TestBashParentCancellationIsFatalAndReported(t *testing.T) {
 		err    error
 	}
 	done := make(chan outcome, 1)
-	updates := &recordingBashUpdates{}
 	go func() {
 		arguments := json.RawMessage(`{"command":"printf ready; (: > \"$EUL_CHILD_READY\"; while [ ! -e \"$EUL_CHILD_RELEASE\" ]; do sleep 0.01; done; : > \"$EUL_CHILD_SURVIVED\") & wait","network":true}`)
-		result, runErr := bashTool.Execute(ctx, arguments, updates)
+		result, runErr := bashTool.Execute(ctx, arguments, discardUpdates)
 		done <- outcome{result: result, err: runErr}
 	}()
 	waitForPath(t, readyPath)
@@ -288,9 +277,8 @@ func TestBashParentCancellationIsFatalAndReported(t *testing.T) {
 		if !got.result.IsError || !strings.Contains(got.result.Output, "exit status:") {
 			t.Fatalf("cancellation result = %+v", got.result)
 		}
-		presentation, finalCalls := updates.finalPresentation()
-		if finalCalls != 1 || !slices.Equal(presentation.Lines, []string{"ready"}) || presentation.Elapsed <= 0 {
-			t.Fatalf("cancellation presentation = %+v, final calls = %d", presentation, finalCalls)
+		if presentation := got.result.Presentation; presentation == nil || !slices.Equal(presentation.Lines, []string{"ready"}) || presentation.Elapsed <= 0 {
+			t.Fatalf("cancellation presentation = %+v", presentation)
 		}
 		assertBashChildStopped(t, releasePath, survivedPath)
 	case <-time.After(2 * time.Second):
@@ -323,14 +311,12 @@ func TestBashValidationAndStartFailuresAreRecoverableAndBounded(t *testing.T) {
 	bashTool := newTestBash(cwd)
 	t.Setenv("PATH", t.TempDir())
 
-	updates := &recordingBashUpdates{}
-	result, err := bashTool.Execute(context.Background(), json.RawMessage(`{"command":"echo no","network":true}`), updates)
+	result, err := bashTool.Execute(context.Background(), json.RawMessage(`{"command":"echo no","network":true}`), discardUpdates)
 	if err != nil || !result.IsError || !strings.Contains(result.Output, "exit status: unavailable") {
 		t.Fatalf("start failure = %+v, err = %v", result, err)
 	}
-	presentation, finalCalls := updates.finalPresentation()
-	if finalCalls != 1 || presentation.Elapsed <= 0 {
-		t.Fatalf("start failure presentation = %+v, final calls = %d", presentation, finalCalls)
+	if result.Presentation == nil || result.Presentation.Elapsed <= 0 {
+		t.Fatalf("start failure presentation = %+v", result.Presentation)
 	}
 
 	regular := newTestBash(cwd)
@@ -360,29 +346,6 @@ func TestBashValidationAndStartFailuresAreRecoverableAndBounded(t *testing.T) {
 	if !result.IsError || len(result.Output) > defaultMaxBytes || countLines(result.Output) > defaultMaxLines {
 		t.Fatalf("large validation error is not bounded: %+v", result)
 	}
-}
-
-type recordingBashUpdates struct {
-	mu         sync.Mutex
-	final      agent.ToolPresentation
-	finalCalls int
-}
-
-func (*recordingBashUpdates) Update(agent.ToolPresentation) error {
-	return nil
-}
-
-func (updates *recordingBashUpdates) SetFinal(presentation agent.ToolPresentation) {
-	updates.mu.Lock()
-	defer updates.mu.Unlock()
-	updates.final = presentation
-	updates.finalCalls++
-}
-
-func (updates *recordingBashUpdates) finalPresentation() (agent.ToolPresentation, int) {
-	updates.mu.Lock()
-	defer updates.mu.Unlock()
-	return updates.final, updates.finalCalls
 }
 
 func assertBashChildStopped(t *testing.T, releasePath, survivedPath string) {

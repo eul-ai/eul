@@ -14,9 +14,8 @@ type toolEventTracker struct {
 }
 
 type streamedTool struct {
-	call                  ToolCall
-	presentation          ToolPresentation
-	presentationFinalized bool
+	call         ToolCall
+	presentation ToolPresentation
 }
 
 type trackedToolUpdateSink struct {
@@ -26,10 +25,6 @@ type trackedToolUpdateSink struct {
 
 func (sink *trackedToolUpdateSink) Update(presentation ToolPresentation) error {
 	return sink.tracker.publishUpdate(sink.call, presentation)
-}
-
-func (sink *trackedToolUpdateSink) SetFinal(presentation ToolPresentation) {
-	sink.tracker.setFinal(sink.call, presentation)
 }
 
 func newToolEventTracker(tools map[string]Tool, sink EventSink) *toolEventTracker {
@@ -164,9 +159,6 @@ func (tracker *toolEventTracker) publishUpdate(call ToolCall, next ToolPresentat
 		return tracker.sinkErr
 	}
 	streamed := tracker.streamed[call.ID]
-	if streamed.presentationFinalized {
-		return nil
-	}
 	if streamed.presentation.Equal(next) {
 		return nil
 	}
@@ -179,16 +171,6 @@ func (tracker *toolEventTracker) publishUpdate(call ToolCall, next ToolPresentat
 	return nil
 }
 
-func (tracker *toolEventTracker) setFinal(call ToolCall, final ToolPresentation) {
-	tracker.mu.Lock()
-	defer tracker.mu.Unlock()
-
-	streamed := tracker.streamed[call.ID]
-	streamed.presentation = final
-	streamed.presentationFinalized = true
-	tracker.streamed[call.ID] = streamed
-}
-
 func (tracker *toolEventTracker) updateError(call ToolCall) error {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
@@ -199,10 +181,13 @@ func (tracker *toolEventTracker) end(call ToolCall, result ToolResult) error {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
-	streamed := tracker.streamed[call.ID]
+	presentation := tracker.streamed[call.ID].presentation
+	if result.Presentation != nil {
+		presentation = *result.Presentation
+	}
 	delete(tracker.streamed, call.ID)
 	delete(tracker.updateErrs, call.ID)
-	return tracker.emitLocked(Event{Kind: EventToolEnd, Call: call, Presentation: streamed.presentation, Result: result})
+	return tracker.emitLocked(Event{Kind: EventToolEnd, Call: call, Presentation: presentation, Result: result})
 }
 
 func (tracker *toolEventTracker) closeRemaining(cause error) error {

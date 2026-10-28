@@ -137,7 +137,7 @@ func NewLaunchSubagents(manager *subagent.Manager, thinkingLevels map[subagent.P
 	}}
 }
 
-func (launcher subagentLauncher) run(_ context.Context, args launchArguments, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
+func (launcher subagentLauncher) run(_ context.Context, args launchArguments, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
 	tasks := make([]subagent.Task, len(args.Tasks))
 	for index, task := range args.Tasks {
 		resolved, err := launcher.resolve(subagent.Task(task))
@@ -156,8 +156,7 @@ func (launcher subagentLauncher) run(_ context.Context, args launchArguments, up
 	for _, job := range jobs {
 		fmt.Fprintf(&output, "\n- %s (%s, %s thinking): %s", job.ID, job.ModelProfile, job.ThinkingLevel, job.Description)
 	}
-	updates.SetFinal(launchPresentation(len(jobs), fmt.Sprintf("Started %d subagent(s).", len(jobs))))
-	return successResult(output.String()), nil
+	return presentedResult(output.String(), launchPresentation(len(jobs), fmt.Sprintf("Started %d subagent(s).", len(jobs)))), nil
 }
 
 func (launcher subagentLauncher) resolve(task subagent.Task) (subagent.Task, error) {
@@ -181,7 +180,7 @@ func (launcher subagentLauncher) resolve(task subagent.Task) (subagent.Task, err
 func (launch launchTool) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
 	result, err := launch.spec.Execute(ctx, arguments, updates)
 	if result.IsError {
-		updates.SetFinal(agent.ToolPresentation{Markdown: true, Lines: []string{"No subagents were started."}})
+		result.Presentation = &agent.ToolPresentation{Markdown: true, Lines: []string{"No subagents were started."}}
 	}
 	return result, err
 }
@@ -200,7 +199,7 @@ func NewWaitForSubagent(manager *subagent.Manager) agent.Tool {
 		present: func(args waitArguments) agent.ToolPresentation {
 			return waitPresentation(args, "Waiting for a subagent completion.")
 		},
-		run: func(ctx context.Context, args waitArguments, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
+		run: func(ctx context.Context, args waitArguments, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
 			timeoutMS, err := optionalPositive(args.TimeoutMS, defaultWaitTimeoutMS, maximumWaitTimeoutMS, "timeout_ms")
 			if err != nil {
 				return agent.ToolResult{}, err
@@ -214,8 +213,7 @@ func NewWaitForSubagent(manager *subagent.Manager) agent.Tool {
 			}
 
 			message := waitResultMessage(outcome)
-			updates.SetFinal(waitPresentation(args, message))
-			return successResult(message), nil
+			return presentedResult(message, waitPresentation(args, message)), nil
 		},
 	}
 }

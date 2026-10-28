@@ -73,6 +73,12 @@ func successResult(output string) agent.ToolResult {
 	return agent.ToolResult{Output: bound(output, "", false)}
 }
 
+func presentedResult(output string, presentation agent.ToolPresentation) agent.ToolResult {
+	result := successResult(output)
+	result.Presentation = &presentation
+	return result
+}
+
 // bound limits text to defaultMaxLines and defaultMaxBytes, keeping its head or
 // tail. A nonempty notice, or any truncation, adds a bracketed marker line.
 func bound(text, notice string, keepTail bool) string {

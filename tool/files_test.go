@@ -18,10 +18,6 @@ func (update toolUpdateSinkFunc) Update(presentation agent.ToolPresentation) err
 	return update(presentation)
 }
 
-func (update toolUpdateSinkFunc) SetFinal(presentation agent.ToolPresentation) {
-	_ = update(presentation)
-}
-
 var discardUpdates = toolUpdateSinkFunc(func(agent.ToolPresentation) error { return nil })
 
 func TestCoreToolDefinitionsUseStrictSchemas(t *testing.T) {

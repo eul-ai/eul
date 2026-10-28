@@ -187,11 +187,10 @@ func TestEngineEventSinkFailuresPreserveResponseContinuation(t *testing.T) {
 			name:     "tool end",
 			failKind: EventToolEnd,
 			response: Response{State: []byte("calls"), ToolCalls: []ToolCall{{ID: "one", Name: "write", Arguments: json.RawMessage(`{}`)}}},
-			toolbox: &fakeToolbox{executeWithUpdates: func(_ context.Context, _ ToolCall, updates ToolUpdateSink) (ToolResult, error) {
-				updates.SetFinal(ToolPresentation{
+			toolbox: &fakeToolbox{execute: func(context.Context, ToolCall) (ToolResult, error) {
+				return ToolResult{Output: "changed", Presentation: &ToolPresentation{
 					Diff: []ToolDiffLine{{Kind: ToolDiffLineAdded, NewLine: 1, Text: "changed"}},
-				})
-				return ToolResult{Output: "changed"}, nil
+				}}, nil
 			}},
 			wantPending:  []Input{{Kind: InputToolResult, CallID: "one", Tool: "write", Text: "changed"}},
 			wantExecuted: 1,

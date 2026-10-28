@@ -101,21 +101,18 @@ func TestEditPublishesDiffAfterSuccessfulCommit(t *testing.T) {
 	mustWriteFile(t, path, original, 0o600)
 	editTool := NewEdit(cwd)
 
-	var presentation agent.ToolPresentation
 	result, err := editTool.Execute(
 		context.Background(),
 		json.RawMessage(`{"path":"sample.txt","old_text":"old","new_text":"new","all":false}`),
-		toolUpdateSinkFunc(func(update agent.ToolPresentation) error {
-			if got := mustReadFile(t, path); got != replacement {
-				t.Fatalf("diff published before commit: content = %q", got)
-			}
-			presentation = update
-			return nil
-		}),
+		discardUpdates,
 	)
-	if err != nil || result.IsError {
+	if err != nil || result.IsError || result.Presentation == nil {
 		t.Fatalf("replace result = %+v, error = %v", result, err)
 	}
+	if got := mustReadFile(t, path); got != replacement {
+		t.Fatalf("content = %q", got)
+	}
+	presentation := *result.Presentation
 
 	wantDiff := []agent.ToolDiffLine{
 		{Kind: agent.ToolDiffLineContext, OldLine: 2, NewLine: 2, Text: "one"},
@@ -252,16 +249,12 @@ func TestFailedEditsNeverModifyFile(t *testing.T) {
 			if marshalErr != nil {
 				t.Fatal(marshalErr)
 			}
-			finalPublished := false
-			result, executeErr := editTool.Execute(context.Background(), arguments, toolUpdateSinkFunc(func(agent.ToolPresentation) error {
-				finalPublished = true
-				return nil
-			}))
+			result, executeErr := editTool.Execute(context.Background(), arguments, discardUpdates)
 			if executeErr != nil {
 				t.Fatal(executeErr)
 			}
-			if !result.IsError || finalPublished {
-				t.Fatalf("replace failure = %+v, final published=%t", result, finalPublished)
+			if !result.IsError || result.Presentation != nil {
+				t.Fatalf("replace failure = %+v", result)
 			}
 			afterInfo, statErr := os.Stat(path)
 			if statErr != nil {
@@ -308,17 +301,13 @@ func TestEditNoOpBinaryAndSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	finalPublished := false
 	result, err := editTool.Execute(
 		context.Background(),
 		json.RawMessage(`{"path":"target.txt","old_text":"new","new_text":"new","all":false}`),
-		toolUpdateSinkFunc(func(agent.ToolPresentation) error {
-			finalPublished = true
-			return nil
-		}),
+		discardUpdates,
 	)
-	if err != nil || result.IsError || finalPublished {
-		t.Fatalf("no-op replace = %+v, final published=%t, error=%v", result, finalPublished, err)
+	if err != nil || result.IsError || result.Presentation != nil {
+		t.Fatalf("no-op replace = %+v, error=%v", result, err)
 	}
 	afterInfo, err := os.Stat(target)
 	if err != nil {

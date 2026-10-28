@@ -150,7 +150,7 @@ func TestToolPresentationCloneAndEqual(t *testing.T) {
 	}
 }
 
-func TestEngineUsesFinalPresentationOnlyOnToolEnd(t *testing.T) {
+func TestEngineUsesResultPresentationOnlyOnToolEnd(t *testing.T) {
 	providerCalls := 0
 	provider := streamingProviderFunc(func(_ context.Context, _ Request, _ TextSink, _ TextSink, _ ToolCallSink) (Response, error) {
 		providerCalls++
@@ -163,12 +163,8 @@ func TestEngineUsesFinalPresentationOnlyOnToolEnd(t *testing.T) {
 		Arguments: "demo.go",
 		Diff:      []ToolDiffLine{{Kind: ToolDiffLineAdded, NewLine: 1, Text: "new"}},
 	}
-	toolbox := &fakeToolbox{definitions: toolDefinitions("edit"), executeWithUpdates: func(_ context.Context, _ ToolCall, updates ToolUpdateSink) (ToolResult, error) {
-		updates.SetFinal(final)
-		if err := updates.Update(ToolPresentation{Lines: []string{"late update"}}); err != nil {
-			t.Fatalf("late update error = %v", err)
-		}
-		return ToolResult{Output: "edited demo.go"}, nil
+	toolbox := &fakeToolbox{definitions: toolDefinitions("edit"), execute: func(context.Context, ToolCall) (ToolResult, error) {
+		return ToolResult{Output: "edited demo.go", Presentation: &final}, nil
 	}}
 	var events []Event
 	engine := newTestEngine(t, provider, toolbox, Options{})

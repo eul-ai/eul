@@ -43,7 +43,7 @@ func editPresentation(path string) agent.ToolPresentation {
 	return agent.ToolPresentation{Arguments: displayToolArgument(path)}
 }
 
-func (w workspace) edit(ctx context.Context, args editArguments, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
+func (w workspace) edit(ctx context.Context, args editArguments, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if args.OldText == nil || *args.OldText == "" {
 		return agent.ToolResult{}, errors.New("old_text is required and must be nonempty")
 	}
@@ -87,8 +87,7 @@ func (w workspace) edit(ctx context.Context, args editArguments, updates agent.T
 	}
 	presentation := editPresentation(args.Path)
 	presentation.Diff = buildFileDiff(original, replacement, starts, len(oldBytes), len(newBytes))
-	updates.SetFinal(presentation)
-	return successResult(fmt.Sprintf("replaced text in %s", escapeOutputName(w.display(requestedPath)))), nil
+	return presentedResult(fmt.Sprintf("replaced text in %s", escapeOutputName(w.display(requestedPath))), presentation), nil
 }
 
 func matchStarts(data, pattern []byte) []int {

@@ -94,17 +94,19 @@ func (b bashTool) run(ctx context.Context, args bashArguments, updates agent.Too
 	capture := &tailCapture{}
 	command := b.command(runCtx, args.Command, network, capture)
 	started := time.Now()
-	setFinal := func(output, outcome string) {
-		updates.SetFinal(bashOutputPresentation(args.Command, output, outcome, time.Since(started), timeout))
+	finalPresentation := func(output, outcome string) *agent.ToolPresentation {
+		presentation := bashOutputPresentation(args.Command, output, outcome, time.Since(started), timeout)
+		return &presentation
 	}
 
 	if err := command.Start(); err != nil {
-		setFinal("", "")
 		shell := "network-isolated shell"
 		if network {
 			shell = "shell"
 		}
-		return agent.ToolResult{}, fmt.Errorf("failed to start %s: %w; exit status: unavailable", shell, err)
+		result := errorResult(bashToolName, fmt.Errorf("failed to start %s: %w; exit status: unavailable", shell, err))
+		result.Presentation = finalPresentation("", "")
+		return result, nil
 	}
 	stop := streamBashOutput(capture, started, func(output string, elapsed time.Duration) error {
 		err := updates.Update(bashOutputPresentation(args.Command, output, "", elapsed, timeout))
@@ -125,8 +127,11 @@ func (b bashTool) run(ctx context.Context, args bashArguments, updates agent.Too
 	if truncated {
 		notice = "earlier command output truncated"
 	}
-	setFinal(output, status)
-	return agent.ToolResult{Output: bound(output+"["+status+"]", notice, true), IsError: isError}, ctx.Err()
+	return agent.ToolResult{
+		Output:       bound(output+"["+status+"]", notice, true),
+		IsError:      isError,
+		Presentation: finalPresentation(output, status),
+	}, ctx.Err()
 }
 
 func bashTimeout(value *json.Number) (time.Duration, error) {

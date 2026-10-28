@@ -147,15 +147,14 @@ func (presentation ToolPresentation) Equal(other ToolPresentation) bool {
 // ToolUpdateSink may be called concurrently before Execute returns.
 type ToolUpdateSink interface {
 	Update(ToolPresentation) error
-	// SetFinal replaces the presentation attached to the tool-end event and ignores later updates.
-	SetFinal(ToolPresentation)
 }
 
 type ToolResult struct {
-	CallID  string
-	Tool    string
-	Output  string
-	IsError bool
+	CallID       string
+	Tool         string
+	Output       string
+	IsError      bool
+	Presentation *ToolPresentation
 }
 
 // Tool is a tool the model can call. Execute may be called concurrently for

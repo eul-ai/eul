@@ -89,22 +89,12 @@ func TestSubagentLaunchSchemaUsesProfileThinkingLevels(t *testing.T) {
 func TestSubagentLaunchFinalizesFailedPresentation(t *testing.T) {
 	launch := NewLaunchSubagents(nil, uniformThinkingLevels(agent.ThinkingMedium), nil)
 
-	var final agent.ToolPresentation
-	finalCalls := 0
-	updates := toolUpdateSinkFunc(func(presentation agent.ToolPresentation) error {
-		final = presentation
-		finalCalls++
-		return nil
-	})
-	result, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect","thinking_level":"minimal"}]}`), updates)
-	if err != nil || !result.IsError {
+	result, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect","thinking_level":"minimal"}]}`), discardUpdates)
+	if err != nil || !result.IsError || result.Presentation == nil {
 		t.Fatalf("launch result = %+v, error = %v", result, err)
 	}
-	if finalCalls != 1 {
-		t.Fatalf("final presentation calls = %d", finalCalls)
-	}
 	initial := launch.Presentation(`{"tasks":[{}]}`)
-	if final.Equal(initial) {
+	if result.Presentation.Equal(initial) {
 		t.Fatal("failed launch retained its pending presentation")
 	}
 }
@@ -170,14 +160,9 @@ func TestSubagentWaitTimesOutWithoutCancelingChild(t *testing.T) {
 	}
 	wait := NewWaitForSubagent(manager)
 
-	var presentation agent.ToolPresentation
-	updates := toolUpdateSinkFunc(func(update agent.ToolPresentation) error {
-		presentation = update
-		return nil
-	})
-	result, err := wait.Execute(context.Background(), json.RawMessage(`{"timeout_ms":1}`), updates)
-	if err != nil || result.IsError || !strings.Contains(presentation.Arguments, time.Millisecond.String()) {
-		t.Fatalf("wait result = %+v, presentation = %+v, error = %v", result, presentation, err)
+	result, err := wait.Execute(context.Background(), json.RawMessage(`{"timeout_ms":1}`), discardUpdates)
+	if err != nil || result.IsError || result.Presentation == nil || !strings.Contains(result.Presentation.Arguments, time.Millisecond.String()) {
+		t.Fatalf("wait result = %+v, error = %v", result, err)
 	}
 	select {
 	case <-childDone:
