@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
-	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 func TestResponsesSSEOrdersCompletedItemsByOutputIndex(t *testing.T) {
@@ -63,23 +62,13 @@ func TestResponsesSSERetriesAfterDelivery(t *testing.T) {
 				},
 			}
 			_, err := readResponsesSSE(strings.NewReader(test.body), 1024, observer)
-			var partial *backendhttp.PartialResponseError
-			if deliveries != 1 || !errors.As(err, &partial) {
+			if deliveries != 1 || !errors.Is(err, errResponsesSSEIncomplete) {
 				t.Fatalf("deliveries=%d error=%v", deliveries, err)
 			}
 			if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {
 				t.Fatal("partial response is not retryable")
 			}
 		})
-	}
-
-	_, err := readResponsesSSE(strings.NewReader(tests[0].body), 1024, agent.StreamObserver{})
-	var partial *backendhttp.PartialResponseError
-	if errors.As(err, &partial) {
-		t.Fatalf("undelivered response was marked partial: %v", err)
-	}
-	if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {
-		t.Fatal("undelivered incomplete response is not retryable")
 	}
 }
 

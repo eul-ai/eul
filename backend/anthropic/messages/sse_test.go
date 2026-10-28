@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
-	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
 
 type fragmentedReader struct {
@@ -155,28 +154,10 @@ func TestReadMessagesSSERetriesAfterDelivery(t *testing.T) {
 		sseContentBlockDelta(0, streamDelta{Type: "text_delta", Text: "partial"}),
 	)
 	_, err := readMessagesSSE(strings.NewReader(stream), 1<<20, agent.StreamObserver{Text: func(string) error { return nil }})
-	var partial *backendhttp.PartialResponseError
-	if !errors.As(err, &partial) {
+	if !errors.Is(err, errSSEIncomplete) {
 		t.Fatalf("error = %v", err)
 	}
 	if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {
 		t.Fatal("partial stream is not retryable")
-	}
-}
-
-func TestReadMessagesSSERetriesWhenNothingWasDelivered(t *testing.T) {
-	stream := marshalSSE(
-		t,
-		sseMessageStart(nil),
-		sseContentBlockStart(t, 0, contentBlock{Type: "text"}),
-		sseContentBlockDelta(0, streamDelta{Type: "text_delta", Text: "partial"}),
-	)
-	_, err := readMessagesSSE(strings.NewReader(stream), 1<<20, agent.StreamObserver{})
-	var partial *backendhttp.PartialResponseError
-	if errors.As(err, &partial) {
-		t.Fatalf("undelivered response was marked partial: %v", err)
-	}
-	if _, retry := (&Client{}).RetryGeneration(err, 1); !retry {
-		t.Fatal("undelivered incomplete response is not retryable")
 	}
 }

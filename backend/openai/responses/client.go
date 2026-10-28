@@ -92,13 +92,13 @@ func (client *Client) ShouldCompactState(request agent.Request) bool {
 	if len(request.State) == 0 {
 		return false
 	}
-	if _, err := buildGenerationWireRequestWithOptions(request, client.maxStateBytes, client.generationStateBytes(), client.encodeInboxAsAgentMessage); err == nil {
+	if _, err := client.buildGenerationWireRequest(request); err == nil {
 		return false
 	}
 
 	withoutState := request
 	withoutState.State = nil
-	_, err := buildGenerationWireRequestWithOptions(withoutState, client.maxStateBytes, client.generationStateBytes(), client.encodeInboxAsAgentMessage)
+	_, err := client.buildGenerationWireRequest(withoutState)
 	return err == nil
 }
 
@@ -119,9 +119,6 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 
 	text, calls, usage, err := normalizeResponse(stream.response)
 	if err != nil {
-		if stream.observed {
-			err = backendhttp.NewPartialResponseError(err)
-		}
 		return agent.Response{}, client.wrapf(err, "%v", err)
 	}
 

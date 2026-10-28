@@ -186,8 +186,8 @@ func TestClientRetriesTerminalFailureAfterDelivery(t *testing.T) {
 		delivered++
 		return nil
 	}, nil, nil)
-	var partial *backendhttp.PartialResponseError
-	if delivered != 1 || !errors.As(err, &partial) {
+	var failure *responseFailureError
+	if delivered != 1 || !errors.As(err, &failure) {
 		t.Fatalf("deliveries=%d error=%v", delivered, err)
 	}
 	if _, retry := client.RetryGeneration(err, 1); !retry {
@@ -213,8 +213,7 @@ func TestClientRetriesDeadlineAfterDelivery(t *testing.T) {
 		delivered++
 		return nil
 	}, nil, nil)
-	var partial *backendhttp.PartialResponseError
-	if delivered != 1 || !errors.As(err, &partial) || !errors.Is(err, context.DeadlineExceeded) {
+	if delivered != 1 || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("deliveries=%d error=%v", delivered, err)
 	}
 	if _, retry := client.RetryGeneration(err, 1); !retry {

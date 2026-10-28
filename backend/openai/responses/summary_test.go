@@ -77,7 +77,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 		t.Fatalf("continuation message = %s, error = %v", items[1], err)
 	}
 
-	continued, err := buildGenerationWireRequest(agent.Request{State: compacted.State}, continuation.DefaultMaximumBytes, continuation.DefaultMaximumBytes)
+	continued, err := client.buildGenerationWireRequest(agent.Request{State: compacted.State})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,10 +104,10 @@ func TestManualSemanticCompactionPreservesTurnBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	continued, err := buildGenerationWireRequest(agent.Request{
+	continued, err := client.buildGenerationWireRequest(agent.Request{
 		State:  compacted.State,
 		Inputs: []agent.Input{agent.NewTextInput("new request")},
-	}, continuation.DefaultMaximumBytes, continuation.DefaultMaximumBytes)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

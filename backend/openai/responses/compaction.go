@@ -17,7 +17,7 @@ type compactRequestBuild struct {
 }
 
 func (client *Client) buildNativeCompactRequest(request agent.Request) (compactRequestBuild, error) {
-	build, err := buildCompactRequestWithOptions(request, client.maxStateBytes, client.encodeInboxAsAgentMessage)
+	build, err := client.buildCompactRequest(request)
 	if err != nil {
 		return compactRequestBuild{}, fmt.Errorf("build compact request: %w", err)
 	}
@@ -29,12 +29,8 @@ func (client *Client) buildNativeCompactRequest(request agent.Request) (compactR
 	return build, nil
 }
 
-func buildCompactRequest(request agent.Request, maxStateBytes int) (compactRequestBuild, error) {
-	return buildCompactRequestWithOptions(request, maxStateBytes, false)
-}
-
-func buildCompactRequestWithOptions(request agent.Request, maxStateBytes int, encodeInboxAsAgentMessage bool) (compactRequestBuild, error) {
-	build, err := buildWireRequestWithOptions(request, maxStateBytes, encodeInboxAsAgentMessage)
+func (client *Client) buildCompactRequest(request agent.Request) (compactRequestBuild, error) {
+	build, err := client.buildWireRequest(request)
 	if err != nil {
 		return compactRequestBuild{}, err
 	}
@@ -241,11 +237,7 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
 
-	items, err := semanticCompactionStateItems(summary, continueAfterCompaction)
-	if err != nil {
-		return agent.CompactResponse{}, client.errorf("encode summary state: %v", err)
-	}
-	state, err := continuation.Encode(client.generationStateBytes(), items)
+	state, err := continuation.Encode(client.generationStateBytes(), semanticCompactionStateItems(summary, continueAfterCompaction))
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("encode summary state: %v", err)
 	}
@@ -253,21 +245,21 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 	return agent.CompactResponse{State: state, Usage: usage}, nil
 }
 
-func semanticCompactionStateItems(summary string, continueTask bool) ([]json.RawMessage, error) {
+func semanticCompactionStateItems(summary string, continueTask bool) []json.RawMessage {
 	summaryItem, _ := json.Marshal(inputMessage{
 		Role:    "assistant",
 		Content: compaction.FormatSummary(summary),
 	})
 	items := []json.RawMessage{summaryItem}
 	if !continueTask {
-		return items, nil
+		return items
 	}
 
-	continuation, err := encodeInputs([]agent.Input{agent.NewTextInput(compaction.Continuation)})
-	if err != nil {
-		return nil, err
-	}
-	return append(items, continuation...), nil
+	continuation, _ := json.Marshal(inputMessage{
+		Role:    "user",
+		Content: []inputContentPart{{Type: "input_text", Text: compaction.Continuation}},
+	})
+	return append(items, continuation)
 }
 
 func validateCompactOutput(output []json.RawMessage) error {

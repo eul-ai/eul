@@ -15,13 +15,13 @@ func TestBuildCreateRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	build, err := buildGenerationWireRequest(agent.Request{
+	build, err := testClient().buildGenerationWireRequest(agent.Request{
 		Model:    "model",
 		FastMode: true,
 		State:    state,
 		Inputs:   []agent.Input{{Kind: agent.InputToolResult, CallID: "call_1", Tool: "read", Text: "failed", IsError: true}},
 		Tools:    []agent.ToolDefinition{strictTestTool("read")},
-	}, continuation.DefaultMaximumBytes, continuation.DefaultMaximumBytes)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestBuildCreateRequest(t *testing.T) {
 	if build.wire.Model != "model" || build.wire.ServiceTier != "" || len(build.wire.Input) != 2 || len(build.newItems) != 1 || len(build.wire.Tools) != 1 || !build.wire.Tools[0].Strict {
 		t.Fatalf("build=%+v", build)
 	}
-	compact, err := buildCompactRequest(agent.Request{Model: "model", FastMode: true}, continuation.DefaultMaximumBytes)
+	compact, err := testClient().buildCompactRequest(agent.Request{Model: "model", FastMode: true})
 	if err != nil || compact.wire.ServiceTier != "" {
 		t.Fatalf("compact request=%+v error=%v", compact, err)
 	}
@@ -39,7 +39,9 @@ func TestBuildCreateRequest(t *testing.T) {
 }
 
 func TestEncodeInboxInputAsAgentMessage(t *testing.T) {
-	items, err := encodeInputsWithOptions([]agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}}, true)
+	client := testClient()
+	client.encodeInboxAsAgentMessage = true
+	items, err := client.encodeInputs([]agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +58,7 @@ func TestEncodeInboxInputAsAgentMessage(t *testing.T) {
 }
 
 func TestEncodeInboxInputAsUserMessageByDefault(t *testing.T) {
-	items, err := encodeInputs([]agent.Input{agent.NewInboxInput("result")})
+	items, err := testClient().encodeInputs([]agent.Input{agent.NewInboxInput("result")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +72,9 @@ func TestEncodeInboxInputAsUserMessageByDefault(t *testing.T) {
 }
 
 func TestInboxInputSurvivesContinuationState(t *testing.T) {
-	build, err := buildGenerationWireRequestWithOptions(agent.Request{Inputs: []agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}}}, continuation.DefaultMaximumBytes, continuation.DefaultMaximumBytes, true)
+	client := testClient()
+	client.encodeInboxAsAgentMessage = true
+	build, err := client.buildGenerationWireRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputInbox, Text: "<subagent_notifications>result</subagent_notifications>"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,14 +96,14 @@ func TestBuildCreateRequestRejectsInvalidInputKinds(t *testing.T) {
 		{Kind: "unknown", Text: "value"},
 		{Kind: agent.InputInbox, Content: []agent.ContentPart{{Kind: agent.ContentPartText, Text: "invalid"}}},
 	} {
-		if _, err := buildGenerationWireRequest(agent.Request{Inputs: []agent.Input{input}}, continuation.DefaultMaximumBytes, continuation.DefaultMaximumBytes); err == nil {
+		if _, err := testClient().buildGenerationWireRequest(agent.Request{Inputs: []agent.Input{input}}); err == nil {
 			t.Fatalf("input %+v was accepted", input)
 		}
 	}
 }
 
 func TestEncodeInputContentInOrder(t *testing.T) {
-	items, err := encodeInputs([]agent.Input{{
+	items, err := testClient().encodeInputs([]agent.Input{{
 		Kind: agent.InputUser,
 		Content: []agent.ContentPart{
 			{Kind: agent.ContentPartText, Text: "before"},
@@ -136,7 +140,7 @@ func TestOrderedInputContentSurvivesContinuationState(t *testing.T) {
 		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("one")}},
 		{Kind: agent.ContentPartText, Text: "after"},
 	}
-	build, err := buildGenerationWireRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputUser, Content: parts}}}, continuation.DefaultMaximumBytes, continuation.DefaultMaximumBytes)
+	build, err := testClient().buildGenerationWireRequest(agent.Request{Inputs: []agent.Input{{Kind: agent.InputUser, Content: parts}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +158,7 @@ func TestOrderedInputContentSurvivesContinuationState(t *testing.T) {
 }
 
 func TestEncodeTextAndImageOnlyContent(t *testing.T) {
-	text, err := encodeInputs([]agent.Input{agent.NewTextInput("hello")})
+	text, err := testClient().encodeInputs([]agent.Input{agent.NewTextInput("hello")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +169,7 @@ func TestEncodeTextAndImageOnlyContent(t *testing.T) {
 		t.Fatalf("text input = %s, error = %v", text[0], err)
 	}
 
-	image, err := encodeInputs([]agent.Input{{
+	image, err := testClient().encodeInputs([]agent.Input{{
 		Kind: agent.InputUser,
 		Content: []agent.ContentPart{{
 			Kind:  agent.ContentPartImage,
@@ -184,10 +188,10 @@ func TestEncodeTextAndImageOnlyContent(t *testing.T) {
 }
 
 func TestBuildCompactRequest(t *testing.T) {
-	build, err := buildCompactRequest(agent.Request{
+	build, err := testClient().buildCompactRequest(agent.Request{
 		Model:  "model",
 		Inputs: []agent.Input{agent.NewTextInput("hello")},
-	}, continuation.DefaultMaximumBytes)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,19 +264,19 @@ func TestBuildCreateRequestReservesResponseOutput(t *testing.T) {
 	}
 	request := agent.Request{State: state, Inputs: []agent.Input{agent.NewTextInput(strings.Repeat("y", 30))}}
 
-	if _, err := buildGenerationWireRequest(request, 240, 240); err != nil {
+	if _, err := (&Client{maxStateBytes: 240, stateOutputHeadroom: 1}).buildGenerationWireRequest(request); err != nil {
 		t.Fatalf("request did not fit full state limit: %v", err)
 	}
-	if _, err := buildGenerationWireRequest(request, 240, 100); err == nil {
+	if _, err := (&Client{maxStateBytes: 240, stateOutputHeadroom: 140}).buildGenerationWireRequest(request); err == nil {
 		t.Fatalf("reserved request error = %v", err)
 	}
-	if _, err := buildCompactRequest(request, 240); err != nil {
+	if _, err := (&Client{maxStateBytes: 240}).buildCompactRequest(request); err != nil {
 		t.Fatalf("compact request could not decode full state: %v", err)
 	}
 }
 
 func TestBuildCreateRequestRejectsInputsThatCannotFitState(t *testing.T) {
-	_, err := buildGenerationWireRequest(agent.Request{
+	_, err := (&Client{maxStateBytes: 100, stateOutputHeadroom: 1}).buildGenerationWireRequest(agent.Request{
 		Inputs: []agent.Input{{
 			Kind: agent.InputUser,
 			Content: []agent.ContentPart{{
@@ -280,7 +284,7 @@ func TestBuildCreateRequestRejectsInputsThatCannotFitState(t *testing.T) {
 				Image: &agent.Image{MediaType: "image/png", Data: make([]byte, 100)},
 			}},
 		}},
-	}, 100, 100)
+	})
 	if err == nil {
 		t.Fatalf("error = %v", err)
 	}
@@ -299,4 +303,8 @@ func TestConfiguredRequestOwnsMutableOptions(t *testing.T) {
 	if configured.Reasoning == reasoning || configured.Reasoning.Effort != "high" || configured.Include[0] != "reasoning.encrypted_content" {
 		t.Fatalf("configured request retained mutable options: %+v", configured)
 	}
+}
+
+func testClient() *Client {
+	return &Client{maxStateBytes: continuation.DefaultMaximumBytes}
 }

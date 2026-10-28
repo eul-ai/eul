@@ -80,13 +80,12 @@ func readMessagesSSE(reader io.Reader, maximum int64, observer agent.StreamObser
 	decoder := streamDecoder{observer: observer, blocks: make(map[int]*blockAccumulator)}
 	done, err := backendhttp.ReadSSE(reader, maximum, decoder.handleData)
 	if err != nil {
-		return streamResult{}, decoder.wrapPartial(fmt.Errorf("read Anthropic Messages SSE: %w", err))
+		return streamResult{}, fmt.Errorf("read Anthropic Messages SSE: %w", err)
 	}
 	if !done {
-		return streamResult{}, decoder.wrapPartial(errSSEIncomplete)
+		return streamResult{}, errSSEIncomplete
 	}
-	result, err := decoder.finish()
-	return result, decoder.wrapPartial(err)
+	return decoder.finish()
 }
 
 func (decoder *streamDecoder) handleData(data []byte) (bool, error) {
@@ -290,8 +289,4 @@ func (decoder *streamDecoder) normalizeUsage() (agent.Usage, error) {
 	}
 	input := usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens
 	return agent.Usage{InputTokens: input, OutputTokens: usage.outputTokens, TotalTokens: input + usage.outputTokens}, nil
-}
-
-func (decoder *streamDecoder) wrapPartial(err error) error {
-	return decoder.delivery.WrapPartial(err)
 }

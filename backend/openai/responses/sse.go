@@ -24,7 +24,6 @@ type streamObserver struct {
 type responseStreamResult struct {
 	response     createResponseEnvelope
 	sawTextDelta bool
-	observed     bool
 }
 
 type responseStreamEvent struct {
@@ -61,12 +60,11 @@ func readResponsesSSE(reader io.Reader, maximum int64, observer agent.StreamObse
 		err = errResponsesSSEIncomplete
 	}
 	if err != nil {
-		return responseStreamResult{}, tracked.wrapPartial(err)
+		return responseStreamResult{}, err
 	}
 	return responseStreamResult{
 		response:     decoder.response,
 		sawTextDelta: tracked.sawDelta,
-		observed:     tracked.delivery.Observed(),
 	}, nil
 }
 
@@ -228,10 +226,6 @@ func (decoder *responseStreamDecoder) terminal(event responseStreamEvent) (creat
 		response.Output = []json.RawMessage{}
 	}
 	return response, nil
-}
-
-func (observer *streamObserver) wrapPartial(err error) error {
-	return observer.delivery.WrapPartial(err)
 }
 
 func streamError(event responseStreamEvent) error {

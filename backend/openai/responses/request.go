@@ -15,7 +15,7 @@ type requestBuild struct {
 }
 
 func (client *Client) buildGenerationRequest(request agent.Request) (requestBuild, error) {
-	build, err := buildGenerationWireRequestWithOptions(request, client.maxStateBytes, client.generationStateBytes(), client.encodeInboxAsAgentMessage)
+	build, err := client.buildGenerationWireRequest(request)
 	if err != nil {
 		return requestBuild{}, fmt.Errorf("build request: %w", err)
 	}
@@ -28,7 +28,7 @@ func (client *Client) buildGenerationRequest(request agent.Request) (requestBuil
 }
 
 func (client *Client) buildSummaryRequest(request agent.Request) (requestBuild, error) {
-	build, err := buildWireRequestWithOptions(request, client.maxStateBytes, client.encodeInboxAsAgentMessage)
+	build, err := client.buildWireRequest(request)
 	if err != nil {
 		return requestBuild{}, fmt.Errorf("build summary request: %w", err)
 	}
@@ -40,28 +40,24 @@ func (client *Client) buildSummaryRequest(request agent.Request) (requestBuild, 
 	return build, nil
 }
 
-func buildGenerationWireRequest(request agent.Request, maxStateBytes, generationStateBytes int) (requestBuild, error) {
-	return buildGenerationWireRequestWithOptions(request, maxStateBytes, generationStateBytes, false)
-}
-
-func buildGenerationWireRequestWithOptions(request agent.Request, maxStateBytes, generationStateBytes int, encodeInboxAsAgentMessage bool) (requestBuild, error) {
-	build, err := buildWireRequestWithOptions(request, maxStateBytes, encodeInboxAsAgentMessage)
+func (client *Client) buildGenerationWireRequest(request agent.Request) (requestBuild, error) {
+	build, err := client.buildWireRequest(request)
 	if err != nil {
 		return requestBuild{}, err
 	}
-	if _, err := continuation.Encode(generationStateBytes, build.history, build.newItems); err != nil {
+	if _, err := continuation.Encode(client.generationStateBytes(), build.history, build.newItems); err != nil {
 		return requestBuild{}, err
 	}
 	return build, nil
 }
 
-func buildWireRequestWithOptions(request agent.Request, maxStateBytes int, encodeInboxAsAgentMessage bool) (requestBuild, error) {
-	history, err := continuation.Decode(request.State, maxStateBytes)
+func (client *Client) buildWireRequest(request agent.Request) (requestBuild, error) {
+	history, err := continuation.Decode(request.State, client.maxStateBytes)
 	if err != nil {
 		return requestBuild{}, err
 	}
 
-	newItems, err := encodeInputsWithOptions(request.Inputs, encodeInboxAsAgentMessage)
+	newItems, err := client.encodeInputs(request.Inputs)
 	if err != nil {
 		return requestBuild{}, err
 	}

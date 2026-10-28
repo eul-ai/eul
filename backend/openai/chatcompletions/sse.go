@@ -74,13 +74,12 @@ func readCompletionSSE(reader io.Reader, maximum int64, observer agent.StreamObs
 	}
 	done, err := backendhttp.ReadSSE(reader, maximum, decoder.handleData)
 	if err != nil {
-		return streamResult{}, decoder.wrapPartial(fmt.Errorf("read Chat Completions SSE: %w", err))
+		return streamResult{}, fmt.Errorf("read Chat Completions SSE: %w", err)
 	}
 	if !done && decoder.finishReason == "" {
-		return streamResult{}, decoder.wrapPartial(errSSEIncomplete)
+		return streamResult{}, errSSEIncomplete
 	}
-	result, err := decoder.finish()
-	return result, decoder.wrapPartial(err)
+	return decoder.finish()
 }
 
 func (decoder *streamDecoder) handleData(data []byte) (bool, error) {
@@ -249,8 +248,4 @@ func normalizeUsage(usage *completionUsage) (agent.Usage, error) {
 		OutputTokens: usage.CompletionTokens,
 		TotalTokens:  total,
 	}, nil
-}
-
-func (decoder *streamDecoder) wrapPartial(err error) error {
-	return decoder.delivery.WrapPartial(err)
 }
