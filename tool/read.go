@@ -2,14 +2,13 @@ package tool
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"os"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/eul-ai/eul/agent"
 )
@@ -70,8 +69,7 @@ func (w workspace) read(ctx context.Context, args readArguments, _ agent.ToolUpd
 		return agent.ToolResult{}, err
 	}
 
-	// Opening a FIFO or device can block, so reject nonregular paths before
-	// os.Open and recheck the descriptor after opening to catch path replacement.
+	// Opening a FIFO or device can block, so reject nonregular paths first.
 	info, err := os.Stat(path)
 	if err != nil {
 		return agent.ToolResult{}, err
@@ -85,13 +83,6 @@ func (w workspace) read(ctx context.Context, args readArguments, _ agent.ToolUpd
 		return agent.ToolResult{}, err
 	}
 	defer file.Close()
-	openedInfo, err := file.Stat()
-	if err != nil {
-		return agent.ToolResult{}, err
-	}
-	if !openedInfo.Mode().IsRegular() {
-		return agent.ToolResult{}, fmt.Errorf("%s is not a regular file", w.display(path))
-	}
 
 	output, err := scanReadRange(ctx, file, offset, limit)
 	switch {
@@ -105,105 +96,51 @@ func (w workspace) read(ctx context.Context, args readArguments, _ agent.ToolUpd
 
 var errReadBinary = errors.New("binary file is not supported")
 
-type readContextError struct {
-	cause error
-}
-
-func (err *readContextError) Error() string {
-	return err.cause.Error()
-}
-
-func (err *readContextError) Unwrap() error {
-	return err.cause
-}
-
 func scanReadRange(ctx context.Context, source io.Reader, offset, limit int) (string, error) {
 	reader := bufio.NewReader(source)
-	var output strings.Builder
-	lineNumber := 1
-	selectedCompleted := 0
-	lineEnds := make([]int, 0, min(limit, defaultMaxLines))
-	sawData := false
-	lastWasNewline := false
-	truncatedOutput := ""
-
+	var output bytes.Buffer
+	var lineEnds []int
+	lineNumber := 0
 	for {
 		if err := ctx.Err(); err != nil {
-			return "", &readContextError{cause: err}
+			return "", err
 		}
 
-		runeValue, size, readErr := reader.ReadRune()
-		if errors.Is(readErr, io.EOF) {
-			if truncatedOutput != "" {
-				return truncatedOutput, nil
-			}
-			if !sawData {
-				if offset != 1 {
-					return "", fmt.Errorf("offset %d is beyond end of empty file", offset)
-				}
-				return "", nil
-			}
+		line, err := reader.ReadBytes('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return "", err
+		}
+		if len(line) == 0 {
+			break
+		}
+		lineNumber++
 
-			lineCount := lineNumber
-			if lastWasNewline {
-				lineCount--
-			}
-			if offset > lineCount {
-				return "", fmt.Errorf("offset %d is beyond end of file (%d lines)", offset, lineCount)
-			}
-			return output.String(), nil
+		selected := lineNumber >= offset
+		overflow := output.Len()+len(line) > defaultMaxBytes
+		if selected && (len(lineEnds) == limit || overflow && len(lineEnds) > 0) {
+			return formatReadTruncation(output.String(), lineEnds, offset), nil
 		}
-		if readErr != nil {
-			return "", readErr
-		}
-		if runeValue == utf8.RuneError && size == 1 || runeValue == 0 {
+		if isBinary(line) {
 			return "", errReadBinary
 		}
-
-		sawData = true
-		lastWasNewline = runeValue == '\n'
-		if truncatedOutput != "" {
-			if runeValue == '\n' {
-				lineNumber++
-			}
-			continue
-		}
-		if lineNumber < offset {
-			if runeValue == '\n' {
-				lineNumber++
-			}
-			continue
-		}
-		if selectedCompleted >= limit {
-			truncatedOutput = formatReadTruncation(output.String(), lineEnds, offset)
-			if runeValue == '\n' {
-				lineNumber++
-			}
-			continue
-		}
-		if output.Len()+size > defaultMaxBytes {
-			truncatedOutput = formatReadByteTruncation(output.String(), lineEnds, offset, lineNumber)
-			if runeValue == '\n' {
-				lineNumber++
-			}
-			continue
-		}
-
-		output.WriteRune(runeValue)
-		if runeValue == '\n' {
-			selectedCompleted++
+		switch {
+		case !selected:
+		case overflow:
+			return bound(string(line), fmt.Sprintf("truncated within line %d; no lossless next offset", lineNumber), false), nil
+		default:
+			output.Write(line)
 			lineEnds = append(lineEnds, output.Len())
-			lineNumber++
 		}
 	}
-}
 
-func formatReadByteTruncation(text string, lineEnds []int, offset, lineNumber int) string {
-	if len(lineEnds) == 0 {
-		return bound(text, fmt.Sprintf("truncated within line %d; no lossless next offset", lineNumber), false)
+	switch {
+	case offset == 1 || offset <= lineNumber:
+		return output.String(), nil
+	case lineNumber == 0:
+		return "", fmt.Errorf("offset %d is beyond end of empty file", offset)
+	default:
+		return "", fmt.Errorf("offset %d is beyond end of file (%d lines)", offset, lineNumber)
 	}
-
-	return formatReadTruncation(text[:lineEnds[len(lineEnds)-1]], lineEnds, offset)
 }
 
 func formatReadTruncation(text string, lineEnds []int, offset int) string {

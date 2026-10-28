@@ -80,8 +80,12 @@ func validateText(data []byte) error {
 	if len(data) > maxTextFileBytes {
 		return fmt.Errorf("text file exceeds %d bytes", maxTextFileBytes)
 	}
-	if !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
+	if isBinary(data) {
 		return errors.New("binary file is not supported")
 	}
 	return nil
+}
+
+func isBinary(data []byte) bool {
+	return !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0
 }

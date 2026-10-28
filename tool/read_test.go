@@ -52,13 +52,15 @@ func TestReadHandlesEmptyBinarySymlinkAndInvalidRanges(t *testing.T) {
 	if result := executeJSON(t, readTool, map[string]any{"path": "link.txt"}); result.IsError || result.Output != "target" {
 		t.Fatalf("symlink read = %+v", result)
 	}
+	if result := executeJSON(t, readTool, map[string]any{"path": "late-binary.dat"}); result.IsError || !strings.Contains(result.Output, fmt.Sprintf("next offset: %d", defaultMaxLines)) {
+		t.Fatalf("binary after result limit = %+v", result.Output[len(result.Output)-min(len(result.Output), 100):])
+	}
 	for _, test := range []struct {
 		name          string
 		args          map[string]any
 		wantRequested string
 	}{
 		{name: "binary", args: map[string]any{"path": "binary.dat"}},
-		{name: "binary after result limit", args: map[string]any{"path": "late-binary.dat"}},
 		{name: "empty offset", args: map[string]any{"path": "empty.txt", "offset": 2}},
 		{name: "zero offset", args: map[string]any{"path": "target.txt", "offset": 0}},
 		{name: "large limit", args: map[string]any{"path": "target.txt", "limit": defaultMaxLines + 1}, wantRequested: fmt.Sprint(defaultMaxLines + 1)},
@@ -108,11 +110,11 @@ func TestReadOutputIsBoundedAndUTF8(t *testing.T) {
 
 func TestReadChecksCancellationWhileScanning(t *testing.T) {
 	cwd := t.TempDir()
-	mustWriteFile(t, filepath.Join(cwd, "large.txt"), strings.Repeat("x", defaultMaxBytes*4), 0o644)
+	mustWriteFile(t, filepath.Join(cwd, "large.txt"), strings.Repeat("x\n", 1_000), 0o644)
 	readTool := NewRead(cwd)
 	ctx := &cancelAfterChecksContext{cancelAfter: 100}
 
-	result, err := readTool.Execute(ctx, json.RawMessage(`{"path":"large.txt","offset":2}`), discardUpdates)
+	result, err := readTool.Execute(ctx, json.RawMessage(`{"path":"large.txt","offset":5000}`), discardUpdates)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("read cancellation error = %v", err)
 	}
@@ -121,10 +123,13 @@ func TestReadChecksCancellationWhileScanning(t *testing.T) {
 	}
 }
 
-func TestScanReadRangeValidatesTheFullStream(t *testing.T) {
+func TestScanReadRangeStopsAtWindow(t *testing.T) {
 	lateBinary := strings.NewReader("selected\nignored\x00")
-	if _, err := scanReadRange(context.Background(), lateBinary, 1, 1); !errors.Is(err, errReadBinary) {
-		t.Fatalf("late binary error = %v", err)
+	if output, err := scanReadRange(context.Background(), lateBinary, 1, 1); err != nil || output != "selected\n[truncated; next offset: 2]\n" {
+		t.Fatalf("late binary output = %q, error = %v", output, err)
+	}
+	if _, err := scanReadRange(context.Background(), strings.NewReader("selected\x00\n"), 1, 1); !errors.Is(err, errReadBinary) {
+		t.Fatalf("selected binary error = %v", err)
 	}
 
 	readErr := errors.New("read failed")
