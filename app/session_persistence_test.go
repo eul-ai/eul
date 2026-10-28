@@ -1,11 +1,8 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"os"
 	"strings"
 	"testing"
@@ -20,31 +17,18 @@ import (
 func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	cwd := t.TempDir()
 	var requests []agent.Request
-	runtime := environment{
-		stdin:  strings.NewReader(""),
-		stdout: io.Discard,
-		newToolset: func(string, toolAccess, tool.NetworkAuthorizer, ...agent.Tool) []agent.Tool {
-			return nil
-		},
+	launcher := testLauncher(t, cwd, testBackendRuntime(providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
+		requests = append(requests, request)
+		if len(requests) == 1 {
+			return agent.Response{Text: "first answer", State: []byte("saved-state")}, nil
+		}
+		return agent.Response{Text: "second answer", State: []byte("next-state")}, nil
+	})))
+	launcher.env.newToolset = func(string, toolAccess, tool.NetworkAuthorizer, ...agent.Tool) []agent.Tool {
+		return nil
 	}
-	newBackendRuntime := func() *backend.Runtime {
-		return testBackendRuntime(providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
-			requests = append(requests, request)
-			if len(requests) == 1 {
-				return agent.Response{Text: "first answer", State: []byte("saved-state")}, nil
-			}
-			return agent.Response{Text: "second answer", State: []byte("next-state")}, nil
-		}))
-	}
-	config := resolvedConfig{provider: "test", models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
-	home := t.TempDir()
-	store := newSessionStore(home)
-	messageHistory := newMessageHistoryStore(home)
 
-	first, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, messageHistory, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd})
 	if _, err := first.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "first prompt"}}, func(agent.Event) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
@@ -57,11 +41,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	handle, err := store.Open(context.Background(), cwd, sessionID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, messageHistory, handle)
+	second, err := launcher.resume(context.Background(), cwd, sessionID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,22 +73,11 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 	cwd := t.TempDir()
 	var tools []agent.Tool
-	runtime := environment{
-		stdin:      strings.NewReader(""),
-		stdout:     io.Discard,
-		newToolset: captureTools(&tools, additionalTools),
-	}
-	backendRuntime := testBackendRuntime(providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
+	launcher := testLauncher(t, cwd, testBackendRuntime(providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
 		return agent.Response{Text: "result for " + request.Inputs[0].PlainText()}, nil
-	}))
-	config := resolvedConfig{provider: "test", models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
-	home := t.TempDir()
-	store := newSessionStore(home)
-	messageHistory := newMessageHistoryStore(home)
-	session, err := newStoredAgentSession(config, runtime, backendRuntime, store, messageHistory, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	})))
+	launcher.env.newToolset = captureTools(&tools, additionalTools)
+	session := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd})
 	defer session.finish(nil)
 	if err := session.terminalOptions.StateChanges.Notify(sessionStoreTestTerminalCheckpoint(t, "prompt"), false); err != nil {
 		t.Fatal(err)
@@ -140,26 +109,13 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testing.T) {
 	cwd := t.TempDir()
 	var tools []agent.Tool
-	runtime := environment{
-		stdin:      strings.NewReader(""),
-		stdout:     io.Discard,
-		newToolset: captureTools(&tools, additionalTools),
-	}
-	newBackendRuntime := func() *backend.Runtime {
-		return testBackendRuntime(providerFunction(func(ctx context.Context, _ agent.Request, _ agent.TextSink) (agent.Response, error) {
-			<-ctx.Done()
-			return agent.Response{}, ctx.Err()
-		}))
-	}
-	config := resolvedConfig{provider: "test", models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd}
-	home := t.TempDir()
-	store := newSessionStore(home)
-	messageHistory := newMessageHistoryStore(home)
+	launcher := testLauncher(t, cwd, testBackendRuntime(providerFunction(func(ctx context.Context, _ agent.Request, _ agent.TextSink) (agent.Response, error) {
+		<-ctx.Done()
+		return agent.Response{}, ctx.Err()
+	})))
+	launcher.env.newToolset = captureTools(&tools, additionalTools)
 
-	first, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, messageHistory, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd})
 	if _, err := executeTool(tools, "launch_subagents", `{"tasks":[{"description":"running","prompt":"running"}]}`); err != nil {
 		t.Fatal(err)
 	}
@@ -174,11 +130,7 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 		t.Fatal(err)
 	}
 
-	handle, err := store.Open(context.Background(), cwd, sessionID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := newStoredAgentSession(config, runtime, newBackendRuntime(), store, messageHistory, handle)
+	second, err := launcher.resume(context.Background(), cwd, sessionID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +141,7 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 		t.Fatal(err)
 	}
 
-	reopened, err := store.Open(context.Background(), cwd, sessionID)
+	reopened, err := launcher.store.Open(context.Background(), cwd, sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,33 +160,18 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 
 func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	cwd := t.TempDir()
-	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(cwd, &stdout, &stderr)
 	alternateRuntime := testBackendRuntime(emptyProvider())
 	alternateRuntime.Catalog = testCatalog("selected-model", "selected-fast-model", "selected-balanced-model")
-	runtime.backends = append(runtime.backends, testBackend("alternate", alternateRuntime))
-	home := t.TempDir()
-	store := newSessionStore(home)
-	messageHistory := newMessageHistoryStore(home)
+	launcher := testLauncher(t, cwd, testBackendRuntime(emptyProvider()))
+	launcher.env.backends = append(launcher.env.backends, testBackend("alternate", alternateRuntime))
+	models := backend.Models{Main: "selected-model", Fast: "selected-fast-model", Balanced: "selected-balanced-model"}
 
-	config, handle, selected, err := resolveInitialSession(context.Background(), Options{
-		Provider:      "alternate",
-		Models:        backend.Models{Main: "selected-model", Fast: "selected-fast-model", Balanced: "selected-balanced-model"},
-		ThinkingLevel: agent.ThinkingHigh,
-	}, runtime, store)
+	session, err := launcher.launch(context.Background(), Options{Provider: "alternate", Models: models, ThinkingLevel: agent.ThinkingHigh})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if handle != nil || config.provider != "alternate" || selected.ID != "alternate" {
-		t.Fatalf("config=%+v handle=%v provider=%q", config, handle, selected.ID)
-	}
-	backendRuntime, err := selected.Open(context.Background(), home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	session, err := newStoredAgentSession(config, runtime, backendRuntime, store, messageHistory, nil)
-	if err != nil {
-		t.Fatal(err)
+	if session.config.provider != "alternate" {
+		t.Fatalf("provider = %q", session.config.provider)
 	}
 	if err := session.terminalOptions.StateChanges.Notify(sessionStoreTestTerminalCheckpoint(t, "saved prompt"), false); err != nil {
 		t.Fatal(err)
@@ -244,23 +181,22 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	restored, handle, selected, err := resolveInitialSession(context.Background(), Options{
-		Resume:    true,
-		SessionID: sessionID,
-	}, runtime, store)
+	restored, err := launcher.launch(context.Background(), Options{Resume: true, SessionID: sessionID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer handle.Close()
-	if restored.provider != "alternate" || restored.models != (backend.Models{Main: "selected-model", Fast: "selected-fast-model", Balanced: "selected-balanced-model"}) || selected.ID != "alternate" {
-		t.Fatalf("restored=%+v provider=%q", restored, selected.ID)
+	defer restored.finish(nil)
+	if restored.config.provider != "alternate" || restored.config.models != models {
+		t.Fatalf("restored = %+v", restored.config)
 	}
 }
 
-func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
+func TestResumeSurfacesSkippedSessionWarnings(t *testing.T) {
 	cwd := t.TempDir()
-	store := newSessionStore(t.TempDir())
-	corrupt, err := store.Create("test", cwd, backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "corrupt"), false)
+	backendRuntime := testBackendRuntime(emptyProvider())
+	backendRuntime.Catalog = testCatalog("model", "persisted-fast", "persisted-balanced")
+	launcher := testLauncher(t, cwd, backendRuntime)
+	corrupt, err := launcher.store.Create("test", cwd, backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "corrupt"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +207,7 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 	if err := os.WriteFile(corruptPath, []byte(`{"version":99}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	valid, err := store.Create("test", cwd, backend.Models{Main: "model", Fast: "persisted-fast", Balanced: "persisted-balanced"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "valid"), false)
+	valid, err := launcher.store.Create("test", cwd, backend.Models{Main: "model", Fast: "persisted-fast", Balanced: "persisted-balanced"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "valid"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,18 +215,15 @@ func TestResolveStoredSessionSurfacesSkippedSessionWarnings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(cwd, &stdout, &stderr)
-	runtime.userHomeDir = func() (string, error) { return "", errors.New("home unavailable") }
-	config, handle, _, err := resolveStoredSession(context.Background(), store, runtime, cwd, "")
+	session, err := launcher.resume(context.Background(), cwd, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer handle.Close()
-	if len(config.warnings) != 1 {
-		t.Fatalf("warnings = %v", config.warnings)
+	defer session.finish(nil)
+	if len(session.terminalOptions.Config.Warnings) != 1 {
+		t.Fatalf("warnings = %v", session.terminalOptions.Config.Warnings)
 	}
-	if config.models != (backend.Models{Main: "model", Fast: "persisted-fast", Balanced: "persisted-balanced"}) {
-		t.Fatalf("restored models = %+v", config)
+	if session.config.models != (backend.Models{Main: "model", Fast: "persisted-fast", Balanced: "persisted-balanced"}) {
+		t.Fatalf("restored models = %+v", session.config)
 	}
 }

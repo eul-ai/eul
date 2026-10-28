@@ -12,7 +12,7 @@ func TestSystemPrompt(t *testing.T) {
 	cwd := filepath.Join("workspace", "project")
 	projectInstructions := "Run focused tests before finishing.\n"
 	prompt := systemPrompt(resolvedConfig{
-		cwd:                 cwd,
+		sessionSettings:     sessionSettings{cwd: cwd},
 		projectInstructions: projectInstructions,
 		skills:              []skill.Skill{{Name: "review", Description: "Review code", FilePath: "/skills/review/SKILL.md"}},
 	})

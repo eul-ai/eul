@@ -44,29 +44,33 @@ type environment struct {
 	newToolset  toolsetFactory
 }
 
+type sessionSettings struct {
+	provider      string
+	models        backend.Models
+	thinkingLevel agent.ThinkingLevel
+	fastMode      bool
+	cwd           string
+}
+
 type resolvedConfig struct {
-	provider            string
-	models              backend.Models
-	thinkingLevel       agent.ThinkingLevel
-	fastMode            bool
-	cwd                 string
+	sessionSettings
 	projectInstructions string
 	skills              []skill.Skill
 	warnings            []string
-	noSandbox           bool
-	prompt              string
 }
 
-func resolveConfig(options Options, env environment, selected backend.Backend) (resolvedConfig, error) {
-	models := options.Models.WithDefaults(selected.Models)
-	if models.Main == "" {
+func resolveConfig(settings sessionSettings, selected backend.Backend, env environment) (resolvedConfig, error) {
+	settings.provider = selected.ID
+	settings.models = settings.models.WithDefaults(selected.Models)
+	if settings.models.Main == "" {
 		return resolvedConfig{}, errors.New("main model is required; use --model")
 	}
 
-	cwd, err := resolveCWD(options.WorkingDirectory, env.getwd)
+	cwd, err := resolveCWD(settings.cwd, env.getwd)
 	if err != nil {
 		return resolvedConfig{}, err
 	}
+	settings.cwd = cwd
 	projectInstructions, err := readProjectInstructions(cwd)
 	if err != nil {
 		return resolvedConfig{}, err
@@ -78,16 +82,10 @@ func resolveConfig(options Options, env environment, selected backend.Backend) (
 	skills, warnings := skill.Load(skillDirectories...)
 
 	return resolvedConfig{
-		provider:            selected.ID,
-		models:              models,
-		thinkingLevel:       options.ThinkingLevel,
-		fastMode:            options.FastMode,
-		cwd:                 cwd,
+		sessionSettings:     settings,
 		projectInstructions: projectInstructions,
 		skills:              skills,
 		warnings:            warnings,
-		noSandbox:           options.NoSandbox,
-		prompt:              options.Prompt,
 	}, nil
 }
 

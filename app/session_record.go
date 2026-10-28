@@ -67,6 +67,16 @@ type sessionTranscriptHead struct {
 	DeltaBytes int64  `json:"delta_bytes"`
 }
 
+func (record sessionRecord) settings() sessionSettings {
+	return sessionSettings{
+		provider:      record.Provider,
+		models:        record.Models,
+		thinkingLevel: record.ThinkingLevel,
+		fastMode:      record.FastMode,
+		cwd:           record.WorkingDirectory,
+	}
+}
+
 type sessionSummary struct {
 	ID          string
 	Description string

@@ -50,14 +50,13 @@ func newCheckpointCoordinator(
 }
 
 func newStoredAgentSession(
+	launcher *launcher,
 	config resolvedConfig,
-	env environment,
 	runtime *backend.Runtime,
-	store *sessionStore,
-	messageHistory *messageHistoryStore,
 	handle *sessionHandle,
+	prompt string,
 ) (*agentSession, error) {
-	session, options, err := newAgentSessionComponents(config, env, runtime, true)
+	session, options, err := newAgentSessionComponents(config, launcher.env, runtime, launcher.noSandbox)
 	if err != nil {
 		if handle != nil {
 			_ = handle.Close()
@@ -71,8 +70,8 @@ func newStoredAgentSession(
 		if checkpointErr != nil {
 			return nil, session.finish(checkpointErr)
 		}
-		thinkingLevel, fastMode := session.settings.Snapshot()
-		handle, err = store.Create(
+		thinkingLevel, fastMode := session.agentSettings.Snapshot()
+		handle, err = launcher.store.Create(
 			config.provider,
 			config.cwd,
 			config.models,
@@ -98,18 +97,18 @@ func newStoredAgentSession(
 		}
 	}
 
-	historyEntries, err := messageHistory.Load(record.ID)
+	historyEntries, err := launcher.history.Load(record.ID)
 	if err != nil {
 		return nil, errors.Join(session.finish(fmt.Errorf("load message history: %w", err)), handle.Close())
 	}
 	options.messageHistory = terminal.MessageHistory{
 		Entries: historyEntries,
-		Append: func(prompt string) error {
-			return messageHistory.Append(record.ID, prompt)
+		Append: func(entry string) error {
+			return launcher.history.Append(record.ID, entry)
 		},
 	}
 
-	checkpoints := newCheckpointCoordinator(handle, session.engine, session.subagents, session.settings)
+	checkpoints := newCheckpointCoordinator(handle, session.engine, session.subagents, session.agentSettings)
 	persistence := &sessionPersistence{
 		handle:      handle,
 		checkpoints: checkpoints,
@@ -140,6 +139,7 @@ func newStoredAgentSession(
 		options.previousTurnActive = record.Status == sessionActive
 	}
 	options.checkpoints = checkpoints
+	options.initialPrompt = prompt
 	options.sessionID = record.ID
 	options.sessions.List = sessionList(handle)
 	session.terminalOptions = options.options()

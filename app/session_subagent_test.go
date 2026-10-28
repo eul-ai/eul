@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -25,30 +24,20 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var stdout, stderr bytes.Buffer
 	var gotRequest agent.Request
-	runtime := testRuntime(cwd, &stdout, &stderr)
-	backendRuntime := testBackendRuntimeOf(t, runtime)
-	backendRuntime.Provider = providerFunction(func(_ context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
+	backendRuntime := testBackendRuntime(providerFunction(func(_ context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
 		gotRequest = request
 		if err := sink("answer"); err != nil {
 			return agent.Response{}, err
 		}
 		return agent.Response{Text: "answer"}, nil
-	})
+	}))
 
-	config, err := resolveTestConfig(Options{
-		Models:        backend.Models{Main: "gpt-5.6-sol"},
-		ThinkingLevel: agent.ThinkingXHigh,
-		FastMode:      true,
-	}, runtime)
-	if err != nil {
-		t.Fatal(err)
-	}
-	session, err := newAgentSession(config, runtime, backendRuntime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), sessionSettings{
+		thinkingLevel: agent.ThinkingXHigh,
+		fastMode:      true,
+		cwd:           cwd,
+	})
 	result, runErr := session.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "test prompt"}}, func(agent.Event) error { return nil })
 	if err := session.finish(runErr); err != nil {
 		t.Fatal(err)
@@ -80,8 +69,6 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(cwd, &stdout, &stderr)
 	var mu sync.Mutex
 	childRequests := make([]agent.Request, 0, 2)
 	childrenStarted := make(chan struct{})
@@ -162,26 +149,19 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 		<-releaseChildren
 		return agent.Response{Text: "finding for " + request.Inputs[0].PlainText()}, nil
 	})
-	backendRuntime := testBackendRuntimeOf(t, runtime)
-	backendRuntime.Provider = providerFunction(func(ctx context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
+	backendRuntime := testBackendRuntime(providerFunction(func(ctx context.Context, request agent.Request, sink agent.TextSink) (agent.Response, error) {
 		if request.Model == "model" {
 			return mainProvider(ctx, request, sink)
 		}
 		return childProvider(ctx, request, sink)
-	})
+	}))
 
-	config, err := resolveTestConfig(Options{
-		Models:        backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"},
-		ThinkingLevel: agent.ThinkingHigh,
-		FastMode:      true,
-	}, runtime)
-	if err != nil {
-		t.Fatal(err)
-	}
-	session, err := newAgentSession(config, runtime, backendRuntime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), sessionSettings{
+		models:        backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"},
+		thinkingLevel: agent.ThinkingHigh,
+		fastMode:      true,
+		cwd:           cwd,
+	})
 	result, runErr := session.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "review in parallel"}}, func(agent.Event) error { return nil })
 	if err := session.finish(runErr); err != nil {
 		t.Fatal(err)

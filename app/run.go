@@ -14,36 +14,24 @@ import (
 
 type runnerFactory func(io.Reader, io.Writer) (sessionRunner, io.Closer, error)
 
-type sessionFactory struct {
-	env            environment
-	store          *sessionStore
-	messageHistory *messageHistoryStore
-	home           string
+type launcher struct {
+	env       environment
+	home      string
+	store     *sessionStore
+	history   *messageHistoryStore
+	noSandbox bool
+	runtimes  map[string]*backend.Runtime
 }
 
-func (factory sessionFactory) create(ctx context.Context, config resolvedConfig, selected backend.Backend) (*agentSession, error) {
-	runtime, err := openRuntime(ctx, selected, factory.home)
-	if err != nil {
-		return nil, err
+func newLauncher(home string, env environment, noSandbox bool) *launcher {
+	return &launcher{
+		env:       env,
+		home:      home,
+		store:     newSessionStore(home),
+		history:   newMessageHistoryStore(home),
+		noSandbox: noSandbox,
+		runtimes:  make(map[string]*backend.Runtime),
 	}
-	return newStoredAgentSession(config, factory.env, runtime, factory.store, factory.messageHistory, nil)
-}
-
-func (factory sessionFactory) open(ctx context.Context, cwd, sessionID string) (*agentSession, resolvedConfig, backend.Backend, error) {
-	config, handle, selected, err := resolveStoredSession(ctx, factory.store, factory.env, cwd, sessionID)
-	if err != nil {
-		return nil, resolvedConfig{}, backend.Backend{}, err
-	}
-	runtime, err := openRuntime(ctx, selected, factory.home)
-	if err != nil {
-		_ = handle.Close()
-		return nil, resolvedConfig{}, backend.Backend{}, err
-	}
-	session, err := newStoredAgentSession(config, factory.env, runtime, factory.store, factory.messageHistory, handle)
-	if err != nil {
-		return nil, resolvedConfig{}, backend.Backend{}, err
-	}
-	return session, config, selected, nil
 }
 
 func Run(ctx context.Context, options Options, dependencies Dependencies) error {
@@ -61,28 +49,10 @@ func run(ctx context.Context, options Options, dependencies Dependencies, newRun
 		userHomeDir: dependencies.UserHomeDir,
 		interrupts:  dependencies.Interrupts,
 		backends:    dependencies.Backends,
+		newToolset:  buildToolset,
 	}
-	home := dependencies.Home
-	env.newToolset = buildToolset
-	store := newSessionStore(home)
-	messageHistory := newMessageHistoryStore(home)
-	factory := sessionFactory{env: env, store: store, messageHistory: messageHistory, home: home}
-
-	config, handle, selected, err := resolveInitialSession(ctx, options, env, store)
-	if err != nil {
-		return err
-	}
-	var session *agentSession
-	if handle == nil {
-		session, err = factory.create(ctx, config, selected)
-	} else {
-		runtime, openErr := openRuntime(ctx, selected, home)
-		if openErr != nil {
-			_ = closeSessionHandle(handle)
-			return openErr
-		}
-		session, err = newStoredAgentSession(config, env, runtime, store, messageHistory, handle)
-	}
+	launcher := newLauncher(dependencies.Home, env, options.NoSandbox)
+	session, err := launcher.launch(ctx, options)
 	if err != nil {
 		return err
 	}
@@ -91,130 +61,98 @@ func run(ctx context.Context, options Options, dependencies Dependencies, newRun
 	if err != nil {
 		return session.finish(err)
 	}
-	runErr := runSessions(ctx, runner, session, config, selected, factory)
+	runErr := runSessions(ctx, runner, session, launcher)
 	return errors.Join(runErr, runnerCloser.Close())
 }
 
-func resolveInitialSession(
-	ctx context.Context,
-	arguments Options,
-	env environment,
-	store *sessionStore,
-) (resolvedConfig, *sessionHandle, backend.Backend, error) {
-	if !arguments.Resume {
-		selected, err := env.backends.Lookup(arguments.Provider)
-		if err != nil {
-			return resolvedConfig{}, nil, backend.Backend{}, err
-		}
-		config, err := resolveConfig(arguments, env, selected)
-		return config, nil, selected, err
-	}
-
-	cwd, err := resolveCWD("", env.getwd)
-	if err != nil {
-		return resolvedConfig{}, nil, backend.Backend{}, err
-	}
-	config, handle, selected, err := resolveStoredSession(ctx, store, env, cwd, arguments.SessionID)
-	config.noSandbox = arguments.NoSandbox
-	return config, handle, selected, err
-}
-
-func resolveStoredSession(
-	ctx context.Context,
-	store *sessionStore,
-	env environment,
-	lookupCWD string,
-	sessionID string,
-) (resolvedConfig, *sessionHandle, backend.Backend, error) {
-	handle, err := store.Open(ctx, lookupCWD, sessionID)
-	if err != nil {
-		return resolvedConfig{}, nil, backend.Backend{}, err
-	}
-	record := handle.Record()
-	selected, err := env.backends.Lookup(record.Provider)
-	if err != nil {
-		_ = handle.Close()
-		return resolvedConfig{}, nil, backend.Backend{}, err
-	}
-	resolved, err := resolveConfig(optionsFromRecord(record), env, selected)
-	if err != nil {
-		_ = handle.Close()
-		return resolvedConfig{}, nil, backend.Backend{}, err
-	}
-	resolved.warnings = append(resolved.warnings, handle.warnings...)
-	return resolved, handle, selected, nil
-}
-
-func runSessions(
-	ctx context.Context,
-	runner sessionRunner,
-	session *agentSession,
-	config resolvedConfig,
-	selected backend.Backend,
-	factory sessionFactory,
-) error {
+func runSessions(ctx context.Context, runner sessionRunner, session *agentSession, launcher *launcher) error {
 	for {
-		outcome, runErr := session.run(ctx, runner)
-		if runErr != nil {
-			return runErr
+		outcome, err := session.run(ctx, runner)
+		if err != nil {
+			return err
 		}
 
 		switch outcome.Action {
 		case terminal.RunExit:
 			return nil
 		case terminal.RunNewSession:
-			var err error
-			nextOptions := optionsFromConfig(config)
-			nextOptions.ThinkingLevel, nextOptions.FastMode = session.settings.Snapshot()
-			config, err = resolveConfig(nextOptions, factory.env, selected)
-			if err != nil {
-				return err
-			}
-			session, err = factory.create(ctx, config, selected)
-			if err != nil {
-				return err
-			}
-			continue
+			session, err = launcher.start(ctx, session.settings(), "")
 		case terminal.RunResumeSession:
-			var err error
-			session, config, selected, err = factory.open(ctx, config.cwd, outcome.SessionID)
-			if err != nil {
-				return err
-			}
+			session, err = launcher.resume(ctx, session.config.cwd, outcome.SessionID, "")
 		default:
 			return fmt.Errorf("session: unknown terminal run action %d", outcome.Action)
+		}
+		if err != nil {
+			return err
 		}
 	}
 }
 
-func optionsFromRecord(record sessionRecord) Options {
-	return Options{
-		Models:           record.Models,
-		ThinkingLevel:    record.ThinkingLevel,
-		FastMode:         record.FastMode,
-		WorkingDirectory: record.WorkingDirectory,
+func (launcher *launcher) launch(ctx context.Context, options Options) (*agentSession, error) {
+	if options.Resume {
+		return launcher.resume(ctx, "", options.SessionID, options.Prompt)
 	}
+	return launcher.start(ctx, sessionSettings{
+		provider:      options.Provider,
+		models:        options.Models,
+		thinkingLevel: options.ThinkingLevel,
+		fastMode:      options.FastMode,
+		cwd:           options.WorkingDirectory,
+	}, options.Prompt)
 }
 
-func optionsFromConfig(config resolvedConfig) Options {
-	return Options{
-		Models:           config.models,
-		ThinkingLevel:    config.thinkingLevel,
-		FastMode:         config.fastMode,
-		WorkingDirectory: config.cwd,
-		NoSandbox:        config.noSandbox,
-	}
+func (launcher *launcher) start(ctx context.Context, settings sessionSettings, prompt string) (*agentSession, error) {
+	return launcher.open(ctx, settings, nil, prompt)
 }
 
-func openRuntime(ctx context.Context, selected backend.Backend, home string) (*backend.Runtime, error) {
+func (launcher *launcher) resume(ctx context.Context, cwd, id, prompt string) (*agentSession, error) {
+	cwd, err := resolveCWD(cwd, launcher.env.getwd)
+	if err != nil {
+		return nil, err
+	}
+	handle, err := launcher.store.Open(ctx, cwd, id)
+	if err != nil {
+		return nil, err
+	}
+
+	session, err := launcher.open(ctx, handle.Record().settings(), handle, prompt)
+	if err != nil {
+		return nil, errors.Join(err, handle.Close())
+	}
+	return session, nil
+}
+
+func (launcher *launcher) open(ctx context.Context, settings sessionSettings, handle *sessionHandle, prompt string) (*agentSession, error) {
+	selected, err := launcher.env.backends.Lookup(settings.provider)
+	if err != nil {
+		return nil, err
+	}
+	config, err := resolveConfig(settings, selected, launcher.env)
+	if err != nil {
+		return nil, err
+	}
+	if handle != nil {
+		config.warnings = append(config.warnings, handle.warnings...)
+	}
+
+	runtime, err := launcher.runtime(ctx, selected)
+	if err != nil {
+		return nil, err
+	}
+	return newStoredAgentSession(launcher, config, runtime, handle, prompt)
+}
+
+func (launcher *launcher) runtime(ctx context.Context, selected backend.Backend) (*backend.Runtime, error) {
+	if runtime, ok := launcher.runtimes[selected.ID]; ok {
+		return runtime, nil
+	}
+
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
-	return selected.Open(ctx, home)
-}
-
-func closeSessionHandle(handle *sessionHandle) error {
-	if handle == nil {
-		return nil
+	runtime, err := selected.Open(ctx, launcher.home)
+	if err != nil {
+		return nil, err
 	}
-	return handle.Close()
+	launcher.runtimes[selected.ID] = runtime
+	return runtime, nil
 }

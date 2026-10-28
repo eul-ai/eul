@@ -20,10 +20,9 @@ func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
 		return agent.Response{}, nil
 	}))
 	var tools []agent.Tool
-	session, err := newAgentSession(resolvedConfig{models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, cwd: t.TempDir()}, environment{newToolset: captureTools(&tools, buildToolset)}, backendRuntime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	launcher := testLauncher(t, t.TempDir(), backendRuntime)
+	launcher.env.newToolset = captureTools(&tools, buildToolset)
+	session := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, cwd: t.TempDir()})
 	defer session.finish(nil)
 
 	type outcome struct {
@@ -58,10 +57,9 @@ func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
 func TestAgentSessionRoutesSubagentNetworkApprovalToTerminal(t *testing.T) {
 	backendRuntime := testBackendRuntime(networkBashChildProvider("child approved", nil))
 	var tools []agent.Tool
-	session, err := newAgentSession(resolvedConfig{models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, cwd: t.TempDir()}, environment{newToolset: captureTools(&tools, buildToolset)}, backendRuntime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	launcher := testLauncher(t, t.TempDir(), backendRuntime)
+	launcher.env.newToolset = captureTools(&tools, buildToolset)
+	session := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, cwd: t.TempDir()})
 	defer session.finish(nil)
 
 	result, err := executeTool(tools, "launch_subagents", `{"tasks":[{"description":"inspect network","prompt":"inspect network"}]}`)
@@ -98,10 +96,9 @@ func TestAgentSessionSharesNetworkSessionApprovalWithSubagents(t *testing.T) {
 	childCompleted := make(chan struct{})
 	backendRuntime := testBackendRuntime(networkBashChildProvider("child approved", childCompleted))
 	var tools []agent.Tool
-	session, err := newAgentSession(resolvedConfig{models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, cwd: t.TempDir()}, environment{newToolset: captureTools(&tools, buildToolset)}, backendRuntime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	launcher := testLauncher(t, t.TempDir(), backendRuntime)
+	launcher.env.newToolset = captureTools(&tools, buildToolset)
+	session := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, cwd: t.TempDir()})
 	defer session.finish(nil)
 
 	type outcome struct {

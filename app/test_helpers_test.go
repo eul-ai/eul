@@ -1,13 +1,10 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -70,32 +67,29 @@ type discardToolUpdates struct{}
 
 func (discardToolUpdates) Update(agent.ToolPresentation) error { return nil }
 
-func testRuntime(cwd string, stdout, stderr *bytes.Buffer) environment {
+func testEnvironment(t *testing.T, cwd string, backends ...backend.Backend) environment {
+	t.Helper()
+	userHome := t.TempDir()
 	return environment{
-		stdin:       strings.NewReader("/exit\n"),
-		stdout:      stdout,
 		getwd:       func() (string, error) { return cwd, nil },
-		userHomeDir: func() (string, error) { return filepath.Join(cwd, ".test-home"), nil },
-		backends:    backend.Registry{testBackend("test", testBackendRuntime(emptyProvider()))},
+		userHomeDir: func() (string, error) { return userHome, nil },
+		backends:    backends,
+		newToolset:  buildToolset,
 	}
 }
 
-func testBackendRuntimeOf(t *testing.T, env environment) *backend.Runtime {
+func testLauncher(t *testing.T, cwd string, runtime *backend.Runtime) *launcher {
 	t.Helper()
-	runtime, err := env.backends[0].Open(context.Background(), "")
+	return newLauncher(t.TempDir(), testEnvironment(t, cwd, testBackend("test", runtime)), false)
+}
+
+func startTestSession(t *testing.T, launcher *launcher, settings sessionSettings) *agentSession {
+	t.Helper()
+	session, err := launcher.start(context.Background(), settings, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return runtime
-}
-
-func resolveTestConfig(options Options, env environment) (resolvedConfig, error) {
-	options.NoSandbox = true
-	selected, err := env.backends.Lookup(options.Provider)
-	if err != nil {
-		return resolvedConfig{}, err
-	}
-	return resolveConfig(options, env, selected)
+	return session
 }
 
 func sessionStoreTestAgentCheckpoint(t testing.TB) agent.Checkpoint {

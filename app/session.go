@@ -17,10 +17,11 @@ type sessionRunner interface {
 }
 
 type agentSession struct {
+	config          sessionSettings
 	engine          *agent.Engine
 	subagents       *subagent.Manager
 	terminalOptions terminal.Options
-	settings        *agent.Settings
+	agentSettings   *agent.Settings
 	persistence     *sessionPersistence
 }
 
@@ -62,15 +63,6 @@ func newSessionTools(
 	return tools, manager
 }
 
-func newAgentSession(config resolvedConfig, env environment, runtime *backend.Runtime) (*agentSession, error) {
-	session, options, err := newAgentSessionComponents(config, env, runtime, false)
-	if err != nil {
-		return nil, err
-	}
-	session.terminalOptions = options.options()
-	return session, nil
-}
-
 func resolveModelMetadata(runtime *backend.Runtime, models backend.Models) (map[subagent.Profile]backend.ModelMetadata, error) {
 	metadata := make(map[subagent.Profile]backend.ModelMetadata, 3)
 	for _, profile := range []subagent.Profile{subagent.ProfileMain, subagent.ProfileFast, subagent.ProfileBalanced} {
@@ -87,7 +79,7 @@ func newAgentSessionComponents(
 	config resolvedConfig,
 	env environment,
 	runtime *backend.Runtime,
-	checkpointing bool,
+	noSandbox bool,
 ) (*agentSession, terminalOptionsBuilder, error) {
 	metadata, err := resolveModelMetadata(runtime, config.models)
 	if err != nil {
@@ -98,20 +90,21 @@ func newAgentSessionComponents(
 		return nil, terminalOptionsBuilder{}, fmt.Errorf("fast mode is unavailable for model %q", config.models.Main)
 	}
 	warnings := append([]string(nil), config.warnings...)
-	authorizeNetwork, permissionRequests := newNetworkPermissionBroker(config.noSandbox)
+	authorizeNetwork, permissionRequests := newNetworkPermissionBroker(noSandbox)
 	settings := agent.NewSettings(main.ClampThinkingLevel(config.thinkingLevel), config.fastMode)
 
 	goal := &agent.Goal{}
 	tools, subagents := newSessionTools(config, env, runtime.Provider, metadata, settings, authorizeNetwork, goal)
 	options := engineOptions(config, config.models.Main, settings)
-	options.Checkpointing = checkpointing
+	options.Checkpointing = true
 	options.Inbox = tool.NewSubagentInbox(subagents)
 	options.Goal = goal
 	engine := agent.New(runtime.Provider, tools, options)
 	session := &agentSession{
-		engine:    engine,
-		subagents: subagents,
-		settings:  settings,
+		config:        config.sessionSettings,
+		engine:        engine,
+		subagents:     subagents,
+		agentSettings: settings,
 	}
 	terminalOptions := terminalOptionsBuilder{
 		config:             config,
@@ -126,6 +119,12 @@ func newAgentSessionComponents(
 		goal:               goal,
 	}
 	return session, terminalOptions, nil
+}
+
+func (session *agentSession) settings() sessionSettings {
+	settings := session.config
+	settings.thinkingLevel, settings.fastMode = session.agentSettings.Snapshot()
+	return settings
 }
 
 func (session *agentSession) run(ctx context.Context, runner sessionRunner) (terminal.RunOutcome, error) {

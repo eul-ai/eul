@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -13,20 +12,20 @@ import (
 )
 
 func TestResolveConfigLoadsDefaultAndExplicitModels(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(t.TempDir(), &stdout, &stderr)
+	env := testEnvironment(t, t.TempDir())
+	selected := testBackend("test", nil)
 
-	defaults, err := resolveTestConfig(Options{}, runtime)
+	defaults, err := resolveConfig(sessionSettings{}, selected, env)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if defaults.models != (backend.Models{Main: "gpt-5.6-sol", Fast: "gpt-5.6-luna", Balanced: "gpt-5.6-terra"}) {
+	if defaults.provider != "test" || defaults.models != (backend.Models{Main: "gpt-5.6-sol", Fast: "gpt-5.6-luna", Balanced: "gpt-5.6-terra"}) {
 		t.Fatalf("resolved defaults = %+v", defaults)
 	}
 
-	explicit, err := resolveTestConfig(Options{
-		Models: backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"},
-	}, runtime)
+	explicit, err := resolveConfig(sessionSettings{
+		models: backend.Models{Main: "main-model", Fast: "fast-model", Balanced: "balanced-model"},
+	}, selected, env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,17 +33,15 @@ func TestResolveConfigLoadsDefaultAndExplicitModels(t *testing.T) {
 		t.Fatalf("config = %+v", explicit)
 	}
 
-	fastMode, err := resolveTestConfig(Options{FastMode: true}, runtime)
+	fastMode, err := resolveConfig(sessionSettings{fastMode: true}, selected, env)
 	if err != nil || !fastMode.fastMode {
 		t.Fatalf("fast mode config = %+v, error = %v", fastMode, err)
 	}
 }
 
 func TestResolveConfigRequiresMainModel(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(t.TempDir(), &stdout, &stderr)
-	runtime.backends[0].Models = backend.Models{}
-	if _, err := resolveTestConfig(Options{Models: backend.Models{Fast: "fast-model"}}, runtime); err == nil {
+	selected := backend.Backend{ID: "test"}
+	if _, err := resolveConfig(sessionSettings{models: backend.Models{Fast: "fast-model"}}, selected, testEnvironment(t, t.TempDir())); err == nil {
 		t.Fatal("missing main model was accepted")
 	}
 }
@@ -68,10 +65,9 @@ func TestResolveConfigLoadsOnlyGenericSkillLocations(t *testing.T) {
 	writeConfigTestSkill(t, filepath.Join(root, ".agents", "skills", "parent", "SKILL.md"), "parent", "parent")
 	writeConfigTestSkill(t, filepath.Join(cwd, ".pi", "skills", "pi", "SKILL.md"), "pi", "pi")
 
-	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(root, &stdout, &stderr)
-	runtime.userHomeDir = func() (string, error) { return home, nil }
-	config, err := resolveTestConfig(Options{Models: backend.Models{Main: "model"}, WorkingDirectory: "project"}, runtime)
+	env := testEnvironment(t, root)
+	env.userHomeDir = func() (string, error) { return home, nil }
+	config, err := resolveConfig(sessionSettings{cwd: "project"}, testBackend("test", nil), env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,11 +83,10 @@ func TestResolveConfigSkipsGlobalSkillsWhenHomeIsUnavailable(t *testing.T) {
 	cwd := t.TempDir()
 	writeConfigTestSkill(t, filepath.Join(cwd, ".agents", "skills", "review", "SKILL.md"), "review", "project")
 
-	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(cwd, &stdout, &stderr)
-	runtime.userHomeDir = func() (string, error) { return "", errors.New("home unavailable") }
+	env := testEnvironment(t, cwd)
+	env.userHomeDir = func() (string, error) { return "", errors.New("home unavailable") }
 
-	config, err := resolveTestConfig(Options{Models: backend.Models{Main: "model"}}, runtime)
+	config, err := resolveConfig(sessionSettings{}, testBackend("test", nil), env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,14 +118,11 @@ func TestResolveConfigLoadsProjectAndResolvesWorkingDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cwd, "AGENTS.md"), []byte("Project rules."), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	var stdout, stderr bytes.Buffer
-	runtime := testRuntime(root, &stdout, &stderr)
-
-	config, err := resolveTestConfig(Options{
-		Models:           backend.Models{Main: "gpt-5.6-sol"},
-		ThinkingLevel:    agent.ThinkingMax,
-		WorkingDirectory: "project",
-	}, runtime)
+	config, err := resolveConfig(sessionSettings{
+		models:        backend.Models{Main: "gpt-5.6-sol"},
+		thinkingLevel: agent.ThinkingMax,
+		cwd:           "project",
+	}, testBackend("test", nil), testEnvironment(t, root))
 	if err != nil {
 		t.Fatal(err)
 	}

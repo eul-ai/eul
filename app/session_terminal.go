@@ -27,6 +27,7 @@ type terminalOptionsBuilder struct {
 	sessions           terminal.Sessions
 	messageHistory     terminal.MessageHistory
 	initialCheckpoint  *terminal.Checkpoint
+	initialPrompt      string
 	sessionID          string
 	previousTurnActive bool
 }
@@ -82,7 +83,7 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 			InitialCheckpoint:  source.initialCheckpoint,
 			SessionID:          source.sessionID,
 			PreviousTurnActive: source.previousTurnActive,
-			InitialPrompt:      source.config.prompt,
+			InitialPrompt:      source.initialPrompt,
 		},
 		Events: terminal.Events{
 			Interrupts:         source.runtime.interrupts,

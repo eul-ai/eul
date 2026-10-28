@@ -3,14 +3,14 @@ package app
 import (
 	"context"
 	"errors"
-	"slices"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/skill"
 	"github.com/eul-ai/eul/subagent"
 )
 
@@ -35,10 +35,10 @@ func TestModelSetSelectsSubagentProfiles(t *testing.T) {
 }
 
 func TestNewAgentSessionRejectsUnsupportedModel(t *testing.T) {
-	_, err := newAgentSession(resolvedConfig{
+	_, err := testLauncher(t, t.TempDir(), testBackendRuntime(emptyProvider())).start(context.Background(), sessionSettings{
 		models: backend.Models{Main: "unknown", Fast: "model", Balanced: "model"},
 		cwd:    t.TempDir(),
-	}, environment{}, testBackendRuntime(emptyProvider()))
+	}, "")
 	var unsupported *backend.ModelNotSupportedError
 	if !errors.As(err, &unsupported) || unsupported.Model != "unknown" {
 		t.Fatalf("error = %v", err)
@@ -66,12 +66,15 @@ func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 		},
 	}
 	cwd := t.TempDir()
-	skills := []skill.Skill{{Name: "review", Description: "Review code"}}
-	warnings := []string{"Skipped skill invalid: malformed"}
-	session, err := newAgentSession(resolvedConfig{models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, thinkingLevel: agent.ThinkingMedium, cwd: cwd, skills: skills, warnings: warnings}, environment{}, backendRuntime)
-	if err != nil {
+	writeConfigTestSkill(t, filepath.Join(cwd, ".agents", "skills", "review", "SKILL.md"), "review", "Review code")
+	brokenSkill := filepath.Join(cwd, ".agents", "skills", "broken", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(brokenSkill), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(brokenSkill, []byte("invalid"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), sessionSettings{models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, thinkingLevel: agent.ThinkingMedium, cwd: cwd})
 	defer session.finish(nil)
 	if session.terminalOptions.Services.LoadUsage == nil {
 		t.Fatal("backend usage was not wired to the terminal")
@@ -95,8 +98,8 @@ func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 	if len(session.terminalOptions.Config.Skills) != 1 || session.terminalOptions.Config.Skills[0].Name != "review" {
 		t.Fatalf("terminal skills = %+v", session.terminalOptions.Config.Skills)
 	}
-	if !slices.Equal(session.terminalOptions.Config.Warnings, warnings) {
-		t.Fatalf("terminal warnings = %v", session.terminalOptions.Config.Warnings)
+	if warnings := session.terminalOptions.Config.Warnings; len(warnings) != 1 || !strings.Contains(warnings[0], filepath.ToSlash(brokenSkill)) {
+		t.Fatalf("terminal warnings = %v", warnings)
 	}
 }
 
@@ -114,13 +117,9 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 		return agent.Response{Text: "done"}, nil
 	}))
 	var tools []agent.Tool
-	session, err := newAgentSession(resolvedConfig{
-		models: backend.Models{Main: "model", Fast: "model", Balanced: "model"},
-		cwd:    t.TempDir(),
-	}, environment{newToolset: captureTools(&tools, buildToolset)}, backendRuntime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	launcher := testLauncher(t, t.TempDir(), backendRuntime)
+	launcher.env.newToolset = captureTools(&tools, buildToolset)
+	session := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, cwd: t.TempDir()})
 	defer func() {
 		close(releaseChild)
 		if err := session.finish(nil); err != nil {
@@ -152,11 +151,11 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 
 func TestNewAgentSessionRejectsUnsupportedFastMode(t *testing.T) {
 	backendRuntime := &backend.Runtime{Provider: emptyProvider(), Catalog: map[string]backend.ModelMetadata{"model": {}}}
-	session, err := newAgentSession(resolvedConfig{
+	session, err := testLauncher(t, t.TempDir(), backendRuntime).start(context.Background(), sessionSettings{
 		models:   backend.Models{Main: "model", Fast: "model", Balanced: "model"},
 		fastMode: true,
 		cwd:      t.TempDir(),
-	}, environment{}, backendRuntime)
+	}, "")
 	if session != nil || err == nil {
 		t.Fatalf("session=%v error=%v", session, err)
 	}
@@ -174,15 +173,13 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 		},
 	}
 	var tools []agent.Tool
-	runtime := environment{newToolset: captureTools(&tools, additionalTools)}
-	session, err := newAgentSession(resolvedConfig{
+	launcher := testLauncher(t, t.TempDir(), backendRuntime)
+	launcher.env.newToolset = captureTools(&tools, additionalTools)
+	session := startTestSession(t, launcher, sessionSettings{
 		models:        backend.Models{Main: "main", Fast: "fast", Balanced: "balanced"},
 		thinkingLevel: agent.ThinkingHigh,
 		cwd:           t.TempDir(),
-	}, runtime, backendRuntime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	})
 
 	result, err := executeTool(tools, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"fast","thinking_level":"high"}]}`)
 	if err != nil || !result.IsError {
@@ -207,15 +204,13 @@ func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 		Catalog: testCatalog("main", "fast", "balanced"),
 	}
 	var tools []agent.Tool
-	runtime := environment{newToolset: captureTools(&tools, additionalTools)}
-	session, err := newAgentSession(resolvedConfig{
+	launcher := testLauncher(t, t.TempDir(), backendRuntime)
+	launcher.env.newToolset = captureTools(&tools, additionalTools)
+	session := startTestSession(t, launcher, sessionSettings{
 		models:        backend.Models{Main: "main", Fast: "fast", Balanced: "balanced"},
 		thinkingLevel: agent.ThinkingHigh,
 		cwd:           t.TempDir(),
-	}, runtime, backendRuntime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	})
 	defer session.finish(nil)
 
 	launch := func() agent.Request {
@@ -236,7 +231,7 @@ func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 	if request.Model != "main" || request.ThinkingLevel != agent.ThinkingHigh {
 		t.Fatalf("high request = %+v", request)
 	}
-	if err := session.settings.SetThinkingLevel(agent.ThinkingMinimal); err != nil {
+	if err := session.agentSettings.SetThinkingLevel(agent.ThinkingMinimal); err != nil {
 		t.Fatal(err)
 	}
 	request = launch()
@@ -247,15 +242,13 @@ func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 
 func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 	var tools []agent.Tool
-	runtime := environment{newToolset: captureTools(&tools, buildToolset)}
 	backendRuntime := testBackendRuntime(providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
 		return agent.Response{}, nil
 	}))
 	cwd := t.TempDir()
-	session, err := newAgentSession(resolvedConfig{models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, cwd: cwd}, runtime, backendRuntime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	launcher := testLauncher(t, cwd, backendRuntime)
+	launcher.env.newToolset = captureTools(&tools, buildToolset)
+	session := startTestSession(t, launcher, sessionSettings{models: backend.Models{Main: "model"}, cwd: cwd})
 	defer session.finish(nil)
 
 	result, err := executeTool(tools, "update_goal", `{"status":"complete"}`)
