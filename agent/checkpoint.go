@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -80,9 +81,18 @@ func validateCheckpointData(data checkpointData) error {
 }
 
 func cloneCheckpointData(data checkpointData) checkpointData {
-	conversation := conversationState{state: data.State, inputs: data.PendingInputs}.clone()
-	data.State = conversation.state
-	data.PendingInputs = conversation.inputs
+	data.State = slices.Clone(data.State)
+	data.PendingInputs = slices.Clone(data.PendingInputs)
+	for index, input := range data.PendingInputs {
+		data.PendingInputs[index].Content = slices.Clone(input.Content)
+		for partIndex, part := range input.Content {
+			if part.Image != nil {
+				image := *part.Image
+				image.Data = slices.Clone(image.Data)
+				data.PendingInputs[index].Content[partIndex].Image = &image
+			}
+		}
+	}
 	if data.Goal != nil {
 		goal := *data.Goal
 		data.Goal = &goal
@@ -129,12 +139,11 @@ func (e *Engine) checkpointLocked() Checkpoint {
 		storedGoal = &goal
 	}
 
-	conversation := e.conversation.clone()
 	return Checkpoint{data: checkpointData{
 		Version:       checkpointVersion,
-		State:         conversation.state,
-		ContextUsage:  conversation.usage,
-		PendingInputs: conversation.inputs,
+		State:         e.conversation.state,
+		ContextUsage:  e.conversation.usage,
+		PendingInputs: slices.Clip(e.conversation.inputs),
 		Goal:          storedGoal,
 	}}
 }

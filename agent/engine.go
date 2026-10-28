@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 
 	"github.com/eul-ai/eul/skill"
@@ -81,8 +82,8 @@ func (e *Engine) Run(ctx context.Context, content []ContentPart, sink EventSink)
 	e.continuations.beginRun()
 	defer e.continuations.endRun()
 
-	current := e.conversation.clone()
-	current.inputs = append(current.inputs, NewUserInput(content...))
+	current := e.conversation
+	current.inputs = append(slices.Clip(current.inputs), NewUserInput(content...))
 	return (&engineTurn{
 		engine:  e,
 		ctx:     ctx,
@@ -97,14 +98,8 @@ type conversationState struct {
 	inputs []Input
 }
 
-func (current conversationState) clone() conversationState {
-	current.state = append([]byte(nil), current.state...)
-	current.inputs = cloneInputs(current.inputs)
-	return current
-}
-
 func (current conversationState) checkpoint(engine *Engine) {
-	engine.conversation = current.clone()
+	engine.conversation = current
 }
 
 func (e *Engine) Compact(ctx context.Context, sink EventSink) error {
@@ -122,7 +117,7 @@ func (e *Engine) Compact(ctx context.Context, sink EventSink) error {
 		return errors.New("agent: context compaction is unavailable")
 	}
 
-	current := e.conversation.clone()
+	current := e.conversation
 	if len(current.state) == 0 && len(current.inputs) == 0 {
 		return errors.New("agent: no context to compact")
 	}
@@ -165,7 +160,7 @@ func (e *Engine) CompleteGoal() error {
 
 func deliverContinuation(current *conversationState, next pendingContinuation, sink EventSink) error {
 	current.inputs = append(current.inputs, NewUserInput(next.content...))
-	event := Event{Kind: EventSteering, Content: cloneContentParts(next.content)}
+	event := Event{Kind: EventSteering, Content: next.content}
 	if next.kind == continuationGoal {
 		event.Kind = EventGoalContinuation
 		event.Text = NewUserInput(next.content...).PlainText()

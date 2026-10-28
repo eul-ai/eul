@@ -103,7 +103,7 @@ func TestEnginePreservesImageSteeringContent(t *testing.T) {
 	go func() {
 		_, err := engine.Run(context.Background(), textParts("start"), func(event Event) error {
 			if event.Kind == EventSteering {
-				delivered = cloneContentParts(event.Content)
+				delivered = event.Content
 			}
 			return nil
 		})
@@ -111,12 +111,9 @@ func TestEnginePreservesImageSteeringContent(t *testing.T) {
 	}()
 
 	<-started
-	steering := cloneContentParts(want)
-	if !engine.Steer(steering) {
+	if !engine.Steer(want) {
 		t.Fatal("active engine rejected image steering")
 	}
-	steering[0].Text = "changed"
-	steering[1].Image.Data[0] = 'x'
 	close(release)
 
 	if err := <-done; err != nil {

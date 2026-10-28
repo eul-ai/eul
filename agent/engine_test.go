@@ -372,66 +372,6 @@ func TestEnginePreservesTextOnlyContent(t *testing.T) {
 	}
 }
 
-func TestProviderRetryOwnsContent(t *testing.T) {
-	attempt := 0
-	provider := &retryingProvider{
-		generate: func(_ context.Context, request Request, _ TextSink, _ TextSink, _ ToolCallSink) (Response, error) {
-			parts := request.Inputs[0].Content
-			if parts[0].Text != "before" || string(parts[1].Image.Data) != "png" {
-				t.Fatalf("retry content = %+v", parts)
-			}
-			attempt++
-			if attempt == 1 {
-				parts[0].Text = "changed"
-				parts[1].Image.Data[0] = 'X'
-				return Response{}, errors.New("retry")
-			}
-			return Response{Text: "done"}, nil
-		},
-		retry: func(_ error, failedAttempts int) (time.Duration, bool) {
-			return 0, failedAttempts == 1
-		},
-	}
-	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
-	content := []ContentPart{
-		{Kind: ContentPartText, Text: "before"},
-		{Kind: ContentPartImage, Image: &Image{MediaType: "image/png", Data: []byte("png")}},
-	}
-
-	if _, err := engine.Run(context.Background(), content, discardEvents); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestProviderRequestOwnsContent(t *testing.T) {
-	provider := &scriptedProvider{t: t, steps: []providerStep{
-		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			request.Inputs[0].Content[0].Text = "changed"
-			request.Inputs[0].Content[1].Image.Data[0] = 'X'
-			return Response{}, errors.New("failed")
-		},
-		func(_ context.Context, request Request, _ TextSink) (Response, error) {
-			parts := request.Inputs[0].Content
-			if parts[0].Text != "before" || string(parts[1].Image.Data) != "png" {
-				t.Fatalf("content was mutated through provider request: %+v", parts)
-			}
-			return Response{Text: "done"}, nil
-		},
-	}}
-	engine := newTestEngine(t, provider, &fakeToolbox{}, Options{})
-	content := []ContentPart{
-		{Kind: ContentPartText, Text: "before"},
-		{Kind: ContentPartImage, Image: &Image{MediaType: "image/png", Data: []byte("png")}},
-	}
-
-	if _, err := engine.Run(context.Background(), content, discardEvents); err == nil {
-		t.Fatal("first run succeeded")
-	}
-	if _, err := engine.Run(context.Background(), content, discardEvents); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func newTestEngine(t *testing.T, provider Provider, toolbox Toolbox, options Options) *Engine {
 	t.Helper()
 	return New(provider, toolbox, options)

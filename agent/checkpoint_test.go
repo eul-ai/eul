@@ -32,9 +32,6 @@ func TestEngineCheckpointRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine.conversation.state[0] = 'X'
-	engine.conversation.inputs[0].Content[0].Text = "changed"
-	engine.conversation.inputs[0].Content[1].Image.Data[0] = 'X'
 
 	encoded, err := json.Marshal(checkpoint)
 	if err != nil {

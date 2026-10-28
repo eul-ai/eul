@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -72,7 +73,7 @@ func (e *Engine) generateWithRecovery(
 }
 
 func (e *Engine) expandSkillContent(content []ContentPart) ([]ContentPart, error) {
-	content = cloneContentParts(content)
+	content = slices.Clone(content)
 	firstText := -1
 	for index, part := range content {
 		switch {
@@ -105,7 +106,7 @@ func (e *Engine) request(current conversationState) Request {
 		ThinkingLevel: thinkingLevel,
 		FastMode:      fastMode,
 		Instructions:  e.instructions,
-		Inputs:        cloneInputs(current.inputs),
+		Inputs:        slices.Clip(current.inputs),
 		Tools:         e.tools.Definitions(),
 		State:         current.state,
 	}
@@ -141,7 +142,7 @@ func attachInbox(request Request, batch InboxBatch) Request {
 	if strings.TrimSpace(batch.Text) == "" {
 		return request
 	}
-	request.Inputs = append(cloneInputs(request.Inputs), NewInboxInput(batch.Text))
+	request.Inputs = append(slices.Clip(request.Inputs), NewInboxInput(batch.Text))
 	return request
 }
 
@@ -160,10 +161,7 @@ func (e *Engine) generateResponse(ctx context.Context, request Request, sink Eve
 	retryPolicy, canRetry := e.provider.(GenerationRetryPolicy)
 	for failedAttempts := 1; ; failedAttempts++ {
 		toolEvents := newToolEventTracker(e.tools, sink)
-		providerRequest := request
-		providerRequest.Inputs = cloneInputs(request.Inputs)
-		providerRequest.State = append([]byte(nil), request.State...)
-		response, err := e.provider.Generate(ctx, providerRequest, StreamObserver{
+		response, err := e.provider.Generate(ctx, request, StreamObserver{
 			Text: func(text string) error {
 				return toolEvents.emitProvider(Event{Kind: EventAssistantText, Text: text})
 			},
@@ -248,10 +246,7 @@ func (e *Engine) compactRequest(ctx context.Context, sink EventSink, compactor C
 		return request, current, Usage{}, err
 	}
 
-	providerRequest := request
-	providerRequest.Inputs = cloneInputs(request.Inputs)
-	providerRequest.State = append([]byte(nil), request.State...)
-	compacted, err := compactor.Compact(ctx, providerRequest)
+	compacted, err := compactor.Compact(ctx, request)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return request, current, Usage{}, ctxErr

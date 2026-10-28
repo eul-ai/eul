@@ -206,7 +206,6 @@ func TestEngineUsesFinalPresentationOnlyOnToolEnd(t *testing.T) {
 		if err := updates.Update(ToolPresentation{Title: "edit", Lines: []string{"late update"}}); err != nil {
 			t.Fatalf("late update error = %v", err)
 		}
-		final.Diff[0].Text = "mutated after finalization"
 		return ToolResult{Output: "edited demo.go"}, nil
 	}}
 	var events []Event

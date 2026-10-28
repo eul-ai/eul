@@ -71,7 +71,7 @@ func (tracker *toolEventTracker) presentation(snapshot ToolCallSnapshot) ToolPre
 	if !ok {
 		return ToolPresentation{Title: snapshot.Name}
 	}
-	presentation := presenter.Presentation(snapshot).Clone()
+	presentation := presenter.Presentation(snapshot)
 	if presentation.Title == "" {
 		presentation.Title = snapshot.Name
 	}
@@ -171,7 +171,6 @@ func (tracker *toolEventTracker) publishUpdate(call ToolCall, next ToolPresentat
 	if streamed.presentationFinalized {
 		return nil
 	}
-	next = next.Clone()
 	if streamed.presentation.Equal(next) {
 		return nil
 	}
@@ -189,7 +188,7 @@ func (tracker *toolEventTracker) setFinal(call ToolCall, final ToolPresentation)
 	defer tracker.mu.Unlock()
 
 	streamed := tracker.streamed[call.ID]
-	streamed.presentation = final.Clone()
+	streamed.presentation = final
 	streamed.presentationFinalized = true
 	tracker.streamed[call.ID] = streamed
 }

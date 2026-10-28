@@ -53,14 +53,6 @@ type continuationArbiter struct {
 	goal              *GoalState
 }
 
-func cloneContentBatches(batches [][]ContentPart) [][]ContentPart {
-	cloned := make([][]ContentPart, len(batches))
-	for index, content := range batches {
-		cloned[index] = cloneContentParts(content)
-	}
-	return cloned
-}
-
 func (arbiter *continuationArbiter) beginRun() {
 	arbiter.mu.Lock()
 	defer arbiter.mu.Unlock()
@@ -86,7 +78,7 @@ func (arbiter *continuationArbiter) steer(content []ContentPart) bool {
 	if !arbiter.acceptingSteering {
 		return false
 	}
-	arbiter.steering = append(arbiter.steering, cloneContentParts(content))
+	arbiter.steering = append(arbiter.steering, content)
 	if arbiter.toolRoundSteering != nil {
 		close(arbiter.toolRoundSteering)
 		arbiter.toolRoundSteering = nil
@@ -98,7 +90,7 @@ func (arbiter *continuationArbiter) clearSteering() [][]ContentPart {
 	arbiter.mu.Lock()
 	defer arbiter.mu.Unlock()
 
-	steering := cloneContentBatches(arbiter.steering)
+	steering := arbiter.steering
 	arbiter.steering = nil
 	return steering
 }
