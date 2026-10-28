@@ -66,7 +66,7 @@ func TestFilePickerShowsLoadingRow(t *testing.T) {
 	if err := model.insertInput("@"); err != nil {
 		t.Fatal(err)
 	}
-	lines := renderFilePicker(model, model.filePickerHeight())
+	lines := renderFilePicker(model, model.pickerHeight())
 	if len(lines) != 1 || lines[0].style.foreground != currentTheme.muted {
 		t.Fatalf("loading picker = %+v", lines)
 	}
@@ -78,10 +78,10 @@ func TestFilePickerKeepsStableHeightWhileSearching(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := takePickerRequest(t, model)
-	height := model.filePickerHeight()
+	height := model.pickerHeight()
 	model.applyFileSearchResult(testFileSearchResult(request.ID, "a.go", "b.go"))
-	if model.filePickerHeight() != height {
-		t.Fatalf("result height = %d, want %d", model.filePickerHeight(), height)
+	if model.pickerHeight() != height {
+		t.Fatalf("result height = %d, want %d", model.pickerHeight(), height)
 	}
 
 	if err := model.insertInput("missing"); err != nil {
@@ -89,9 +89,9 @@ func TestFilePickerKeepsStableHeightWhileSearching(t *testing.T) {
 	}
 	request = takePickerRequest(t, model)
 	model.applyFileSearchResult(filesearch.Result{ID: request.ID, State: filesearch.StateComplete})
-	lines := renderFilePicker(model, model.filePickerHeight())
-	if !model.filePickerVisible() || model.filePickerHeight() != height || len(lines) != 1 || lines[0].style.foreground != currentTheme.muted {
-		t.Fatalf("empty picker: visible=%t height=%d lines=%+v", model.filePickerVisible(), model.filePickerHeight(), lines)
+	lines := renderFilePicker(model, model.pickerHeight())
+	if !model.filePickerVisible() || model.pickerHeight() != height || len(lines) != 1 || lines[0].style.foreground != currentTheme.muted {
+		t.Fatalf("empty picker: visible=%t height=%d lines=%+v", model.filePickerVisible(), model.pickerHeight(), lines)
 	}
 }
 

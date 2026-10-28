@@ -204,15 +204,15 @@ func reduceResumePickerKey(model *tuiModel, key keys.Event) (tuiAction, bool) {
 
 	switch key.Code {
 	case keys.Up:
-		model.moveResumePickerSelection(-1)
+		model.resumePicker.move(-1)
 	case keys.Down:
-		model.moveResumePickerSelection(1)
+		model.resumePicker.move(1)
 	case keys.Enter:
-		sessionID, ok := model.selectedResumeSession()
+		session, ok := model.resumePicker.current()
 		if !ok {
 			return tuiAction{}, true
 		}
-		return tuiAction{kind: tuiActionResume, text: sessionID}, true
+		return tuiAction{kind: tuiActionResume, text: session.ID}, true
 	case keys.Escape:
 		model.dismissResumePicker()
 	case keys.EOF, keys.CtrlC, keys.CtrlD:
@@ -230,15 +230,15 @@ func reduceCommandPickerKey(model *tuiModel, key keys.Event) bool {
 
 	switch key.Code {
 	case keys.Up:
-		model.moveCommandPickerSelection(-1)
+		model.commandPicker.move(-1)
 	case keys.Down:
-		model.moveCommandPickerSelection(1)
+		model.commandPicker.move(1)
 	case keys.Tab:
 		if err := model.applyCommandPickerSelection(); err != nil {
 			setInputError(model, err)
 		}
 	case keys.Enter:
-		selected := model.commandPicker.matches[model.commandPicker.selected]
+		selected, _ := model.commandPicker.current()
 		if selected.text == model.commandPicker.query {
 			return false
 		}
@@ -266,21 +266,21 @@ func reduceFilePickerKey(model *tuiModel, key keys.Event) bool {
 	if !model.filePicker.matchesCurrent {
 		return key.Code == keys.Up || key.Code == keys.Down || key.Code == keys.Enter || key.Code == keys.Tab || key.Code == keys.Right
 	}
-	if len(model.filePicker.matches) == 0 {
+	if len(model.filePicker.items) == 0 {
 		return model.filePicker.state == filesearch.StateDiscovering && (key.Code == keys.Up || key.Code == keys.Down || key.Code == keys.Enter || key.Code == keys.Tab || key.Code == keys.Right)
 	}
 
 	switch key.Code {
 	case keys.Up:
-		model.moveFilePickerSelection(-1)
+		model.filePicker.move(-1)
 	case keys.Down:
-		model.moveFilePickerSelection(1)
+		model.filePicker.move(1)
 	case keys.Enter:
 		if err := model.applyFilePickerSelection(); err != nil {
 			setInputError(model, err)
 		}
 	case keys.Tab:
-		match := model.filePicker.matches[model.filePicker.selected]
+		match, _ := model.filePicker.current()
 		var err error
 		if match.IsDir {
 			err = model.drillIntoFilePickerDirectory()
@@ -291,7 +291,7 @@ func reduceFilePickerKey(model *tuiModel, key keys.Event) bool {
 			setInputError(model, err)
 		}
 	case keys.Right:
-		match := model.filePicker.matches[model.filePicker.selected]
+		match, _ := model.filePicker.current()
 		if !match.IsDir {
 			return false
 		}

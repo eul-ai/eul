@@ -90,16 +90,18 @@ func maximumPickerHeight(height int) int {
 }
 
 func (m *tuiModel) pickerHeight() int {
-	if m.permission.active() {
+	switch {
+	case m.permission.active():
+		return 0
+	case m.resumePickerVisible():
+		return max(1, min(pickerMaxVisible, len(m.resumePicker.items)))
+	case m.commandPickerVisible():
+		return min(pickerMaxVisible, len(m.commandPicker.items))
+	case m.filePickerVisible():
+		return pickerMaxVisible
+	default:
 		return 0
 	}
-	if m.resumePickerVisible() {
-		return m.resumePickerHeight()
-	}
-	if m.commandPickerVisible() {
-		return m.commandPickerHeight()
-	}
-	return m.filePickerHeight()
 }
 
 func (m *tuiModel) subagentHeight() int {
@@ -406,39 +408,21 @@ func renderResumePicker(model *tuiModel, height int) []styledLine {
 	if height <= 0 {
 		return nil
 	}
-	if len(model.resumePicker.matches) == 0 {
+	if len(model.resumePicker.items) == 0 {
 		return []styledLine{{text: "  no saved sessions", style: lineStyle{foreground: currentTheme.muted}}}
 	}
 
-	selectedID := ""
-	if model.resumePicker.selected >= 0 && model.resumePicker.selected < len(model.resumePicker.matches) {
-		selectedID = model.resumePicker.matches[model.resumePicker.selected].ID
-	}
-	matches := model.visibleResumePickerMatches()
-	lines := make([]styledLine, 0, min(height, len(matches)))
-	for _, match := range matches[:min(height, len(matches))] {
-		detail := match.ID + " · " + match.UpdatedAt.Local().Format("Jan 2 15:04")
-		if match.Active {
+	return renderPickerRows(model.resumePicker.pickerList, height, func(session SessionSummary, _ int) styledLine {
+		detail := session.ID + " · " + session.UpdatedAt.Local().Format("Jan 2 15:04")
+		if session.Active {
 			detail += " · interrupted"
 		}
-		line := styledLine{
-			prefixText: "  ",
-			text:       resumeSummaryLabel(match),
-			rightText:  detail,
-			style:      lineStyle{foreground: currentTheme.muted},
+		return styledLine{
+			text:      resumeSummaryLabel(session),
+			rightText: detail,
+			style:     lineStyle{foreground: currentTheme.muted},
 		}
-		if match.ID == selectedID {
-			line.prefixText = "> "
-			line.prefixForeground = &currentTheme.accent
-			line.style = lineStyle{
-				foreground:      currentTheme.foreground,
-				background:      currentTheme.selectedBackground,
-				paintBackground: true,
-			}
-		}
-		lines = append(lines, line)
-	}
-	return lines
+	})
 }
 
 func renderCommandPicker(model *tuiModel, height int) []styledLine {
@@ -446,42 +430,20 @@ func renderCommandPicker(model *tuiModel, height int) []styledLine {
 		return nil
 	}
 
-	selectedText := ""
-	if model.commandPicker.selected >= 0 && model.commandPicker.selected < len(model.commandPicker.matches) {
-		selectedText = model.commandPicker.matches[model.commandPicker.selected].text
-	}
-	matches := model.visibleCommandPickerMatches()
-	lines := make([]styledLine, 0, min(height, len(matches)))
-	for _, match := range matches[:min(height, len(matches))] {
+	return renderPickerRows(model.commandPicker.pickerList, height, func(match commandCompletion, _ int) styledLine {
 		description := ""
 		if model.width >= 30 {
 			description = text.Truncate(match.description, model.width/2, true)
 		}
-		line := styledLine{
-			prefixText: "  ",
-			text:       match.text,
-			rightText:  description,
-			style:      lineStyle{foreground: currentTheme.muted},
-		}
-		if match.text == selectedText {
-			line.prefixText = "> "
-			line.prefixForeground = &currentTheme.accent
-			line.style = lineStyle{
-				foreground:      currentTheme.foreground,
-				background:      currentTheme.selectedBackground,
-				paintBackground: true,
-			}
-		}
-		lines = append(lines, line)
-	}
-	return lines
+		return styledLine{text: match.text, rightText: description, style: lineStyle{foreground: currentTheme.muted}}
+	})
 }
 
 func renderFilePicker(model *tuiModel, height int) []styledLine {
 	if height <= 0 {
 		return nil
 	}
-	if len(model.filePicker.matches) == 0 {
+	if len(model.filePicker.items) == 0 {
 		text := "  no matching files"
 		switch {
 		case !model.filePicker.matchesCurrent || model.filePicker.state == filesearch.StateDiscovering:
@@ -497,14 +459,8 @@ func renderFilePicker(model *tuiModel, height int) []styledLine {
 		return []styledLine{{text: text, style: lineStyle{foreground: currentTheme.muted}}}
 	}
 
-	selectedPath := ""
-	if model.filePicker.selected >= 0 && model.filePicker.selected < len(model.filePicker.matches) {
-		selectedPath = fileSearchMatchIdentity(model.filePicker.matches[model.filePicker.selected])
-	}
-	matches := model.visibleFilePickerMatches()
 	status := filePickerStatus(model)
-	lines := make([]styledLine, 0, min(height, len(matches)))
-	for index, match := range matches[:min(height, len(matches))] {
+	return renderPickerRows(model.filePicker.pickerList, height, func(match filesearch.Match, index int) styledLine {
 		parent := filePickerParent(match.Display)
 		if index == 0 && status != "" {
 			if parent != "" {
@@ -512,25 +468,13 @@ func renderFilePicker(model *tuiModel, height int) []styledLine {
 			}
 			parent += status
 		}
-		line := styledLine{
-			prefixText:      "  ",
+		return styledLine{
 			spans:           filePickerNameSpans(match),
 			rightText:       text.Truncate(parent, max(0, model.width/2), true),
 			rightForeground: &currentTheme.muted,
 			style:           lineStyle{foreground: currentTheme.foreground},
 		}
-		if fileSearchMatchIdentity(match) == selectedPath {
-			line.prefixText = "> "
-			line.prefixForeground = &currentTheme.accent
-			line.style = lineStyle{
-				foreground:      currentTheme.foreground,
-				background:      currentTheme.selectedBackground,
-				paintBackground: true,
-			}
-		}
-		lines = append(lines, line)
-	}
-	return lines
+	})
 }
 
 func filePickerStatus(model *tuiModel) string {

@@ -144,9 +144,9 @@ func TestFilePickerKeepsCurrentResultsSelectableDuringRefresh(t *testing.T) {
 	request := takePickerRequest(t, model)
 	matches := testFileSearchMatches("a.go", "b.go", "c.go")
 	model.applyFileSearchResult(filesearch.Result{ID: request.ID, Matches: matches, State: filesearch.StateDiscovering})
-	originalHeight := model.filePickerHeight()
+	originalHeight := model.pickerHeight()
 
-	if model.filePicker.state != filesearch.StateDiscovering || model.filePickerHeight() != originalHeight || len(model.filePicker.matches) != 3 {
+	if model.filePicker.state != filesearch.StateDiscovering || model.pickerHeight() != originalHeight || len(model.filePicker.items) != 3 {
 		t.Fatalf("picker changed while refreshing: %+v", model.filePicker)
 	}
 	if action, err := reduceKey(model, keys.Event{Code: keys.Enter}); err != nil || action.kind != tuiActionNone {
@@ -168,7 +168,7 @@ func TestFilePickerDoesNotApplyPreviousQueryResults(t *testing.T) {
 	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "missing"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(model.filePicker.matches) != 2 || model.filePicker.matchesCurrent {
+	if len(model.filePicker.items) != 2 || model.filePicker.matchesCurrent {
 		t.Fatalf("previous query results were not retained as pending: %+v", model.filePicker)
 	}
 	if action, err := reduceKey(model, keys.Event{Code: keys.Enter}); err != nil || action.kind != tuiActionNone {
@@ -186,13 +186,13 @@ func TestFilePickerShowsEmptyResultsUpdatingWhileRescoring(t *testing.T) {
 	}
 	request := takePickerRequest(t, model)
 	model.applyFileSearchResult(filesearch.Result{ID: request.ID, State: filesearch.StateComplete})
-	settled := renderFilePicker(model, model.filePickerHeight())
+	settled := renderFilePicker(model, model.pickerHeight())
 
 	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	pending := renderFilePicker(model, model.filePickerHeight())
-	if model.filePicker.matchesCurrent || model.filePicker.state != filesearch.StateComplete || len(model.filePicker.matches) != 0 {
+	pending := renderFilePicker(model, model.pickerHeight())
+	if model.filePicker.matchesCurrent || model.filePicker.state != filesearch.StateComplete || len(model.filePicker.items) != 0 {
 		t.Fatalf("empty picker did not retain its results while rescoring: %+v", model.filePicker)
 	}
 	if len(settled) != 1 || len(pending) != 1 || pending[0].text == settled[0].text {

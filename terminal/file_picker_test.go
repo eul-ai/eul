@@ -61,8 +61,8 @@ func TestFilePickerRequestsNavigatesAndAppliesSelection(t *testing.T) {
 		t.Fatal("current search result was rejected")
 	}
 
-	model.moveFilePickerSelection(1)
-	selected := model.filePicker.matches[model.filePicker.selected]
+	model.filePicker.move(1)
+	selected := model.filePicker.items[model.filePicker.selected]
 	if err := model.applyFilePickerSelection(); err != nil {
 		t.Fatal(err)
 	}
@@ -81,11 +81,11 @@ func TestFilePickerPreservesSelectionAcrossSearchUpdates(t *testing.T) {
 	}
 	request := takePickerRequest(t, model)
 	model.applyFileSearchResult(filesearch.Result{ID: request.ID, Matches: testFileSearchMatches("a.go", "b.go"), State: filesearch.StateDiscovering})
-	model.moveFilePickerSelection(1)
-	selected := fileSearchMatchIdentity(model.filePicker.matches[model.filePicker.selected])
+	model.filePicker.move(1)
+	selected := fileSearchMatchIdentity(model.filePicker.items[model.filePicker.selected])
 
 	model.applyFileSearchResult(filesearch.Result{ID: request.ID, Matches: testFileSearchMatches("b.go", "c.go"), State: filesearch.StateComplete})
-	if got := fileSearchMatchIdentity(model.filePicker.matches[model.filePicker.selected]); got != selected {
+	if got := fileSearchMatchIdentity(model.filePicker.items[model.filePicker.selected]); got != selected {
 		t.Fatalf("selected match = %q, want %q", got, selected)
 	}
 }
@@ -148,7 +148,7 @@ func TestFilePickerRemovesStaleSelection(t *testing.T) {
 	if err := model.applyFilePickerSelection(); err == nil {
 		t.Fatal("stale selection succeeded")
 	}
-	if len(model.filePicker.matches) != 0 || model.inputText() != "@gone" {
+	if len(model.filePicker.items) != 0 || model.inputText() != "@gone" {
 		t.Fatalf("stale picker = %+v input=%q", model.filePicker, model.inputText())
 	}
 }

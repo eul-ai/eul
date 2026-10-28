@@ -3,6 +3,7 @@ package terminal
 import (
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -10,15 +11,12 @@ import (
 	"github.com/eul-ai/eul/terminal/keys"
 )
 
-const filePickerMaxVisible = 5
-
 type filePickerState struct {
-	matches        []filesearch.Match
+	pickerList[filesearch.Match]
 	matchesCurrent bool
 	query          string
 	tokenStart     int
 	tokenEnd       int
-	selected       int
 	requestID      uint64
 	pending        *filesearch.Request
 	state          filesearch.State
@@ -149,8 +147,7 @@ func (m *tuiModel) refreshFilePicker(reopen bool) {
 
 	m.filePicker.query = query
 	if !wasActive {
-		m.filePicker.matches = nil
-		m.filePicker.selected = 0
+		m.filePicker.pickerList = pickerList[filesearch.Match]{}
 		m.filePicker.state = filesearch.StateDiscovering
 		m.filePicker.err = ""
 	}
@@ -175,25 +172,19 @@ func (m *tuiModel) applyFileSearchResult(result filesearch.Result) bool {
 	if result.ID != m.filePicker.requestID || !m.filePicker.active {
 		return false
 	}
-	selectedPath := ""
-	if m.filePicker.selected >= 0 && m.filePicker.selected < len(m.filePicker.matches) {
-		selectedPath = fileSearchMatchIdentity(m.filePicker.matches[m.filePicker.selected])
-	}
+	selected, hadSelection := m.filePicker.current()
 	m.filePicker.state = result.State
 	m.filePicker.err = ""
 	if result.Err != nil {
 		m.filePicker.err = result.Err.Error()
 	}
-	m.filePicker.matches = append([]filesearch.Match(nil), result.Matches...)
+	m.filePicker.items = append([]filesearch.Match(nil), result.Matches...)
 	m.filePicker.matchesCurrent = true
 	m.filePicker.selected = 0
-	if selectedPath != "" {
-		for index, match := range m.filePicker.matches {
-			if fileSearchMatchIdentity(match) == selectedPath {
-				m.filePicker.selected = index
-				break
-			}
-		}
+	if hadSelection {
+		m.filePicker.selected = max(0, slices.IndexFunc(m.filePicker.items, func(match filesearch.Match) bool {
+			return fileSearchMatchIdentity(match) == fileSearchMatchIdentity(selected)
+		}))
 	}
 	return true
 }
@@ -211,7 +202,7 @@ func (m *tuiModel) clearFilePicker() {
 
 func (m *tuiModel) dismissFilePicker() {
 	m.filePicker.active = false
-	m.filePicker.matches = nil
+	m.filePicker.items = nil
 	m.filePicker.pending = nil
 	m.filePicker.dismissed = true
 	m.filePicker.requestID++
@@ -222,33 +213,15 @@ func (m *tuiModel) filePickerVisible() bool {
 	return maximumPickerHeight(m.height) > 0 && m.filePicker.active
 }
 
-func (m *tuiModel) filePickerHeight() int {
-	if !m.filePickerVisible() {
-		return 0
-	}
-	return filePickerMaxVisible
-}
-
-func (m *tuiModel) moveFilePickerSelection(direction int) {
-	count := len(m.filePicker.matches)
-	if count == 0 {
-		return
-	}
-	m.filePicker.selected = (m.filePicker.selected + direction + count) % count
-}
-
 func (m *tuiModel) applyFilePickerSelection() error {
 	picker := &m.filePicker
-	if !picker.matchesCurrent {
+	match, ok := picker.current()
+	if !picker.matchesCurrent || !ok {
 		return nil
 	}
-	if picker.selected < 0 || picker.selected >= len(picker.matches) {
-		return nil
-	}
-	match := picker.matches[picker.selected]
 	if err := validateFileSearchMatch(match); err != nil {
-		picker.matches = append(picker.matches[:picker.selected], picker.matches[picker.selected+1:]...)
-		picker.selected = min(picker.selected, max(0, len(picker.matches)-1))
+		picker.items = slices.Delete(picker.items, picker.selected, picker.selected+1)
+		picker.selected = min(picker.selected, max(0, len(picker.items)-1))
 		return err
 	}
 
@@ -284,13 +257,10 @@ func validateFileSearchMatch(match filesearch.Match) error {
 
 func (m *tuiModel) drillIntoFilePickerDirectory() error {
 	picker := &m.filePicker
-	if !picker.matchesCurrent {
+	match, ok := picker.current()
+	if !picker.matchesCurrent || !ok || !match.IsDir {
 		return nil
 	}
-	if picker.selected < 0 || picker.selected >= len(picker.matches) || !picker.matches[picker.selected].IsDir {
-		return nil
-	}
-	match := picker.matches[picker.selected]
 	if err := validateFileSearchMatch(match); err != nil {
 		return err
 	}
@@ -318,16 +288,6 @@ func formatFileReference(path string) string {
 	}
 	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(path)
 	return `@"` + escaped + `"`
-}
-
-func (m *tuiModel) visibleFilePickerMatches() []filesearch.Match {
-	matches := m.filePicker.matches
-	if len(matches) <= filePickerMaxVisible {
-		return matches
-	}
-	start := m.filePicker.selected - filePickerMaxVisible/2
-	start = max(0, min(start, len(matches)-filePickerMaxVisible))
-	return matches[start : start+filePickerMaxVisible]
 }
 
 func fileSearchMatchIdentity(match filesearch.Match) string {

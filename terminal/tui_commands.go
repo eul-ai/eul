@@ -11,10 +11,7 @@ import (
 	"github.com/eul-ai/eul/terminal/keys"
 )
 
-const (
-	commandPickerMaxVisible = 5
-	skillCommand            = "/skill:"
-)
+const skillCommand = "/skill:"
 
 type slashCommand struct {
 	name        string
@@ -46,11 +43,10 @@ type commandCompletion struct {
 }
 
 type commandPickerState struct {
-	matches    []commandCompletion
+	pickerList[commandCompletion]
 	query      string
 	tokenStart int
 	tokenEnd   int
-	selected   int
 	active     bool
 	dismissed  bool
 }
@@ -267,10 +263,7 @@ func (m *tuiModel) refreshCommandPicker(reopen bool) {
 		return
 	}
 
-	selectedText := ""
-	if m.commandPicker.selected >= 0 && m.commandPicker.selected < len(m.commandPicker.matches) {
-		selectedText = m.commandPicker.matches[m.commandPicker.selected].text
-	}
+	selected, _ := m.commandPicker.current()
 
 	matches := make([]commandCompletion, 0, len(m.commandCompletions))
 	for _, completion := range m.commandCompletions {
@@ -290,14 +283,10 @@ func (m *tuiModel) refreshCommandPicker(reopen bool) {
 	m.commandPicker.query = query
 	m.commandPicker.tokenStart = start
 	m.commandPicker.tokenEnd = end
-	m.commandPicker.matches = matches
-	m.commandPicker.selected = 0
-	for index, match := range matches {
-		if match.text == selectedText {
-			m.commandPicker.selected = index
-			break
-		}
-	}
+	m.commandPicker.items = matches
+	m.commandPicker.selected = max(0, slices.IndexFunc(matches, func(match commandCompletion) bool {
+		return match.text == selected.text
+	}))
 }
 
 func (m *tuiModel) refreshCommandPickerAvailability() {
@@ -320,28 +309,14 @@ func (m *tuiModel) commandPickerVisible() bool {
 	return maximumPickerHeight(m.height) > 0 && m.commandPicker.active
 }
 
-func (m *tuiModel) commandPickerHeight() int {
-	if !m.commandPickerVisible() {
-		return 0
-	}
-	return min(commandPickerMaxVisible, len(m.commandPicker.matches))
-}
-
-func (m *tuiModel) moveCommandPickerSelection(direction int) {
-	count := len(m.commandPicker.matches)
-	if count == 0 {
-		return
-	}
-	m.commandPicker.selected = (m.commandPicker.selected + direction + count) % count
-}
-
 func (m *tuiModel) applyCommandPickerSelection() error {
 	picker := &m.commandPicker
-	if picker.selected < 0 || picker.selected >= len(picker.matches) {
+	selected, ok := picker.current()
+	if !ok {
 		return nil
 	}
 
-	completion := picker.matches[picker.selected].text
+	completion := selected.text
 	removedBytes := len(editorText(m.input[picker.tokenStart:picker.tokenEnd]))
 	if len(m.inputText())-removedBytes+len(completion) > maxInputBytes {
 		return keys.ErrInputTooLong
@@ -353,14 +328,4 @@ func (m *tuiModel) applyCommandPickerSelection() error {
 	}
 	m.dismissCommandPicker()
 	return nil
-}
-
-func (m *tuiModel) visibleCommandPickerMatches() []commandCompletion {
-	matches := m.commandPicker.matches
-	if len(matches) <= commandPickerMaxVisible {
-		return matches
-	}
-	start := m.commandPicker.selected - commandPickerMaxVisible/2
-	start = max(0, min(start, len(matches)-commandPickerMaxVisible))
-	return matches[start : start+commandPickerMaxVisible]
 }

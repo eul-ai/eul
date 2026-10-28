@@ -278,8 +278,8 @@ func TestResumePickerUsesNewestSessionAndReturnsSelection(t *testing.T) {
 		{ID: newID, Description: "new prompt", UpdatedAt: now, Active: true},
 	})
 
-	if id, ok := model.selectedResumeSession(); !ok || id != newID {
-		t.Fatalf("selected=%q exists=%v", id, ok)
+	if session, ok := model.resumePicker.current(); !ok || session.ID != newID {
+		t.Fatalf("selected=%q exists=%v", session.ID, ok)
 	}
 	frame := renderFrame(model)
 	if !strings.Contains(frame, "new prompt") || !strings.Contains(frame, newID) || !strings.Contains(frame, oldID) {

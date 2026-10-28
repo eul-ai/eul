@@ -72,10 +72,10 @@ func TestCommandPickerFiltersCommandsAndSkills(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !model.commandPickerVisible() || len(model.commandPicker.matches) != 1 {
+	if !model.commandPickerVisible() || len(model.commandPicker.items) != 1 {
 		t.Fatalf("picker = %+v", model.commandPicker)
 	}
-	match := model.commandPicker.matches[0]
+	match := model.commandPicker.items[0]
 	if match.text != "/skill:review" || match.description != "Review code" {
 		t.Fatalf("match = %+v", match)
 	}
@@ -223,7 +223,7 @@ func TestCommandPickerOnlySuggestsRunnableCommandsDuringTurn(t *testing.T) {
 	}
 
 	var matches []string
-	for _, match := range model.commandPicker.matches {
+	for _, match := range model.commandPicker.items {
 		matches = append(matches, match.text)
 	}
 	if got, want := strings.Join(matches, ","), "/help,/goal"; got != want {
@@ -237,7 +237,7 @@ func TestCommandPickerSuggestsRunnableCommandDuringTurn(t *testing.T) {
 	if err := model.insertInput("/he"); err != nil {
 		t.Fatal(err)
 	}
-	if !model.commandPickerVisible() || len(model.commandPicker.matches) != 1 || model.commandPicker.matches[0].text != "/help" {
+	if !model.commandPickerVisible() || len(model.commandPicker.items) != 1 || model.commandPicker.items[0].text != "/help" {
 		t.Fatalf("picker = %+v", model.commandPicker)
 	}
 }
@@ -259,7 +259,7 @@ func TestRenderCommandPickerShowsSelectionAndDescription(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	lines := renderCommandPicker(model, model.commandPickerHeight())
+	lines := renderCommandPicker(model, model.pickerHeight())
 	if len(lines) != 1 || lines[0].text != "/help" || lines[0].prefixText != "> " || !lines[0].style.paintBackground {
 		t.Fatalf("lines = %+v", lines)
 	}
