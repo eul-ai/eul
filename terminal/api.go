@@ -111,7 +111,7 @@ type MessageHistory struct {
 
 type Events struct {
 	Interrupts         <-chan os.Signal
-	SubagentUpdates    <-chan subagent.Status
+	Subagents          *subagent.Manager
 	PermissionRequests <-chan PermissionRequest
 }
 

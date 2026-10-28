@@ -24,7 +24,7 @@ type terminalOptionsBuilder struct {
 	metadata           sessionModelMetadata
 	warnings           []string
 	loadUsage          func(context.Context) (backend.AccountUsage, error)
-	subagentUpdates    <-chan subagent.Status
+	subagents          *subagent.Manager
 	permissionRequests <-chan terminal.PermissionRequest
 	engine             *agent.Engine
 	settings           *agent.Settings
@@ -128,7 +128,7 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 		},
 		Events: terminal.Events{
 			Interrupts:         source.runtime.interrupts,
-			SubagentUpdates:    source.subagentUpdates,
+			Subagents:          source.subagents,
 			PermissionRequests: source.permissionRequests,
 		},
 		Services: terminal.Services{LoadUsage: loadUsage},

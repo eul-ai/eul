@@ -285,7 +285,7 @@ func TestInboxAcknowledgesOnlyExactPrefix(t *testing.T) {
 	}
 }
 
-func TestAcknowledgeCompletionsAfterCloseDoesNotPublish(t *testing.T) {
+func TestAcknowledgeCompletionsAfterClose(t *testing.T) {
 	manager := NewManager(func(context.Context, Task, func(agent.Usage)) (string, error) {
 		return "done", nil
 	})
@@ -293,9 +293,7 @@ func TestAcknowledgeCompletionsAfterCloseDoesNotPublish(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := waitForStatus(t, manager, func(status Status) bool { return len(status.PendingCompletions) == 1 })
-	if err := manager.Close(); err != nil {
-		t.Fatal(err)
-	}
+	manager.Close()
 
 	if err := manager.AcknowledgeCompletions([]uint64{status.PendingCompletions[0].MessageID}); err != nil {
 		t.Fatal(err)
@@ -312,15 +310,15 @@ func testTasks(count int) []Task {
 
 func waitForStatus(t *testing.T, manager *Manager, ready func(Status) bool) Status {
 	t.Helper()
-	timer := time.NewTimer(2 * time.Second)
-	defer timer.Stop()
+	timeout := time.After(2 * time.Second)
 	for {
+		changes := manager.Changes()
+		if status := manager.Snapshot(); ready(status) {
+			return status
+		}
 		select {
-		case status := <-manager.StatusChanges():
-			if ready(status) {
-				return status
-			}
-		case <-timer.C:
+		case <-changes:
+		case <-timeout:
 			t.Fatal("timed out waiting for subagent status")
 		}
 	}

@@ -178,11 +178,8 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 		t.Fatal(err)
 	}
 	sessionID := first.persistence.handle.record.ID
-	first.persistence.checkpoints.Stop()
-	if err := first.subagents.Close(); err != nil {
-		t.Fatal(err)
-	}
-	<-first.persistence.changesDone
+	first.persistence.stop()
+	first.subagents.Close()
 	if err := first.persistence.checkpoints.Close(); err != nil {
 		t.Fatal(err)
 	}

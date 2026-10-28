@@ -17,10 +17,9 @@ type sessionRunner interface {
 }
 
 type sessionToolset struct {
-	registry        *tool.Registry
-	subagents       *subagent.Manager
-	subagentBridge  *subagentBridge
-	subagentUpdates <-chan subagent.Status
+	registry       *tool.Registry
+	subagents      *subagent.Manager
+	subagentBridge *subagentBridge
 }
 
 type agentSession struct {
@@ -73,14 +72,14 @@ func newSessionToolset(
 		tool.NewUpdateGoal(completeGoal),
 	)
 	if err != nil {
-		return sessionToolset{}, errors.Join(fmt.Errorf("configure tools: %w", err), manager.Close())
+		manager.Close()
+		return sessionToolset{}, fmt.Errorf("configure tools: %w", err)
 	}
 	bridge := newSubagentBridge(manager, waitForSubagent.Definition().Name)
 	return sessionToolset{
-		registry:        registry,
-		subagents:       manager,
-		subagentBridge:  bridge,
-		subagentUpdates: manager.StatusChanges(),
+		registry:       registry,
+		subagents:      manager,
+		subagentBridge: bridge,
 	}, nil
 }
 
@@ -173,7 +172,7 @@ func newAgentSessionComponents(
 		metadata:           metadata,
 		warnings:           warnings,
 		loadUsage:          loadUsage,
-		subagentUpdates:    tools.subagentUpdates,
+		subagents:          tools.subagents,
 		permissionRequests: permissionRequests,
 		engine:             engine,
 		settings:           settings,
@@ -190,10 +189,7 @@ func (session *agentSession) finish(runErr error) error {
 	if session.persistence != nil {
 		session.persistence.stop()
 	}
-	var subagentErr error
-	if session.subagents != nil {
-		subagentErr = session.subagents.Close()
-	}
+	session.subagents.Close()
 	var finalCheckpointErr error
 	if session.persistence != nil {
 		finalCheckpointErr = session.persistence.saveFinal()
@@ -207,7 +203,7 @@ func (session *agentSession) finish(runErr error) error {
 	}
 	backendErr := closeBackendRuntime(session.backendRuntime)
 	session.backendRuntime = nil
-	return errors.Join(runErr, subagentErr, finalCheckpointErr, persistenceErr, backendErr)
+	return errors.Join(runErr, finalCheckpointErr, persistenceErr, backendErr)
 }
 
 func closeBackendRuntime(backendRuntime backend.Runtime) error {

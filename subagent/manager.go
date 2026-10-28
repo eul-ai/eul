@@ -38,10 +38,7 @@ type Manager struct {
 	nextMessageID uint64
 	closed        bool
 	workers       sync.WaitGroup
-	closeOnce     sync.Once
-	status        chan Status
 	changes       chan struct{}
-	dirty         chan struct{}
 }
 
 type job struct {
@@ -68,42 +65,24 @@ func (job *job) status() JobStatus {
 
 func NewManager(run func(ctx context.Context, task Task, progress func(agent.Usage)) (string, error)) *Manager {
 	ctx, cancel := context.WithCancelCause(context.Background())
-	return &Manager{
-		run:     run,
-		ctx:     ctx,
-		cancel:  cancel,
-		status:  make(chan Status, 1),
-		changes: make(chan struct{}),
-		dirty:   make(chan struct{}, 1),
-	}
+	return &Manager{run: run, ctx: ctx, cancel: cancel, changes: make(chan struct{})}
 }
 
-// StatusChanges coalesces status changes when the receiver falls behind.
-func (m *Manager) StatusChanges() <-chan Status {
-	return m.status
+// Changes returns a channel that is closed at the next state change. Call it
+// before Snapshot so that no change is missed.
+func (m *Manager) Changes() <-chan struct{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.changes
 }
 
-// CheckpointChanges coalesces checkpoint changes when the receiver falls behind.
-func (m *Manager) CheckpointChanges() <-chan struct{} {
-	return m.dirty
-}
+func (m *Manager) Close() {
+	m.mu.Lock()
+	m.closed = true
+	m.cancel(errSessionClosed)
+	m.mu.Unlock()
 
-func (m *Manager) Close() error {
-	m.closeOnce.Do(func() {
-		m.mu.Lock()
-		m.closed = true
-		m.cancel(errSessionClosed)
-		m.signalChangeLocked()
-		m.mu.Unlock()
-
-		m.workers.Wait()
-
-		m.mu.Lock()
-		close(m.status)
-		close(m.dirty)
-		m.mu.Unlock()
-	})
-	return nil
+	m.workers.Wait()
 }
 
 func (m *Manager) Start(tasks []Task) ([]JobStatus, error) {
@@ -365,31 +344,13 @@ func (m *Manager) AcknowledgeCompletions(messageIDs []uint64) error {
 		}
 	}
 	m.inbox = append([]Completion(nil), m.inbox[len(messageIDs):]...)
-	if !m.closed {
-		m.publishLocked()
-	}
+	m.publishLocked()
 	return nil
 }
 
 func (m *Manager) publishLocked() {
-	status := m.statusLocked()
-	select {
-	case m.status <- status:
-	default:
-		select {
-		case <-m.status:
-		default:
-		}
-		select {
-		case m.status <- status:
-		default:
-		}
-	}
-	m.signalChangeLocked()
-	select {
-	case m.dirty <- struct{}{}:
-	default:
-	}
+	close(m.changes)
+	m.changes = make(chan struct{})
 }
 
 func (m *Manager) statusLocked() Status {
@@ -398,9 +359,4 @@ func (m *Manager) statusLocked() Status {
 		active[index] = job.status()
 	}
 	return Status{Active: active, PendingCompletions: slices.Clone(m.inbox)}
-}
-
-func (m *Manager) signalChangeLocked() {
-	close(m.changes)
-	m.changes = make(chan struct{})
 }

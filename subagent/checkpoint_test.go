@@ -55,9 +55,7 @@ func TestCheckpointRoundTripRestoresPendingAndInterruptsActive(t *testing.T) {
 	}
 	waitForStatus(t, manager, func(status Status) bool { return len(status.PendingCompletions) == 1 && len(status.Active) == 1 })
 	checkpoint := manager.Checkpoint()
-	if err := manager.Close(); err != nil {
-		t.Fatal(err)
-	}
+	manager.Close()
 
 	encoded, err := json.Marshal(checkpoint)
 	if err != nil {

@@ -136,7 +136,7 @@ func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 	if usageCalls != 1 || len(usage.Windows) != 1 || usage.MonthlyUsageUSD == nil || *usage.MonthlyUsageUSD != monthlyUsage || usage.LimitRemainingUSD == nil || *usage.LimitRemainingUSD != limitRemaining {
 		t.Fatalf("usage calls=%d result=%+v", usageCalls, usage)
 	}
-	if session.terminalOptions.Events.SubagentUpdates == nil {
+	if session.terminalOptions.Events.Subagents == nil {
 		t.Fatal("subagent status was not wired to the terminal")
 	}
 	if session.terminalOptions.Config.WorkingDirectory != cwd {

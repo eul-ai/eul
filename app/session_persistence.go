@@ -15,6 +15,7 @@ import (
 type sessionPersistence struct {
 	handle      *sessionHandle
 	checkpoints *checkpointCoordinator
+	stopChanges chan struct{}
 	changesDone chan struct{}
 }
 
@@ -112,9 +113,23 @@ func newStoredAgentSession(
 	persistence := &sessionPersistence{
 		handle:      handle,
 		checkpoints: checkpoints,
+		stopChanges: make(chan struct{}),
 		changesDone: make(chan struct{}),
 	}
 	session.persistence = persistence
+	go func() {
+		defer close(persistence.changesDone)
+		changes := session.subagents.Changes()
+		for {
+			select {
+			case <-changes:
+				changes = session.subagents.Changes()
+				checkpoints.SaveIdle()
+			case <-persistence.stopChanges:
+				return
+			}
+		}
+	}()
 
 	if restore {
 		if err := checkpoints.RestoreIdle(record.Agent); err != nil {
@@ -128,13 +143,6 @@ func newStoredAgentSession(
 	options.sessionID = record.ID
 	options.sessions.List = sessionList(handle)
 	session.terminalOptions = options.options()
-
-	go func() {
-		defer close(persistence.changesDone)
-		for range session.subagents.CheckpointChanges() {
-			checkpoints.SaveIdle()
-		}
-	}()
 
 	return session, nil
 }
@@ -257,10 +265,11 @@ func sessionList(handle *sessionHandle) func(context.Context) ([]terminal.Sessio
 
 func (persistence *sessionPersistence) stop() {
 	persistence.checkpoints.Stop()
+	close(persistence.stopChanges)
+	<-persistence.changesDone
 }
 
 func (persistence *sessionPersistence) saveFinal() error {
-	<-persistence.changesDone
 	return persistence.checkpoints.SaveFinal()
 }
 

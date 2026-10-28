@@ -114,6 +114,12 @@ func wrapRestoreError(err error) error {
 
 func (runner *Runner) run(ctx context.Context, options Options, width, height int) (RunOutcome, error) {
 	model := newTUIModel(width, height, options)
+	subagents := options.Events.Subagents
+	var subagentChanges <-chan struct{}
+	if subagents != nil {
+		subagentChanges = subagents.Changes()
+		model.subagentStatus = sanitizeSubagentStatus(subagents.Snapshot())
+	}
 	fileSearch := filesearch.New(options.Config.WorkingDirectory)
 	defer fileSearch.Close()
 	fileSearchResults := fileSearch.Results()
@@ -174,7 +180,6 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 	}
 
 	interrupts := options.Events.Interrupts
-	subagentUpdates := options.Events.SubagentUpdates
 	permissionRequests := options.Events.PermissionRequests
 	parentDone := ctx.Done()
 	for {
@@ -197,12 +202,9 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 			event = tuiEvent{kind: tuiEventEngine, engine: message}
 		case message := <-usageResults:
 			event = tuiEvent{kind: tuiEventProviderUsage, providerUsage: message}
-		case status, ok := <-subagentUpdates:
-			if !ok {
-				subagentUpdates = nil
-				continue
-			}
-			event = tuiEvent{kind: tuiEventSubagentStatus, subagentStatus: status}
+		case <-subagentChanges:
+			subagentChanges = subagents.Changes()
+			event = tuiEvent{kind: tuiEventSubagentStatus, subagentStatus: subagents.Snapshot()}
 		case request, ok := <-permissionRequests:
 			if !ok {
 				permissionRequests = nil

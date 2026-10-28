@@ -87,21 +87,23 @@ func TestRunTUIParentCancellationWinsAfterActiveEOF(t *testing.T) {
 func TestRunTUIRendersSubagentUpdatesWhileIdle(t *testing.T) {
 	reader, writer := io.Pipe()
 	defer reader.Close()
-	updates := make(chan subagent.Status, 1)
+	manager := subagent.NewManager(func(ctx context.Context, _ subagent.Task, _ func(agent.Usage)) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	})
+	defer manager.Close()
 	output := newSignalingWriter("subagent-1")
 
 	done := make(chan error, 1)
 	go func() {
 		_, err := runTest(context.Background(), optionsForEngine(&fakeEngine{}, Options{
-			Input: reader, Output: output, Events: Events{SubagentUpdates: updates},
+			Input: reader, Output: output, Events: Events{Subagents: manager},
 		}))
 		done <- err
 	}()
 
-	updates <- subagent.Status{
-		Active: []subagent.JobStatus{{
-			ID: "subagent-1", Description: "inspect", State: subagent.StateRunning, Started: time.Now(),
-		}},
+	if _, err := manager.Start([]subagent.Task{{Description: "inspect", Prompt: "inspect"}}); err != nil {
+		t.Fatal(err)
 	}
 	select {
 	case <-output.seen:
