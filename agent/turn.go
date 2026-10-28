@@ -57,7 +57,7 @@ func (t *turn) request() Request {
 		FastMode:      fastMode,
 		Instructions:  t.engine.instructions,
 		Inputs:        slices.Clip(t.current.inputs),
-		Tools:         t.engine.tools.Definitions(),
+		Tools:         t.engine.definitions,
 		State:         t.current.state,
 	}
 }

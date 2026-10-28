@@ -54,11 +54,6 @@ func TestEngineRunsToolLoopAndCarriesProviderState(t *testing.T) {
 			if got := toolNames(request.Tools); !slices.Equal(got, []string{"read", "write"}) {
 				t.Fatalf("tool order = %v, want [read write]", got)
 			}
-			for _, definition := range request.Tools {
-				if strings.Contains(request.Instructions, definition.Description) {
-					t.Fatalf("instructions duplicate tool description %q:\n%s", definition.Description, request.Instructions)
-				}
-			}
 			if err := onText("Checking"); err != nil {
 				return Response{}, err
 			}

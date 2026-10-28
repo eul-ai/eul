@@ -2,9 +2,12 @@ package app
 
 import (
 	"context"
+	"slices"
+	"strings"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/skill"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
 )
@@ -88,7 +91,7 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 			}, err
 		}
 	}
-	callbacks := newTerminalCallbacks(source.engine, source.checkpoints)
+	callbacks := &terminalCallbacks{engine: source.engine, checkpoints: source.checkpoints, skills: source.config.skills}
 	return terminal.Options{
 		Input:      source.runtime.stdin,
 		Output:     source.runtime.stdout,
@@ -135,22 +138,43 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 type terminalCallbacks struct {
 	engine      *agent.Engine
 	checkpoints *checkpointCoordinator
-}
-
-func newTerminalCallbacks(engine *agent.Engine, checkpoints *checkpointCoordinator) *terminalCallbacks {
-	return &terminalCallbacks{engine: engine, checkpoints: checkpoints}
+	skills      []skill.Skill
 }
 
 func (callbacks *terminalCallbacks) operations() terminal.Operations {
 	return terminal.Operations{
 		RunTurn: func(ctx context.Context, content []agent.ContentPart, stream terminal.EventStream) error {
-			_, err := callbacks.engine.Run(ctx, content, callbacks.sink(stream))
+			content, err := expandSkillContent(content, callbacks.skills)
+			if err != nil {
+				return err
+			}
+			_, err = callbacks.engine.Run(ctx, content, callbacks.sink(stream))
 			return err
 		},
 		Compact: func(ctx context.Context, stream terminal.EventStream) error {
 			return callbacks.engine.Compact(ctx, callbacks.sink(stream))
 		},
 	}
+}
+
+func expandSkillContent(content []agent.ContentPart, skills []skill.Skill) ([]agent.ContentPart, error) {
+	for index, part := range content {
+		switch {
+		case part.Kind == agent.ContentPartImage:
+			return content, nil
+		case strings.TrimSpace(part.Text) == "":
+			continue
+		}
+
+		expanded, err := skill.Expand(part.Text, skills)
+		if err != nil {
+			return nil, err
+		}
+		content = slices.Clone(content)
+		content[index].Text = expanded
+		return content, nil
+	}
+	return content, nil
 }
 
 func (callbacks *terminalCallbacks) sink(stream terminal.EventStream) agent.EventSink {

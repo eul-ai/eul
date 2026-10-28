@@ -5,17 +5,13 @@ import (
 	"errors"
 	"slices"
 	"sync"
-
-	"github.com/eul-ai/eul/skill"
 )
 
 var errEngineBusy = errors.New("agent: engine is busy")
 
 type Options struct {
 	Model                  string
-	WorkingDirectory       string
-	ProjectInstructions    string
-	Skills                 []skill.Skill
+	Instructions           string
 	Checkpointing          bool
 	Inbox                  InboxSource
 	AdditionalInstructions func() string
@@ -30,13 +26,13 @@ type Engine struct {
 	mu                     sync.Mutex
 	provider               Provider
 	tools                  Toolbox
+	definitions            []ToolDefinition
 	sessionID              string
 	model                  string
 	settings               *Settings
 	instructions           string
 	conversation           conversationState
 	continuations          continuationArbiter
-	skills                 []skill.Skill
 	checkpointing          bool
 	inbox                  InboxSource
 	additionalInstructions func() string
@@ -47,16 +43,14 @@ func New(provider Provider, tools Toolbox, options Options) *Engine {
 	if settings == nil {
 		settings = NewSettings(DefaultThinkingLevel, false)
 	}
-	skills := append([]skill.Skill(nil), options.Skills...)
-	instructions := buildSystemPrompt(tools.Definitions(), options.WorkingDirectory, options.ProjectInstructions, options.Skills)
 
 	return &Engine{
 		provider:               provider,
 		tools:                  tools,
+		definitions:            tools.Definitions(),
 		model:                  options.Model,
 		settings:               settings,
-		instructions:           instructions,
-		skills:                 skills,
+		instructions:           options.Instructions,
 		checkpointing:          options.Checkpointing,
 		inbox:                  options.Inbox,
 		additionalInstructions: options.AdditionalInstructions,
@@ -70,11 +64,6 @@ func (e *Engine) Run(ctx context.Context, content []ContentPart, sink EventSink)
 	defer e.mu.Unlock()
 
 	if err := ctx.Err(); err != nil {
-		return RunResult{}, err
-	}
-
-	content, err := e.expandSkillContent(content)
-	if err != nil {
 		return RunResult{}, err
 	}
 
