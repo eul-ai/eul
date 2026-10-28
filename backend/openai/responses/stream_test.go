@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -76,7 +77,7 @@ func TestResponsesSSERetriesAfterDelivery(t *testing.T) {
 func TestClientStreamsTextDeltas(t *testing.T) {
 	releaseTerminal := make(chan struct{})
 	released := false
-	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := streamingClient(func(request *http.Request, writer *io.PipeWriter) {
 		var wire createResponseRequest
 		if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
 			t.Error(err)
@@ -84,22 +85,20 @@ func TestClientStreamsTextDeltas(t *testing.T) {
 		if !wire.Stream || request.Header.Get("Accept") != "text/event-stream" {
 			t.Errorf("stream=%v accept=%q", wire.Stream, request.Header.Get("Accept"))
 		}
-		writer.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 		fmt.Fprint(writer, "data: {\"type\":\"response.output_text.delta\",\"sequence_number\":0,\"delta\":\"streamed \"}\n\n")
-		writer.(http.Flusher).Flush()
 		<-releaseTerminal
 		fmt.Fprint(writer, "data: {\"type\":\"response.output_text.delta\",\"sequence_number\":1,\"delta\":\"answer\"}\n\n")
 		fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"sequence_number\":2,\"output_index\":0,\"item\":{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"streamed answer\"}]}}\n\n")
 		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"sequence_number\":3,\"response\":{\"status\":\"completed\"}}\n\n")
-	}))
-	defer server.Close()
+		writer.Close()
+	})
 	defer func() {
 		if !released {
 			close(releaseTerminal)
 		}
 	}()
 
-	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+	client := newTestClient(t, "key", Options{HTTPClient: server})
 	var deltas []string
 	seenDelta := make(chan string, 2)
 	type outcome struct {
@@ -135,15 +134,14 @@ func TestClientStreamsTextDeltas(t *testing.T) {
 }
 
 func TestClientStreamsRefusal(t *testing.T) {
-	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(writer, "data: {\"type\":\"response.refusal.delta\",\"delta\":\"Cannot comply.\"}\n\n")
 		fmt.Fprint(writer, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"content\":[{\"type\":\"refusal\",\"refusal\":\"Cannot comply.\"}]}}\n\n")
 		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
 	}))
-	defer server.Close()
 
-	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+	client := newTestClient(t, "key", Options{HTTPClient: server})
 	var delivered string
 	response, err := generate(client, context.Background(), baseRequest(), func(delta string) error { delivered += delta; return nil }, nil, nil)
 	if err != nil || response.Text != "Cannot comply." || delivered != response.Text {
@@ -159,8 +157,7 @@ func TestClientDecodesRefusalAndPreservesMalformedToolArguments(t *testing.T) {
 			{"type":"function_call","id":"fc_item","call_id":"call_1","name":"read","arguments":"{bad"}
 		]
 	}`)
-	defer server.Close()
-	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+	client := newTestClient(t, "key", Options{HTTPClient: server})
 	response, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
@@ -186,8 +183,7 @@ func TestClientRejectsMalformedResponses(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			server := responseServer(t, http.StatusOK, test.body)
-			defer server.Close()
-			client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+			client := newTestClient(t, "key", Options{HTTPClient: server})
 			_, err := generate(client, context.Background(), baseRequest(), func(string) error {
 				t.Fatal("text sink called for malformed response")
 				return nil

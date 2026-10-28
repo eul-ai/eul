@@ -17,7 +17,6 @@ import (
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend/continuation"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
-	"github.com/eul-ai/eul/backend/testhttp"
 )
 
 func generate(client *Client, ctx context.Context, request agent.Request, onText, onReasoning agent.TextSink, onToolCall agent.ToolCallSink) (agent.Response, error) {
@@ -27,7 +26,7 @@ func generate(client *Client, ctx context.Context, request agent.Request, onText
 func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	const token = "secret-test-token"
 	var requestNumber atomic.Int32
-	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		call := int(requestNumber.Add(1))
 		if request.Method != http.MethodPost || request.URL.Path != "/codex/responses" {
 			t.Errorf("request %d = %s %s", call, request.Method, request.URL.Path)
@@ -127,9 +126,8 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 			writer.WriteHeader(http.StatusInternalServerError)
 		}
 	}))
-	defer server.Close()
 
-	client := newTestClient(t, token, server.URL, Options{HTTPClient: server.Client()})
+	client := newTestClient(t, token, Options{HTTPClient: server})
 	tools := []agent.ToolDefinition{strictTestTool("read"), strictTestTool("bash")}
 	var sinkText []string
 	first, err := generate(client, context.Background(), agent.Request{
@@ -195,7 +193,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 
 func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 	t.Run("pre-canceled", func(t *testing.T) {
-		client := newTestClient(t, "key", "http://127.0.0.1:1", Options{})
+		client := newTestClient(t, "key", Options{})
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		_, err := generate(client, ctx, baseRequest(), nil, nil, nil)
@@ -204,14 +202,12 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		}
 	})
 	t.Run("HTTP timeout", func(t *testing.T) {
-		release := make(chan struct{})
-		server := newTestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-			<-release
-		}))
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: &http.Client{Transport: server.Client().Transport, Timeout: 30 * time.Millisecond}})
+		transport := roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			<-request.Context().Done()
+			return nil, request.Context().Err()
+		})
+		client := newTestClient(t, "key", Options{HTTPClient: &http.Client{Transport: transport, Timeout: 30 * time.Millisecond}})
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
-		close(release)
-		server.Close()
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("Generate() error = %v", err)
 		}
@@ -228,8 +224,7 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 	})
 	t.Run("sink", func(t *testing.T) {
 		server := responseServer(t, http.StatusOK, `{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"answer"}]}]}`)
-		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+		client := newTestClient(t, "key", Options{HTTPClient: server})
 		sinkError := errors.New("sink failed")
 		_, err := generate(client, context.Background(), baseRequest(), func(string) error { return sinkError }, nil, nil)
 		if !errors.Is(err, sinkError) {
@@ -237,12 +232,11 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		}
 	})
 	t.Run("streaming sink", func(t *testing.T) {
-		server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			writer.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"answer\"}\n\n")
 		}))
-		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+		client := newTestClient(t, "key", Options{HTTPClient: server})
 		sinkError := errors.New("streaming sink failed")
 		_, err := generate(client, context.Background(), baseRequest(), func(string) error { return sinkError }, nil, nil)
 		if !errors.Is(err, sinkError) {
@@ -250,14 +244,12 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		}
 	})
 	t.Run("stream cancellation", func(t *testing.T) {
-		server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-			writer.Header().Set("Content-Type", "text/event-stream")
+		server := streamingClient(func(request *http.Request, writer *io.PipeWriter) {
 			fmt.Fprint(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
-			writer.(http.Flusher).Flush()
 			<-request.Context().Done()
-		}))
-		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+			writer.CloseWithError(request.Context().Err())
+		})
+		client := newTestClient(t, "key", Options{HTTPClient: server})
 		ctx, cancel := context.WithCancel(context.Background())
 		seen := make(chan struct{}, 1)
 		done := make(chan error, 1)
@@ -278,13 +270,14 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 	})
 	t.Run("redirect", func(t *testing.T) {
 		var destinationCalls atomic.Int32
-		destination := newTestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { destinationCalls.Add(1) }))
-		defer destination.Close()
-		origin := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-			http.Redirect(writer, request, destination.URL, http.StatusTemporaryRedirect)
+		server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			if request.URL.Host == "destination.test" {
+				destinationCalls.Add(1)
+				return
+			}
+			http.Redirect(writer, request, "https://destination.test/", http.StatusTemporaryRedirect)
 		}))
-		defer origin.Close()
-		client := newTestClient(t, "key", origin.URL, Options{HTTPClient: origin.Client()})
+		client := newTestClient(t, "key", Options{HTTPClient: server})
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		var responseErr *backendhttp.APIResponseError
 		if !errors.As(err, &responseErr) || responseErr.StatusCode() != http.StatusTemporaryRedirect || destinationCalls.Load() != 0 {
@@ -341,10 +334,10 @@ func TestNewCopiesInjectedClientBeforeApplyingPolicy(t *testing.T) {
 	}
 }
 
-func newTestClient(t *testing.T, token, baseURL string, overrides Options) *Client {
+func newTestClient(t *testing.T, token string, overrides Options) *Client {
 	t.Helper()
 	if overrides.Endpoint == "" {
-		overrides.Endpoint = strings.TrimRight(baseURL, "/") + "/codex/responses"
+		overrides.Endpoint = "https://example.test/codex/responses"
 	}
 	if overrides.PrepareRequest == nil {
 		overrides.PrepareRequest = testPrepareRequest(token)
@@ -424,9 +417,9 @@ func baseRequest() agent.Request {
 	}
 }
 
-func responseServer(t *testing.T, status int, body string) *testhttp.Server {
+func responseServer(t *testing.T, status int, body string) *http.Client {
 	t.Helper()
-	return newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	return handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if status >= 200 && status < 300 {
 			payload := body
 			var compact bytes.Buffer
@@ -445,9 +438,9 @@ func responseServer(t *testing.T, status int, body string) *testhttp.Server {
 	}))
 }
 
-func compactResponseServer(t *testing.T, status int, body string) *testhttp.Server {
+func compactResponseServer(t *testing.T, status int, body string) *http.Client {
 	t.Helper()
-	return newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	return handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		if status < 200 || status >= 300 {
 			writer.Header().Set("Content-Type", "application/json")
 			writer.WriteHeader(status)

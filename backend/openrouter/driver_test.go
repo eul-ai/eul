@@ -12,7 +12,6 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/backend/testhttp"
 )
 
 type driverRoundTripperFunc func(*http.Request) (*http.Response, error)
@@ -50,7 +49,7 @@ func TestThinkingMetadataUsesCatalogEfforts(t *testing.T) {
 
 func TestRuntimeChecksCredentialsInitializesModelsAndCreatesProvider(t *testing.T) {
 	requests := 0
-	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requests++
 		if request.Header.Get("HTTP-Referer") == "" || request.Header.Get("X-Title") != "Eul" {
 			t.Errorf("headers = %v", request.Header)
@@ -77,13 +76,12 @@ func TestRuntimeChecksCredentialsInitializesModelsAndCreatesProvider(t *testing.
 			writer.WriteHeader(http.StatusNotFound)
 		}
 	}))
-	defer server.Close()
 
 	driver := New()
 	key := "secret"
 	driver.getenv = func(string) string { return key }
-	driver.baseURL = server.URL
-	driver.httpClient = server.Client()
+	driver.baseURL = "https://openrouter.test"
+	driver.httpClient = server
 	backendRuntime, err := driver.Open(backend.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -161,7 +159,7 @@ func TestRuntimeChecksCredentialsInitializesModelsAndCreatesProvider(t *testing.
 
 func TestModelCatalogIsCached(t *testing.T) {
 	models := 0
-	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/key":
 			fmt.Fprint(writer, `{"data":{}}`)
@@ -170,12 +168,11 @@ func TestModelCatalogIsCached(t *testing.T) {
 			fmt.Fprint(writer, `{"data":[{"id":"vendor/model","context_length":64000,"supported_parameters":[]}]}`)
 		}
 	}))
-	defer server.Close()
 
 	driver := New()
 	driver.getenv = func(string) string { return "secret" }
-	driver.baseURL = server.URL
-	driver.httpClient = server.Client()
+	driver.baseURL = "https://openrouter.test"
+	driver.httpClient = server
 	opened, err := driver.Open(backend.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -210,18 +207,17 @@ func TestRuntimeLoadsAccountUsage(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				if request.Method != http.MethodGet || request.URL.Path != "/key" || request.Header.Get("Authorization") != "Bearer secret" {
 					t.Errorf("request = %s %s, authorization = %q", request.Method, request.URL.Path, request.Header.Get("Authorization"))
 				}
 				fmt.Fprint(writer, test.body)
 			}))
-			defer server.Close()
 
 			driver := New()
 			driver.getenv = func(string) string { return "secret" }
-			driver.baseURL = server.URL
-			driver.httpClient = server.Client()
+			driver.baseURL = "https://openrouter.test"
+			driver.httpClient = server
 			opened, err := driver.Open(backend.Options{})
 			if err != nil {
 				t.Fatal(err)
@@ -265,15 +261,14 @@ func TestRuntimeUsageRejectsTrailingData(t *testing.T) {
 }
 
 func TestCredentialCheckRejectsMalformedResponse(t *testing.T) {
-	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(writer, `{`)
 	}))
-	defer server.Close()
 
 	driver := New()
 	driver.getenv = func(string) string { return "secret" }
-	driver.baseURL = server.URL
-	driver.httpClient = server.Client()
+	driver.baseURL = "https://openrouter.test"
+	driver.httpClient = server
 	backendRuntime, err := driver.Open(backend.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -284,7 +279,7 @@ func TestCredentialCheckRejectsMalformedResponse(t *testing.T) {
 }
 
 func TestCredentialCheckReportsInvalidKey(t *testing.T) {
-	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/models" {
 			fmt.Fprint(writer, `{"data":[]}`)
 			return
@@ -292,12 +287,11 @@ func TestCredentialCheckReportsInvalidKey(t *testing.T) {
 		writer.WriteHeader(http.StatusUnauthorized)
 		fmt.Fprint(writer, `{"error":{"message":"invalid secret key"}}`)
 	}))
-	defer server.Close()
 
 	driver := New()
 	driver.getenv = func(string) string { return "secret" }
-	driver.baseURL = server.URL
-	driver.httpClient = server.Client()
+	driver.baseURL = "https://openrouter.test"
+	driver.httpClient = server
 	backendRuntime, err := driver.Open(backend.Options{})
 	if err != nil {
 		t.Fatal(err)

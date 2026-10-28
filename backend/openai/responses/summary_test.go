@@ -13,7 +13,7 @@ import (
 )
 
 func TestClientCompactsBySummarizing(t *testing.T) {
-	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		var wire createResponseRequest
 		if err := json.NewDecoder(request.Body).Decode(&wire); err != nil {
 			t.Fatal(err)
@@ -38,9 +38,8 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 			"usage": map[string]any{"input_tokens": 80, "output_tokens": 10, "total_tokens": 90},
 		})
 	}))
-	defer server.Close()
 
-	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+	client := newTestClient(t, "key", Options{HTTPClient: server})
 	state, err := continuation.Encode(continuation.MaximumBytes, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
 	if err != nil {
 		t.Fatal(err)
@@ -89,9 +88,8 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 
 func TestManualSemanticCompactionPreservesTurnBoundary(t *testing.T) {
 	server := responseServer(t, http.StatusOK, `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"concise handoff"}]}]}`)
-	defer server.Close()
 
-	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+	client := newTestClient(t, "key", Options{HTTPClient: server})
 	state, err := continuation.Encode(continuation.MaximumBytes, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
 	if err != nil {
 		t.Fatal(err)

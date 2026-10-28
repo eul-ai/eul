@@ -16,7 +16,7 @@ import (
 func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
 	const token = "compact-oauth-token"
 	var calls int
-	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		calls++
 		switch calls {
 		case 1:
@@ -88,9 +88,8 @@ func TestClientCompactsAndReplaysCanonicalState(t *testing.T) {
 			t.Errorf("unexpected request %d", calls)
 		}
 	}))
-	defer server.Close()
 
-	client := newTestClient(t, token, server.URL, Options{HTTPClient: server.Client()})
+	client := newTestClient(t, token, Options{HTTPClient: server})
 	state, err := continuation.Encode(continuation.MaximumBytes, []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":"old answer"}`)})
 	if err != nil {
 		t.Fatal(err)
@@ -140,8 +139,7 @@ func TestClientRejectsMalformedCompactResponses(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			server := compactResponseServer(t, http.StatusOK, test.body)
-			defer server.Close()
-			client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+			client := newTestClient(t, "key", Options{HTTPClient: server})
 			_, err := client.Compact(context.Background(), baseRequest())
 			if err == nil {
 				t.Fatal("Compact() succeeded")
@@ -153,8 +151,7 @@ func TestClientRejectsMalformedCompactResponses(t *testing.T) {
 func TestClientCompactBoundsCancellationAndOptionalUsage(t *testing.T) {
 	t.Run("optional usage", func(t *testing.T) {
 		server := compactResponseServer(t, http.StatusOK, `{"output":[{"type":"compaction","encrypted_content":"opaque"}]}`)
-		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+		client := newTestClient(t, "key", Options{HTTPClient: server})
 		response, err := client.Compact(context.Background(), baseRequest())
 		if err != nil || response.Usage != (agent.Usage{}) {
 			t.Fatalf("Compact() response = %+v, error = %v", response, err)
@@ -162,7 +159,7 @@ func TestClientCompactBoundsCancellationAndOptionalUsage(t *testing.T) {
 	})
 
 	t.Run("pre-canceled", func(t *testing.T) {
-		client := newTestClient(t, "key", "http://127.0.0.1:1", Options{})
+		client := newTestClient(t, "key", Options{})
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		_, err := client.Compact(ctx, baseRequest())

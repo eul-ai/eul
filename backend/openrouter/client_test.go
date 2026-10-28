@@ -5,12 +5,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/backend/testhttp"
 )
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
+
+func handlerClient(handler http.Handler) *http.Client {
+	return &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder.Result(), nil
+	})}
+}
 
 func testMetadata(reasoning bool, contextWindow int64) func(string) modelMetadata {
 	return func(string) modelMetadata {
@@ -24,7 +38,7 @@ func testMetadata(reasoning bool, contextWindow int64) func(string) modelMetadat
 
 func TestClientConfiguresOpenRouterResponsesAdapter(t *testing.T) {
 	calls := 0
-	server := testhttp.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		calls++
 		if request.URL.Path != "/responses" || request.Method != http.MethodPost {
 			t.Errorf("request = %s %s", request.Method, request.URL.Path)
@@ -63,9 +77,8 @@ func TestClientConfiguresOpenRouterResponsesAdapter(t *testing.T) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n")
 	}))
-	defer server.Close()
 
-	client := newClient("secret", server.URL+"/responses", server.Client(), testMetadata(true, 128_000))
+	client := newClient("secret", "https://openrouter.test/responses", server, testMetadata(true, 128_000))
 	_, err := client.Generate(context.Background(), agent.Request{
 		SessionID:     "session-123",
 		Model:         "vendor/model",

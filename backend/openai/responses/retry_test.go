@@ -20,8 +20,7 @@ import (
 func TestClientBoundsHTTPErrors(t *testing.T) {
 	const key = "top-secret-key"
 	server := responseServer(t, http.StatusBadRequest, strings.Repeat(key+" ", 10_000))
-	defer server.Close()
-	client := newTestClient(t, key, server.URL, Options{HTTPClient: server.Client()})
+	client := newTestClient(t, key, Options{HTTPClient: server})
 	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	if err == nil {
 		t.Fatal("Generate() succeeded")
@@ -34,8 +33,7 @@ func TestClientBoundsHTTPErrors(t *testing.T) {
 
 func TestClientParsesStructuredHTTPError(t *testing.T) {
 	server := responseServer(t, http.StatusTooManyRequests, `{"error":{"type":"rate_limit_error","code":"rate_limit","message":"slow down"}}`)
-	defer server.Close()
-	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+	client := newTestClient(t, "key", Options{HTTPClient: server})
 	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	var responseErr *backendhttp.APIResponseError
 	if !errors.As(err, &responseErr) || responseErr.StatusCode() != http.StatusTooManyRequests || responseErr.Detail().Type != "rate_limit_error" || responseErr.Detail().Code != "rate_limit" || responseErr.Detail().Message != "slow down" {
@@ -46,8 +44,7 @@ func TestClientParsesStructuredHTTPError(t *testing.T) {
 func TestClientIncludesProviderHTTPErrorDetail(t *testing.T) {
 	const key = "provider-secret"
 	server := responseServer(t, http.StatusBadRequest, `{"error":{"code":400,"message":"Provider returned error","metadata":{"provider_name":"Google AI Studio","raw":"{\"error\":{\"code\":400,\"message\":\"Corrupted thought signature: provider-secret\",\"status\":\"INVALID_ARGUMENT\"}}"}}}`)
-	defer server.Close()
-	client := newTestClient(t, key, server.URL, Options{HTTPClient: server.Client()})
+	client := newTestClient(t, key, Options{HTTPClient: server})
 
 	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	var responseErr *backendhttp.APIResponseError
@@ -62,8 +59,7 @@ func TestClientIncludesProviderHTTPErrorDetail(t *testing.T) {
 func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 	t.Run("HTTP error", func(t *testing.T) {
 		server := responseServer(t, http.StatusBadRequest, `{"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too many tokens"}}`)
-		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+		client := newTestClient(t, "key", Options{HTTPClient: server})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		if err == nil || !backendhttp.IsContextLimit(err) {
@@ -76,8 +72,7 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 
 	t.Run("HTTP error type", func(t *testing.T) {
 		server := responseServer(t, http.StatusBadRequest, `{"error":{"type":"context_length_exceeded","message":"too many tokens"}}`)
-		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+		client := newTestClient(t, "key", Options{HTTPClient: server})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		if err == nil || !backendhttp.IsContextLimit(err) {
@@ -86,12 +81,11 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 	})
 
 	t.Run("SSE error", func(t *testing.T) {
-		server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			writer.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(writer, "data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"context_length_exceeded\",\"message\":\"too many tokens\"}}\n\n")
 		}))
-		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+		client := newTestClient(t, "key", Options{HTTPClient: server})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		if err == nil || !backendhttp.IsContextLimit(err) {
@@ -101,8 +95,7 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 
 	t.Run("terminal response error", func(t *testing.T) {
 		server := responseServer(t, http.StatusOK, `{"status":"failed","error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too many tokens"},"output":[]}`)
-		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+		client := newTestClient(t, "key", Options{HTTPClient: server})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		if err == nil || !backendhttp.IsContextLimit(err) {
@@ -113,7 +106,7 @@ func TestClientClassifiesContextLimitErrorsForCompaction(t *testing.T) {
 
 func TestClientRetriesTransientGenerationThroughEngine(t *testing.T) {
 	calls := 0
-	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		calls++
 		writer.Header().Set("Content-Type", "text/event-stream")
 		if calls == 1 {
@@ -122,8 +115,7 @@ func TestClientRetriesTransientGenerationThroughEngine(t *testing.T) {
 		}
 		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"recovered\"}]}]}}\n\n")
 	}))
-	defer server.Close()
-	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+	client := newTestClient(t, "key", Options{HTTPClient: server})
 	engine := agent.New(client, emptyToolbox{}, agent.Options{Model: "test-model"})
 
 	var retries []agent.Event
@@ -143,18 +135,17 @@ func TestClientRetriesTransientGenerationThroughEngine(t *testing.T) {
 
 func TestClientRetriesInterruptedStreamAfterToolCallDelivery(t *testing.T) {
 	var calls atomic.Int32
-	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", "text/event-stream")
+	server := streamingClient(func(_ *http.Request, writer *io.PipeWriter) {
 		if calls.Add(1) == 1 {
 			fmt.Fprint(writer, "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"write\",\"arguments\":\"\"}}\n\n")
-			writer.(http.Flusher).Flush()
-			panic("reset stream")
+			writer.CloseWithError(io.ErrUnexpectedEOF)
+			return
 		}
 		fmt.Fprint(writer, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"recovered\"}]}]}}\n\n")
-	}))
-	defer server.Close()
+		writer.Close()
+	})
 
-	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+	client := newTestClient(t, "key", Options{HTTPClient: server})
 	engine := agent.New(client, emptyToolbox{}, agent.Options{Model: "test-model"})
 
 	result, err := engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "hello"}}, func(agent.Event) error { return nil })
@@ -170,7 +161,7 @@ func TestClientRetriesTerminalFailureAfterDelivery(t *testing.T) {
 		`data: {"type":"response.failed","response":{"status":"failed","error":{"type":"server_error","code":"server_error","message":"failed"}}}`,
 		"",
 	}, "\n")
-	client := newTestClient(t, "key", "https://example.test", Options{
+	client := newTestClient(t, "key", Options{
 		HTTPClient: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 			return &http.Response{
 				StatusCode: http.StatusOK,
@@ -197,7 +188,7 @@ func TestClientRetriesTerminalFailureAfterDelivery(t *testing.T) {
 
 func TestClientRetriesDeadlineAfterDelivery(t *testing.T) {
 	body := &deadlineAfterReadCloser{reader: strings.NewReader(`data: {"type":"response.output_text.delta","delta":"partial"}` + "\n\n")}
-	client := newTestClient(t, "key", "https://example.test", Options{
+	client := newTestClient(t, "key", Options{
 		HTTPClient: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 			return &http.Response{
 				StatusCode: http.StatusOK,
@@ -243,12 +234,11 @@ func (*deadlineAfterReadCloser) Close() error { return nil }
 
 func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 	t.Run("SSE server error", func(t *testing.T) {
-		server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			writer.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(writer, "data: {\"type\":\"error\",\"error\":{\"type\":\"server_error\",\"code\":\"server_error\",\"message\":\"failed\"}}\n\n")
 		}))
-		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+		client := newTestClient(t, "key", Options{HTTPClient: server})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		delay, retry := client.RetryGeneration(err, 1)
@@ -258,12 +248,11 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 	})
 
 	t.Run("SSE overloaded code", func(t *testing.T) {
-		server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			writer.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(writer, "data: {\"type\":\"error\",\"error\":{\"code\":\"server_is_overloaded\",\"message\":\"overloaded\"}}\n\n")
 		}))
-		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+		client := newTestClient(t, "key", Options{HTTPClient: server})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		if _, retry := client.RetryGeneration(err, 1); err == nil || !retry {
@@ -292,14 +281,13 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 	})
 
 	t.Run("Retry-After is bounded", func(t *testing.T) {
-		server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		server := handlerClient(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			writer.Header().Set("Content-Type", "application/json")
 			writer.Header().Set("Retry-After", "600")
 			writer.WriteHeader(http.StatusTooManyRequests)
 			fmt.Fprint(writer, `{"error":{"type":"rate_limit_error","message":"slow down"}}`)
 		}))
-		defer server.Close()
-		client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+		client := newTestClient(t, "key", Options{HTTPClient: server})
 
 		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		delay, retry := client.RetryGeneration(err, 1)
@@ -311,8 +299,7 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 
 func TestClientDoesNotRetryPermanentOrObserverErrors(t *testing.T) {
 	server := responseServer(t, http.StatusBadRequest, `{"error":{"type":"invalid_request_error","message":"bad request"}}`)
-	defer server.Close()
-	client := newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+	client := newTestClient(t, "key", Options{HTTPClient: server})
 	_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 	if _, retry := client.RetryGeneration(err, 1); err == nil || retry {
 		t.Fatalf("HTTP error = %v, retry = %t", err, retry)
@@ -322,8 +309,7 @@ func TestClientDoesNotRetryPermanentOrObserverErrors(t *testing.T) {
 	}
 
 	server = responseServer(t, http.StatusOK, `{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"answer"}]}]}`)
-	defer server.Close()
-	client = newTestClient(t, "key", server.URL, Options{HTTPClient: server.Client()})
+	client = newTestClient(t, "key", Options{HTTPClient: server})
 	sinkErr := &net.DNSError{IsTimeout: true, Err: "sink timeout", Name: "sink"}
 	_, err = generate(client, context.Background(), baseRequest(), func(string) error { return sinkErr }, nil, nil)
 	if _, retry := client.RetryGeneration(err, 1); !errors.Is(err, sinkErr) || retry {
