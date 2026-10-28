@@ -83,7 +83,7 @@ func (store *Store) Open(cwd, id string) (*Handle, error) {
 	return &Handle{path: path, lock: lock, record: record, persisted: true}, nil
 }
 
-func (store *Store) List(cwd string) ([]Summary, error) {
+func (store *Store) list(cwd string) ([]Summary, error) {
 	directory := store.workspaceDirectory(cwd)
 	entries, err := os.ReadDir(directory)
 	if errors.Is(err, os.ErrNotExist) {
@@ -132,7 +132,7 @@ func (store *Store) sessionPath(cwd, id string) (string, error) {
 		return store.findSessionPath(id)
 	}
 
-	summaries, err := store.List(cwd)
+	summaries, err := store.list(cwd)
 	if err != nil {
 		return "", err
 	}

@@ -83,14 +83,6 @@ func (c *tuiController) startTurn(content []agent.ContentPart) error {
 	return nil
 }
 
-func (c *tuiController) startCompaction() error {
-	if err := c.model.session.Compact(); err != nil {
-		return err
-	}
-	c.model.beginTurn(activityCompacting)
-	return nil
-}
-
 func (c *tuiController) interruptTurn() {
 	c.model.interrupted = true
 	c.cancelTurn()

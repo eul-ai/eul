@@ -209,10 +209,6 @@ func newTUIModel(width, height int, session Session) *tuiModel {
 	return model
 }
 
-func (m *tuiModel) thinkingLevel() agent.ThinkingLevel {
-	return agent.ThinkingLevel(singleLine(string(m.session.Settings().ThinkingLevel), 40))
-}
-
 func (m *tuiModel) syncConversation() {
 	entries, changed := m.session.Sync(m.entries)
 	if !changed {

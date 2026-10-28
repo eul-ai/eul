@@ -75,7 +75,6 @@ type Session struct {
 	agentSettings *agent.Settings
 	goal          *agent.Goal
 	usage         func(context.Context) (backend.AccountUsage, error)
-	skills        []skill.Skill
 	engine        *agent.Engine
 	subagents     *subagent.Manager
 	updates       chan Update
@@ -123,7 +122,6 @@ func New(config Config) (*Session, error) {
 		agentSettings: config.AgentSettings,
 		goal:          config.Goal,
 		usage:         config.Usage,
-		skills:        config.Skills,
 		updates:       make(chan Update, 256),
 		closing:       make(chan struct{}),
 		transcript:    restoreTranscript(record.Transcript),
@@ -181,7 +179,7 @@ func (s *Session) Remember(prompt string) error {
 
 // Sessions lists the other sessions in the working directory.
 func (s *Session) Sessions() ([]Summary, error) {
-	return s.store.List(s.settings.WorkingDirectory)
+	return s.store.list(s.settings.WorkingDirectory)
 }
 
 func (s *Session) Usage(ctx context.Context) (backend.AccountUsage, error) {

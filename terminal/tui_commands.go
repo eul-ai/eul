@@ -142,7 +142,11 @@ func (c *tuiController) startNewSession(context.Context, string) (bool, error) {
 }
 
 func (c *tuiController) compact(context.Context, string) (bool, error) {
-	return false, c.startCompaction()
+	if err := c.model.session.Compact(); err != nil {
+		return false, err
+	}
+	c.model.beginTurn(activityCompacting)
+	return false, nil
 }
 
 func (c *tuiController) toggleFastMode(context.Context, string) (bool, error) {

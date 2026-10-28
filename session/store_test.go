@@ -77,7 +77,7 @@ func TestStorePartitionsListsAndResolvesSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	summaries, err := store.List(cwd)
+	summaries, err := store.list(cwd)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestStoreIgnoresLegacySessionFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	summaries, err := store.List(cwd)
+	summaries, err := store.list(cwd)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestStoreIgnoresAbandonedEmptyDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	summaries, err := store.List(cwd)
+	summaries, err := store.list(cwd)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 			t.Fatalf("empty session %s error = %v", name, err)
 		}
 	}
-	summaries, err := store.List(cwd)
+	summaries, err := store.list(cwd)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestStoreListsMetadataWithoutDecodingCheckpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	summaries, err := store.List(cwd)
+	summaries, err := store.list(cwd)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestStoreSkipsCorruptSessions(t *testing.T) {
 	if err := valid.Close(); err != nil {
 		t.Fatal(err)
 	}
-	summaries, err := store.List(cwd)
+	summaries, err := store.list(cwd)
 	if err != nil {
 		t.Fatal(err)
 	}

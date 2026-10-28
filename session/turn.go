@@ -152,7 +152,7 @@ func (s *Session) settle(err error) (context.Context, operation, bool) {
 
 func (s *Session) prompt(content []agent.ContentPart) operation {
 	return func(ctx context.Context, sink agent.EventSink) error {
-		content, err := expandSkill(content, s.skills)
+		content, err := expandSkill(content, s.info.Skills)
 		if err != nil {
 			return err
 		}
