@@ -95,6 +95,7 @@ type editorItem struct {
 type editorModel struct {
 	input              []editorItem
 	cursor             int
+	commands           []slashCommand
 	commandCompletions []commandCompletion
 	commandPicker      commandPickerState
 	filePicker         filePickerState
@@ -169,13 +170,15 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 		thinkingLevels = agent.ThinkingLevels()
 	}
 	fastModeAvailable := options.Config.FastModeAvailable && options.Controls.SetFastMode != nil
+	commands := availableCommands(fastModeAvailable)
 
 	model := &tuiModel{
 		conversationModel: conversationModel{
 			following: true,
 		},
 		editorModel: editorModel{
-			commandCompletions: commandCompletions(options.Config.Skills, fastModeAvailable),
+			commands:           commands,
+			commandCompletions: commandCompletions(commands, options.Config.Skills),
 			filePicker:         filePickerState{enabled: options.Config.WorkingDirectory != ""},
 			globalHistory:      append([]string(nil), options.MessageHistory.Entries...),
 			historyIndex:       -1,

@@ -381,6 +381,10 @@ func contentText(content []agent.ContentPart) string {
 	return text.String()
 }
 
+func textContent(text string) []agent.ContentPart {
+	return []agent.ContentPart{{Kind: agent.ContentPartText, Text: text}}
+}
+
 func cloneTerminalContent(content []agent.ContentPart) []agent.ContentPart {
 	cloned := make([]agent.ContentPart, len(content))
 	for index, part := range content {

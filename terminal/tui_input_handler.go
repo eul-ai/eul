@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -12,19 +13,12 @@ type tuiActionKind uint8
 
 const (
 	tuiActionNone tuiActionKind = iota
-	tuiActionHelp
-	tuiActionOpenResume
+	tuiActionCommand
 	tuiActionResume
-	tuiActionNewSession
 	tuiActionCancel
-	tuiActionCompact
-	tuiActionToggleFast
 	tuiActionExit
 	tuiActionSubmit
 	tuiActionSteer
-	tuiActionShowGoal
-	tuiActionSetGoal
-	tuiActionClearGoal
 	tuiActionDequeue
 	tuiActionSetThinking
 	tuiActionAttachImage
@@ -35,7 +29,7 @@ const (
 
 type tuiAction struct {
 	kind               tuiActionKind
-	prompt             string
+	command            slashCommand
 	text               string
 	content            []agent.ContentPart
 	thinkingLevel      agent.ThinkingLevel
@@ -141,10 +135,7 @@ func handleKeyInput(model *tuiModel, key keyEvent, frame terminalFrame) (tuiActi
 			return tuiAction{kind: tuiActionExit}, nil
 		}
 	case keyEnter:
-		if model.running {
-			return reduceSteeringPrompt(model), nil
-		}
-		return reducePrompt(model), nil
+		return reduceSubmission(model), nil
 	}
 	return tuiAction{}, nil
 }
@@ -322,50 +313,34 @@ func reduceInterrupt(model *tuiModel) (tuiAction, error) {
 	return tuiAction{kind: tuiActionCancel}, nil
 }
 
-func reduceSteeringPrompt(model *tuiModel) tuiAction {
+func reduceSubmission(model *tuiModel) tuiAction {
 	content, ok := model.submittingContent()
 	if !ok {
 		return tuiAction{}
 	}
 
-	prompt := contentText(content)
-	trimmed := strings.TrimSpace(prompt)
-	if !contentHasImage(content) && strings.HasPrefix(trimmed, "/") {
-		action, command, ok := matchSlashCommand(prompt, trimmed, model.fastModeAvailable)
-		if ok && command.availableDuringRun {
-			model.finishSubmission(content)
-			return action
+	trimmed := strings.TrimSpace(contentText(content))
+	if contentHasImage(content) || !strings.HasPrefix(trimmed, "/") {
+		if !model.running {
+			return tuiAction{kind: tuiActionSubmit, content: content}
 		}
-		setInputError(model, fmt.Errorf("commands cannot be queued while the agent is running"))
-		return tuiAction{}
+		model.finishSubmission(content)
+		return tuiAction{kind: tuiActionSteer, content: content}
 	}
 
-	model.finishSubmission(content)
-	return tuiAction{kind: tuiActionSteer, prompt: prompt, content: content}
-}
-
-func reducePrompt(model *tuiModel) tuiAction {
-	content, ok := model.submittingContent()
-	if !ok {
-		return tuiAction{}
+	command, arg, ok := findCommand(model.commands, trimmed)
+	switch {
+	case ok && (command.duringRun || !model.running):
+		model.finishSubmission(content)
+		return tuiAction{kind: tuiActionCommand, command: command, text: arg}
+	case model.running:
+		setInputError(model, errors.New("commands cannot be queued while the agent is running"))
+	default:
+		model.finishSubmission(content)
+		model.appendBlock(blockError, "Unknown command "+diagnostic(trimmed, 120))
+		model.activity = activity{kind: activityError, detail: "unknown command"}
 	}
-
-	prompt := contentText(content)
-	trimmed := strings.TrimSpace(prompt)
-	if !contentHasImage(content) {
-		if action, _, matched := matchSlashCommand(prompt, trimmed, model.fastModeAvailable); matched {
-			model.finishSubmission(content)
-			return action
-		}
-		if strings.HasPrefix(trimmed, "/") {
-			model.finishSubmission(content)
-			model.appendBlock(blockError, "Unknown command "+diagnostic(trimmed, 120))
-			model.activity = activity{kind: activityError, detail: "unknown command"}
-			return tuiAction{}
-		}
-	}
-
-	return tuiAction{kind: tuiActionSubmit, prompt: prompt, content: content}
+	return tuiAction{}
 }
 
 func contentHasImage(content []agent.ContentPart) bool {

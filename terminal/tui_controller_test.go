@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/skill"
 	"github.com/eul-ai/eul/subagent"
 )
 
@@ -683,7 +684,7 @@ func TestTUIControllerStartsOperationsAfterActiveCheckpoint(t *testing.T) {
 			activity:      activityThinking,
 			wantUserBlock: true,
 			start: func(ctx context.Context, controller *tuiController) error {
-				_, err := controller.applyAction(ctx, tuiAction{kind: tuiActionSetGoal, prompt: "finish goal"})
+				_, err := controller.applyAction(ctx, commandAction("/goal", "finish goal"))
 				return err
 			},
 		},
@@ -691,7 +692,7 @@ func TestTUIControllerStartsOperationsAfterActiveCheckpoint(t *testing.T) {
 			name:     "compaction",
 			activity: activityCompacting,
 			start: func(ctx context.Context, controller *tuiController) error {
-				_, err := controller.applyAction(ctx, tuiAction{kind: tuiActionCompact})
+				_, err := controller.applyAction(ctx, commandAction("/compact", ""))
 				return err
 			},
 		},
@@ -792,7 +793,7 @@ func TestTUIControllerDoesNotLaunchAfterActiveCheckpointFailure(t *testing.T) {
 			name:     "goal",
 			activity: activityThinking,
 			start: func(ctx context.Context, controller *tuiController) error {
-				_, err := controller.applyAction(ctx, tuiAction{kind: tuiActionSetGoal, prompt: "finish goal"})
+				_, err := controller.applyAction(ctx, commandAction("/goal", "finish goal"))
 				return err
 			},
 		},
@@ -800,7 +801,7 @@ func TestTUIControllerDoesNotLaunchAfterActiveCheckpointFailure(t *testing.T) {
 			name:     "compaction",
 			activity: activityCompacting,
 			start: func(ctx context.Context, controller *tuiController) error {
-				_, err := controller.applyAction(ctx, tuiAction{kind: tuiActionCompact})
+				_, err := controller.applyAction(ctx, commandAction("/compact", ""))
 				return err
 			},
 		},
@@ -856,6 +857,36 @@ func TestTUIControllerDoesNotLaunchAfterActiveCheckpointFailure(t *testing.T) {
 				t.Fatalf("cancel=%v running=%v activity=%+v", controller.turnCancel != nil, model.running, model.activity)
 			}
 		})
+	}
+}
+
+func TestTUIControllerSendsSkillCommandTextToTurn(t *testing.T) {
+	engine := &fakeEngine{}
+	messages := make(chan engineMessage, 1)
+	stopped := make(chan struct{})
+	defer close(stopped)
+	model := newTUIModel(80, 24, Options{Config: Config{Skills: []skill.Skill{{Name: "review"}}}})
+	if err := model.insertInput("/skill:review check tests"); err != nil {
+		t.Fatal(err)
+	}
+	controller := tuiController{
+		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
+		engineMessages: messages, stopped: stopped,
+	}
+
+	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keyEvent{code: keyEnter}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-messages:
+	case <-time.After(2 * time.Second):
+		t.Fatal("skill turn did not complete")
+	}
+	if calls := engine.snapshot(); !slices.Equal(calls, []string{"/skill:review check tests"}) {
+		t.Fatalf("calls = %q", calls)
+	}
+	if len(model.blocks) != 1 || model.blocks[0].kind != blockUser || model.blocks[0].text != "/skill:review check tests" {
+		t.Fatalf("blocks = %+v", model.blocks)
 	}
 }
 
@@ -938,14 +969,14 @@ func TestTUIControllerSetsShowsAndClearsGoal(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	if _, err := controller.applyAction(ctx, tuiAction{kind: tuiActionShowGoal}); err != nil {
+	if _, err := controller.applyAction(ctx, commandAction("/goal", "")); err != nil {
 		t.Fatal(err)
 	}
 	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo {
 		t.Fatalf("blocks = %+v", model.blocks)
 	}
 
-	if _, err := controller.applyAction(ctx, tuiAction{kind: tuiActionSetGoal, prompt: "finish migration"}); err != nil {
+	if _, err := controller.applyAction(ctx, commandAction("/goal", "finish migration")); err != nil {
 		t.Fatal(err)
 	}
 	goal, ok := engine.Goal()
@@ -962,14 +993,14 @@ func TestTUIControllerSetsShowsAndClearsGoal(t *testing.T) {
 		t.Fatalf("calls = %q", calls)
 	}
 
-	if _, err := controller.applyAction(ctx, tuiAction{kind: tuiActionShowGoal}); err != nil {
+	if _, err := controller.applyAction(ctx, commandAction("/goal", "")); err != nil {
 		t.Fatal(err)
 	}
 	if model.blocks[len(model.blocks)-1].kind != blockInfo || !strings.Contains(model.blocks[len(model.blocks)-1].text, "finish migration") {
 		t.Fatalf("goal status block = %+v", model.blocks[len(model.blocks)-1])
 	}
 
-	if _, err := controller.applyAction(ctx, tuiAction{kind: tuiActionClearGoal}); err != nil {
+	if _, err := controller.applyAction(ctx, commandAction("/goal", "clear")); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := engine.Goal(); ok || model.blocks[len(model.blocks)-1].kind != blockInfo {
@@ -1065,7 +1096,7 @@ func TestTUIControllerDoesNotStartGoalWhenSetFails(t *testing.T) {
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 	}
 
-	if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionSetGoal, prompt: "goal"}); err != nil {
+	if _, err := controller.applyAction(context.Background(), commandAction("/goal", "goal")); err != nil {
 		t.Fatal(err)
 	}
 	calls := engine.snapshot()
@@ -1082,7 +1113,7 @@ func TestTUIControllerNewSessionLeavesCurrentGoal(t *testing.T) {
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 	}
 
-	exit, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionNewSession})
+	exit, err := controller.applyAction(context.Background(), commandAction("/new", ""))
 	if err != nil || !exit || controller.outcome.Action != RunNewSession {
 		t.Fatalf("new session exit=%v outcome=%+v error=%v", exit, controller.outcome, err)
 	}
@@ -1536,7 +1567,7 @@ func TestTUIControllerTogglesFastMode(t *testing.T) {
 		stateChanges: StateChanges{Notify: nil},
 	}
 	for _, want := range []bool{true, false} {
-		if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionToggleFast}); err != nil {
+		if _, err := controller.applyAction(context.Background(), commandAction("/fast", "")); err != nil {
 			t.Fatal(err)
 		}
 		if model.fastMode != want {
@@ -1567,7 +1598,7 @@ func TestTUIControllerTogglesFastModeWhileRunning(t *testing.T) {
 			return nil
 		}},
 	}
-	if _, err := controller.applyAction(context.Background(), tuiAction{kind: tuiActionToggleFast}); err != nil {
+	if _, err := controller.applyAction(context.Background(), commandAction("/fast", "")); err != nil {
 		t.Fatal(err)
 	}
 	if !configured || !model.fastMode || !model.running {

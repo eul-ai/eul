@@ -1,63 +1,41 @@
 package terminal
 
 import (
+	"context"
+	"errors"
+	"slices"
 	"strings"
 	"unicode"
 
 	"github.com/eul-ai/eul/skill"
 )
 
-const commandPickerMaxVisible = 5
+const (
+	commandPickerMaxVisible = 5
+	skillCommand            = "/skill:"
+)
 
-type slashCommandDefinition struct {
-	text               string
-	usage              string
-	description        string
-	action             tuiActionKind
-	argumentAction     tuiActionKind
-	complete           bool
-	dynamicSkills      bool
-	fastMode           bool
-	availableDuringRun bool
+type slashCommand struct {
+	name        string
+	usage       string
+	description string
+	duringRun   bool
+	run         func(c *tuiController, ctx context.Context, arg string) (exit bool, err error)
 }
 
-var slashCommands = []slashCommandDefinition{
-	{
-		text: "/help", usage: "/help", description: "show this help",
-		action: tuiActionHelp, complete: true, availableDuringRun: true,
-	},
-	{
-		text: "/resume", usage: "/resume", description: "resume a saved session",
-		action: tuiActionOpenResume, complete: true,
-	},
-	{
-		text: "/new", usage: "/new", description: "start a new session",
-		action: tuiActionNewSession, complete: true,
-	},
-	{
-		text: "/compact", usage: "/compact", description: "compact the conversation context",
-		action: tuiActionCompact, complete: true,
-	},
-	{
-		text: "/fast", usage: "/fast", description: "toggle fast inference mode",
-		action: tuiActionToggleFast, complete: true, fastMode: true, availableDuringRun: true,
-	},
-	{
-		text: "/exit", usage: "/exit", description: "exit eul",
-		action: tuiActionExit, complete: true,
-	},
-	{
-		text: "/goal", usage: "/goal [objective]", description: "show or set the active goal",
-		action: tuiActionShowGoal, argumentAction: tuiActionSetGoal, complete: true, availableDuringRun: true,
-	},
-	{
-		text: "/goal clear", usage: "/goal clear", description: "clear the active goal",
-		action: tuiActionClearGoal, complete: true, availableDuringRun: true,
-	},
-	{
-		text: "/skill:", usage: "/skill:<name>", description: "load a skill",
-		action: tuiActionSubmit, dynamicSkills: true,
-	},
+var slashCommands = []slashCommand{
+	{name: "/help", usage: "/help", description: "show this help", duringRun: true, run: (*tuiController).showHelp},
+	{name: "/resume", usage: "/resume", description: "resume a saved session", run: (*tuiController).openResume},
+	{name: "/new", usage: "/new", description: "start a new session", run: (*tuiController).startNewSession},
+	{name: "/compact", usage: "/compact", description: "compact the conversation context", run: (*tuiController).compact},
+	{name: "/fast", usage: "/fast", description: "toggle fast inference mode", duringRun: true, run: (*tuiController).toggleFastMode},
+	{name: "/exit", usage: "/exit", description: "exit eul", run: (*tuiController).exit},
+	{name: "/goal", usage: "/goal [objective|clear]", description: "show, set or clear the active goal", duringRun: true, run: (*tuiController).goal},
+	{name: skillCommand, usage: "/skill:<name>", description: "load a skill", run: (*tuiController).loadSkill},
+}
+
+func (command slashCommand) acceptsArgument() bool {
+	return command.usage != command.name
 }
 
 type commandCompletion struct {
@@ -76,20 +54,24 @@ type commandPickerState struct {
 	dismissed  bool
 }
 
-func commandCompletions(skills []skill.Skill, fastModeAvailable bool) []commandCompletion {
-	completions := make([]commandCompletion, 0, len(slashCommands)+len(skills))
-	for _, command := range slashCommands {
-		if command.fastMode && !fastModeAvailable {
-			continue
-		}
-		if command.complete {
+func availableCommands(fastModeAvailable bool) []slashCommand {
+	if fastModeAvailable {
+		return slashCommands
+	}
+	return slices.DeleteFunc(slices.Clone(slashCommands), func(command slashCommand) bool {
+		return command.name == "/fast"
+	})
+}
+
+func commandCompletions(commands []slashCommand, skills []skill.Skill) []commandCompletion {
+	completions := make([]commandCompletion, 0, len(commands)+len(skills))
+	for _, command := range commands {
+		if command.name != skillCommand {
 			completions = append(completions, commandCompletion{
-				text:               command.text,
+				text:               command.name,
 				description:        command.description,
-				availableDuringRun: command.availableDuringRun,
+				availableDuringRun: command.duringRun,
 			})
-		}
-		if !command.dynamicSkills {
 			continue
 		}
 		for _, skill := range skills {
@@ -97,7 +79,7 @@ func commandCompletions(skills []skill.Skill, fastModeAvailable bool) []commandC
 				continue
 			}
 			completions = append(completions, commandCompletion{
-				text:        command.text + skill.Name,
+				text:        skillCommand + skill.Name,
 				description: singleLine(skill.Description, 200),
 			})
 		}
@@ -111,72 +93,148 @@ func invokableSkillName(name string) bool {
 	}) < 0
 }
 
-func commandHelpText(fastModeAvailable bool) string {
-	const usageWidth = 18
+func commandHelpText(commands []slashCommand) string {
+	const usageWidth = 24
 
 	var help strings.Builder
 	help.WriteString("Commands:")
-	for _, command := range slashCommands {
-		if command.fastMode && !fastModeAvailable {
-			continue
-		}
+	for _, command := range commands {
 		help.WriteString("\n  ")
 		help.WriteString(command.usage)
-		padding := usageWidth - len(command.usage)
-		if padding < 1 {
-			padding = 1
-		}
-		help.WriteString(strings.Repeat(" ", padding))
+		help.WriteString(strings.Repeat(" ", max(1, usageWidth-len(command.usage))))
 		help.WriteString(command.description)
 	}
 	return help.String()
 }
 
-func matchSlashCommand(prompt, trimmed string, fastModeAvailable bool) (tuiAction, slashCommandDefinition, bool) {
-	for _, command := range slashCommands {
-		if command.fastMode && !fastModeAvailable {
-			continue
-		}
-		if trimmed == command.text {
-			return tuiAction{kind: command.action, prompt: commandPrompt(command.action, prompt)}, command, true
+func findCommand(commands []slashCommand, input string) (slashCommand, string, bool) {
+	name, arg := input, ""
+	if index := strings.IndexFunc(input, unicode.IsSpace); index >= 0 {
+		name, arg = input[:index], strings.TrimSpace(input[index:])
+	}
+	for _, command := range commands {
+		switch {
+		case command.name == skillCommand && strings.HasPrefix(input, skillCommand):
+			return command, input, true
+		case command.name == name && (arg == "" || command.acceptsArgument()):
+			return command, arg, true
 		}
 	}
-
-	for _, command := range slashCommands {
-		if command.fastMode && !fastModeAvailable {
-			continue
-		}
-		if command.argumentAction == tuiActionNone || !hasCommandArguments(trimmed, command.text) {
-			continue
-		}
-		argument := strings.TrimSpace(trimmed[len(command.text):])
-		return tuiAction{kind: command.argumentAction, prompt: argument}, command, true
-	}
-
-	for _, command := range slashCommands {
-		if command.fastMode && !fastModeAvailable {
-			continue
-		}
-		if command.dynamicSkills && strings.HasPrefix(trimmed, command.text) {
-			return tuiAction{kind: command.action, prompt: commandPrompt(command.action, prompt)}, command, true
-		}
-	}
-	return tuiAction{}, slashCommandDefinition{}, false
+	return slashCommand{}, "", false
 }
 
-func commandPrompt(action tuiActionKind, prompt string) string {
-	if action == tuiActionSubmit {
-		return prompt
-	}
-	return ""
+func (c *tuiController) showHelp(context.Context, string) (bool, error) {
+	c.model.appendBlock(blockInfo, commandHelpText(c.model.commands))
+	return false, nil
 }
 
-func hasCommandArguments(input, command string) bool {
-	if !strings.HasPrefix(input, command) || len(input) <= len(command) {
-		return false
+func (c *tuiController) openResume(ctx context.Context, _ string) (bool, error) {
+	if c.sessions.List == nil {
+		setInputError(c.model, errors.New("session resumption is unavailable"))
+		return false, nil
 	}
-	separator := input[len(command)]
-	return separator == ' ' || separator == '\t' || separator == '\n'
+	summaries, warnings, err := c.sessions.List(ctx)
+	if err != nil {
+		setInputError(c.model, err)
+		return false, nil
+	}
+	for _, warning := range warnings {
+		c.model.appendBlock(blockInfo, warning)
+	}
+	c.model.openResumePicker(summaries)
+	return false, nil
+}
+
+func (c *tuiController) startNewSession(context.Context, string) (bool, error) {
+	c.cancelClipboardRequests()
+	c.outcome = RunOutcome{Action: RunNewSession}
+	return true, nil
+}
+
+func (c *tuiController) compact(ctx context.Context, _ string) (bool, error) {
+	return false, c.startCompaction(ctx)
+}
+
+func (c *tuiController) toggleFastMode(context.Context, string) (bool, error) {
+	if !c.model.fastModeAvailable || c.controls.SetFastMode == nil {
+		setInputError(c.model, errors.New("fast mode is unavailable for this model"))
+		return false, nil
+	}
+	if err := c.controls.SetFastMode(!c.model.fastMode); err != nil {
+		setInputError(c.model, err)
+		return false, nil
+	}
+	c.model.fastMode = !c.model.fastMode
+	state := "off"
+	if c.model.fastMode {
+		state = "on"
+	}
+	c.model.appendBlock(blockInfo, "Fast mode "+state)
+	return false, nil
+}
+
+func (c *tuiController) exit(context.Context, string) (bool, error) {
+	c.cancelClipboardRequests()
+	return true, nil
+}
+
+func (c *tuiController) goal(ctx context.Context, objective string) (bool, error) {
+	switch objective {
+	case "":
+		c.showGoal()
+		return false, nil
+	case "clear":
+		c.clearGoal()
+		return false, nil
+	}
+
+	if c.controls.SetGoal == nil {
+		setInputError(c.model, errors.New("goal updates are unavailable"))
+		return false, nil
+	}
+	if err := c.controls.SetGoal(objective); err != nil {
+		setInputError(c.model, err)
+		return false, nil
+	}
+	if c.model.running {
+		c.model.appendBlock(blockInfo, "Goal set: "+objective)
+		return false, nil
+	}
+	return false, c.startTurn(ctx, textContent(objective))
+}
+
+func (c *tuiController) showGoal() {
+	if c.controls.Goal == nil {
+		setInputError(c.model, errors.New("goal inspection is unavailable"))
+		return
+	}
+	goal, ok := c.controls.Goal()
+	switch {
+	case !ok:
+		c.model.appendBlock(blockInfo, "No goal is set")
+	case goal.Complete:
+		c.model.appendBlock(blockInfo, "Goal complete: "+goal.Objective)
+	default:
+		c.model.appendBlock(blockInfo, "Goal: "+goal.Objective)
+	}
+}
+
+func (c *tuiController) clearGoal() {
+	if c.controls.Goal == nil || c.controls.ClearGoal == nil {
+		setInputError(c.model, errors.New("goal updates are unavailable"))
+		return
+	}
+	_, hadGoal := c.controls.Goal()
+	c.controls.ClearGoal()
+	if hadGoal {
+		c.model.appendBlock(blockInfo, "Goal cleared")
+		return
+	}
+	c.model.appendBlock(blockInfo, "No goal is set")
+}
+
+func (c *tuiController) loadSkill(ctx context.Context, prompt string) (bool, error) {
+	return false, c.startTurn(ctx, textContent(prompt))
 }
 
 func commandReference(input []rune, cursor int) (int, int, string, bool) {

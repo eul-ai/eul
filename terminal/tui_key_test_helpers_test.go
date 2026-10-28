@@ -3,12 +3,18 @@ package terminal
 import (
 	"context"
 	"io"
+	"slices"
 
 	"github.com/eul-ai/eul/agent"
 )
 
 func reduceKey(model *tuiModel, key keyEvent) (tuiAction, error) {
 	return handleKeyInput(model, key, buildTerminalFrame(model))
+}
+
+func commandAction(name, arg string) tuiAction {
+	index := slices.IndexFunc(slashCommands, func(command slashCommand) bool { return command.name == name })
+	return tuiAction{kind: tuiActionCommand, command: slashCommands[index], text: arg}
 }
 
 func handleKey(

@@ -57,7 +57,7 @@ func TestFastCommandOnlyAppearsWhenAvailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	action, err := reduceKey(available, keyEvent{code: keyEnter})
-	if err != nil || action.kind != tuiActionToggleFast {
+	if err != nil || action.kind != tuiActionCommand || action.command.name != "/fast" {
 		t.Fatalf("action=%+v error=%v", action, err)
 	}
 }
@@ -90,7 +90,7 @@ func TestCommandPickerEnterCompletesAndSubmits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if action.kind != tuiActionHelp || len(model.input) != 0 || len(model.history) != 1 || len(model.blocks) != 0 {
+	if action.command.name != "/help" || len(model.input) != 0 || len(model.history) != 1 || len(model.blocks) != 0 {
 		t.Fatalf("submission action=%+v input=%q history=%q blocks=%+v", action, model.inputText(), model.history, model.blocks)
 	}
 	controller := tuiController{model: model}
@@ -112,7 +112,7 @@ func TestCommandPickerLetsExactCommandSubmit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if action.kind != tuiActionNewSession || len(model.input) != 0 || len(model.history) != 1 {
+	if action.command.name != "/new" || len(model.input) != 0 || len(model.history) != 1 {
 		t.Fatalf("action=%+v input=%q history=%q", action, model.inputText(), model.history)
 	}
 }
@@ -130,17 +130,17 @@ func TestCommandPickerEnterExecutesArrowSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if action.kind != tuiActionCompact || len(model.input) != 0 || len(model.history) != 1 || model.history[0] != "/compact" {
+	if action.command.name != "/compact" || len(model.input) != 0 || len(model.history) != 1 || model.history[0] != "/compact" {
 		t.Fatalf("action=%+v input=%q history=%q", action, model.inputText(), model.history)
 	}
 }
 
 func TestCommandPickerNavigationAndTabReplaceCommandFragment(t *testing.T) {
-	model := newTUIModel(80, 24, Options{})
-	if err := model.insertInput("/goXX existing"); err != nil {
+	model := newTUIModel(80, 24, Options{Config: Config{Skills: []skill.Skill{{Name: "review"}, {Name: "refactor"}}}})
+	if err := model.insertInput("/skXX existing"); err != nil {
 		t.Fatal(err)
 	}
-	model.cursor = len([]rune("/go"))
+	model.cursor = len([]rune("/sk"))
 	model.refreshCommandPicker(true)
 
 	if _, err := reduceKey(model, keyEvent{code: keyDown}); err != nil {
@@ -149,7 +149,7 @@ func TestCommandPickerNavigationAndTabReplaceCommandFragment(t *testing.T) {
 	if _, err := reduceKey(model, keyEvent{code: keyTab}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := model.inputText(), "/goal clear existing"; got != want {
+	if got, want := model.inputText(), "/skill:refactor existing"; got != want {
 		t.Fatalf("input = %q, want %q", got, want)
 	}
 }
@@ -225,7 +225,7 @@ func TestCommandPickerOnlySuggestsRunnableCommandsDuringTurn(t *testing.T) {
 	for _, match := range model.commandPicker.matches {
 		matches = append(matches, match.text)
 	}
-	if got, want := strings.Join(matches, ","), "/help,/goal,/goal clear"; got != want {
+	if got, want := strings.Join(matches, ","), "/help,/goal"; got != want {
 		t.Fatalf("matches = %q, want %q", got, want)
 	}
 }

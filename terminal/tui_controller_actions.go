@@ -9,74 +9,29 @@ import (
 )
 
 func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool, error) {
+	exit, err := c.runAction(ctx, action)
+	if err != nil || c.model.running {
+		return exit, err
+	}
 	switch action.kind {
-	case tuiActionNone:
-		return false, nil
-	case tuiActionHelp:
-		c.model.appendBlock(blockInfo, commandHelpText(c.model.fastModeAvailable))
-		if c.model.running {
-			return false, nil
-		}
-		return false, c.saveCurrentCheckpoint(false)
-	case tuiActionOpenResume:
-		if c.sessions.List == nil {
-			setInputError(c.model, errors.New("session resumption is unavailable"))
-			return false, nil
-		}
-		summaries, warnings, err := c.sessions.List(ctx)
-		if err != nil {
-			setInputError(c.model, err)
-			return false, nil
-		}
-		for _, warning := range warnings {
-			c.model.appendBlock(blockInfo, warning)
-		}
-		c.model.openResumePicker(summaries)
+	case tuiActionCommand, tuiActionExit, tuiActionResume, tuiActionSetThinking:
+		return exit, c.saveCurrentCheckpoint(false)
+	}
+	return exit, nil
+}
+
+func (c *tuiController) runAction(ctx context.Context, action tuiAction) (bool, error) {
+	switch action.kind {
+	case tuiActionCommand:
+		return action.command.run(c, ctx, action.text)
+	case tuiActionExit:
+		return c.exit(ctx, "")
 	case tuiActionResume:
 		c.cancelClipboardRequests()
-		if err := c.saveCurrentCheckpoint(false); err != nil {
-			return false, err
-		}
 		c.outcome = RunOutcome{Action: RunResumeSession, SessionID: action.text}
-		return true, nil
-	case tuiActionNewSession:
-		c.cancelClipboardRequests()
-		if err := c.saveCurrentCheckpoint(false); err != nil {
-			return false, err
-		}
-		c.outcome = RunOutcome{Action: RunNewSession}
 		return true, nil
 	case tuiActionCancel:
 		c.interruptTurn()
-	case tuiActionCompact:
-		return false, c.startCompaction(ctx)
-	case tuiActionToggleFast:
-		if !c.model.fastModeAvailable || c.controls.SetFastMode == nil {
-			setInputError(c.model, errors.New("fast mode is unavailable for this model"))
-			return false, nil
-		}
-		if err := c.controls.SetFastMode(!c.model.fastMode); err != nil {
-			setInputError(c.model, err)
-			return false, nil
-		}
-		c.model.fastMode = !c.model.fastMode
-		state := "off"
-		if c.model.fastMode {
-			state = "on"
-		}
-		c.model.appendBlock(blockInfo, "Fast mode "+state)
-		if c.model.running {
-			return false, nil
-		}
-		return false, c.saveCurrentCheckpoint(false)
-	case tuiActionExit:
-		c.cancelClipboardRequests()
-		if !c.model.running {
-			if err := c.saveCurrentCheckpoint(false); err != nil {
-				return false, err
-			}
-		}
-		return true, nil
 	case tuiActionSubmit:
 		if err := c.startTurn(ctx, action.content); err != nil {
 			return false, err
@@ -89,53 +44,6 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 			accepted = c.controls.Steer(cloneTerminalContent(action.content))
 		}
 		c.model.enqueueSteering(action.content, accepted)
-	case tuiActionShowGoal:
-		if c.controls.Goal == nil {
-			setInputError(c.model, errors.New("goal inspection is unavailable"))
-			return false, nil
-		}
-		goal, ok := c.controls.Goal()
-		switch {
-		case !ok:
-			c.model.appendBlock(blockInfo, "No goal is set")
-		case goal.Complete:
-			c.model.appendBlock(blockInfo, "Goal complete: "+goal.Objective)
-		default:
-			c.model.appendBlock(blockInfo, "Goal: "+goal.Objective)
-		}
-		if c.model.running {
-			return false, nil
-		}
-		return false, c.saveCurrentCheckpoint(false)
-	case tuiActionSetGoal:
-		if c.controls.SetGoal == nil {
-			setInputError(c.model, errors.New("goal updates are unavailable"))
-			return false, nil
-		}
-		if err := c.controls.SetGoal(action.prompt); err != nil {
-			setInputError(c.model, err)
-			return false, nil
-		}
-		if c.model.running {
-			c.model.appendBlock(blockInfo, "Goal set: "+action.prompt)
-			return false, nil
-		}
-		return false, c.startTurn(ctx, []agent.ContentPart{{Kind: agent.ContentPartText, Text: action.prompt}})
-	case tuiActionClearGoal:
-		if c.controls.Goal == nil || c.controls.ClearGoal == nil {
-			setInputError(c.model, errors.New("goal updates are unavailable"))
-			return false, nil
-		}
-		_, hadGoal := c.controls.Goal()
-		c.controls.ClearGoal()
-		if hadGoal {
-			c.model.appendBlock(blockInfo, "Goal cleared")
-		} else {
-			c.model.appendBlock(blockInfo, "No goal is set")
-		}
-		if !c.model.running {
-			return false, c.saveCurrentCheckpoint(false)
-		}
 	case tuiActionDequeue:
 		c.restoreQueuedInput()
 	case tuiActionSetThinking:
@@ -148,10 +56,6 @@ func (c *tuiController) applyAction(ctx context.Context, action tuiAction) (bool
 			return false, nil
 		}
 		c.model.thinkingLevel = action.thinkingLevel
-		if c.model.running {
-			return false, nil
-		}
-		return false, c.saveCurrentCheckpoint(false)
 	case tuiActionAttachImage:
 		if c.readClipboardImage == nil || c.clipboardImages == nil {
 			setInputError(c.model, errors.New("clipboard images are unavailable"))

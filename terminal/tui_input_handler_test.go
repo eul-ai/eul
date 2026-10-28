@@ -212,21 +212,22 @@ func TestHiddenFilePickerDoesNotInterceptEditorKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if action.kind != tuiActionSubmit || action.prompt != "@" {
+	if action.kind != tuiActionSubmit || contentText(action.content) != "@" {
 		t.Fatalf("enter action = %+v", action)
 	}
 }
 
 func TestReduceKeyActions(t *testing.T) {
 	tests := []struct {
-		name       string
-		options    Options
-		setup      func(*testing.T, *tuiModel)
-		key        keyEvent
-		wantKind   tuiActionKind
-		wantPrompt string
-		wantLevel  agent.ThinkingLevel
-		check      func(*testing.T, *tuiModel)
+		name        string
+		options     Options
+		setup       func(*testing.T, *tuiModel)
+		key         keyEvent
+		wantKind    tuiActionKind
+		wantCommand string
+		wantText    string
+		wantLevel   agent.ThinkingLevel
+		check       func(*testing.T, *tuiModel)
 	}{
 		{
 			name: "none",
@@ -274,7 +275,7 @@ func TestReduceKeyActions(t *testing.T) {
 				}
 			},
 			key:      keyEvent{code: keyEnter},
-			wantKind: tuiActionNewSession,
+			wantKind: tuiActionCommand, wantCommand: "/new",
 			check: func(t *testing.T, model *tuiModel) {
 				if len(model.history) != 1 || model.history[0] != "/new" || len(model.blocks) != 1 {
 					t.Fatalf("history=%q blocks=%+v", model.history, model.blocks)
@@ -289,7 +290,7 @@ func TestReduceKeyActions(t *testing.T) {
 				}
 			},
 			key:      keyEvent{code: keyEnter},
-			wantKind: tuiActionCompact,
+			wantKind: tuiActionCommand, wantCommand: "/compact",
 		},
 		{
 			name: "exit",
@@ -298,8 +299,9 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:      keyEvent{code: keyEnter},
-			wantKind: tuiActionExit,
+			key:         keyEvent{code: keyEnter},
+			wantKind:    tuiActionCommand,
+			wantCommand: "/exit",
 			check: func(t *testing.T, model *tuiModel) {
 				if len(model.history) != 1 || model.history[0] != "/exit" {
 					t.Fatalf("history = %q", model.history)
@@ -314,7 +316,7 @@ func TestReduceKeyActions(t *testing.T) {
 				}
 			},
 			key:      keyEvent{code: keyEnter},
-			wantKind: tuiActionShowGoal,
+			wantKind: tuiActionCommand, wantCommand: "/goal",
 		},
 		{
 			name: "set goal",
@@ -323,9 +325,10 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:        keyEvent{code: keyEnter},
-			wantKind:   tuiActionSetGoal,
-			wantPrompt: "finish migration",
+			key:         keyEvent{code: keyEnter},
+			wantKind:    tuiActionCommand,
+			wantCommand: "/goal",
+			wantText:    "finish migration",
 		},
 		{
 			name: "clear goal",
@@ -334,8 +337,10 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:      keyEvent{code: keyEnter},
-			wantKind: tuiActionClearGoal,
+			key:         keyEvent{code: keyEnter},
+			wantKind:    tuiActionCommand,
+			wantCommand: "/goal",
+			wantText:    "clear",
 		},
 		{
 			name: "submit",
@@ -344,9 +349,9 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:        keyEvent{code: keyEnter},
-			wantKind:   tuiActionSubmit,
-			wantPrompt: " hello ",
+			key:      keyEvent{code: keyEnter},
+			wantKind: tuiActionSubmit,
+			wantText: " hello ",
 			check: func(t *testing.T, model *tuiModel) {
 				if model.running || len(model.history) != 0 || len(model.blocks) != 0 || model.inputText() != " hello " {
 					t.Fatalf("running=%v history=%q blocks=%+v input=%q", model.running, model.history, model.blocks, model.inputText())
@@ -377,9 +382,10 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:        keyEvent{code: keyEnter},
-			wantKind:   tuiActionSubmit,
-			wantPrompt: "/skill:review check tests",
+			key:         keyEvent{code: keyEnter},
+			wantKind:    tuiActionCommand,
+			wantCommand: "/skill:",
+			wantText:    "/skill:review check tests",
 			check: func(t *testing.T, model *tuiModel) {
 				if model.running || len(model.blocks) != 0 {
 					t.Fatalf("running=%v blocks=%+v", model.running, model.blocks)
@@ -420,9 +426,9 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:        keyEvent{code: keyEnter},
-			wantKind:   tuiActionSteer,
-			wantPrompt: "steer",
+			key:      keyEvent{code: keyEnter},
+			wantKind: tuiActionSteer,
+			wantText: "steer",
 			check: func(t *testing.T, model *tuiModel) {
 				if len(model.input) != 0 || len(model.history) != 1 || len(model.blocks) != 0 {
 					t.Fatalf("input=%q history=%q blocks=%+v", model.inputText(), model.history, model.blocks)
@@ -438,7 +444,7 @@ func TestReduceKeyActions(t *testing.T) {
 				}
 			},
 			key:      keyEvent{code: keyEnter},
-			wantKind: tuiActionHelp,
+			wantKind: tuiActionCommand, wantCommand: "/help",
 			check: func(t *testing.T, model *tuiModel) {
 				if len(model.input) != 0 || len(model.history) != 1 {
 					t.Fatalf("input=%q history=%q", model.inputText(), model.history)
@@ -454,7 +460,7 @@ func TestReduceKeyActions(t *testing.T) {
 				}
 			},
 			key:      keyEvent{code: keyEnter},
-			wantKind: tuiActionShowGoal,
+			wantKind: tuiActionCommand, wantCommand: "/goal",
 			check: func(t *testing.T, model *tuiModel) {
 				if len(model.input) != 0 || len(model.history) != 1 {
 					t.Fatalf("input=%q history=%q", model.inputText(), model.history)
@@ -469,9 +475,10 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:        keyEvent{code: keyEnter},
-			wantKind:   tuiActionSetGoal,
-			wantPrompt: "finish migration",
+			key:         keyEvent{code: keyEnter},
+			wantKind:    tuiActionCommand,
+			wantCommand: "/goal",
+			wantText:    "finish migration",
 			check: func(t *testing.T, model *tuiModel) {
 				if len(model.input) != 0 || len(model.history) != 1 {
 					t.Fatalf("input=%q history=%q", model.inputText(), model.history)
@@ -486,8 +493,10 @@ func TestReduceKeyActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			key:      keyEvent{code: keyEnter},
-			wantKind: tuiActionClearGoal,
+			key:         keyEvent{code: keyEnter},
+			wantKind:    tuiActionCommand,
+			wantCommand: "/goal",
+			wantText:    "clear",
 			check: func(t *testing.T, model *tuiModel) {
 				if len(model.input) != 0 || len(model.history) != 1 {
 					t.Fatalf("input=%q history=%q", model.inputText(), model.history)
@@ -548,8 +557,9 @@ func TestReduceKeyActions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if action.kind != test.wantKind || action.prompt != test.wantPrompt || action.thinkingLevel != test.wantLevel {
-				t.Fatalf("action = %+v, want kind=%d prompt=%q level=%q", action, test.wantKind, test.wantPrompt, test.wantLevel)
+			text := action.text + contentText(action.content)
+			if action.kind != test.wantKind || action.command.name != test.wantCommand || text != test.wantText || action.thinkingLevel != test.wantLevel {
+				t.Fatalf("action = %+v, want kind=%d command=%q text=%q level=%q", action, test.wantKind, test.wantCommand, test.wantText, test.wantLevel)
 			}
 			if test.check != nil {
 				test.check(t, model)
