@@ -8,8 +8,8 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
-	"github.com/eul-ai/eul/backend/openai/responses"
 	"github.com/eul-ai/eul/backend/protocol"
+	"github.com/eul-ai/eul/backend/protocol/responses"
 )
 
 type client struct {

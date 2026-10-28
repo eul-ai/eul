@@ -9,8 +9,8 @@ import (
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend/codex/oauth"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
-	"github.com/eul-ai/eul/backend/openai/responses"
 	"github.com/eul-ai/eul/backend/protocol"
+	"github.com/eul-ai/eul/backend/protocol/responses"
 )
 
 const baseURL = "https://chatgpt.com/backend-api"

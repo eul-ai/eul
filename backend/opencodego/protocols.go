@@ -8,9 +8,9 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
-	anthropic "github.com/eul-ai/eul/backend/anthropic/messages"
-	"github.com/eul-ai/eul/backend/openai/chatcompletions"
-	"github.com/eul-ai/eul/backend/openai/responses"
+	"github.com/eul-ai/eul/backend/protocol/anthropic"
+	"github.com/eul-ai/eul/backend/protocol/chatcompletions"
+	"github.com/eul-ai/eul/backend/protocol/responses"
 )
 
 func newProtocolClients(apiKey, baseURL string, httpClient *http.Client, models *backend.Models[modelInfo]) map[wireProtocol]protocolClient {

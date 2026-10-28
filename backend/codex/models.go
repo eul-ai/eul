@@ -5,7 +5,7 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/backend/openai/responses"
+	"github.com/eul-ai/eul/backend/protocol/responses"
 )
 
 const (
