@@ -18,8 +18,6 @@ type provider struct {
 	codec responses.Codec
 }
 
-var _ agent.Compactor = provider{}
-
 func newProvider(manager *oauth.Manager, httpClient *http.Client) provider {
 	codec := responses.Codec{Options: requestOptions, InboxAsAgentMessage: true}
 	return provider{

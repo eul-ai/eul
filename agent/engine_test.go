@@ -12,19 +12,38 @@ import (
 
 type providerStep func(context.Context, Request, TextSink) (Response, error)
 
-type streamingProviderFunc func(context.Context, Request, TextSink, TextSink, ToolCallSink) (Response, error)
+// providerFunc is a provider that never retries or compacts. Fakes embed it to
+// inherit those defaults.
+type providerFunc func(context.Context, Request, StreamObserver) (Response, error)
 
-func (function streamingProviderFunc) Generate(ctx context.Context, request Request, observer StreamObserver) (Response, error) {
-	return function(ctx, request, observer.Text, observer.Reasoning, observer.ToolCall)
+func (generate providerFunc) Generate(ctx context.Context, request Request, observer StreamObserver) (Response, error) {
+	return generate(ctx, request, observer)
+}
+
+func (providerFunc) RetryGeneration(error, int) (time.Duration, bool) { return 0, false }
+
+func (providerFunc) ShouldCompact(Request, Usage) bool { return false }
+
+func (providerFunc) Compact(context.Context, Request) (CompactResponse, error) {
+	return CompactResponse{}, errors.New("compaction is unavailable")
+}
+
+func (providerFunc) ShouldCompactAfterError(Request, error) bool { return false }
+
+func streamingProviderFunc(generate func(context.Context, Request, TextSink, TextSink, ToolCallSink) (Response, error)) providerFunc {
+	return func(ctx context.Context, request Request, observer StreamObserver) (Response, error) {
+		return generate(ctx, request, observer.Text, observer.Reasoning, observer.ToolCall)
+	}
 }
 
 type retryingProvider struct {
-	generate streamingProviderFunc
+	providerFunc
+	generate func(context.Context, Request, TextSink, TextSink, ToolCallSink) (Response, error)
 	retry    func(error, int) (time.Duration, bool)
 }
 
 func (p *retryingProvider) Generate(ctx context.Context, request Request, observer StreamObserver) (Response, error) {
-	return p.generate.Generate(ctx, request, observer)
+	return streamingProviderFunc(p.generate).Generate(ctx, request, observer)
 }
 
 func (p *retryingProvider) RetryGeneration(err error, failedAttempts int) (time.Duration, bool) {
@@ -36,6 +55,7 @@ func textParts(text string) []ContentPart {
 }
 
 type scriptedProvider struct {
+	providerFunc
 	t         *testing.T
 	steps     []providerStep
 	calls     int

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -23,9 +24,15 @@ func (function providerFunction) Generate(ctx context.Context, request agent.Req
 	return function(ctx, request, observer.Text)
 }
 
-func (providerFunction) ModelMetadata(string) backend.ModelMetadata {
-	return backend.ModelMetadata{ThinkingLevels: agent.ThinkingLevels(), FastMode: true}
+func (providerFunction) RetryGeneration(error, int) (time.Duration, bool) { return 0, false }
+
+func (providerFunction) ShouldCompact(agent.Request, agent.Usage) bool { return false }
+
+func (providerFunction) Compact(context.Context, agent.Request) (agent.CompactResponse, error) {
+	return agent.CompactResponse{}, errors.New("compaction is unavailable")
 }
+
+func (providerFunction) ShouldCompactAfterError(agent.Request, error) bool { return false }
 
 type fakeBackendRuntime struct {
 	checkCredentialsErr   error

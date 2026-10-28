@@ -73,15 +73,11 @@ func (t *turn) decorate(request Request) Request {
 }
 
 func (t *turn) compact() error {
-	compactor, ok := t.engine.provider.(Compactor)
-	if !ok {
-		return errors.New("agent: context compaction is unavailable")
-	}
 	if err := t.sink(Event{Kind: EventCompactionStart}); err != nil {
 		return err
 	}
 
-	compacted, err := compactor.Compact(t.ctx, t.request())
+	compacted, err := t.engine.provider.Compact(t.ctx, t.request())
 	if err != nil {
 		if ctxErr := t.ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -104,7 +100,7 @@ func (t *turn) generate() (Response, error) {
 		t.inbox = t.engine.inbox.Snapshot()
 	}
 	request := t.decorate(t.request())
-	if compactor, ok := t.engine.provider.(Compactor); ok && compactor.ShouldCompact(request, t.current.usage) {
+	if t.engine.provider.ShouldCompact(request, t.current.usage) {
 		if err := t.compact(); err != nil {
 			return Response{}, err
 		}
@@ -112,7 +108,7 @@ func (t *turn) generate() (Response, error) {
 	}
 
 	response, observed, err := t.generateWithRetry(request)
-	if err == nil || observed || t.ctx.Err() != nil || !t.compactsAfter(err) {
+	if err == nil || observed || t.ctx.Err() != nil || !t.engine.provider.ShouldCompactAfterError(t.request(), err) {
 		return response, err
 	}
 	if err := t.compact(); err != nil {
@@ -122,14 +118,7 @@ func (t *turn) generate() (Response, error) {
 	return response, err
 }
 
-func (t *turn) compactsAfter(err error) bool {
-	_, canCompact := t.engine.provider.(Compactor)
-	policy, hasPolicy := t.engine.provider.(CompactionErrorPolicy)
-	return canCompact && hasPolicy && policy.ShouldCompactAfterError(t.request(), err)
-}
-
 func (t *turn) generateWithRetry(request Request) (Response, bool, error) {
-	retryPolicy, canRetry := t.engine.provider.(GenerationRetryPolicy)
 	for failedAttempts := 1; ; failedAttempts++ {
 		tools := newToolEventTracker(t.engine.tools, t.sink)
 		t.tools = tools
@@ -155,10 +144,7 @@ func (t *turn) generateWithRetry(request Request) (Response, bool, error) {
 			return Response{}, true, closeErr
 		}
 
-		delay, retry := time.Duration(0), false
-		if canRetry {
-			delay, retry = retryPolicy.RetryGeneration(err, failedAttempts)
-		}
+		delay, retry := t.engine.provider.RetryGeneration(err, failedAttempts)
 		if !retry {
 			return Response{}, observed, fmt.Errorf("agent: generate response: %w", err)
 		}

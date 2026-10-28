@@ -245,12 +245,6 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 	}
 }
 
-type steeringWaitProvider func(context.Context, agent.Request) (agent.Response, error)
-
-func (provider steeringWaitProvider) Generate(ctx context.Context, request agent.Request, _ agent.StreamObserver) (agent.Response, error) {
-	return provider(ctx, request)
-}
-
 func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) {
 	release := make(chan struct{})
 	childDone := make(chan struct{})
@@ -271,7 +265,7 @@ func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) 
 		tool.NewWaitForSubagent(manager),
 	}
 	calls := 0
-	provider := steeringWaitProvider(func(_ context.Context, request agent.Request) (agent.Response, error) {
+	provider := providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
 		calls++
 		switch calls {
 		case 1:

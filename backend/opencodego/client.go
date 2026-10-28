@@ -16,13 +16,6 @@ type provider struct {
 	clients map[wireProtocol]*protocol.Client
 }
 
-var (
-	_ agent.Provider              = (*provider)(nil)
-	_ agent.GenerationRetryPolicy = (*provider)(nil)
-	_ agent.Compactor             = (*provider)(nil)
-	_ agent.CompactionErrorPolicy = (*provider)(nil)
-)
-
 func newProvider(apiKey, baseURL string, httpClient *http.Client, models *backend.Models[modelInfo]) *provider {
 	return &provider{models: models, clients: newProtocolClients(apiKey, baseURL, httpClient, models)}
 }

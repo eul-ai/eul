@@ -9,12 +9,6 @@ import (
 	"time"
 )
 
-type inboxProvider func(context.Context, Request, StreamObserver) (Response, error)
-
-func (provider inboxProvider) Generate(ctx context.Context, request Request, observer StreamObserver) (Response, error) {
-	return provider(ctx, request, observer)
-}
-
 type fakeInbox struct {
 	mu             sync.Mutex
 	messages       []InboxBatch
@@ -53,7 +47,7 @@ func TestEngineDeliversAndAcknowledgesInbox(t *testing.T) {
 		messages:     []InboxBatch{{MessageIDs: []uint64{7}, Text: "<subagent_notifications>result</subagent_notifications>"}},
 		instructions: "Active subagents:\n- subagent-2: inspect (running)",
 	}
-	provider := inboxProvider(func(_ context.Context, request Request, _ StreamObserver) (Response, error) {
+	provider := providerFunc(func(_ context.Context, request Request, _ StreamObserver) (Response, error) {
 		if strings.Count(request.Instructions, "subagent-2: inspect") != 1 {
 			t.Fatalf("instructions = %q", request.Instructions)
 		}
@@ -75,7 +69,7 @@ func TestEngineDeliversAndAcknowledgesInbox(t *testing.T) {
 
 func TestEngineAcknowledgesInboxOnlyAfterCheckpointSucceeds(t *testing.T) {
 	inbox := &fakeInbox{messages: []InboxBatch{{MessageIDs: []uint64{8}, Text: "notification"}}}
-	provider := inboxProvider(func(context.Context, Request, StreamObserver) (Response, error) {
+	provider := providerFunc(func(context.Context, Request, StreamObserver) (Response, error) {
 		return Response{Text: "answer", State: []byte("delivered")}, nil
 	})
 	engine := New(provider, nil, Options{Model: "model", Inbox: inbox, Checkpointing: true})
@@ -94,7 +88,7 @@ func TestEngineAcknowledgesInboxOnlyAfterCheckpointSucceeds(t *testing.T) {
 
 func TestEngineLeavesInboxPendingAfterGenerationFailure(t *testing.T) {
 	inbox := &fakeInbox{messages: []InboxBatch{{MessageIDs: []uint64{1}, Text: "notification"}}}
-	provider := inboxProvider(func(context.Context, Request, StreamObserver) (Response, error) {
+	provider := providerFunc(func(context.Context, Request, StreamObserver) (Response, error) {
 		return Response{}, errors.New("failed")
 	})
 	engine := New(provider, nil, Options{Model: "model", Inbox: inbox})
@@ -114,7 +108,7 @@ func TestEngineAutomaticallyCompactsOrdinaryStateBeforeDeliveringInbox(t *testin
 	}
 	generateCalls := 0
 	provider := &compactingProvider{
-		Provider: inboxProvider(func(_ context.Context, request Request, _ StreamObserver) (Response, error) {
+		Provider: providerFunc(func(_ context.Context, request Request, _ StreamObserver) (Response, error) {
 			generateCalls++
 			if string(request.State) != "compacted" || len(request.Inputs) != 1 || request.Inputs[0].Kind != InputInbox || request.Inputs[0].PlainText() != "completion" {
 				t.Fatalf("generation request = %+v", request)
@@ -160,7 +154,7 @@ func TestEngineReattachesInboxAfterErrorCompaction(t *testing.T) {
 	}
 	generateCalls := 0
 	provider := &compactingProvider{
-		Provider: inboxProvider(func(_ context.Context, request Request, _ StreamObserver) (Response, error) {
+		Provider: providerFunc(func(_ context.Context, request Request, _ StreamObserver) (Response, error) {
 			generateCalls++
 			if strings.Count(request.Instructions, "subagent-6: inspect") != 1 {
 				t.Fatalf("active context count in %q", request.Instructions)
@@ -215,7 +209,7 @@ func TestEngineCompletionAfterSettlementRemainsForNextUserTurn(t *testing.T) {
 		}()
 	}}
 	calls := 0
-	provider := inboxProvider(func(_ context.Context, request Request, _ StreamObserver) (Response, error) {
+	provider := providerFunc(func(_ context.Context, request Request, _ StreamObserver) (Response, error) {
 		calls++
 		if calls == 2 {
 			if len(request.Inputs) != 2 || request.Inputs[0].Kind != InputUser || request.Inputs[1].Kind != InputInbox || request.Inputs[1].PlainText() != "after settlement" {
@@ -258,7 +252,7 @@ func TestEngineSettlementDeliversCompletionThatRacesFinalAnswer(t *testing.T) {
 			injected = true
 		}
 	}}
-	provider := inboxProvider(func(_ context.Context, request Request, _ StreamObserver) (Response, error) {
+	provider := providerFunc(func(_ context.Context, request Request, _ StreamObserver) (Response, error) {
 		calls++
 		switch calls {
 		case 1:

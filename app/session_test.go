@@ -14,12 +14,6 @@ import (
 	"github.com/eul-ai/eul/subagent"
 )
 
-type metadataFreeProvider struct{}
-
-func (metadataFreeProvider) Generate(context.Context, agent.Request, agent.StreamObserver) (agent.Response, error) {
-	return agent.Response{}, nil
-}
-
 type profileMetadataProvider struct {
 	providerFunction
 	metadata  map[string]backend.ModelMetadata
@@ -77,7 +71,9 @@ func TestNewAgentSessionValidatesModelsBeforeCreatingProvider(t *testing.T) {
 	configured := &validatingBackendRuntime{
 		fakeBackendRuntime: &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 			providerCalls++
-			return metadataFreeProvider{}, nil
+			return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+				return agent.Response{}, nil
+			}), nil
 		}},
 		invalid: "unknown",
 	}
@@ -205,7 +201,9 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 
 func TestNewAgentSessionRejectsUnsupportedFastMode(t *testing.T) {
 	configured := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
-		return metadataFreeProvider{}, nil
+		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+			return agent.Response{}, nil
+		}), nil
 	}}
 	backendRuntime := metadataFreeBackendRuntime{Runtime: configured}
 	session, err := newAgentSession(resolvedConfig{

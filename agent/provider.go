@@ -62,20 +62,11 @@ type StreamObserver struct {
 
 type Provider interface {
 	Generate(context.Context, Request, StreamObserver) (Response, error)
-}
-
-// GenerationRetryPolicy decides whether a failed generation attempt should be retried.
-// failedAttempts includes the attempt that returned err.
-type GenerationRetryPolicy interface {
+	// RetryGeneration decides whether a failed generation attempt should be retried.
+	// failedAttempts includes the attempt that returned err.
 	RetryGeneration(err error, failedAttempts int) (time.Duration, bool)
-}
-
-type Compactor interface {
 	ShouldCompact(Request, Usage) bool
 	Compact(context.Context, Request) (CompactResponse, error)
-}
-
-// CompactionErrorPolicy decides whether a failed generation should be retried after compacting its request.
-type CompactionErrorPolicy interface {
+	// ShouldCompactAfterError decides whether a failed generation should be retried after compacting its request.
 	ShouldCompactAfterError(Request, error) bool
 }

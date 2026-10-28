@@ -45,13 +45,6 @@ type Client struct {
 	config        httpclient.JSONSSEConfig
 }
 
-var (
-	_ agent.Provider              = (*Client)(nil)
-	_ agent.GenerationRetryPolicy = (*Client)(nil)
-	_ agent.Compactor             = (*Client)(nil)
-	_ agent.CompactionErrorPolicy = (*Client)(nil)
-)
-
 func New(options Options) *Client {
 	return &Client{
 		codec:         options.Codec,
