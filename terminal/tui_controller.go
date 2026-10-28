@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/filesearch"
@@ -50,7 +51,8 @@ type controllerOptions struct {
 	engineMessages  chan<- engineMessage
 	stopped         <-chan struct{}
 	fileSearch      *filesearch.Searcher
-	usageRequests   chan<- struct{}
+	loadUsage       func(context.Context) (ProviderUsage, error)
+	usageResults    chan<- providerUsageMessage
 	clipboardImages chan<- tuiEvent
 	operations      Operations
 	controls        Controls
@@ -70,7 +72,8 @@ func newTUIController(config controllerOptions) *tuiController {
 		engineMessages:     config.engineMessages,
 		stopped:            config.stopped,
 		fileSearch:         config.fileSearch,
-		usageRequests:      config.usageRequests,
+		loadUsage:          config.loadUsage,
+		usageResults:       config.usageResults,
 		stateChanges:       config.stateChanges,
 		sessions:           config.sessions,
 		messageHistory:     config.messageHistory,
@@ -91,7 +94,10 @@ type tuiController struct {
 	engineMessages               chan<- engineMessage
 	stopped                      <-chan struct{}
 	fileSearch                   *filesearch.Searcher
-	usageRequests                chan<- struct{}
+	loadUsage                    func(context.Context) (ProviderUsage, error)
+	usageResults                 chan<- providerUsageMessage
+	usageLoading                 bool
+	usageLoads                   sync.WaitGroup
 	stateChanges                 StateChanges
 	sessions                     Sessions
 	messageHistory               MessageHistory
@@ -133,7 +139,7 @@ func (c *tuiController) transition(ctx context.Context, event tuiEvent) (bool, e
 	case tuiEventSpinner:
 		return c.handleSpinner()
 	case tuiEventUsageClock:
-		return c.handleUsageClock()
+		return c.handleUsageClock(ctx)
 	case tuiEventRender:
 		return c.handleRender()
 	}
@@ -274,7 +280,7 @@ func (c *tuiController) handleEngineMessage(ctx context.Context, message engineM
 	if err := c.saveCurrentCheckpoint(false); err != nil {
 		return false, err
 	}
-	requestProviderUsage(c.usageRequests)
+	c.requestUsage(ctx)
 	if !interrupted && message.err == nil {
 		if err := c.startDeferredTurn(ctx); err != nil {
 			return false, err
@@ -297,7 +303,23 @@ func (c *tuiController) handleAgentEvent(message engineMessage) (bool, error) {
 	return false, nil
 }
 
+func (c *tuiController) requestUsage(ctx context.Context) {
+	if c.loadUsage == nil || c.usageLoading {
+		return
+	}
+
+	c.usageLoading = true
+	load, results := c.loadUsage, c.usageResults
+	c.usageLoads.Go(func() {
+		loadContext, cancel := context.WithTimeout(ctx, providerUsageTimeout)
+		defer cancel()
+		usage, err := load(loadContext)
+		results <- providerUsageMessage{usage: usage, err: err}
+	})
+}
+
 func (c *tuiController) handleProviderUsage(message providerUsageMessage) (bool, error) {
+	c.usageLoading = false
 	if message.err == nil {
 		c.model.providerUsage = ProviderUsage{
 			Windows:           append([]UsageWindow(nil), message.usage.Windows...),
@@ -354,9 +376,9 @@ func (c *tuiController) handleSpinner() (bool, error) {
 	return false, nil
 }
 
-func (c *tuiController) handleUsageClock() (bool, error) {
+func (c *tuiController) handleUsageClock(ctx context.Context) (bool, error) {
 	if c.model.running {
-		requestProviderUsage(c.usageRequests)
+		c.requestUsage(ctx)
 	}
 
 	for _, window := range c.model.providerUsage.Windows {

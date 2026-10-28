@@ -119,30 +119,7 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 	fileSearchResults := fileSearch.Results()
 	engineMessages := make(chan engineMessage, 256)
 	clipboardImages := make(chan tuiEvent, maxAttachedImages)
-
-	usageContext, cancelUsage := context.WithCancel(ctx)
-	var usageDone <-chan struct{}
-	defer func() {
-		cancelUsage()
-		if usageDone != nil {
-			<-usageDone
-		}
-	}()
-	var usageRequests chan struct{}
-	var usageMessages <-chan providerUsageMessage
-	if options.Services.LoadUsage != nil {
-		requests := make(chan struct{}, 1)
-		messages := make(chan providerUsageMessage, 1)
-		done := make(chan struct{})
-		usageRequests = requests
-		usageMessages = messages
-		usageDone = done
-		go func() {
-			defer close(done)
-			loadProviderUsage(usageContext, options.Services.LoadUsage, requests, messages)
-		}()
-		requestProviderUsage(usageRequests)
-	}
+	usageResults := make(chan providerUsageMessage, 1)
 
 	resizes, stopResizes := watchResize()
 	defer stopResizes()
@@ -168,7 +145,8 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 		engineMessages:  engineMessages,
 		stopped:         runner.stopped,
 		fileSearch:      fileSearch,
-		usageRequests:   usageRequests,
+		loadUsage:       options.Services.LoadUsage,
+		usageResults:    usageResults,
 		clipboardImages: clipboardImages,
 		operations:      options.Operations,
 		controls:        options.Controls,
@@ -177,6 +155,11 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 		messageHistory:  options.MessageHistory,
 	})
 	defer controller.cancelClipboardRequests()
+	defer controller.usageLoads.Wait()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	controller.requestUsage(ctx)
 	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventRender}); err != nil {
 		return RunOutcome{}, err
 	}
@@ -212,7 +195,7 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 			event = tuiEvent{kind: tuiEventKey, key: key}
 		case message := <-engineMessages:
 			event = tuiEvent{kind: tuiEventEngine, engine: message}
-		case message := <-usageMessages:
+		case message := <-usageResults:
 			event = tuiEvent{kind: tuiEventProviderUsage, providerUsage: message}
 		case status, ok := <-subagentUpdates:
 			if !ok {
@@ -263,38 +246,6 @@ func submitInitialPrompt(ctx context.Context, controller *tuiController, model *
 		return false, err
 	}
 	return controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Enter}})
-}
-
-func requestProviderUsage(requests chan<- struct{}) {
-	select {
-	case requests <- struct{}{}:
-	default:
-	}
-}
-
-func loadProviderUsage(
-	ctx context.Context,
-	load func(context.Context) (ProviderUsage, error),
-	requests <-chan struct{},
-	messages chan<- providerUsageMessage,
-) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-requests:
-		}
-
-		requestContext, cancel := context.WithTimeout(ctx, providerUsageTimeout)
-		usage, err := load(requestContext)
-		cancel()
-
-		select {
-		case messages <- providerUsageMessage{usage: usage, err: err}:
-		case <-ctx.Done():
-			return
-		}
-	}
 }
 
 func cancelActiveTurn(cancel context.CancelFunc, messages <-chan engineMessage) {
