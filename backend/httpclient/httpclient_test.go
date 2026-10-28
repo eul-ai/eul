@@ -45,7 +45,7 @@ func TestReadBounded(t *testing.T) {
 func TestNewJSONSSERequest(t *testing.T) {
 	type contextKey struct{}
 	ctx := context.WithValue(context.Background(), contextKey{}, "value")
-	request, err := NewJSONSSERequest(ctx, "https://example.test/responses", []byte(`{"input":[]}`))
+	request, err := newJSONSSERequest(ctx, "https://example.test/responses", []byte(`{"input":[]}`))
 	if err != nil {
 		t.Fatal(err)
 	}

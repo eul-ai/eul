@@ -1,7 +1,6 @@
 package responses
 
 import (
-	"context"
 	"errors"
 	"strconv"
 	"strings"
@@ -10,8 +9,6 @@ import (
 	"github.com/eul-ai/eul/agent"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
-
-type responseReadErrorFunc func(context.Context, error, string) error
 
 var generationRetryPolicy = backendhttp.RetryPolicy{
 	MaximumAttempts: 20,
@@ -25,36 +22,6 @@ type responseFailureError struct {
 }
 
 func (e *responseFailureError) Error() string { return e.message }
-
-func (c *Client) generationReadError(ctx context.Context, err error, _ string) error {
-	if backendhttp.IsObserverError(err) {
-		return c.wrapf(err, "%v", err)
-	}
-
-	classified := backendhttp.ClassifyTransportError(ctx, err)
-	if classified.ReturnDirectly {
-		return classified.Cause
-	}
-	if classified.Retryable {
-		return c.retryableWrapf(err, "%v", err)
-	}
-	return c.wrapf(classified.Cause, "%v", err)
-}
-
-func (c *Client) compactionReadError(ctx context.Context, err error, operation string) error {
-	classified := backendhttp.ClassifyTransportError(ctx, err)
-	if classified.ReturnDirectly {
-		return classified.Cause
-	}
-	switch {
-	case errors.Is(classified.Cause, context.DeadlineExceeded):
-		return c.retryableWrapf(context.DeadlineExceeded, "read %s: %v", operation, err)
-	case errors.Is(classified.Cause, context.Canceled):
-		return c.wrapf(context.Canceled, "read %s: %v", operation, err)
-	default:
-		return c.errorf("read %s: %v", operation, err)
-	}
-}
 
 func (c *Client) RetryGeneration(err error, failedAttempts int) (time.Duration, bool) {
 	return generationRetryPolicy.Next(err, failedAttempts, retryableGenerationError(err))

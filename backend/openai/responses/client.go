@@ -3,6 +3,7 @@ package responses
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -85,7 +86,7 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 		return agent.Response{}, client.errorf("%v", err)
 	}
 
-	stream, err := client.complete(ctx, build.wire, observer, "request", client.generationReadError)
+	stream, err := client.complete(ctx, build.wire, observer, "request")
 	if err != nil {
 		return agent.Response{}, err
 	}
@@ -110,32 +111,21 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 	return agent.Response{Text: text, ToolCalls: calls, State: state, Usage: usage}, nil
 }
 
-func (client *Client) complete(
-	ctx context.Context,
-	wireRequest createResponseRequest,
-	observer agent.StreamObserver,
-	operation string,
-	readError responseReadErrorFunc,
-) (responseStreamResult, error) {
-	requestBody, oversized, err := backendhttp.MarshalBoundedJSON(wireRequest, backendhttp.MaxRequestBytes)
-	if err != nil {
-		return responseStreamResult{}, client.errorf("encode %s: %v", operation, err)
-	}
-	if oversized {
-		return responseStreamResult{}, client.errorf("%s exceeds %d bytes", operation, backendhttp.MaxRequestBytes)
-	}
-
-	httpResponse, err := client.post(ctx, requestBody, operation)
-	if err != nil {
-		return responseStreamResult{}, err
-	}
-	defer httpResponse.Body.Close()
-
-	result, err := readResponsesSSE(httpResponse.Body, backendhttp.MaxResponseBytes, observer)
-	if err != nil {
-		return responseStreamResult{}, readError(ctx, err, operation)
-	}
-	return result, nil
+func (client *Client) complete(ctx context.Context, wireRequest createResponseRequest, observer agent.StreamObserver, operation string) (responseStreamResult, error) {
+	return backendhttp.CompleteJSONSSE(
+		ctx,
+		backendhttp.JSONSSEConfig{
+			HTTPClient:     client.httpClient,
+			Endpoint:       client.endpoint,
+			ErrorConfig:    client.errorConfig,
+			PrepareRequest: client.prepareRequest,
+		},
+		wireRequest,
+		operation,
+		func(reader io.Reader, maximum int64) (responseStreamResult, error) {
+			return readResponsesSSE(reader, maximum, observer)
+		},
+	)
 }
 
 func (client *Client) optionsFor(request agent.Request) (RequestOptions, error) {

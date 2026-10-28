@@ -10,7 +10,7 @@ import (
 	"net/http"
 )
 
-func NewJSONSSERequest(ctx context.Context, endpoint string, body []byte) (*http.Request, error) {
+func newJSONSSERequest(ctx context.Context, endpoint string, body []byte) (*http.Request, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -36,15 +36,15 @@ func CompleteJSONSSE[T any](
 ) (T, error) {
 	var zero T
 
-	body, oversized, err := MarshalBoundedJSON(wireRequest, MaxRequestBytes)
+	body, oversized, err := MarshalBoundedJSON(wireRequest, maxRequestBytes)
 	if err != nil {
 		return zero, config.ErrorConfig.Errorf("encode %s: %v", operation, err)
 	}
 	if oversized {
-		return zero, config.ErrorConfig.Errorf("%s exceeds %d bytes", operation, MaxRequestBytes)
+		return zero, config.ErrorConfig.Errorf("%s exceeds %d bytes", operation, maxRequestBytes)
 	}
 
-	request, err := NewJSONSSERequest(ctx, config.Endpoint, body)
+	request, err := newJSONSSERequest(ctx, config.Endpoint, body)
 	if err != nil {
 		return zero, config.ErrorConfig.Errorf("create %s: %v", operation, err)
 	}

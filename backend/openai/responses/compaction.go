@@ -190,7 +190,7 @@ func (client *Client) Compact(ctx context.Context, request agent.Request) (agent
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
 
-	stream, err := client.complete(ctx, build.wire, agent.StreamObserver{}, "compact request", client.compactionReadError)
+	stream, err := client.complete(ctx, build.wire, agent.StreamObserver{}, "compact request")
 	if err != nil {
 		return agent.CompactResponse{}, err
 	}
@@ -223,7 +223,7 @@ func (client *Client) SemanticCompact(ctx context.Context, request agent.Request
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
 
-	stream, err := client.complete(ctx, build.wire, agent.StreamObserver{}, "summary request", client.compactionReadError)
+	stream, err := client.complete(ctx, build.wire, agent.StreamObserver{}, "summary request")
 	if err != nil {
 		return agent.CompactResponse{}, err
 	}
