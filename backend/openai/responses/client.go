@@ -2,10 +2,8 @@ package responses
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend/continuation"
@@ -44,19 +42,15 @@ type Client struct {
 	encodeInboxAsAgentMessage bool
 }
 
-func New(options Options) (*Client, error) {
-	if strings.TrimSpace(options.Endpoint) == "" {
-		return nil, errors.New("responses: endpoint is required")
-	}
-
+func New(options Options) *Client {
 	return &Client{
 		httpClient:                backendhttp.CloneNoRedirects(options.HTTPClient, backendhttp.DefaultGenerationHTTPTimeout),
 		endpoint:                  options.Endpoint,
-		errorConfig:               backendhttp.APIErrorConfig{Prefix: strings.TrimSpace(options.ErrorPrefix)},
+		errorConfig:               backendhttp.APIErrorConfig{Prefix: options.ErrorPrefix},
 		prepareRequest:            options.PrepareRequest,
 		requestOptions:            options.RequestOptions,
 		encodeInboxAsAgentMessage: options.EncodeInboxAsAgentMessage,
-	}, nil
+	}
 }
 
 func (client *Client) ShouldCompactState(request agent.Request) bool {

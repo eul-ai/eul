@@ -93,9 +93,6 @@ func (decoder *responseStreamDecoder) handleEvent(data []byte) (createResponseEn
 	case "response.function_call_arguments.done":
 		return createResponseEnvelope{}, false, decoder.updateToolCall(event, true)
 	case "response.output_item.done":
-		if err := validateRawObject(event.Item); err != nil {
-			return createResponseEnvelope{}, false, fmt.Errorf("responses completed output item: %w", err)
-		}
 		if err := decoder.finishToolCall(event); err != nil {
 			return createResponseEnvelope{}, false, err
 		}
@@ -138,8 +135,8 @@ func (decoder *responseStreamDecoder) terminal(event responseStreamEvent) (creat
 		return createResponseEnvelope{}, errors.New("responses terminal SSE event is missing response")
 	}
 
-	response, err := decodeCreateResponse(event.Response)
-	if err != nil {
+	var response createResponseEnvelope
+	if err := json.Unmarshal(event.Response, &response); err != nil {
 		return createResponseEnvelope{}, fmt.Errorf("decode Responses terminal response: %w", err)
 	}
 	if response.Status == "" {

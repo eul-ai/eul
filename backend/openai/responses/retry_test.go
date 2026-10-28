@@ -279,16 +279,13 @@ func TestClientClassifiesTransientGenerationErrorsForRetry(t *testing.T) {
 				Body:       errorReadCloser{err: syscall.ECONNRESET},
 			}, nil
 		})
-		client, err := New(Options{
+		client := New(Options{
 			PrepareRequest: testPrepareRequest("key"), RequestOptions: testRequestOptions,
 			Endpoint:   "https://example.com/responses",
 			HTTPClient: &http.Client{Transport: transport},
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
 
-		_, err = generate(client, context.Background(), baseRequest(), nil, nil, nil)
+		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		if _, retry := client.RetryGeneration(err, 1); err == nil || !retry {
 			t.Fatalf("Generate() error = %v, retry = %t", err, retry)
 		}

@@ -21,7 +21,7 @@ func (function roundTripperFunc) RoundTrip(request *http.Request) (*http.Respons
 
 func TestClientContinuesAssistantToolCalls(t *testing.T) {
 	requestNumber := 0
-	client, err := New(Options{
+	client := New(Options{
 		Endpoint: "https://example.test/v1/chat/completions",
 		HTTPClient: &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
 			requestNumber++
@@ -78,9 +78,6 @@ func TestClientContinuesAssistantToolCalls(t *testing.T) {
 			return RequestOptions{MaxTokens: 32_000, ToolChoice: "auto", ParallelToolCalls: true}, nil
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	first, err := client.Generate(context.Background(), agent.Request{
 		Model:        "model",
@@ -111,7 +108,7 @@ func TestClientContinuesAssistantToolCalls(t *testing.T) {
 
 func TestClientReplaysRequiredEmptyReasoningContent(t *testing.T) {
 	requestNumber := 0
-	client, err := New(Options{
+	client := New(Options{
 		Endpoint: "https://example.test/v1/chat/completions",
 		HTTPClient: &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
 			requestNumber++
@@ -135,9 +132,6 @@ func TestClientReplaysRequiredEmptyReasoningContent(t *testing.T) {
 			return RequestOptions{MaxTokens: 100, SerializeReasoningContent: true}, nil
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	first, err := client.Generate(context.Background(), agent.Request{
 		Model:  "model",
@@ -159,7 +153,7 @@ func TestClientReplaysRequiredEmptyReasoningContent(t *testing.T) {
 }
 
 func TestSemanticCompactDisablesToolsAndStoresContinuation(t *testing.T) {
-	client, err := New(Options{
+	client := New(Options{
 		Endpoint: "https://example.test/v1/chat/completions",
 		HTTPClient: &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
 			body, err := io.ReadAll(request.Body)
@@ -181,9 +175,6 @@ func TestSemanticCompactDisablesToolsAndStoresContinuation(t *testing.T) {
 			}, nil
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	compacted, err := client.SemanticCompact(context.Background(), agent.Request{
 		Model:  "model",

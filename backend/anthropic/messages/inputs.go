@@ -15,11 +15,7 @@ func encodeInputs(inputs []agent.Input) ([]json.RawMessage, error) {
 	}
 
 	blocks := make([]contentBlock, 0, len(inputs))
-	for index, input := range inputs {
-		if err := input.Validate(); err != nil {
-			return nil, fmt.Errorf("input %d: %w", index, err)
-		}
-
+	for _, input := range inputs {
 		switch input.Kind {
 		case agent.InputUser:
 			for _, part := range input.Content {
@@ -29,9 +25,6 @@ func encodeInputs(inputs []agent.Input) ([]json.RawMessage, error) {
 						blocks = append(blocks, contentBlock{Type: "text", Text: part.Text})
 					}
 				case agent.ContentPartImage:
-					if part.Image == nil {
-						continue
-					}
 					blocks = append(blocks, contentBlock{
 						Type: "image",
 						Source: &imageSource{
@@ -40,6 +33,8 @@ func encodeInputs(inputs []agent.Input) ([]json.RawMessage, error) {
 							Data:      base64.StdEncoding.EncodeToString(part.Image.Data),
 						},
 					})
+				default:
+					return nil, fmt.Errorf("unknown content kind %q", part.Kind)
 				}
 			}
 		case agent.InputInbox:
@@ -51,6 +46,8 @@ func encodeInputs(inputs []agent.Input) ([]json.RawMessage, error) {
 				Content:   input.Text,
 				IsError:   input.IsError,
 			})
+		default:
+			return nil, fmt.Errorf("unknown input kind %q", input.Kind)
 		}
 	}
 	if len(blocks) == 0 {

@@ -17,9 +17,6 @@ func TestStateRoundTripAndValidation(t *testing.T) {
 	if _, err := Decode([]byte(`{"version":2,"items":[]}`), 1024); err == nil {
 		t.Fatal("unsupported version was accepted")
 	}
-	if _, err := Encode(1024, []json.RawMessage{json.RawMessage(`[]`)}); err == nil {
-		t.Fatal("non-object item was accepted")
-	}
 	if _, err := Decode(encoded, len(encoded)-1); err == nil {
 		t.Fatal("oversized state was accepted")
 	}

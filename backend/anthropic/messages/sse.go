@@ -3,7 +3,6 @@ package messages
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -199,9 +198,8 @@ func (decoder *streamDecoder) finish() (streamResult, error) {
 	var text strings.Builder
 	calls := make([]agent.ToolCall, 0)
 	wireBlocks := make([]contentBlock, 0, len(indexes))
-	seenCalls := make(map[string]struct{})
 	for _, index := range indexes {
-		wire, call, blockText, err := decoder.blocks[index].finalize(seenCalls)
+		wire, call, blockText, err := decoder.blocks[index].finalize()
 		if err != nil {
 			return streamResult{}, err
 		}
@@ -216,11 +214,7 @@ func (decoder *streamDecoder) finish() (streamResult, error) {
 	if err != nil {
 		return streamResult{}, err
 	}
-	usage, err := decoder.normalizeUsage()
-	if err != nil {
-		return streamResult{}, err
-	}
-	return streamResult{text: text.String(), calls: calls, assistant: assistant, usage: usage}, nil
+	return streamResult{text: text.String(), calls: calls, assistant: assistant, usage: decoder.normalizeUsage()}, nil
 }
 
 func (decoder *streamDecoder) mergeUsage(usage *wireUsage) {
@@ -241,11 +235,8 @@ func (decoder *streamDecoder) mergeUsage(usage *wireUsage) {
 	}
 }
 
-func (decoder *streamDecoder) normalizeUsage() (agent.Usage, error) {
+func (decoder *streamDecoder) normalizeUsage() agent.Usage {
 	usage := decoder.usage
-	if usage.inputTokens < 0 || usage.outputTokens < 0 || usage.cacheReadTokens < 0 || usage.cacheCreationTokens < 0 {
-		return agent.Usage{}, errors.New("anthropic message usage contains negative token counts")
-	}
 	input := usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens
-	return agent.Usage{InputTokens: input, OutputTokens: usage.outputTokens, TotalTokens: input + usage.outputTokens}, nil
+	return agent.Usage{InputTokens: input, OutputTokens: usage.outputTokens, TotalTokens: input + usage.outputTokens}
 }

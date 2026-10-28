@@ -77,10 +77,7 @@ func TestThinkingLevelMappings(t *testing.T) {
 }
 
 func TestClientShouldCompact(t *testing.T) {
-	responsesClient, err := responses.New(responses.Options{Endpoint: "https://example.com/responses"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	responsesClient := responses.New(responses.Options{Endpoint: "https://example.com/responses"})
 	client := &Client{responses: responsesClient}
 	state := []byte(`{"version":1}`)
 	solLimit := models[ModelGPT56Sol].contextWindow * 9 / 10

@@ -20,7 +20,7 @@ func (function roundTripperFunc) RoundTrip(request *http.Request) (*http.Respons
 
 func TestClientContinuesThinkingAndToolUse(t *testing.T) {
 	requestNumber := 0
-	client, err := New(Options{
+	client := New(Options{
 		Endpoint: "https://example.test/v1/messages",
 		HTTPClient: &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
 			requestNumber++
@@ -91,9 +91,6 @@ func TestClientContinuesThinkingAndToolUse(t *testing.T) {
 			return RequestOptions{MaxTokens: 32_000, ToolChoice: &ToolChoice{Type: "auto"}}, nil
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	first, err := client.Generate(context.Background(), agent.Request{
 		Model:        "model",
@@ -123,7 +120,7 @@ func TestClientContinuesThinkingAndToolUse(t *testing.T) {
 }
 
 func TestSemanticCompactStoresValidAnthropicExchange(t *testing.T) {
-	client, err := New(Options{
+	client := New(Options{
 		Endpoint: "https://example.test/v1/messages",
 		HTTPClient: &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
 			body, err := io.ReadAll(request.Body)
@@ -147,9 +144,6 @@ func TestSemanticCompactStoresValidAnthropicExchange(t *testing.T) {
 			return RequestOptions{MaxTokens: 100, ToolChoice: &ToolChoice{Type: "auto"}}, nil
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	compacted, err := client.SemanticCompact(context.Background(), agent.Request{
 		Model:  "model",

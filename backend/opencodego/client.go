@@ -22,12 +22,8 @@ type provider struct {
 	clients map[protocol]protocolClient
 }
 
-func newProvider(apiKey, baseURL string, httpClient *http.Client, models map[string]modelInfo) (*provider, error) {
-	clients, err := newProtocolClients(apiKey, baseURL, httpClient, models)
-	if err != nil {
-		return nil, err
-	}
-	return &provider{models: models, clients: clients}, nil
+func newProvider(apiKey, baseURL string, httpClient *http.Client, models map[string]modelInfo) *provider {
+	return &provider{models: models, clients: newProtocolClients(apiKey, baseURL, httpClient, models)}
 }
 
 func (provider *provider) modelClient(model string) (modelInfo, protocolClient, error) {

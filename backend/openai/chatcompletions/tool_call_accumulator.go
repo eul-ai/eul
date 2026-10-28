@@ -49,16 +49,11 @@ func (calls *toolCallAccumulator) finalize() ([]finalizedToolCall, error) {
 	sort.Ints(indexes)
 
 	finalized := make([]finalizedToolCall, 0, len(indexes))
-	seen := make(map[string]struct{}, len(indexes))
 	for _, index := range indexes {
 		streamed := calls.calls[index]
 		if streamed.id == "" || streamed.name == "" {
 			return nil, fmt.Errorf("chat completion tool call %d is incomplete", index)
 		}
-		if _, exists := seen[streamed.id]; exists {
-			return nil, fmt.Errorf("chat completion has duplicate tool call ID %q", streamed.id)
-		}
-		seen[streamed.id] = struct{}{}
 
 		arguments := streamed.arguments
 		if arguments == "" {

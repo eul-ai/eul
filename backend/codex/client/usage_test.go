@@ -56,19 +56,14 @@ func TestUsageClientGetsSubscriptionWindows(t *testing.T) {
 	}
 }
 
-func TestUsageClientHandlesOptionalAndInvalidWindows(t *testing.T) {
+func TestUsageClientHandlesOptionalWindows(t *testing.T) {
 	tests := []struct {
-		name    string
-		body    string
-		want    backend.AccountUsage
-		wantErr bool
+		name string
+		body string
+		want backend.AccountUsage
 	}{
 		{name: "no rate limit", body: `{"plan_type":"plus","rate_limit":null}`},
 		{name: "one window", body: `{"rate_limit":{"primary_window":{"used_percent":0,"limit_window_seconds":3600}}}`, want: backend.AccountUsage{Windows: []backend.UsageWindow{{Duration: time.Hour}}}},
-		{name: "negative percent", body: `{"rate_limit":{"primary_window":{"used_percent":-1,"limit_window_seconds":3600}}}`, wantErr: true},
-		{name: "percent over one hundred", body: `{"rate_limit":{"primary_window":{"used_percent":101,"limit_window_seconds":3600}}}`, wantErr: true},
-		{name: "zero duration", body: `{"rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":0}}}`, wantErr: true},
-		{name: "negative reset", body: `{"rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":3600,"reset_at":-1}}}`, wantErr: true},
 	}
 
 	for _, test := range tests {
@@ -79,12 +74,6 @@ func TestUsageClientHandlesOptionalAndInvalidWindows(t *testing.T) {
 			defer server.Close()
 
 			usage, err := newTestUsageClient(t, "token", server).Usage(context.Background())
-			if test.wantErr {
-				if err == nil {
-					t.Fatalf("Usage() error = %v", err)
-				}
-				return
-			}
 			if err != nil || !reflect.DeepEqual(usage, test.want) {
 				t.Fatalf("Usage() = %+v, %v; want %+v", usage, err, test.want)
 			}

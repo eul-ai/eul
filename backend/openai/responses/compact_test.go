@@ -136,7 +136,6 @@ func TestClientRejectsMalformedCompactResponses(t *testing.T) {
 		{name: "empty output", body: `{"status":"completed","output":[]}`},
 		{name: "non-object output", body: `{"status":"completed","output":[3]}`},
 		{name: "wrong output type", body: `{"status":"completed","output":[{}]}`},
-		{name: "negative usage", body: `{"status":"completed","output":[{"type":"compaction"}],"usage":{"input_tokens":-1}}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

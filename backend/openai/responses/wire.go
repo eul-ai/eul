@@ -1,9 +1,7 @@
 package responses
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 
 	"github.com/eul-ai/eul/agent"
 )
@@ -68,12 +66,4 @@ type functionCallOutput struct {
 	Type   string `json:"type"`
 	CallID string `json:"call_id"`
 	Output string `json:"output"`
-}
-
-func validateRawObject(value json.RawMessage) error {
-	trimmed := bytes.TrimSpace(value)
-	if len(trimmed) == 0 || trimmed[0] != '{' || !json.Valid(trimmed) {
-		return errors.New("must be a JSON object")
-	}
-	return nil
 }

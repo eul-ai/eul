@@ -66,11 +66,11 @@ func TestBuildRequestEncodesInputsToolsAndState(t *testing.T) {
 }
 
 func TestEncodeUserContentConcatenatesTextOnlyParts(t *testing.T) {
-	content := encodeUserContent([]agent.ContentPart{
+	content, err := encodeUserContent([]agent.ContentPart{
 		{Kind: agent.ContentPartText, Text: "one"},
 		{Kind: agent.ContentPartText, Text: "two"},
 	})
-	if content != "onetwo" {
+	if err != nil || content != "onetwo" {
 		t.Fatalf("content = %#v", content)
 	}
 }

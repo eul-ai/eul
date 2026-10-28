@@ -24,18 +24,17 @@ var (
 	_ agent.CompactionErrorPolicy = (*client)(nil)
 )
 
-func newClient(apiKey, endpoint string, httpClient *http.Client, metadata func(string) modelMetadata) (*client, error) {
-	shared, err := responses.New(responses.Options{
-		HTTPClient:     httpClient,
-		Endpoint:       endpoint,
-		ErrorPrefix:    "openrouter",
-		PrepareRequest: prepareRequest(apiKey),
-		RequestOptions: requestOptions(metadata),
-	})
-	if err != nil {
-		return nil, err
+func newClient(apiKey, endpoint string, httpClient *http.Client, metadata func(string) modelMetadata) *client {
+	return &client{
+		responses: responses.New(responses.Options{
+			HTTPClient:     httpClient,
+			Endpoint:       endpoint,
+			ErrorPrefix:    "openrouter",
+			PrepareRequest: prepareRequest(apiKey),
+			RequestOptions: requestOptions(metadata),
+		}),
+		metadata: metadata,
 	}
-	return &client{responses: shared, metadata: metadata}, nil
 }
 
 func (c *client) Generate(ctx context.Context, request agent.Request, observer agent.StreamObserver) (agent.Response, error) {

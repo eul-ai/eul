@@ -3,7 +3,6 @@ package chatcompletions
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -177,16 +176,12 @@ func (decoder *streamDecoder) finish() (streamResult, error) {
 		return streamResult{}, err
 	}
 
-	usage, err := normalizeUsage(decoder.usage)
-	if err != nil {
-		return streamResult{}, err
-	}
 	return streamResult{
 		text:      text,
 		reasoning: reasoning,
 		calls:     calls,
 		assistant: assistant,
-		usage:     usage,
+		usage:     normalizeUsage(decoder.usage),
 	}, nil
 }
 
@@ -207,12 +202,9 @@ func encodeAssistantMessage(text, reasoning string, calls []toolCall, serializeR
 	return assistant, nil
 }
 
-func normalizeUsage(usage *completionUsage) (agent.Usage, error) {
+func normalizeUsage(usage *completionUsage) agent.Usage {
 	if usage == nil {
-		return agent.Usage{}, nil
-	}
-	if usage.PromptTokens < 0 || usage.CompletionTokens < 0 || usage.TotalTokens < 0 {
-		return agent.Usage{}, errors.New("chat completion usage contains negative token counts")
+		return agent.Usage{}
 	}
 	total := usage.TotalTokens
 	if total == 0 {
@@ -222,5 +214,5 @@ func normalizeUsage(usage *completionUsage) (agent.Usage, error) {
 		InputTokens:  usage.PromptTokens,
 		OutputTokens: usage.CompletionTokens,
 		TotalTokens:  total,
-	}, nil
+	}
 }

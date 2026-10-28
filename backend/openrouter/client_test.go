@@ -75,11 +75,8 @@ func TestClientConfiguresOpenRouterResponsesAdapter(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := newClient("secret", server.URL+"/responses", server.Client(), testMetadata(true, 128_000))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = client.Generate(context.Background(), agent.Request{
+	client := newClient("secret", server.URL+"/responses", server.Client(), testMetadata(true, 128_000))
+	_, err := client.Generate(context.Background(), agent.Request{
 		SessionID:     "session-123",
 		Model:         "vendor/model",
 		ThinkingLevel: agent.ThinkingHigh,
@@ -116,7 +113,7 @@ func TestRequestOptionsRespectModelReasoningMetadata(t *testing.T) {
 }
 
 func TestClientShouldCompactAtModelContextThreshold(t *testing.T) {
-	client, err := newClient(
+	client := newClient(
 		"secret",
 		"http://127.0.0.1:1/responses",
 		&http.Client{},
@@ -127,9 +124,6 @@ func TestClientShouldCompactAtModelContextThreshold(t *testing.T) {
 			return modelMetadata{}
 		},
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	state := []byte(`{"version":1,"items":[{"type":"message","role":"assistant","content":"history"}]}`)
 	tests := []struct {

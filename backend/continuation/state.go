@@ -1,9 +1,7 @@
 package continuation
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 )
 
@@ -33,24 +31,11 @@ func Decode(encoded []byte, maximum int) ([]json.RawMessage, error) {
 	if decoded.Version != version {
 		return nil, fmt.Errorf("unsupported continuation state version %d", decoded.Version)
 	}
-	for index, item := range decoded.Items {
-		if err := validateObject(item); err != nil {
-			return nil, fmt.Errorf("continuation state item %d: %w", index, err)
-		}
-	}
-
 	return decoded.Items, nil
 }
 
 func Encode(maximum int, groups ...[]json.RawMessage) ([]byte, error) {
-	items := join(groups...)
-	for index, item := range items {
-		if err := validateObject(item); err != nil {
-			return nil, fmt.Errorf("continuation state item %d: %w", index, err)
-		}
-	}
-
-	encoded, err := json.Marshal(state{Version: version, Items: items})
+	encoded, err := json.Marshal(state{Version: version, Items: join(groups...)})
 	if err != nil {
 		return nil, fmt.Errorf("encode continuation state: %w", err)
 	}
@@ -72,12 +57,4 @@ func join(groups ...[]json.RawMessage) []json.RawMessage {
 		items = append(items, group...)
 	}
 	return items
-}
-
-func validateObject(value json.RawMessage) error {
-	trimmed := bytes.TrimSpace(value)
-	if len(trimmed) == 0 || trimmed[0] != '{' || !json.Valid(trimmed) {
-		return errors.New("must be a JSON object")
-	}
-	return nil
 }

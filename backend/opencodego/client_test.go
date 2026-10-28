@@ -81,10 +81,7 @@ func TestProviderRoutesProtocols(t *testing.T) {
 		}, nil
 	})}
 
-	client, err := newProvider("secret", "https://example.test/zen/go/v1", httpClient, models)
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := newProvider("secret", "https://example.test/zen/go/v1", httpClient, models)
 	for _, modelID := range expected {
 		response, err := client.Generate(context.Background(), agent.Request{
 			SessionID:     "session-id",
@@ -105,10 +102,7 @@ func TestProviderRoutesProtocols(t *testing.T) {
 }
 
 func TestProviderCompactionRequiresState(t *testing.T) {
-	client, err := newProvider("secret", "https://example.test/zen/go/v1", &http.Client{}, testModelInfos(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := newProvider("secret", "https://example.test/zen/go/v1", &http.Client{}, testModelInfos(t))
 	request := agent.Request{Model: "grok-4.5", ThinkingLevel: agent.ThinkingMedium}
 	usage := agent.Usage{TotalTokens: 900_000}
 	if client.ShouldCompact(request, usage) {
@@ -122,13 +116,10 @@ func TestProviderCompactionRequiresState(t *testing.T) {
 
 func TestProviderRejectsUnknownModelBeforeRequest(t *testing.T) {
 	requests := 0
-	client, err := newProvider("secret", "https://example.test/zen/go/v1", &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+	client := newProvider("secret", "https://example.test/zen/go/v1", &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 		requests++
 		return nil, nil
 	})}, testModelInfos(t))
-	if err != nil {
-		t.Fatal(err)
-	}
 	if _, err := client.Generate(context.Background(), agent.Request{Model: "unknown"}, agent.StreamObserver{}); err == nil {
 		t.Fatal("unknown model was accepted")
 	}
@@ -230,10 +221,7 @@ func TestProviderSemanticCompactionUsesMaxThinkingBudget(t *testing.T) {
 	})}
 
 	models := testModelInfos(t)
-	client, err := newProvider("secret", "https://example.test/zen/go/v1", httpClient, models)
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := newProvider("secret", "https://example.test/zen/go/v1", httpClient, models)
 	compacted, err := client.Compact(context.Background(), agent.Request{
 		Model:         "qwen3.8-max",
 		ThinkingLevel: agent.ThinkingMax,

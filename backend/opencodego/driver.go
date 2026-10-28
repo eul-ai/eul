@@ -120,7 +120,7 @@ func (configured *runtime) NewProvider() (agent.Provider, error) {
 	if len(models) == 0 {
 		return nil, errors.New("opencode go: model catalog is unavailable")
 	}
-	return newProvider(configured.apiKey, configured.baseURL, configured.generationClient, models)
+	return newProvider(configured.apiKey, configured.baseURL, configured.generationClient, models), nil
 }
 
 func (configured *runtime) ModelMetadata(model string) backend.ModelMetadata {

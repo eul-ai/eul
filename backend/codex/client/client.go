@@ -33,7 +33,7 @@ func newClient(source TokenSource, httpClient *http.Client) (*Client, error) {
 	}
 
 	client := &Client{requests: requests}
-	client.responses, err = responses.New(responses.Options{
+	client.responses = responses.New(responses.Options{
 		HTTPClient:                requests.httpClient,
 		Endpoint:                  baseURL + "/codex/responses",
 		ErrorPrefix:               "openai",
@@ -41,9 +41,6 @@ func newClient(source TokenSource, httpClient *http.Client) (*Client, error) {
 		RequestOptions:            client.responsesRequestOptions,
 		EncodeInboxAsAgentMessage: true,
 	})
-	if err != nil {
-		return nil, err
-	}
 	return client, nil
 }
 

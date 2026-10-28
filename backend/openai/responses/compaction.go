@@ -197,10 +197,6 @@ func (client *Client) Compact(ctx context.Context, request agent.Request) (agent
 	if err := validateCompletedResponse(stream.response); err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
-	usage, err := normalizeUsage(stream.response.Usage)
-	if err != nil {
-		return agent.CompactResponse{}, client.errorf("%v", err)
-	}
 	if err := validateCompactOutput(stream.response.Output); err != nil {
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
@@ -209,7 +205,7 @@ func (client *Client) Compact(ctx context.Context, request agent.Request) (agent
 		return agent.CompactResponse{}, client.errorf("%v", err)
 	}
 
-	return agent.CompactResponse{State: state, Usage: usage}, nil
+	return agent.CompactResponse{State: state, Usage: normalizeUsage(stream.response.Usage)}, nil
 }
 
 func (client *Client) SemanticCompact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {

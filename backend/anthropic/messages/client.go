@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend/compaction"
@@ -44,20 +43,15 @@ type Client struct {
 	promptCaching  bool
 }
 
-func New(options Options) (*Client, error) {
-	endpoint := strings.TrimSpace(options.Endpoint)
-	if endpoint == "" {
-		return nil, errors.New("anthropic messages: endpoint is required")
-	}
-
+func New(options Options) *Client {
 	return &Client{
 		httpClient:     backendhttp.CloneNoRedirects(options.HTTPClient, backendhttp.DefaultGenerationHTTPTimeout),
-		endpoint:       endpoint,
-		errorConfig:    backendhttp.APIErrorConfig{Prefix: strings.TrimSpace(options.ErrorPrefix)},
+		endpoint:       options.Endpoint,
+		errorConfig:    backendhttp.APIErrorConfig{Prefix: options.ErrorPrefix},
 		prepareRequest: options.PrepareRequest,
 		requestOptions: options.RequestOptions,
 		promptCaching:  options.PromptCaching,
-	}, nil
+	}
 }
 
 func (client *Client) ShouldCompactState(request agent.Request) bool {

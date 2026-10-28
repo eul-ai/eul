@@ -12,52 +12,37 @@ import (
 	"github.com/eul-ai/eul/backend/openai/responses"
 )
 
-func newProtocolClients(apiKey, baseURL string, httpClient *http.Client, models map[string]modelInfo) (map[protocol]protocolClient, error) {
-	responsesClient, err := responses.New(responses.Options{
-		HTTPClient:     httpClient,
-		Endpoint:       baseURL + "/responses",
-		ErrorPrefix:    "opencode go",
-		PrepareRequest: prepareBearerRequest(apiKey),
-		RequestOptions: func(request agent.Request) (responses.RequestOptions, error) {
-			return responseRequestOptions(models, request)
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	chatClient, err := chatcompletions.New(chatcompletions.Options{
-		HTTPClient:     httpClient,
-		Endpoint:       baseURL + "/chat/completions",
-		ErrorPrefix:    "opencode go",
-		PrepareRequest: prepareBearerRequest(apiKey),
-		RequestOptions: func(request agent.Request) (chatcompletions.RequestOptions, error) {
-			return chatRequestOptions(models, request)
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	anthropicClient, err := anthropic.New(anthropic.Options{
-		HTTPClient:     httpClient,
-		Endpoint:       baseURL + "/messages",
-		ErrorPrefix:    "opencode go",
-		PrepareRequest: prepareAnthropicRequest(apiKey),
-		RequestOptions: func(request agent.Request) (anthropic.RequestOptions, error) {
-			return anthropicRequestOptions(models, request)
-		},
-		PromptCaching: true,
-	})
-	if err != nil {
-		return nil, err
-	}
-
+func newProtocolClients(apiKey, baseURL string, httpClient *http.Client, models map[string]modelInfo) map[protocol]protocolClient {
 	return map[protocol]protocolClient{
-		protocolResponses:         responsesClient,
-		protocolChatCompletions:   chatClient,
-		protocolAnthropicMessages: anthropicClient,
-	}, nil
+		protocolResponses: responses.New(responses.Options{
+			HTTPClient:     httpClient,
+			Endpoint:       baseURL + "/responses",
+			ErrorPrefix:    "opencode go",
+			PrepareRequest: prepareBearerRequest(apiKey),
+			RequestOptions: func(request agent.Request) (responses.RequestOptions, error) {
+				return responseRequestOptions(models, request)
+			},
+		}),
+		protocolChatCompletions: chatcompletions.New(chatcompletions.Options{
+			HTTPClient:     httpClient,
+			Endpoint:       baseURL + "/chat/completions",
+			ErrorPrefix:    "opencode go",
+			PrepareRequest: prepareBearerRequest(apiKey),
+			RequestOptions: func(request agent.Request) (chatcompletions.RequestOptions, error) {
+				return chatRequestOptions(models, request)
+			},
+		}),
+		protocolAnthropicMessages: anthropic.New(anthropic.Options{
+			HTTPClient:     httpClient,
+			Endpoint:       baseURL + "/messages",
+			ErrorPrefix:    "opencode go",
+			PrepareRequest: prepareAnthropicRequest(apiKey),
+			RequestOptions: func(request agent.Request) (anthropic.RequestOptions, error) {
+				return anthropicRequestOptions(models, request)
+			},
+			PromptCaching: true,
+		}),
+	}
 }
 
 func prepareBearerRequest(apiKey string) func(context.Context, *http.Request) error {
@@ -88,7 +73,7 @@ func prepareAnthropicRequest(apiKey string) func(context.Context, *http.Request)
 }
 
 func responseRequestOptions(models map[string]modelInfo, request agent.Request) (responses.RequestOptions, error) {
-	info, err := validateRequestModel(models, request, protocolResponses)
+	info, err := validateRequestModel(models, request)
 	if err != nil {
 		return responses.RequestOptions{}, err
 	}
@@ -113,7 +98,7 @@ func responseRequestOptions(models map[string]modelInfo, request agent.Request) 
 }
 
 func chatRequestOptions(models map[string]modelInfo, request agent.Request) (chatcompletions.RequestOptions, error) {
-	info, err := validateRequestModel(models, request, protocolChatCompletions)
+	info, err := validateRequestModel(models, request)
 	if err != nil {
 		return chatcompletions.RequestOptions{}, err
 	}
@@ -131,7 +116,7 @@ func chatRequestOptions(models map[string]modelInfo, request agent.Request) (cha
 }
 
 func anthropicRequestOptions(models map[string]modelInfo, request agent.Request) (anthropic.RequestOptions, error) {
-	info, err := validateRequestModel(models, request, protocolAnthropicMessages)
+	info, err := validateRequestModel(models, request)
 	if err != nil {
 		return anthropic.RequestOptions{}, err
 	}
@@ -157,11 +142,8 @@ func anthropicRequestOptions(models map[string]modelInfo, request agent.Request)
 	return options, nil
 }
 
-func validateRequestModel(models map[string]modelInfo, request agent.Request, expected protocol) (modelInfo, error) {
-	info, ok := models[request.Model]
-	if !ok || info.protocol != expected {
-		return modelInfo{}, fmt.Errorf("model %q does not use the requested protocol", request.Model)
-	}
+func validateRequestModel(models map[string]modelInfo, request agent.Request) (modelInfo, error) {
+	info := models[request.Model]
 	if !slices.Contains(info.thinking.levels, request.ThinkingLevel) {
 		return modelInfo{}, fmt.Errorf("thinking level %q is not supported by model %q", request.ThinkingLevel, request.Model)
 	}

@@ -3,10 +3,8 @@ package chatcompletions
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend/compaction"
@@ -42,18 +40,14 @@ type Client struct {
 	requestOptions RequestOptionsFunc
 }
 
-func New(options Options) (*Client, error) {
-	if strings.TrimSpace(options.Endpoint) == "" {
-		return nil, errors.New("chat completions: endpoint is required")
-	}
-
+func New(options Options) *Client {
 	return &Client{
 		httpClient:     backendhttp.CloneNoRedirects(options.HTTPClient, backendhttp.DefaultGenerationHTTPTimeout),
 		endpoint:       options.Endpoint,
-		errorConfig:    backendhttp.APIErrorConfig{Prefix: strings.TrimSpace(options.ErrorPrefix)},
+		errorConfig:    backendhttp.APIErrorConfig{Prefix: options.ErrorPrefix},
 		prepareRequest: options.PrepareRequest,
 		requestOptions: options.RequestOptions,
-	}, nil
+	}
 }
 
 func (client *Client) ShouldCompactState(request agent.Request) bool {

@@ -1,11 +1,9 @@
 package responses
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/eul-ai/eul/agent"
@@ -44,31 +42,6 @@ type outputContentPart struct {
 	Refusal string `json:"refusal"`
 }
 
-func decodeCreateResponse(body []byte) (createResponseEnvelope, error) {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	var response createResponseEnvelope
-
-	if err := decoder.Decode(&response); err != nil {
-		return createResponseEnvelope{}, fmt.Errorf("decode response: %w", err)
-	}
-
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return createResponseEnvelope{}, errors.New("decode response: multiple JSON values")
-		}
-		return createResponseEnvelope{}, fmt.Errorf("decode response: %w", err)
-	}
-
-	for i, item := range response.Output {
-		if err := validateRawObject(item); err != nil {
-			return createResponseEnvelope{}, fmt.Errorf("response output item %d: %w", i, err)
-		}
-	}
-
-	return response, nil
-}
-
 func normalizeResponse(response createResponseEnvelope) (string, []agent.ToolCall, agent.Usage, error) {
 	if err := validateCompletedResponse(response); err != nil {
 		return "", nil, agent.Usage{}, err
@@ -79,12 +52,7 @@ func normalizeResponse(response createResponseEnvelope) (string, []agent.ToolCal
 		return "", nil, agent.Usage{}, err
 	}
 
-	usage, err := normalizeUsage(response.Usage)
-	if err != nil {
-		return "", nil, agent.Usage{}, err
-	}
-
-	return text, calls, usage, nil
+	return text, calls, normalizeUsage(response.Usage), nil
 }
 
 func validateCompletedResponse(response createResponseEnvelope) error {
@@ -113,7 +81,6 @@ func validateCompletedResponse(response createResponseEnvelope) error {
 func normalizeOutput(output []json.RawMessage) (string, []agent.ToolCall, error) {
 	var text strings.Builder
 	var calls []agent.ToolCall
-	seenCallIDs := make(map[string]struct{})
 	for index, raw := range output {
 		var item outputItem
 		if err := json.Unmarshal(raw, &item); err != nil {
@@ -131,7 +98,7 @@ func normalizeOutput(output []json.RawMessage) (string, []agent.ToolCall, error)
 				}
 			}
 		case "function_call":
-			call, err := normalizeToolCall(item, index, seenCallIDs)
+			call, err := normalizeToolCall(item, index)
 			if err != nil {
 				return "", nil, err
 			}
@@ -141,18 +108,13 @@ func normalizeOutput(output []json.RawMessage) (string, []agent.ToolCall, error)
 	return text.String(), calls, nil
 }
 
-func normalizeToolCall(item outputItem, index int, seen map[string]struct{}) (agent.ToolCall, error) {
+func normalizeToolCall(item outputItem, index int) (agent.ToolCall, error) {
 	if item.CallID == "" {
 		return agent.ToolCall{}, fmt.Errorf("response function call %d has no call ID", index)
 	}
 	if item.Name == "" {
 		return agent.ToolCall{}, fmt.Errorf("response function call %d has no name", index)
 	}
-	if _, exists := seen[item.CallID]; exists {
-		return agent.ToolCall{}, fmt.Errorf("response has duplicate function call ID %q", item.CallID)
-	}
-
-	seen[item.CallID] = struct{}{}
 	return agent.ToolCall{
 		ID:        item.CallID,
 		Name:      item.Name,
@@ -160,12 +122,9 @@ func normalizeToolCall(item outputItem, index int, seen map[string]struct{}) (ag
 	}, nil
 }
 
-func normalizeUsage(usage *responseUsage) (agent.Usage, error) {
+func normalizeUsage(usage *responseUsage) agent.Usage {
 	if usage == nil {
-		return agent.Usage{}, nil
-	}
-	if usage.InputTokens < 0 || usage.OutputTokens < 0 || usage.TotalTokens < 0 {
-		return agent.Usage{}, errors.New("response usage contains negative token counts")
+		return agent.Usage{}
 	}
 
 	total := usage.TotalTokens
@@ -176,5 +135,5 @@ func normalizeUsage(usage *responseUsage) (agent.Usage, error) {
 		InputTokens:  usage.InputTokens,
 		OutputTokens: usage.OutputTokens,
 		TotalTokens:  total,
-	}, nil
+	}
 }

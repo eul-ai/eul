@@ -36,7 +36,7 @@ func TestHTTPErrorRetryAndContextClassification(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			client, err := New(Options{
+			client := New(Options{
 				Endpoint: "https://example.test/v1/messages",
 				RequestOptions: func(agent.Request) (RequestOptions, error) {
 					return RequestOptions{MaxTokens: 100}, nil
@@ -52,10 +52,7 @@ func TestHTTPErrorRetryAndContextClassification(t *testing.T) {
 					}, nil
 				})},
 			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = client.Generate(context.Background(), agent.Request{
+			_, err := client.Generate(context.Background(), agent.Request{
 				Model:  "model",
 				Inputs: []agent.Input{agent.NewTextInput("hello")},
 			}, agent.StreamObserver{})
@@ -79,7 +76,7 @@ func TestHTTPErrorRetryAndContextClassification(t *testing.T) {
 func TestGenerateClosesBodyWhenCanceledDuringRead(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	body := &cancelingReadCloser{cancel: cancel}
-	client, err := New(Options{
+	client := New(Options{
 		Endpoint: "https://example.test/v1/messages",
 		RequestOptions: func(agent.Request) (RequestOptions, error) {
 			return RequestOptions{MaxTokens: 100}, nil
@@ -93,11 +90,8 @@ func TestGenerateClosesBodyWhenCanceledDuringRead(t *testing.T) {
 			}, nil
 		})},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	_, err = client.Generate(ctx, agent.Request{Model: "model", Inputs: []agent.Input{agent.NewTextInput("hello")}}, agent.StreamObserver{})
+	_, err := client.Generate(ctx, agent.Request{Model: "model", Inputs: []agent.Input{agent.NewTextInput("hello")}}, agent.StreamObserver{})
 	if err != context.Canceled || !body.closed {
 		t.Fatalf("Generate() error = %v, body closed = %v", err, body.closed)
 	}
@@ -119,10 +113,7 @@ func (reader *cancelingReadCloser) Close() error {
 }
 
 func TestGenerateHonorsCanceledContext(t *testing.T) {
-	client, err := New(Options{Endpoint: "https://example.test/v1/messages"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := New(Options{Endpoint: "https://example.test/v1/messages"})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := client.Generate(ctx, agent.Request{}, agent.StreamObserver{}); err != context.Canceled {

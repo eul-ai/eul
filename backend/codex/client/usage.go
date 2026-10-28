@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -58,12 +57,12 @@ func (client *UsageClient) Usage(ctx context.Context) (backend.AccountUsage, err
 	}, &wire); err != nil {
 		return backend.AccountUsage{}, fmt.Errorf("openai: load usage: %w", err)
 	}
-	return normalizeProviderUsage(wire)
+	return normalizeProviderUsage(wire), nil
 }
 
-func normalizeProviderUsage(response usageResponse) (backend.AccountUsage, error) {
+func normalizeProviderUsage(response usageResponse) backend.AccountUsage {
 	if response.RateLimit == nil {
-		return backend.AccountUsage{}, nil
+		return backend.AccountUsage{}
 	}
 
 	windows := make([]backend.UsageWindow, 0, 2)
@@ -71,17 +70,6 @@ func normalizeProviderUsage(response usageResponse) (backend.AccountUsage, error
 		if window == nil {
 			continue
 		}
-		if window.UsedPercent < 0 || window.UsedPercent > 100 {
-			return backend.AccountUsage{}, errors.New("openai: usage response contains an invalid used percentage")
-		}
-		maximumSeconds := int64(time.Duration(1<<63-1) / time.Second)
-		if window.LimitWindowSeconds <= 0 || window.LimitWindowSeconds > maximumSeconds {
-			return backend.AccountUsage{}, errors.New("openai: usage response contains an invalid window duration")
-		}
-		if window.ResetAt < 0 {
-			return backend.AccountUsage{}, errors.New("openai: usage response contains an invalid reset time")
-		}
-
 		usageWindow := backend.UsageWindow{
 			Duration:    time.Duration(window.LimitWindowSeconds) * time.Second,
 			UsedPercent: window.UsedPercent,
@@ -92,7 +80,7 @@ func normalizeProviderUsage(response usageResponse) (backend.AccountUsage, error
 		windows = append(windows, usageWindow)
 	}
 
-	return backend.AccountUsage{Windows: windows}, nil
+	return backend.AccountUsage{Windows: windows}
 }
 
 var _ backend.UsageProvider = (*UsageClient)(nil)

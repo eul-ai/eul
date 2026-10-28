@@ -220,11 +220,8 @@ func TestClientCancellationTimeoutSinkAndRedirect(t *testing.T) {
 		transport := roundTripperFunc(func(*http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: errorReadCloser{err: context.DeadlineExceeded}}, nil
 		})
-		client, err := New(Options{PrepareRequest: testPrepareRequest("token"), RequestOptions: testRequestOptions, Endpoint: "https://example.com/responses", HTTPClient: &http.Client{Transport: transport}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = generate(client, context.Background(), baseRequest(), nil, nil, nil)
+		client := New(Options{PrepareRequest: testPrepareRequest("token"), RequestOptions: testRequestOptions, Endpoint: "https://example.com/responses", HTTPClient: &http.Client{Transport: transport}})
+		_, err := generate(client, context.Background(), baseRequest(), nil, nil, nil)
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("Generate() error = %v", err)
 		}
@@ -303,10 +300,7 @@ func TestClientValidatesRequestsBeforePreparingRequest(t *testing.T) {
 		prepareCalls.Add(1)
 		return nil
 	}
-	client, err := New(options)
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := New(options)
 
 	invalidState := baseRequest()
 	invalidState.State = []byte(`not-json`)
@@ -326,15 +320,12 @@ func TestNewCopiesInjectedClientBeforeApplyingPolicy(t *testing.T) {
 	transport := http.DefaultTransport
 	injected := &http.Client{Transport: transport, CheckRedirect: redirect}
 
-	client, err := New(Options{
+	client := New(Options{
 		Endpoint:       "https://example.com/responses",
 		HTTPClient:     injected,
 		RequestOptions: testRequestOptions,
 		PrepareRequest: testPrepareRequest("token"),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	if client.httpClient == injected || client.httpClient.Transport != transport || client.httpClient.Timeout != backendhttp.DefaultGenerationHTTPTimeout {
 		t.Fatalf("owned client=%p injected=%p transport=%T timeout=%s", client.httpClient, injected, client.httpClient.Transport, client.httpClient.Timeout)
 	}
@@ -361,10 +352,7 @@ func newTestClient(t *testing.T, token, baseURL string, overrides Options) *Clie
 	if overrides.RequestOptions == nil {
 		overrides.RequestOptions = testRequestOptions
 	}
-	client, err := New(overrides)
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := New(overrides)
 
 	return client
 }

@@ -11,14 +11,14 @@ import (
 func (client *Client) encodeInputs(inputs []agent.Input) ([]json.RawMessage, error) {
 	items := make([]json.RawMessage, len(inputs))
 	for index, input := range inputs {
-		if err := input.Validate(); err != nil {
-			return nil, fmt.Errorf("input %d: %w", index, err)
-		}
-
 		var value any
 		switch input.Kind {
 		case agent.InputUser:
-			value = inputMessage{Role: "user", Content: encodeUserContent(input.Content)}
+			content, err := encodeUserContent(input.Content)
+			if err != nil {
+				return nil, err
+			}
+			value = inputMessage{Role: "user", Content: content}
 		case agent.InputInbox:
 			if client.encodeInboxAsAgentMessage {
 				value = inputAgentMessage{
@@ -36,28 +36,28 @@ func (client *Client) encodeInputs(inputs []agent.Input) ([]json.RawMessage, err
 				output = "[tool error]\n" + output
 			}
 			value = functionCallOutput{Type: "function_call_output", CallID: input.CallID, Output: output}
+		default:
+			return nil, fmt.Errorf("unknown input kind %q", input.Kind)
 		}
 		items[index], _ = json.Marshal(value)
 	}
 	return items, nil
 }
 
-func encodeUserContent(content []agent.ContentPart) any {
+func encodeUserContent(content []agent.ContentPart) ([]inputContentPart, error) {
 	parts := make([]inputContentPart, 0, len(content))
 	for _, part := range content {
 		switch part.Kind {
 		case agent.ContentPartText:
 			parts = append(parts, inputContentPart{Type: "input_text", Text: part.Text})
 		case agent.ContentPartImage:
-			image := part.Image
-			if image == nil {
-				continue
-			}
 			parts = append(parts, inputContentPart{
 				Type:     "input_image",
-				ImageURL: "data:" + image.MediaType + ";base64," + base64.StdEncoding.EncodeToString(image.Data),
+				ImageURL: "data:" + part.Image.MediaType + ";base64," + base64.StdEncoding.EncodeToString(part.Image.Data),
 			})
+		default:
+			return nil, fmt.Errorf("unknown content kind %q", part.Kind)
 		}
 	}
-	return parts
+	return parts, nil
 }

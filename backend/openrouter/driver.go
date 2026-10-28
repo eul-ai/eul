@@ -120,7 +120,7 @@ func (configured *runtime) NewProvider() (agent.Provider, error) {
 		configured.baseURL+"/responses",
 		configured.generationClient,
 		configured.modelMetadata,
-	)
+	), nil
 }
 
 func (configured *runtime) modelMetadata(model string) modelMetadata {

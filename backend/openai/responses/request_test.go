@@ -94,7 +94,6 @@ func TestInboxInputSurvivesContinuationState(t *testing.T) {
 func TestBuildCreateRequestRejectsInvalidInputKinds(t *testing.T) {
 	for _, input := range []agent.Input{
 		{Kind: "unknown", Text: "value"},
-		{Kind: agent.InputInbox, Content: []agent.ContentPart{{Kind: agent.ContentPartText, Text: "invalid"}}},
 	} {
 		if _, err := testClient().buildGenerationWireRequest(agent.Request{Inputs: []agent.Input{input}}); err == nil {
 			t.Fatalf("input %+v was accepted", input)
