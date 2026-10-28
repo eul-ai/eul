@@ -64,14 +64,15 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 func TestRenderFrameShowsPermission(t *testing.T) {
 	model := newTUIModel(72, 12, Options{})
 	model.running = true
-	model.showPermission(PermissionRequest{
+	model.permission.queue = []PermissionRequest{{
 		Title:        "Network access requested",
 		Subject:      "bash",
 		Description:  "needs access to the network",
 		Detail:       "git push origin main",
 		DetailPrefix: "$ ",
 		Notice:       "This command and its descendants will have network access.",
-	}, 1, 2)
+	}, {Title: "Network access requested"}}
+	permission := model.permission.view()
 	if err := model.insertInput("queued steering"); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,7 @@ func TestRenderFrameShowsPermission(t *testing.T) {
 	frame := buildTerminalFrame(model)
 	joined := strings.Join(frame.plainRows, "\n")
 	for _, want := range []string{
-		"Network access requested",
+		"Network access requested (1 of 2)",
 		"bash needs access to the network",
 		"$ git push origin main",
 		"This command and its descendants will have network access.",
@@ -103,17 +104,17 @@ func TestRenderFrameShowsPermission(t *testing.T) {
 	if len(description.spans) != 3 || description.spans[0].Text != "bash" || description.spans[0].Style.Foreground != text.ForegroundAccent || description.spans[2].Style.Foreground != text.ForegroundDefault {
 		t.Fatalf("permission description = %+v", description.spans)
 	}
-	detailIndex := slices.IndexFunc(input.styledLines, func(line styledLine) bool { return line.text == model.permission.detail })
+	detailIndex := slices.IndexFunc(input.styledLines, func(line styledLine) bool { return line.text == permission.detail })
 	if detailIndex < 0 || input.styledLines[detailIndex].style != (lineStyle{foreground: currentTheme.markdownCode, background: currentTheme.editorLine, paintBackground: true}) {
 		t.Fatalf("permission detail does not use the panel background: %+v", input.styledLines)
 	}
-	noticeIndex := slices.IndexFunc(input.styledLines, func(line styledLine) bool { return line.text == model.permission.notice })
+	noticeIndex := slices.IndexFunc(input.styledLines, func(line styledLine) bool { return line.text == permission.notice })
 	if noticeIndex < 1 || noticeIndex+2 >= len(input.lines) || strings.TrimSpace(input.lines[noticeIndex-1]) != "" || strings.TrimSpace(input.lines[noticeIndex+1]) != "" {
 		t.Fatalf("permission notice spacing = %q", input.lines)
 	}
 	buttons := input.lines[noticeIndex+2]
 	buttonIndex := strings.Index(buttons, "[")
-	descriptionIndexInLine := strings.Index(input.lines[descriptionIndex], model.permission.subject)
+	descriptionIndexInLine := strings.Index(input.lines[descriptionIndex], permission.subject)
 	buttonIndent := text.Width(buttons[:max(buttonIndex, 0)])
 	descriptionIndent := text.Width(input.lines[descriptionIndex][:max(descriptionIndexInLine, 0)])
 	if strings.TrimSpace(buttons) == "" || buttonIndex < 0 || descriptionIndexInLine < 0 || buttonIndent != descriptionIndent {

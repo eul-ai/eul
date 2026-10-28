@@ -56,7 +56,6 @@ const (
 	activityRetrying
 	activityCompacting
 	activityTool
-	activityPermission
 	activityCanceling
 	activityError
 )
@@ -68,7 +67,7 @@ type activity struct {
 
 func (a activity) animated() bool {
 	switch a.kind {
-	case activityReady, activityPermission, activityError:
+	case activityReady, activityError:
 		return false
 	default:
 		return true
@@ -119,26 +118,47 @@ type editorModel struct {
 
 const permissionDecisionCount PermissionDecision = PermissionAllowSession + 1
 
-type permissionModel struct {
+type permissionState struct {
+	queue    []PermissionRequest
+	selected PermissionDecision
+	scroll   int
+}
+
+func (permission permissionState) active() bool {
+	return len(permission.queue) > 0
+}
+
+type permissionView struct {
 	title        string
 	subject      string
 	description  string
 	detail       string
 	detailPrefix string
 	notice       string
-	selected     PermissionDecision
-	scroll       int
-	index        int
-	total        int
 }
 
-func (permission permissionModel) active() bool {
-	return permission.title != ""
+func (permission permissionState) view() permissionView {
+	request := permission.queue[0]
+	title := singleLine(request.Title, 200)
+	if strings.TrimSpace(title) == "" {
+		title = "Permission requested"
+	}
+	if len(permission.queue) > 1 {
+		title += fmt.Sprintf(" (1 of %d)", len(permission.queue))
+	}
+	return permissionView{
+		title:        title,
+		subject:      singleLine(request.Subject, 120),
+		description:  singleLine(request.Description, 500),
+		detail:       sanitizeAssistantText(request.Detail),
+		detailPrefix: text.Truncate(replaceControls(request.DetailPrefix), 20, false),
+		notice:       singleLine(request.Notice, 500),
+	}
 }
 
 type operationModel struct {
 	steering         steeringCoordinator
-	permission       permissionModel
+	permission       permissionState
 	turnExecutedTool bool
 	running          bool
 	interrupted      bool
@@ -423,28 +443,6 @@ func (m *tuiModel) restoreSteering(messages [][]agent.ContentPart) {
 	m.cursor = len(m.input)
 	m.leaveHistory()
 	m.clearInputPickers()
-}
-
-func (m *tuiModel) showPermission(request PermissionRequest, index, total int) {
-	title := singleLine(request.Title, 200)
-	if strings.TrimSpace(title) == "" {
-		title = "Permission requested"
-	}
-	m.permission = permissionModel{
-		title:        title,
-		subject:      singleLine(request.Subject, 120),
-		description:  singleLine(request.Description, 500),
-		detail:       sanitizeAssistantText(request.Detail),
-		detailPrefix: text.Truncate(replaceControls(request.DetailPrefix), 20, false),
-		notice:       singleLine(request.Notice, 500),
-		index:        index,
-		total:        total,
-	}
-	m.activity = activity{kind: activityPermission}
-}
-
-func (m *tuiModel) clearPermission() {
-	m.permission = permissionModel{}
 }
 
 func (m *tuiModel) finishPendingTools(outcome string) {

@@ -1,7 +1,6 @@
 package terminal
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 
@@ -302,7 +301,7 @@ func composeFrameRows(model *tuiModel, prepared renderPreparation) []styledLine 
 	if layout.topRuleRow > 0 {
 		topRule := styledLine{text: rule, style: ruleStyle}
 		if model.permission.active() {
-			topRule.text = permissionRule(model.permission, width)
+			topRule.text = permissionRule(model.permission.view().title, width)
 		} else {
 			bottom := max(0, len(prepared.conversationLines)-layout.conversationHeight)
 			if prepared.scrollTop < bottom {
@@ -343,12 +342,8 @@ func composeFrameRows(model *tuiModel, prepared renderPreparation) []styledLine 
 	return rows
 }
 
-func permissionRule(permission permissionModel, width int) string {
-	label := permission.title
-	if permission.total > 1 {
-		label += fmt.Sprintf(" (%d of %d)", permission.index, permission.total)
-	}
-	prefix := "── " + label + " "
+func permissionRule(title string, width int) string {
+	prefix := "── " + title + " "
 	prefix = text.Truncate(prefix, width, true)
 	return prefix + strings.Repeat("─", max(0, width-text.Width(prefix)))
 }

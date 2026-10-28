@@ -103,9 +103,6 @@ type tuiController struct {
 	exitAfterTurn                bool
 	exitAfterTurnErr             error
 	outcome                      RunOutcome
-	permission                   *PermissionRequest
-	queuedPermissions            []PermissionRequest
-	permissionActivity           activity
 	permissionsAllowedForSession bool
 	dirty                        bool
 	forceRedraw                  bool
@@ -283,8 +280,6 @@ func (c *tuiController) handleEngineMessage(ctx context.Context, message engineM
 			return false, err
 		}
 	}
-	c.overlayPermissionActivity()
-
 	c.dirty = true
 	return false, nil
 }
@@ -298,7 +293,6 @@ func (c *tuiController) handleAgentEvent(message engineMessage) (bool, error) {
 	} else {
 		c.model.applyAgentEvent(*message.event)
 	}
-	c.overlayPermissionActivity()
 	c.dirty = true
 	return false, nil
 }
@@ -351,7 +345,7 @@ func (c *tuiController) handleFileSearch(result filesearch.Result) (bool, error)
 }
 
 func (c *tuiController) handleSpinner() (bool, error) {
-	if !c.model.activity.animated() && c.model.subagentStatus.Running == 0 {
+	if (!c.model.activity.animated() || c.model.permission.active()) && c.model.subagentStatus.Running == 0 {
 		return false, nil
 	}
 

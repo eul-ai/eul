@@ -148,7 +148,7 @@ func permissionDetailCapacity(height int) int {
 	}
 }
 
-func wrappedPermissionDetail(permission permissionModel, width int) []string {
+func wrappedPermissionDetail(permission permissionView, width int) []string {
 	if permission.detail == "" {
 		return nil
 	}
@@ -158,6 +158,7 @@ func wrappedPermissionDetail(permission permissionModel, width int) []string {
 
 func renderPermission(model *tuiModel, width, maximumHeight int) renderedInput {
 	height := min(maximumPermissionHeight, maximumHeight)
+	permission := model.permission.view()
 	panelStyle := lineStyle{
 		foreground:      currentTheme.foreground,
 		background:      currentTheme.editorLine,
@@ -169,35 +170,35 @@ func renderPermission(model *tuiModel, width, maximumHeight int) renderedInput {
 	commandStyle.foreground = currentTheme.markdownCode
 
 	var descriptionSpans []text.Span
-	if model.permission.subject != "" {
-		descriptionSpans = append(descriptionSpans, text.Span{Text: model.permission.subject, Style: text.Style{Bold: true, Foreground: text.ForegroundAccent}})
+	if permission.subject != "" {
+		descriptionSpans = append(descriptionSpans, text.Span{Text: permission.subject, Style: text.Style{Bold: true, Foreground: text.ForegroundAccent}})
 	}
-	if model.permission.subject != "" && model.permission.description != "" {
+	if permission.subject != "" && permission.description != "" {
 		descriptionSpans = append(descriptionSpans, text.Span{Text: " "})
 	}
-	if model.permission.description != "" {
-		descriptionSpans = append(descriptionSpans, text.Span{Text: model.permission.description})
+	if permission.description != "" {
+		descriptionSpans = append(descriptionSpans, text.Span{Text: permission.description})
 	}
 	description := styledLine{spans: descriptionSpans, style: panelStyle, padding: 2}
 	blank := styledLine{style: panelStyle}
 	buttons := permissionButtons(model.permission.selected, panelStyle)
 
-	detailLines := wrappedPermissionDetail(model.permission, width)
+	detailLines := wrappedPermissionDetail(permission, width)
 	capacity := permissionDetailCapacity(height)
 	start := min(model.permission.scroll, max(0, len(detailLines)-capacity))
 	end := min(len(detailLines), start+capacity)
 	details := make([]styledLine, 0, end-start)
 	for index, detail := range detailLines[start:end] {
-		prefix := strings.Repeat(" ", text.Width(model.permission.detailPrefix))
+		prefix := strings.Repeat(" ", text.Width(permission.detailPrefix))
 		if index == 0 && start == 0 {
-			prefix = model.permission.detailPrefix
+			prefix = permission.detailPrefix
 		}
 		details = append(details, styledLine{
 			prefixText: prefix, prefixForeground: &currentTheme.accent,
 			text: detail, style: commandStyle, padding: 2,
 		})
 	}
-	notice := styledLine{text: model.permission.notice, style: mutedStyle, padding: 2}
+	notice := styledLine{text: permission.notice, style: mutedStyle, padding: 2}
 	if len(detailLines) > capacity && capacity > 0 {
 		notice.rightText = fmt.Sprintf("lines %d–%d of %d", start+1, end, len(detailLines))
 	}

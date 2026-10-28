@@ -130,8 +130,8 @@ func TestTUIControllerSerializesPermissions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if model.permission.detail != "git push" || model.permission.total != 2 || len(controller.queuedPermissions) != 1 {
-		t.Fatalf("permission=%+v queued=%d", model.permission, len(controller.queuedPermissions))
+	if model.permission.view().detail != "git push" || len(model.permission.queue) != 2 {
+		t.Fatalf("permission=%+v", model.permission)
 	}
 
 	if _, err := controller.applyAction(context.Background(), permissionAction(PermissionAllowOnce)); err != nil {
@@ -140,7 +140,7 @@ func TestTUIControllerSerializesPermissions(t *testing.T) {
 	if decision := <-first; decision != PermissionAllowOnce {
 		t.Fatalf("first decision = %d", decision)
 	}
-	if model.permission.detail != "ssh host" || model.permission.index != 2 || model.permission.total != 2 {
+	if model.permission.view().detail != "ssh host" || len(model.permission.queue) != 1 {
 		t.Fatalf("next permission = %+v", model.permission)
 	}
 
@@ -150,8 +150,8 @@ func TestTUIControllerSerializesPermissions(t *testing.T) {
 	if decision := <-second; decision != PermissionDenyOnce {
 		t.Fatalf("second decision = %d", decision)
 	}
-	if model.permission.active() || controller.permission != nil {
-		t.Fatalf("permission remains active: model=%+v request=%+v", model.permission, controller.permission)
+	if model.permission.active() {
+		t.Fatalf("permission remains active: %+v", model.permission)
 	}
 }
 
@@ -175,8 +175,8 @@ func TestTUIControllerAllowsPermissionsForSession(t *testing.T) {
 			t.Fatalf("decision %d = %d", index, decision)
 		}
 	}
-	if model.permission.active() || controller.permission != nil || len(controller.queuedPermissions) != 0 {
-		t.Fatalf("permission remains active: model=%+v request=%+v queued=%d", model.permission, controller.permission, len(controller.queuedPermissions))
+	if model.permission.active() {
+		t.Fatalf("permission remains active: %+v", model.permission)
 	}
 
 	future := make(chan PermissionDecision, 1)
@@ -205,7 +205,7 @@ func TestTUIControllerHandlesPermissionWhileIdle(t *testing.T) {
 		t.Fatalf("permission resolved before input: %d", decision)
 	default:
 	}
-	if !model.permission.active() || model.activity.kind != activityPermission {
+	if _, status, _ := renderStatus(model, model.width); !model.permission.active() || status != "waiting for permission" || model.activity.kind != activityError {
 		t.Fatalf("permission=%+v activity=%+v", model.permission, model.activity)
 	}
 
@@ -236,7 +236,7 @@ func TestTUIControllerKeepsPermissionAfterMainTurnFinishes(t *testing.T) {
 		t.Fatalf("permission resolved when main turn finished: %d", decision)
 	default:
 	}
-	if model.running || !model.permission.active() || model.activity.kind != activityPermission {
+	if _, status, _ := renderStatus(model, model.width); model.running || !model.permission.active() || status != "waiting for permission" {
 		t.Fatalf("running=%t permission=%+v activity=%+v", model.running, model.permission, model.activity)
 	}
 

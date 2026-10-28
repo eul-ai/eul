@@ -192,7 +192,7 @@ func permissionAction(decision PermissionDecision) tuiAction {
 }
 
 func scrollPermission(model *tuiModel, delta int) {
-	lines := wrappedPermissionDetail(model.permission, model.width)
+	lines := wrappedPermissionDetail(model.permission.view(), model.width)
 	maximum := max(0, len(lines)-permissionDetailCapacityForModel(model))
 	model.permission.scroll = max(0, min(maximum, model.permission.scroll+delta))
 }

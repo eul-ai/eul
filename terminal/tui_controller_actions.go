@@ -130,7 +130,7 @@ func (c *tuiController) interruptTurn() {
 }
 
 func (c *tuiController) cancelTurn() {
-	c.denyPermissions()
+	c.respondPermissions(PermissionDenyOnce)
 	c.restoreQueuedInput()
 	if c.turnCancel != nil {
 		c.turnCancel()

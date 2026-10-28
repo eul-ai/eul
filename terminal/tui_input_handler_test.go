@@ -26,7 +26,7 @@ func TestPermissionKeysTakePriority(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			model := newTUIModel(80, 24, Options{})
 			model.running = true
-			model.showPermission(PermissionRequest{Title: "Network access", Detail: "git push"}, 1, 1)
+			model.permission.queue = []PermissionRequest{{Title: "Network access", Detail: "git push"}}
 			if err := model.insertInput("queued steering"); err != nil {
 				t.Fatal(err)
 			}
@@ -44,7 +44,7 @@ func TestPermissionKeysTakePriority(t *testing.T) {
 
 func TestIdlePermissionCtrlCDeniesRequest(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
-	model.showPermission(PermissionRequest{Title: "Network access"}, 1, 1)
+	model.permission.queue = []PermissionRequest{{Title: "Network access"}}
 
 	action, err := reduceKey(model, keys.Event{Code: keys.CtrlC})
 	if err != nil || action.kind != tuiActionResolvePermission || action.permissionDecision != PermissionDenyOnce {
@@ -55,10 +55,10 @@ func TestIdlePermissionCtrlCDeniesRequest(t *testing.T) {
 func TestPermissionSelectionAndScrolling(t *testing.T) {
 	model := newTUIModel(40, 12, Options{})
 	model.running = true
-	model.showPermission(PermissionRequest{
+	model.permission.queue = []PermissionRequest{{
 		Title:  "Permission requested",
 		Detail: strings.Repeat("long command ", 30),
-	}, 1, 1)
+	}}
 
 	if action, err := reduceKey(model, keys.Event{Code: keys.Right}); err != nil || action.kind != tuiActionNone || model.permission.selected != PermissionAllowOnce {
 		t.Fatalf("right action=%+v err=%v permission=%+v", action, err, model.permission)

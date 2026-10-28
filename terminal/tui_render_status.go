@@ -168,12 +168,13 @@ func activityText(model *tuiModel) (string, string) {
 		label = "compacting"
 	case activityTool:
 		label = model.activity.detail
-	case activityPermission:
-		label = "waiting for permission"
 	case activityCanceling:
 		label = "canceling"
 	case activityError:
 		label = "error: " + model.activity.detail
+	}
+	if model.permission.active() {
+		return "", "waiting for permission"
 	}
 	if !model.activity.animated() {
 		return "", label
