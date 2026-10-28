@@ -15,7 +15,7 @@ const editToolName = "edit"
 var editToolDefinition = agent.ToolDefinition{
 	Name:        editToolName,
 	Description: "Edit a file by replacing one or all exact text matches.",
-	Parameters: StrictObject(map[string]agent.JSONSchema{
+	Parameters: strictObject(map[string]agent.JSONSchema{
 		"path":     {Type: "string", Description: "Relative or absolute file path."},
 		"old_text": {Type: "string", Description: "Exact nonempty text to replace."},
 		"new_text": {Type: "string", Description: "Replacement text; empty deletes matches."},
@@ -23,7 +23,7 @@ var editToolDefinition = agent.ToolDefinition{
 	}, "path", "old_text", "new_text", "all"),
 }
 
-type Edit struct {
+type editTool struct {
 	workspace workspace
 }
 
@@ -34,15 +34,15 @@ type editArguments struct {
 	All     bool    `json:"all"`
 }
 
-func NewEdit(cwd string) *Edit {
-	return &Edit{workspace: newWorkspace(cwd)}
+func NewEdit(cwd string) Tool {
+	return &editTool{workspace: newWorkspace(cwd)}
 }
 
-func (*Edit) Definition() agent.ToolDefinition {
+func (*editTool) Definition() agent.ToolDefinition {
 	return editToolDefinition
 }
 
-func (*Edit) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
+func (*editTool) Presentation(snapshot presentationSnapshot) agent.ToolPresentation {
 	return editPresentation(snapshotString(snapshot, "path"))
 }
 
@@ -54,12 +54,12 @@ func editPresentation(path string) agent.ToolPresentation {
 	return agent.ToolPresentation{Title: editToolName, Arguments: arguments}
 }
 
-func (e *Edit) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
+func (e *editTool) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
 
-	args, err := DecodeArguments[editArguments](arguments)
+	args, err := decodeArguments[editArguments](arguments)
 	if err != nil {
 		return errorResult(editToolName, err), nil
 	}
@@ -106,10 +106,8 @@ func (e *Edit) Execute(ctx context.Context, arguments json.RawMessage, updates a
 	if err := textfile.Replace(snapshot, replacement); err != nil {
 		return errorResult(editToolName, err), nil
 	}
-	if updates != nil {
-		presentation := editPresentation(args.Path)
-		presentation.Diff = buildFileDiff(original, replacement)
-		updates.SetFinal(presentation)
-	}
+	presentation := editPresentation(args.Path)
+	presentation.Diff = buildFileDiff(original, replacement)
+	updates.SetFinal(presentation)
 	return successResult(fmt.Sprintf("replaced text in %s", escapeOutputName(e.workspace.display(requestedPath)))), nil
 }

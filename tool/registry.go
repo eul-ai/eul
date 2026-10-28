@@ -21,19 +21,13 @@ var errUnknownTool = errors.New("tool: unknown tool")
 // concurrently for calls from the same provider response.
 type Tool interface {
 	Definition() agent.ToolDefinition
+	Presentation(presentationSnapshot) agent.ToolPresentation
 	Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error)
 }
 
-type PresentationSnapshot struct {
-	ID           string
-	Name         string
-	RawArguments string
-	Arguments    map[string]any
-	Complete     bool
-}
-
-type presenter interface {
-	Presentation(PresentationSnapshot) agent.ToolPresentation
+type presentationSnapshot struct {
+	Arguments map[string]any
+	Complete  bool
 }
 
 type Registry struct {
@@ -80,16 +74,9 @@ func (r *Registry) Presentation(snapshot agent.ToolCallSnapshot) agent.ToolPrese
 		return agent.ToolPresentation{Title: snapshot.Name}
 	}
 
-	provider, ok := registered.(presenter)
-	if !ok {
-		return agent.ToolPresentation{Title: snapshot.Name}
-	}
-	presentation := provider.Presentation(PresentationSnapshot{
-		ID:           snapshot.ID,
-		Name:         snapshot.Name,
-		RawArguments: snapshot.RawArguments,
-		Arguments:    parseStreamingJSONObject(snapshot.RawArguments),
-		Complete:     snapshot.Complete,
+	presentation := registered.Presentation(presentationSnapshot{
+		Arguments: parseStreamingJSONObject(snapshot.RawArguments),
+		Complete:  snapshot.Complete,
 	})
 	if presentation.Title == "" {
 		presentation.Title = snapshot.Name
@@ -149,7 +136,7 @@ func cloneJSONSchema(schema agent.JSONSchema) agent.JSONSchema {
 	return schema
 }
 
-func DecodeArguments[T any](arguments json.RawMessage) (T, error) {
+func decodeArguments[T any](arguments json.RawMessage) (T, error) {
 	var value T
 	decoder := json.NewDecoder(bytes.NewReader(arguments))
 	decoder.DisallowUnknownFields()

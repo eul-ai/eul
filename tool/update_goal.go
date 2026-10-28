@@ -13,12 +13,12 @@ const updateGoalToolName = "update_goal"
 var updateGoalToolDefinition = agent.ToolDefinition{
 	Name:        updateGoalToolName,
 	Description: "Complete the active goal after verifying all requirements; succeeds without changes if no incomplete goal is active.",
-	Parameters: StrictObject(map[string]agent.JSONSchema{
+	Parameters: strictObject(map[string]agent.JSONSchema{
 		"status": {Type: "string", Description: `Must be "complete".`},
 	}, "status"),
 }
 
-type UpdateGoal struct {
+type updateGoalTool struct {
 	complete func() error
 }
 
@@ -26,25 +26,25 @@ type updateGoalArguments struct {
 	Status string `json:"status"`
 }
 
-func NewUpdateGoal(complete func() error) *UpdateGoal {
-	return &UpdateGoal{complete: complete}
+func NewUpdateGoal(complete func() error) Tool {
+	return &updateGoalTool{complete: complete}
 }
 
-func (*UpdateGoal) Definition() agent.ToolDefinition {
+func (*updateGoalTool) Definition() agent.ToolDefinition {
 	return updateGoalToolDefinition
 }
 
-func (*UpdateGoal) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
+func (*updateGoalTool) Presentation(snapshot presentationSnapshot) agent.ToolPresentation {
 	arguments := snapshotString(snapshot, "status")
 	return agent.ToolPresentation{Title: updateGoalToolName, Arguments: arguments}
 }
 
-func (tool *UpdateGoal) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
+func (tool *updateGoalTool) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
 
-	args, err := DecodeArguments[updateGoalArguments](arguments)
+	args, err := decodeArguments[updateGoalArguments](arguments)
 	if err != nil {
 		return errorResult(updateGoalToolName, err), nil
 	}

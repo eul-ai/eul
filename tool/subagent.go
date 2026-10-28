@@ -22,7 +22,7 @@ const (
 )
 
 func launchDefinitionFor(manager *subagent.Manager) agent.ToolDefinition {
-	taskSchema := StrictObject(map[string]agent.JSONSchema{
+	taskSchema := strictObject(map[string]agent.JSONSchema{
 		"description": {
 			Type:        "string",
 			Description: "Short progress label.",
@@ -38,7 +38,7 @@ func launchDefinitionFor(manager *subagent.Manager) agent.ToolDefinition {
 	return agent.ToolDefinition{
 		Name:        launchToolName,
 		Description: "Launch 1-4 independent read-only research tasks, with at most 4 active. Results arrive automatically.",
-		Parameters: StrictObject(map[string]agent.JSONSchema{
+		Parameters: strictObject(map[string]agent.JSONSchema{
 			"tasks": {
 				Type:        "array",
 				Description: "1-4 independent tasks.",
@@ -80,7 +80,7 @@ func formatThinkingLevelChoices(levels []agent.ThinkingLevel) string {
 var waitDefinition = agent.ToolDefinition{
 	Name:        waitToolName,
 	Description: "Wait for subagent results only when no other work remains. Steering interrupts the wait.",
-	Parameters: StrictObject(map[string]agent.JSONSchema{
+	Parameters: strictObject(map[string]agent.JSONSchema{
 		"timeout_ms": nullable("integer", fmt.Sprintf("Timeout in milliseconds; null uses %d, maximum %d.", defaultWaitTimeoutMS, maximumWaitTimeoutMS)),
 	}, "timeout_ms"),
 }
@@ -88,7 +88,7 @@ var waitDefinition = agent.ToolDefinition{
 var cancelDefinition = agent.ToolDefinition{
 	Name:        cancelToolName,
 	Description: "Cancel active subagents.",
-	Parameters: StrictObject(map[string]agent.JSONSchema{
+	Parameters: strictObject(map[string]agent.JSONSchema{
 		"ids": {
 			Type:        "array",
 			Description: "1-4 active subagent IDs.",
@@ -145,7 +145,7 @@ func (launch *launchTool) Definition() agent.ToolDefinition {
 	return launch.definition
 }
 
-func (launch *launchTool) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
+func (launch *launchTool) Presentation(snapshot presentationSnapshot) agent.ToolPresentation {
 	values, _ := snapshot.Arguments["tasks"].([]any)
 	return launchPresentation(len(values), fmt.Sprintf("Starting %d subagent(s).", len(values)))
 }
@@ -172,7 +172,7 @@ func (launch *launchTool) Execute(ctx context.Context, arguments json.RawMessage
 		return agent.ToolResult{}, err
 	}
 
-	args, err := DecodeArguments[launchArguments](arguments)
+	args, err := decodeArguments[launchArguments](arguments)
 	if err != nil {
 		if updates != nil {
 			updates.SetFinal(launchFailurePresentation())
@@ -203,7 +203,7 @@ func (*waitTool) Definition() agent.ToolDefinition {
 	return waitDefinition
 }
 
-func (*waitTool) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
+func (*waitTool) Presentation(snapshot presentationSnapshot) agent.ToolPresentation {
 	var timeout time.Duration
 	if number, ok := snapshot.Arguments["timeout_ms"].(json.Number); ok {
 		if milliseconds, err := number.Int64(); err == nil {
@@ -224,7 +224,7 @@ func waitPresentation(timeout time.Duration, message string) agent.ToolPresentat
 }
 
 func (wait *waitTool) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
-	args, err := DecodeArguments[waitArguments](arguments)
+	args, err := decodeArguments[waitArguments](arguments)
 	if err != nil {
 		return errorResult(waitToolName, err), nil
 	}
@@ -244,13 +244,11 @@ func (wait *waitTool) Execute(ctx context.Context, arguments json.RawMessage, up
 	}
 
 	message := waitResultMessage(outcome)
-	if updates != nil {
-		var timeout time.Duration
-		if args.TimeoutMS != nil {
-			timeout = time.Duration(timeoutMS) * time.Millisecond
-		}
-		updates.SetFinal(waitPresentation(timeout, message))
+	var timeout time.Duration
+	if args.TimeoutMS != nil {
+		timeout = time.Duration(timeoutMS) * time.Millisecond
 	}
+	updates.SetFinal(waitPresentation(timeout, message))
 	return successResult(message), nil
 }
 
@@ -271,7 +269,7 @@ func (*cancelTool) Definition() agent.ToolDefinition {
 	return cancelDefinition
 }
 
-func (*cancelTool) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
+func (*cancelTool) Presentation(snapshot presentationSnapshot) agent.ToolPresentation {
 	values, _ := snapshot.Arguments["ids"].([]any)
 	lines := make([]string, 0, len(values))
 	for _, value := range values {
@@ -287,7 +285,7 @@ func (cancel *cancelTool) Execute(ctx context.Context, arguments json.RawMessage
 		return agent.ToolResult{}, err
 	}
 
-	args, err := DecodeArguments[cancelArguments](arguments)
+	args, err := decodeArguments[cancelArguments](arguments)
 	if err != nil {
 		return errorResult(cancelToolName, err), nil
 	}

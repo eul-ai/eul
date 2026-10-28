@@ -19,14 +19,14 @@ const readToolName = "read"
 var readToolDefinition = agent.ToolDefinition{
 	Name:        readToolName,
 	Description: "Read all or part of a text file.",
-	Parameters: StrictObject(map[string]agent.JSONSchema{
+	Parameters: strictObject(map[string]agent.JSONSchema{
 		"path":   {Type: "string", Description: "Relative or absolute file path."},
 		"offset": nullable("integer", "Starting line; null uses line 1."),
 		"limit":  nullable("integer", "Maximum lines; null uses 2000."),
 	}, "path", "offset", "limit"),
 }
 
-type Read struct {
+type readTool struct {
 	workspace workspace
 }
 
@@ -36,15 +36,15 @@ type readArguments struct {
 	Limit  *int   `json:"limit"`
 }
 
-func NewRead(cwd string) *Read {
-	return &Read{workspace: newWorkspace(cwd)}
+func NewRead(cwd string) Tool {
+	return &readTool{workspace: newWorkspace(cwd)}
 }
 
-func (*Read) Definition() agent.ToolDefinition {
+func (*readTool) Definition() agent.ToolDefinition {
 	return readToolDefinition
 }
 
-func (*Read) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
+func (*readTool) Presentation(snapshot presentationSnapshot) agent.ToolPresentation {
 	arguments := ""
 	if path := snapshotString(snapshot, "path"); path != "" {
 		arguments = displayToolArgument(path)
@@ -76,12 +76,12 @@ func (*Read) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation 
 	return agent.ToolPresentation{Title: readToolName, Arguments: arguments}
 }
 
-func (r *Read) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
+func (r *readTool) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
 
-	args, err := DecodeArguments[readArguments](arguments)
+	args, err := decodeArguments[readArguments](arguments)
 	if err != nil {
 		return errorResult(readToolName, err), nil
 	}

@@ -26,7 +26,7 @@ func TestSubagentLaunchUsesPerTaskPolicyDefaultsAndSurfacesManagerValidation(t *
 	defer manager.Close()
 	launch := NewLaunchSubagents(manager)
 
-	result, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"default","prompt":"default"},{"description":"custom","prompt":"custom","model_profile":"fast","thinking_level":"medium"}]}`), nil)
+	result, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"default","prompt":"default"},{"description":"custom","prompt":"custom","model_profile":"fast","thinking_level":"medium"}]}`), discardUpdates)
 	if err != nil || result.IsError {
 		t.Fatalf("launch result = %+v, error = %v", result, err)
 	}
@@ -46,7 +46,7 @@ func TestSubagentLaunchUsesPerTaskPolicyDefaultsAndSurfacesManagerValidation(t *
 		`{"tasks":[{"description":"inspect","prompt":"inspect","thinking_level":"max"}]}`,
 		`{"tasks":[{"description":"inspect","prompt":"inspect"}],"model_profile":"fast"}`,
 	} {
-		result, err := launch.Execute(context.Background(), json.RawMessage(arguments), nil)
+		result, err := launch.Execute(context.Background(), json.RawMessage(arguments), discardUpdates)
 		if err != nil || !result.IsError {
 			t.Fatalf("arguments = %s, result = %+v, error = %v", arguments, result, err)
 		}
@@ -107,7 +107,7 @@ func TestSubagentLaunchFinalizesFailedPresentation(t *testing.T) {
 		},
 	})
 	defer manager.Close()
-	launch := NewLaunchSubagents(manager).(*launchTool)
+	launch := NewLaunchSubagents(manager)
 
 	var final agent.ToolPresentation
 	finalCalls := 0
@@ -123,7 +123,7 @@ func TestSubagentLaunchFinalizesFailedPresentation(t *testing.T) {
 	if finalCalls != 1 {
 		t.Fatalf("final presentation calls = %d", finalCalls)
 	}
-	initial := launch.Presentation(PresentationSnapshot{Arguments: map[string]any{"tasks": []any{map[string]any{}}}})
+	initial := launch.Presentation(presentationSnapshot{Arguments: map[string]any{"tasks": []any{map[string]any{}}}})
 	if final.Equal(initial) {
 		t.Fatal("failed launch retained its pending presentation")
 	}
@@ -139,14 +139,14 @@ func TestSubagentWaitDefaultTimeout(t *testing.T) {
 }
 
 func TestSubagentWaitPresentationShowsProvidedTimeout(t *testing.T) {
-	wait := &waitTool{}
+	wait := NewWaitForSubagent(nil)
 
-	defaultPresentation := wait.Presentation(PresentationSnapshot{Arguments: map[string]any{"timeout_ms": nil}})
+	defaultPresentation := wait.Presentation(presentationSnapshot{Arguments: map[string]any{"timeout_ms": nil}})
 	if defaultPresentation.Arguments != "" {
 		t.Fatalf("default presentation = %+v", defaultPresentation)
 	}
 
-	customPresentation := wait.Presentation(PresentationSnapshot{Arguments: map[string]any{"timeout_ms": json.Number("1500")}})
+	customPresentation := wait.Presentation(presentationSnapshot{Arguments: map[string]any{"timeout_ms": json.Number("1500")}})
 	if !strings.Contains(customPresentation.Arguments, (1500 * time.Millisecond).String()) {
 		t.Fatalf("custom presentation = %+v", customPresentation)
 	}
@@ -160,10 +160,10 @@ func TestSubagentWaitIsSynchronizationOnly(t *testing.T) {
 	launch := NewLaunchSubagents(manager)
 	wait := NewWaitForSubagent(manager)
 
-	if _, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`), nil); err != nil {
+	if _, err := launch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"description":"inspect","prompt":"inspect"}]}`), discardUpdates); err != nil {
 		t.Fatal(err)
 	}
-	result, err := wait.Execute(context.Background(), json.RawMessage(`{}`), nil)
+	result, err := wait.Execute(context.Background(), json.RawMessage(`{}`), discardUpdates)
 	if err != nil || result.IsError {
 		t.Fatalf("wait result = %+v, error = %v", result, err)
 	}
@@ -206,7 +206,7 @@ func TestSubagentWaitTimesOutWithoutCancelingChild(t *testing.T) {
 	}
 
 	close(release)
-	result, err = wait.Execute(context.Background(), json.RawMessage(`{"timeout_ms":1000}`), nil)
+	result, err = wait.Execute(context.Background(), json.RawMessage(`{"timeout_ms":1000}`), discardUpdates)
 	if err != nil || result.IsError {
 		t.Fatalf("completion wait result = %+v, error = %v", result, err)
 	}
@@ -223,7 +223,7 @@ func TestSubagentWaitValidatesTimeout(t *testing.T) {
 		`{"timeout_ms":3600001}`,
 		`{"other":1}`,
 	} {
-		result, err := wait.Execute(context.Background(), json.RawMessage(arguments), nil)
+		result, err := wait.Execute(context.Background(), json.RawMessage(arguments), discardUpdates)
 		if err != nil || !result.IsError {
 			t.Fatalf("arguments = %s, result = %+v, error = %v", arguments, result, err)
 		}

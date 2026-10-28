@@ -17,8 +17,8 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-func newTestBash(cwd string) *Bash {
-	return NewBash(cwd, func(context.Context, string) (bool, error) {
+func newTestBash(cwd string) *bashTool {
+	return newBash(cwd, func(context.Context, string) (bool, error) {
 		return true, nil
 	})
 }
@@ -82,7 +82,7 @@ func TestBashAcceptsIntegerAndNumericStringTimeout(t *testing.T) {
 				t.Fatalf("presentation = %+v, final calls = %d", presentation, finalCalls)
 			}
 
-			initial := bashTool.Presentation(PresentationSnapshot{Arguments: map[string]any{"command": "printf ok", "timeout": test.timeout}})
+			initial := bashTool.Presentation(presentationSnapshot{Arguments: map[string]any{"command": "printf ok", "timeout": test.timeout}})
 			if initial.Timeout != time.Second {
 				t.Fatalf("initial presentation = %+v", initial)
 			}
@@ -353,7 +353,7 @@ func TestBashValidationAndStartFailuresAreRecoverableAndBounded(t *testing.T) {
 		{name: "wrong type", json: `{"command":3}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			result, runErr := regular.Execute(context.Background(), json.RawMessage(test.json), nil)
+			result, runErr := regular.Execute(context.Background(), json.RawMessage(test.json), discardUpdates)
 			if runErr != nil || !result.IsError {
 				t.Fatalf("validation result = %+v err=%v", result, runErr)
 			}
@@ -362,7 +362,7 @@ func TestBashValidationAndStartFailuresAreRecoverableAndBounded(t *testing.T) {
 
 	largeField := strings.Repeat("x", defaultMaxBytes*2)
 	encoded := fmt.Sprintf(`{"command":"echo no",%q:true}`, largeField)
-	result, err = regular.Execute(context.Background(), json.RawMessage(encoded), nil)
+	result, err = regular.Execute(context.Background(), json.RawMessage(encoded), discardUpdates)
 	if err != nil {
 		t.Fatal(err)
 	}

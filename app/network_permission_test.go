@@ -37,7 +37,7 @@ func TestAgentSessionRoutesNetworkApprovalToTerminal(t *testing.T) {
 			ID:        "bash-network",
 			Name:      "bash",
 			Arguments: json.RawMessage(`{"command":"printf approved","timeout":null,"network":true}`),
-		}, nil)
+		}, discardToolUpdates{})
 		done <- outcome{result: result, err: err}
 	}()
 
@@ -80,7 +80,7 @@ func TestAgentSessionRoutesSubagentNetworkApprovalToTerminal(t *testing.T) {
 		ID:        "launch",
 		Name:      "launch_subagents",
 		Arguments: json.RawMessage(`{"tasks":[{"description":"inspect network","prompt":"inspect network"}]}`),
-	}, nil)
+	}, discardToolUpdates{})
 	if err != nil || result.IsError {
 		t.Fatalf("launch result = %+v, error = %v", result, err)
 	}
@@ -137,7 +137,7 @@ func TestAgentSessionSharesNetworkSessionApprovalWithSubagents(t *testing.T) {
 			ID:        "parent-bash",
 			Name:      "bash",
 			Arguments: json.RawMessage(`{"command":"printf parent","timeout":null,"network":true}`),
-		}, nil)
+		}, discardToolUpdates{})
 		parentDone <- outcome{result: result, err: err}
 	}()
 
@@ -160,7 +160,7 @@ func TestAgentSessionSharesNetworkSessionApprovalWithSubagents(t *testing.T) {
 		ID:        "launch",
 		Name:      "launch_subagents",
 		Arguments: json.RawMessage(`{"tasks":[{"description":"inspect network","prompt":"inspect network"}]}`),
-	}, nil)
+	}, discardToolUpdates{})
 	if err != nil || result.IsError {
 		t.Fatalf("launch result = %+v, error = %v", result, err)
 	}

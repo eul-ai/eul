@@ -39,7 +39,7 @@ func (w workspace) display(name string) string {
 	return filepath.ToSlash(name)
 }
 
-func StrictObject(properties map[string]agent.JSONSchema, required ...string) agent.JSONSchema {
+func strictObject(properties map[string]agent.JSONSchema, required ...string) agent.JSONSchema {
 	additionalProperties := false
 	return agent.JSONSchema{
 		Type:                 "object",
@@ -112,7 +112,7 @@ func escapeOutputName(name string) string {
 	return replacer.Replace(name)
 }
 
-func snapshotString(snapshot PresentationSnapshot, name string) string {
+func snapshotString(snapshot presentationSnapshot, name string) string {
 	value, _ := snapshot.Arguments[name].(string)
 	return value
 }

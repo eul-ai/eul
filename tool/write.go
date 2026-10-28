@@ -20,13 +20,13 @@ const (
 var writeToolDefinition = agent.ToolDefinition{
 	Name:        writeToolName,
 	Description: "Create or overwrite a file, creating parent directories.",
-	Parameters: StrictObject(map[string]agent.JSONSchema{
+	Parameters: strictObject(map[string]agent.JSONSchema{
 		"path":    {Type: "string", Description: "Relative or absolute file path."},
 		"content": {Type: "string", Description: "Complete file content."},
 	}, "path", "content"),
 }
 
-type Write struct {
+type writeTool struct {
 	workspace workspace
 }
 
@@ -35,15 +35,15 @@ type writeArguments struct {
 	Content *string `json:"content"`
 }
 
-func NewWrite(cwd string) *Write {
-	return &Write{workspace: newWorkspace(cwd)}
+func NewWrite(cwd string) Tool {
+	return &writeTool{workspace: newWorkspace(cwd)}
 }
 
-func (*Write) Definition() agent.ToolDefinition {
+func (*writeTool) Definition() agent.ToolDefinition {
 	return writeToolDefinition
 }
 
-func (*Write) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
+func (*writeTool) Presentation(snapshot presentationSnapshot) agent.ToolPresentation {
 	arguments := ""
 	if path := snapshotString(snapshot, "path"); path != "" {
 		arguments = displayToolArgument(path)
@@ -129,12 +129,12 @@ func writePreviewByteMarker(total int) string {
 	return fmt.Sprintf("… (preview truncated, %d total %s)", total, unit)
 }
 
-func (w *Write) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
+func (w *writeTool) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
 
-	args, err := DecodeArguments[writeArguments](arguments)
+	args, err := decodeArguments[writeArguments](arguments)
 	if err != nil {
 		return errorResult(writeToolName, err), nil
 	}

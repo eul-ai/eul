@@ -22,6 +22,8 @@ func (update toolUpdateSinkFunc) SetFinal(presentation agent.ToolPresentation) {
 	_ = update(presentation)
 }
 
+var discardUpdates = toolUpdateSinkFunc(func(agent.ToolPresentation) error { return nil })
+
 func TestCoreToolDefinitionsUseStrictSchemas(t *testing.T) {
 	cwd := t.TempDir()
 	readTool := NewRead(cwd)
@@ -100,7 +102,7 @@ func (r failingReader) Read([]byte) (int, error) {
 }
 
 func TestFileToolPresentationsSeparateTitleAndArguments(t *testing.T) {
-	snapshot := PresentationSnapshot{Arguments: map[string]any{"path": "demo.go"}}
+	snapshot := presentationSnapshot{Arguments: map[string]any{"path": "demo.go"}}
 	presentations := []agent.ToolPresentation{
 		NewRead(t.TempDir()).Presentation(snapshot),
 		NewWrite(t.TempDir()).Presentation(snapshot),
@@ -119,12 +121,12 @@ func TestFileToolPresentationsSeparateTitleAndArguments(t *testing.T) {
 func TestBashPresentationShowsTimeout(t *testing.T) {
 	bashTool := NewBash(t.TempDir(), nil)
 
-	defaultPresentation := bashTool.Presentation(PresentationSnapshot{Arguments: map[string]any{"command": "sleep 1", "timeout": nil}})
+	defaultPresentation := bashTool.Presentation(presentationSnapshot{Arguments: map[string]any{"command": "sleep 1", "timeout": nil}})
 	if defaultPresentation.Timeout != defaultBashTimeout {
 		t.Fatalf("default presentation = %+v", defaultPresentation)
 	}
 
-	customPresentation := bashTool.Presentation(PresentationSnapshot{Arguments: map[string]any{"command": "sleep 1", "timeout": json.Number("30")}})
+	customPresentation := bashTool.Presentation(presentationSnapshot{Arguments: map[string]any{"command": "sleep 1", "timeout": json.Number("30")}})
 	if customPresentation.Timeout != 30*time.Second {
 		t.Fatalf("custom presentation = %+v", customPresentation)
 	}
@@ -147,7 +149,7 @@ func TestFilesystemToolsHonorPreCanceledContext(t *testing.T) {
 		{editTool, `{"path":"file","old_text":"old","new_text":"new","all":false}`},
 	}
 	for _, call := range calls {
-		_, err := call.tool.Execute(ctx, json.RawMessage(call.args), nil)
+		_, err := call.tool.Execute(ctx, json.RawMessage(call.args), discardUpdates)
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("%s cancellation error = %v", call.tool.Definition().Name, err)
 		}
@@ -185,7 +187,7 @@ func executeJSON(t *testing.T, current Tool, arguments any) agent.ToolResult {
 		t.Fatal(err)
 	}
 
-	result, err := current.Execute(context.Background(), encoded, nil)
+	result, err := current.Execute(context.Background(), encoded, discardUpdates)
 	if err != nil {
 		t.Fatalf("%s.Execute() error = %v", current.Definition().Name, err)
 	}

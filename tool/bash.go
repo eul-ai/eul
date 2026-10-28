@@ -21,7 +21,7 @@ const (
 var bashToolDefinition = agent.ToolDefinition{
 	Name:        bashToolName,
 	Description: "Run a noninteractive Bash command.",
-	Parameters: StrictObject(map[string]agent.JSONSchema{
+	Parameters: strictObject(map[string]agent.JSONSchema{
 		"command": {Type: "string", Description: "Command passed to bash -c."},
 		"timeout": nullable("integer", fmt.Sprintf("Timeout in seconds; null uses the default (%d seconds).", defaultBashTimeout/time.Second)),
 		"network": {Type: "boolean", Description: "Allow network access; true requires approval."},
@@ -30,7 +30,7 @@ var bashToolDefinition = agent.ToolDefinition{
 
 type NetworkAuthorizer func(context.Context, string) (bool, error)
 
-type Bash struct {
+type bashTool struct {
 	workspace        workspace
 	shell            string
 	authorizeNetwork NetworkAuthorizer
@@ -46,8 +46,12 @@ type bashArguments struct {
 }
 
 // NewBash returns an unsandboxed Bash tool when authorizeNetwork is nil.
-func NewBash(cwd string, authorizeNetwork NetworkAuthorizer) *Bash {
-	return &Bash{
+func NewBash(cwd string, authorizeNetwork NetworkAuthorizer) Tool {
+	return newBash(cwd, authorizeNetwork)
+}
+
+func newBash(cwd string, authorizeNetwork NetworkAuthorizer) *bashTool {
+	return &bashTool{
 		workspace:        newWorkspace(cwd),
 		shell:            bashToolName,
 		authorizeNetwork: authorizeNetwork,
@@ -57,15 +61,15 @@ func NewBash(cwd string, authorizeNetwork NetworkAuthorizer) *Bash {
 	}
 }
 
-func (b *Bash) sandboxed() bool {
+func (b *bashTool) sandboxed() bool {
 	return b.authorizeNetwork != nil
 }
 
-func (*Bash) Definition() agent.ToolDefinition {
+func (*bashTool) Definition() agent.ToolDefinition {
 	return bashToolDefinition
 }
 
-func (b *Bash) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
+func (b *bashTool) Presentation(snapshot presentationSnapshot) agent.ToolPresentation {
 	timeout := b.defaultTimeout
 	var number json.Number
 	switch value := snapshot.Arguments["timeout"].(type) {

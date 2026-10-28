@@ -18,6 +18,10 @@ type fakeTool struct {
 
 func (t fakeTool) Definition() agent.ToolDefinition { return t.definition }
 
+func (fakeTool) Presentation(presentationSnapshot) agent.ToolPresentation {
+	return agent.ToolPresentation{}
+}
+
 func (t fakeTool) Execute(ctx context.Context, arguments json.RawMessage, _ agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if t.execute == nil {
 		return agent.ToolResult{}, nil
@@ -27,10 +31,10 @@ func (t fakeTool) Execute(ctx context.Context, arguments json.RawMessage, _ agen
 
 type presentingTool struct {
 	fakeTool
-	present func(PresentationSnapshot) agent.ToolPresentation
+	present func(presentationSnapshot) agent.ToolPresentation
 }
 
-func (t presentingTool) Presentation(snapshot PresentationSnapshot) agent.ToolPresentation {
+func (t presentingTool) Presentation(snapshot presentationSnapshot) agent.ToolPresentation {
 	return t.present(snapshot)
 }
 
@@ -87,10 +91,10 @@ func TestRegistryRejectsInvalidDefinitions(t *testing.T) {
 }
 
 func TestRegistryParsesStreamingArgumentsForPresentation(t *testing.T) {
-	var presented PresentationSnapshot
+	var presented presentationSnapshot
 	registry := mustRegistry(t, presentingTool{
 		fakeTool: fakeTool{definition: agent.ToolDefinition{Name: "write"}},
-		present: func(snapshot PresentationSnapshot) agent.ToolPresentation {
+		present: func(snapshot presentationSnapshot) agent.ToolPresentation {
 			presented = snapshot
 			return agent.ToolPresentation{Title: "write"}
 		},
@@ -99,7 +103,7 @@ func TestRegistryParsesStreamingArgumentsForPresentation(t *testing.T) {
 	presentation := registry.Presentation(agent.ToolCallSnapshot{
 		ID: "call", Name: "write", RawArguments: `{"path":"demo.go","content":"partial`,
 	})
-	if presentation.Title != "write" || presented.ID != "call" || presented.Arguments["path"] != "demo.go" || presented.Arguments["content"] != "partial" {
+	if presentation.Title != "write" || presented.Arguments["path"] != "demo.go" || presented.Arguments["content"] != "partial" {
 		t.Fatalf("presentation=%+v snapshot=%+v", presentation, presented)
 	}
 }
@@ -166,10 +170,10 @@ func TestDecodeArguments(t *testing.T) {
 		{name: "trailing", input: `{"path":"README.md"} {}`, wantErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := DecodeArguments[arguments](json.RawMessage(test.input))
+			got, err := decodeArguments[arguments](json.RawMessage(test.input))
 			if test.wantErr {
 				if err == nil {
-					t.Fatal("DecodeArguments succeeded")
+					t.Fatal("decodeArguments succeeded")
 				}
 				return
 			}

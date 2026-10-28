@@ -14,12 +14,12 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
+func (b *bashTool) Execute(ctx context.Context, arguments json.RawMessage, updates agent.ToolUpdateSink) (agent.ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
 
-	args, err := DecodeArguments[bashArguments](arguments)
+	args, err := decodeArguments[bashArguments](arguments)
 	if err != nil {
 		return errorResult(bashToolName, err), nil
 	}
@@ -72,15 +72,10 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates a
 	command.WaitDelay = b.waitDelay
 
 	capture := newTailCapture(defaultMaxBytes)
-	command.Stdout = capture
-	command.Stderr = capture
 	started := time.Now()
-	var streamer *bashOutputStreamer
-	if updates != nil {
-		streamer = newBashOutputStreamer(capture, updates, args.Command, started, timeout, cancel)
-		command.Stdout = streamer
-		command.Stderr = streamer
-	}
+	streamer := newBashOutputStreamer(capture, updates, args.Command, started, timeout, cancel)
+	command.Stdout = streamer
+	command.Stderr = streamer
 	if err := command.Start(); err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			result := errorResult(bashToolName, fmt.Errorf("canceled before shell started; exit status: unavailable: %w", contextErr))
@@ -100,15 +95,10 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates a
 		setFinalBashPresentation(updates, args.Command, "", "", time.Since(started), timeout)
 		return result, nil
 	}
-	if streamer != nil {
-		streamer.start()
-	}
+	streamer.start()
 
 	waitErr := command.Wait()
-	var updateErr error
-	if streamer != nil {
-		updateErr = streamer.stop()
-	}
+	updateErr := streamer.stop()
 	output, captureTruncated := capture.String()
 	exitStatus := -1
 	if command.ProcessState != nil {

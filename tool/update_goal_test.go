@@ -15,7 +15,7 @@ func TestUpdateGoalMarksActiveGoalComplete(t *testing.T) {
 		calls++
 		return nil
 	})
-	result, err := goalTool.Execute(context.Background(), []byte(`{"status":"complete"}`), nil)
+	result, err := goalTool.Execute(context.Background(), []byte(`{"status":"complete"}`), discardUpdates)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestUpdateGoalRejectsInvalidStatus(t *testing.T) {
 		return nil
 	})
 
-	result, err := goalTool.Execute(context.Background(), []byte(`{"status":"paused"}`), nil)
+	result, err := goalTool.Execute(context.Background(), []byte(`{"status":"paused"}`), discardUpdates)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestUpdateGoalIgnoresInactiveGoal(t *testing.T) {
 	for _, completionErr := range []error{agent.ErrNoGoal, agent.ErrGoalAlreadyComplete} {
 		goalTool := NewUpdateGoal(func() error { return completionErr })
 
-		result, err := goalTool.Execute(context.Background(), []byte(`{"status":"complete"}`), nil)
+		result, err := goalTool.Execute(context.Background(), []byte(`{"status":"complete"}`), discardUpdates)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -58,7 +58,7 @@ func TestUpdateGoalReportsCompletionFailure(t *testing.T) {
 	failure := errors.New("completion failed")
 	goalTool := NewUpdateGoal(func() error { return failure })
 
-	result, err := goalTool.Execute(context.Background(), []byte(`{"status":"complete"}`), nil)
+	result, err := goalTool.Execute(context.Background(), []byte(`{"status":"complete"}`), discardUpdates)
 	if err != nil {
 		t.Fatal(err)
 	}

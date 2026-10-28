@@ -45,10 +45,7 @@ func TestWritePresentationStreamsBoundedPreviewWithoutWriting(t *testing.T) {
 		"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
 	}, "\n")
 	raw := `{"path":"preview.txt","content":"` + strings.ReplaceAll(content, "\n", `\n`)
-	snapshot := PresentationSnapshot{
-		ID: "write-1", Name: "write", RawArguments: raw,
-		Arguments: map[string]any{"path": "preview.txt", "content": content},
-	}
+	snapshot := presentationSnapshot{Arguments: parseStreamingJSONObject(raw)}
 	presentation := writeTool.Presentation(snapshot)
 	if presentation.Title != "write" || presentation.Arguments != "preview.txt" || !presentation.LinesTruncated || len(presentation.Lines) != 11 || presentation.Lines[0] != "one" || presentation.Lines[9] != "ten" {
 		t.Fatalf("presentation = %+v", presentation)
@@ -58,7 +55,7 @@ func TestWritePresentationStreamsBoundedPreviewWithoutWriting(t *testing.T) {
 	}
 
 	huge := strings.Repeat("界", writePresentationMaxBytes)
-	hugeSnapshot := PresentationSnapshot{Arguments: map[string]any{"path": "huge.txt", "content": huge}}
+	hugeSnapshot := presentationSnapshot{Arguments: map[string]any{"path": "huge.txt", "content": huge}}
 	hugePresentation := writeTool.Presentation(hugeSnapshot)
 	if len(strings.Join(hugePresentation.Lines, "\n")) > writePresentationMaxBytes || !hugePresentation.LinesTruncated {
 		t.Fatalf("huge presentation bytes=%d lines=%+v", len(strings.Join(hugePresentation.Lines, "\n")), hugePresentation.Lines)
@@ -75,7 +72,7 @@ func TestWriteCancellationAfterNonTransactionalWriteIsFatal(t *testing.T) {
 	writeTool := NewWrite(cwd)
 	ctx := &cancelAfterChecksContext{cancelAfter: 3}
 
-	result, err := writeTool.Execute(ctx, json.RawMessage(`{"path":"file.txt","content":"written"}`), nil)
+	result, err := writeTool.Execute(ctx, json.RawMessage(`{"path":"file.txt","content":"written"}`), discardUpdates)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("write cancellation error = %v", err)
 	}

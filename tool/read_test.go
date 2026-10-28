@@ -112,7 +112,7 @@ func TestReadChecksCancellationWhileScanning(t *testing.T) {
 	readTool := NewRead(cwd)
 	ctx := &cancelAfterChecksContext{cancelAfter: 100}
 
-	result, err := readTool.Execute(ctx, json.RawMessage(`{"path":"large.txt","offset":2}`), nil)
+	result, err := readTool.Execute(ctx, json.RawMessage(`{"path":"large.txt","offset":2}`), discardUpdates)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("read cancellation error = %v", err)
 	}
@@ -160,7 +160,7 @@ func TestReadPresentationShowsRequestedLineRange(t *testing.T) {
 	readTool := NewRead(t.TempDir())
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			presentation := readTool.Presentation(PresentationSnapshot{Arguments: test.arguments})
+			presentation := readTool.Presentation(presentationSnapshot{Arguments: test.arguments})
 			if presentation.Title != "read" || presentation.Arguments != test.want {
 				t.Fatalf("presentation = %+v, want arguments %q", presentation, test.want)
 			}

@@ -10,9 +10,7 @@ import (
 )
 
 func setFinalBashPresentation(updates agent.ToolUpdateSink, command, output, outcome string, elapsed, timeout time.Duration) {
-	if updates != nil {
-		updates.SetFinal(bashOutputPresentation(command, output, outcome, elapsed, timeout))
-	}
+	updates.SetFinal(bashOutputPresentation(command, output, outcome, elapsed, timeout))
 }
 
 func bashOutputPresentation(command, output, outcome string, elapsed, timeout time.Duration) agent.ToolPresentation {

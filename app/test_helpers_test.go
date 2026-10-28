@@ -89,6 +89,12 @@ func (driver *fakeBackendDriver) Open(backend.Options) (backend.Runtime, error) 
 	return driver.runtime, nil
 }
 
+type discardToolUpdates struct{}
+
+func (discardToolUpdates) Update(agent.ToolPresentation) error { return nil }
+
+func (discardToolUpdates) SetFinal(agent.ToolPresentation) {}
+
 func testRuntime(cwd string, stdout, stderr *bytes.Buffer) environment {
 	backendRuntime := &fakeBackendRuntime{newProvider: func() (agent.Provider, error) {
 		return providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
