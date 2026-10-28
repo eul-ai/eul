@@ -36,7 +36,7 @@ func CompleteJSONSSE[T any](
 ) (T, error) {
 	var zero T
 
-	body, oversized, err := MarshalBoundedJSON(wireRequest, maxRequestBytes)
+	body, oversized, err := marshalBoundedJSON(wireRequest, maxRequestBytes)
 	if err != nil {
 		return zero, config.ErrorConfig.Errorf("encode %s: %v", operation, err)
 	}

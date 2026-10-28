@@ -11,7 +11,7 @@ import (
 	"unicode/utf8"
 )
 
-func MarshalBoundedJSON(value any, maximum int64) ([]byte, bool, error) {
+func marshalBoundedJSON(value any, maximum int64) ([]byte, bool, error) {
 	body, err := json.Marshal(value)
 	if err != nil {
 		return nil, false, err
@@ -30,7 +30,7 @@ func ReadBounded(reader io.Reader, maximum int64) ([]byte, bool, error) {
 	return data[:maximum], true, nil
 }
 
-func DecodeBoundedJSON(reader io.Reader, maximum int64, target any) (bool, error) {
+func decodeBoundedJSON(reader io.Reader, maximum int64, target any) (bool, error) {
 	data, truncated, err := ReadBounded(reader, maximum)
 	if err != nil || truncated {
 		return truncated, err
@@ -61,9 +61,9 @@ func GetJSON(ctx context.Context, client *http.Client, url string, prepare func(
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return ReadHTTPStatusError(response)
+		return readHTTPStatusError(response)
 	}
-	truncated, err := DecodeBoundedJSON(response.Body, maxResponseBytes, target)
+	truncated, err := decodeBoundedJSON(response.Body, maxResponseBytes, target)
 	if err != nil {
 		return contextOr(ctx, err)
 	}
@@ -80,7 +80,7 @@ func contextOr(ctx context.Context, err error) error {
 	return err
 }
 
-func ReadHTTPStatusError(response *http.Response) error {
+func readHTTPStatusError(response *http.Response) error {
 	detail, truncated, err := readBoundedText(response.Body, maxErrorBytes)
 	switch {
 	case err != nil:

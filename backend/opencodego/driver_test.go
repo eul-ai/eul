@@ -82,10 +82,10 @@ func TestDriverRequiresAPIKey(t *testing.T) {
 }
 
 func TestRuntimeValidatesModels(t *testing.T) {
-	configured := &runtime{models: map[string]modelInfo{
+	configured := &runtime{models: catalogOf(map[string]modelInfo{
 		"zeta":  {},
 		"alpha": {},
-	}}
+	})}
 	if err := configured.ValidateModel("alpha"); err != nil {
 		t.Fatal(err)
 	}

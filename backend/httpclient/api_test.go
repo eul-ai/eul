@@ -148,11 +148,11 @@ func TestCompleteJSONSSEOwnsRequestLifecycle(t *testing.T) {
 
 func TestDecodeBoundedJSONAndText(t *testing.T) {
 	var decoded map[string]int
-	truncated, err := DecodeBoundedJSON(strings.NewReader(`{"value":1}`), 64, &decoded)
+	truncated, err := decodeBoundedJSON(strings.NewReader(`{"value":1}`), 64, &decoded)
 	if err != nil || truncated || decoded["value"] != 1 {
 		t.Fatalf("decoded=%v truncated=%t err=%v", decoded, truncated, err)
 	}
-	truncated, err = DecodeBoundedJSON(strings.NewReader(`{"value":1}`), 4, &decoded)
+	truncated, err = decodeBoundedJSON(strings.NewReader(`{"value":1}`), 4, &decoded)
 	if err != nil || !truncated {
 		t.Fatalf("truncated=%t err=%v", truncated, err)
 	}

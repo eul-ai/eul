@@ -46,7 +46,7 @@ const (
 type thinkingConfig struct {
 	mode            thinkingMode
 	levels          []agent.ThinkingLevel
-	efforts         map[agent.ThinkingLevel]string
+	efforts         agent.ThinkingLevelMap
 	maxBudgetTokens int
 }
 
@@ -86,14 +86,6 @@ type catalogLimit struct {
 
 type catalogModelProvider struct {
 	NPM string `json:"npm"`
-}
-
-func modelNotSupportedError(model string, models map[string]modelInfo) error {
-	available := make([]string, 0, len(models))
-	for id := range models {
-		available = append(available, id)
-	}
-	return backend.NewModelNotSupportedError("opencode go", model, available)
 }
 
 func buildModels(catalog catalogProvider, live map[string]struct{}) map[string]modelInfo {
@@ -171,24 +163,15 @@ func modelThinking(model catalogModel) (thinkingConfig, bool) {
 			continue
 		}
 
-		efforts := make(map[agent.ThinkingLevel]string)
-		for _, value := range option.Values {
-			wireValue := "none"
+		values := make([]string, len(option.Values))
+		for index, value := range option.Values {
+			values[index] = "none"
 			if value != nil {
-				wireValue = *value
-			}
-			level := agent.ThinkingLevel(wireValue)
-			if wireValue == "none" {
-				level = agent.ThinkingOff
-			}
-			if !level.Valid() {
-				continue
-			}
-			if _, exists := efforts[level]; !exists {
-				efforts[level] = wireValue
+				values[index] = *value
 			}
 		}
-		levels := orderedThinkingLevels(efforts)
+		efforts := backend.ThinkingEfforts(values)
+		levels := efforts.SupportedLevels()
 		return thinkingConfig{mode: thinkingEffort, levels: levels, efforts: efforts}, len(levels) > 0
 	}
 
@@ -220,19 +203,9 @@ func modelThinking(model catalogModel) (thinkingConfig, bool) {
 	return thinkingConfig{}, false
 }
 
-func orderedThinkingLevels(efforts map[agent.ThinkingLevel]string) []agent.ThinkingLevel {
-	levels := make([]agent.ThinkingLevel, 0, len(efforts))
-	for _, level := range agent.ThinkingLevels() {
-		if _, ok := efforts[level]; ok {
-			levels = append(levels, level)
-		}
-	}
-	return levels
-}
-
-func metadataFor(models map[string]modelInfo, model string) backend.ModelMetadata {
-	info, ok := models[model]
-	if !ok {
+func metadataFor(models *backend.Models[modelInfo], model string) backend.ModelMetadata {
+	info, err := models.Lookup(model)
+	if err != nil {
 		return backend.ModelMetadata{ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff}}
 	}
 	return backend.ModelMetadata{

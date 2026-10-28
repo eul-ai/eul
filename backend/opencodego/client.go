@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/backend/compaction"
 	backendhttp "github.com/eul-ai/eul/backend/httpclient"
 )
@@ -18,18 +19,18 @@ type protocolClient interface {
 }
 
 type provider struct {
-	models  map[string]modelInfo
+	models  *backend.Models[modelInfo]
 	clients map[protocol]protocolClient
 }
 
-func newProvider(apiKey, baseURL string, httpClient *http.Client, models map[string]modelInfo) *provider {
+func newProvider(apiKey, baseURL string, httpClient *http.Client, models *backend.Models[modelInfo]) *provider {
 	return &provider{models: models, clients: newProtocolClients(apiKey, baseURL, httpClient, models)}
 }
 
 func (provider *provider) modelClient(model string) (modelInfo, protocolClient, error) {
-	info, ok := provider.models[model]
-	if !ok {
-		return modelInfo{}, nil, modelNotSupportedError(model, provider.models)
+	info, err := provider.models.Lookup(model)
+	if err != nil {
+		return modelInfo{}, nil, err
 	}
 	selected, ok := provider.clients[info.protocol]
 	if !ok {

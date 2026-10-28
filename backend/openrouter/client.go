@@ -78,16 +78,18 @@ func setCommonHeaders(request *http.Request) {
 
 func requestOptions(metadataFor func(string) modelMetadata) responses.RequestOptionsFunc {
 	return func(request agent.Request) (responses.RequestOptions, error) {
-		metadata := metadataFor(request.Model)
-		if !metadata.supportsThinkingLevel(request.ThinkingLevel) {
+		options := responses.RequestOptions{SessionID: request.SessionID, ToolChoice: "auto", ParallelToolCalls: true}
+		efforts := metadataFor(request.Model).efforts
+		effort, supported := efforts[request.ThinkingLevel]
+		switch {
+		case len(efforts) == 0 && request.ThinkingLevel == agent.ThinkingOff:
+			return options, nil
+		case !supported:
 			return responses.RequestOptions{}, fmt.Errorf("thinking level %q is not supported by model %q", request.ThinkingLevel, request.Model)
 		}
 
-		options := responses.RequestOptions{SessionID: request.SessionID, ToolChoice: "auto", ParallelToolCalls: true}
-		if metadata.reasoning {
-			options.Reasoning = &responses.Reasoning{Effort: metadata.effortForResolvedLevel(request.ThinkingLevel)}
-			options.Include = []string{"reasoning.encrypted_content"}
-		}
+		options.Reasoning = &responses.Reasoning{Effort: effort}
+		options.Include = []string{"reasoning.encrypted_content"}
 		return options, nil
 	}
 }

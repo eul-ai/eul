@@ -30,17 +30,19 @@ func TestDriverRequiresAPIKey(t *testing.T) {
 }
 
 func TestThinkingMetadataUsesCatalogEfforts(t *testing.T) {
-	levels := thinkingLevels(modelReasoning{
+	metadata, _ := buildModelMetadata(modelDescription{ID: "model", Reasoning: modelReasoning{
 		SupportedEfforts: []string{"high", "low", "unsupported"},
-	})
+	}})
+	levels := metadata.backendMetadata().ThinkingLevels
 	if !slices.Equal(levels, []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh}) {
 		t.Fatalf("levels = %v", levels)
 	}
 
-	levels = thinkingLevels(modelReasoning{
+	metadata, _ = buildModelMetadata(modelDescription{ID: "model", Reasoning: modelReasoning{
 		Mandatory:        true,
 		SupportedEfforts: []string{"high", "medium", "low"},
-	})
+	}})
+	levels = metadata.backendMetadata().ThinkingLevels
 	if !slices.Equal(levels, []agent.ThinkingLevel{agent.ThinkingLow, agent.ThinkingMedium, agent.ThinkingHigh}) {
 		t.Fatalf("mandatory levels = %v", levels)
 	}

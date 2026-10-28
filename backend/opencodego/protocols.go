@@ -7,12 +7,13 @@ import (
 	"slices"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	anthropic "github.com/eul-ai/eul/backend/anthropic/messages"
 	"github.com/eul-ai/eul/backend/openai/chatcompletions"
 	"github.com/eul-ai/eul/backend/openai/responses"
 )
 
-func newProtocolClients(apiKey, baseURL string, httpClient *http.Client, models map[string]modelInfo) map[protocol]protocolClient {
+func newProtocolClients(apiKey, baseURL string, httpClient *http.Client, models *backend.Models[modelInfo]) map[protocol]protocolClient {
 	return map[protocol]protocolClient{
 		protocolResponses: responses.New(responses.Options{
 			HTTPClient:     httpClient,
@@ -72,7 +73,7 @@ func prepareAnthropicRequest(apiKey string) func(context.Context, *http.Request)
 	}
 }
 
-func responseRequestOptions(models map[string]modelInfo, request agent.Request) (responses.RequestOptions, error) {
+func responseRequestOptions(models *backend.Models[modelInfo], request agent.Request) (responses.RequestOptions, error) {
 	info, err := validateRequestModel(models, request)
 	if err != nil {
 		return responses.RequestOptions{}, err
@@ -97,7 +98,7 @@ func responseRequestOptions(models map[string]modelInfo, request agent.Request) 
 	return options, nil
 }
 
-func chatRequestOptions(models map[string]modelInfo, request agent.Request) (chatcompletions.RequestOptions, error) {
+func chatRequestOptions(models *backend.Models[modelInfo], request agent.Request) (chatcompletions.RequestOptions, error) {
 	info, err := validateRequestModel(models, request)
 	if err != nil {
 		return chatcompletions.RequestOptions{}, err
@@ -115,7 +116,7 @@ func chatRequestOptions(models map[string]modelInfo, request agent.Request) (cha
 	return options, nil
 }
 
-func anthropicRequestOptions(models map[string]modelInfo, request agent.Request) (anthropic.RequestOptions, error) {
+func anthropicRequestOptions(models *backend.Models[modelInfo], request agent.Request) (anthropic.RequestOptions, error) {
 	info, err := validateRequestModel(models, request)
 	if err != nil {
 		return anthropic.RequestOptions{}, err
@@ -142,8 +143,11 @@ func anthropicRequestOptions(models map[string]modelInfo, request agent.Request)
 	return options, nil
 }
 
-func validateRequestModel(models map[string]modelInfo, request agent.Request) (modelInfo, error) {
-	info := models[request.Model]
+func validateRequestModel(models *backend.Models[modelInfo], request agent.Request) (modelInfo, error) {
+	info, err := models.Lookup(request.Model)
+	if err != nil {
+		return modelInfo{}, err
+	}
 	if !slices.Contains(info.thinking.levels, request.ThinkingLevel) {
 		return modelInfo{}, fmt.Errorf("thinking level %q is not supported by model %q", request.ThinkingLevel, request.Model)
 	}

@@ -8,25 +8,15 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/backend/testhttp"
 )
 
 func testMetadata(reasoning bool, contextWindow int64) func(string) modelMetadata {
 	return func(string) modelMetadata {
-		metadata := modelMetadata{
-			contextWindow:  contextWindow,
-			thinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff},
-		}
+		metadata := modelMetadata{contextWindow: contextWindow}
 		if reasoning {
-			metadata.reasoning = true
-			metadata.thinkingLevels = []agent.ThinkingLevel{
-				agent.ThinkingOff,
-				agent.ThinkingMinimal,
-				agent.ThinkingLow,
-				agent.ThinkingMedium,
-				agent.ThinkingHigh,
-				agent.ThinkingXHigh,
-			}
+			metadata.efforts = backend.ThinkingEfforts([]string{"none", "minimal", "low", "medium", "high", "xhigh"})
 		}
 		return metadata
 	}
@@ -119,7 +109,7 @@ func TestClientShouldCompactAtModelContextThreshold(t *testing.T) {
 		&http.Client{},
 		func(model string) modelMetadata {
 			if model == "vendor/model" {
-				return modelMetadata{contextWindow: 1_000, thinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff}}
+				return modelMetadata{contextWindow: 1_000}
 			}
 			return modelMetadata{}
 		},

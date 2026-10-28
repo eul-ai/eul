@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
@@ -69,7 +68,7 @@ func (driver *Driver) Open(backend.Options) (backend.Runtime, error) {
 		baseURL:          baseURL,
 		generationClient: generationClient,
 		credentialClient: credentialClient,
-		models:           make(map[string]modelMetadata),
+		models:           backend.NewModels[modelMetadata]("openrouter"),
 	}, nil
 }
 
@@ -78,9 +77,7 @@ type runtime struct {
 	baseURL          string
 	generationClient *http.Client
 	credentialClient *http.Client
-
-	mu     sync.RWMutex
-	models map[string]modelMetadata
+	models           *backend.Models[modelMetadata]
 }
 
 func (configured *runtime) CheckCredentials(ctx context.Context) error {
@@ -96,9 +93,7 @@ func (configured *runtime) InitializeModels(ctx context.Context) error {
 		return fmt.Errorf("openrouter: load models: %w", err)
 	}
 
-	configured.mu.Lock()
-	configured.models = buildModels(catalog)
-	configured.mu.Unlock()
+	configured.models.Replace(buildModels(catalog))
 	return nil
 }
 
@@ -124,9 +119,8 @@ func (configured *runtime) NewProvider() (agent.Provider, error) {
 }
 
 func (configured *runtime) modelMetadata(model string) modelMetadata {
-	configured.mu.RLock()
-	defer configured.mu.RUnlock()
-	return configured.models[model]
+	metadata, _ := configured.models.Lookup(model)
+	return metadata
 }
 
 func (configured *runtime) ModelMetadata(model string) backend.ModelMetadata {
@@ -134,18 +128,8 @@ func (configured *runtime) ModelMetadata(model string) backend.ModelMetadata {
 }
 
 func (configured *runtime) ValidateModel(model string) error {
-	configured.mu.RLock()
-	defer configured.mu.RUnlock()
-
-	if _, ok := configured.models[model]; ok {
-		return nil
-	}
-
-	available := make([]string, 0, len(configured.models))
-	for id := range configured.models {
-		available = append(available, id)
-	}
-	return backend.NewModelNotSupportedError("openrouter", model, available)
+	_, err := configured.models.Lookup(model)
+	return err
 }
 
 func (*runtime) Close() error {

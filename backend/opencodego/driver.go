@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/eul-ai/eul/agent"
@@ -29,7 +28,6 @@ type Driver struct {
 	baseURL    string
 	catalogURL string
 	httpClient *http.Client
-	now        func() time.Time
 }
 
 func New() *Driver {
@@ -37,7 +35,6 @@ func New() *Driver {
 		getenv:     os.Getenv,
 		baseURL:    defaultBaseURL,
 		catalogURL: defaultCatalogURL,
-		now:        time.Now,
 	}
 }
 
@@ -77,8 +74,8 @@ func (driver *Driver) Open(options backend.Options) (backend.Runtime, error) {
 			url:       catalogURL,
 			cachePath: catalogCachePath,
 			client:    credentialClient,
-			now:       driver.now,
 		},
+		models: backend.NewModels[modelInfo]("opencode go"),
 	}, nil
 }
 
@@ -88,8 +85,7 @@ type runtime struct {
 	generationClient *http.Client
 	credentialClient *http.Client
 	catalog          *catalogLoader
-	modelsMu         sync.RWMutex
-	models           map[string]modelInfo
+	models           *backend.Models[modelInfo]
 }
 
 func (configured *runtime) InitializeModels(ctx context.Context) error {
@@ -107,36 +103,21 @@ func (configured *runtime) InitializeModels(ctx context.Context) error {
 		return errors.New("opencode go: no supported models are available")
 	}
 
-	configured.modelsMu.Lock()
-	configured.models = models
-	configured.modelsMu.Unlock()
+	configured.models.Replace(models)
 	return nil
 }
 
 func (configured *runtime) NewProvider() (agent.Provider, error) {
-	configured.modelsMu.RLock()
-	models := configured.models
-	configured.modelsMu.RUnlock()
-	if len(models) == 0 {
-		return nil, errors.New("opencode go: model catalog is unavailable")
-	}
-	return newProvider(configured.apiKey, configured.baseURL, configured.generationClient, models), nil
+	return newProvider(configured.apiKey, configured.baseURL, configured.generationClient, configured.models.Snapshot()), nil
 }
 
 func (configured *runtime) ModelMetadata(model string) backend.ModelMetadata {
-	configured.modelsMu.RLock()
-	defer configured.modelsMu.RUnlock()
 	return metadataFor(configured.models, model)
 }
 
 func (configured *runtime) ValidateModel(model string) error {
-	configured.modelsMu.RLock()
-	_, ok := configured.models[model]
-	configured.modelsMu.RUnlock()
-	if !ok {
-		return modelNotSupportedError(model, configured.models)
-	}
-	return nil
+	_, err := configured.models.Lookup(model)
+	return err
 }
 
 func (*runtime) Close() error {
