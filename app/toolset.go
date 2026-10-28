@@ -18,14 +18,11 @@ type toolsetFactory func(string, toolAccess, bool, tool.NetworkAuthorizer, ...to
 func buildToolset(
 	cwd string,
 	access toolAccess,
-	noSandbox bool,
+	_ bool,
 	authorizeNetwork tool.NetworkAuthorizer,
 	additional ...tool.Tool,
 ) (*tool.Registry, error) {
-	bash := tool.NewBashWithNetworkAuthorizer(cwd, authorizeNetwork)
-	if noSandbox {
-		bash = tool.NewBashWithoutSandbox(cwd)
-	}
+	bash := tool.NewBash(cwd, authorizeNetwork)
 
 	var tools []tool.Tool
 	switch access {

@@ -203,9 +203,8 @@ func networkBashChildProvider(result string, completed chan<- struct{}) agent.Pr
 
 func TestNetworkPermissionBrokerSkipsPermissions(t *testing.T) {
 	authorize, requests := newNetworkPermissionBroker(true)
-	allowed, err := authorize(context.Background(), "git push")
-	if !allowed || err != nil || requests != nil {
-		t.Fatalf("allowed = %t, requests = %v, error = %v", allowed, requests, err)
+	if authorize != nil || requests != nil {
+		t.Fatal("broker was built without a sandbox")
 	}
 }
 

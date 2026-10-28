@@ -27,7 +27,7 @@ func TestCoreToolDefinitionsUseStrictSchemas(t *testing.T) {
 	readTool := NewRead(cwd)
 	writeTool := NewWrite(cwd)
 	editTool := NewEdit(cwd)
-	bashTool := NewBash(cwd)
+	bashTool := NewBash(cwd, nil)
 
 	tests := []struct {
 		tool       Tool
@@ -117,7 +117,7 @@ func TestFileToolPresentationsSeparateTitleAndArguments(t *testing.T) {
 }
 
 func TestBashPresentationShowsTimeout(t *testing.T) {
-	bashTool := NewBash(t.TempDir())
+	bashTool := NewBash(t.TempDir(), nil)
 
 	defaultPresentation := bashTool.Presentation(PresentationSnapshot{Arguments: map[string]any{"command": "sleep 1", "timeout": nil}})
 	if defaultPresentation.Timeout != defaultBashTimeout {
@@ -162,7 +162,7 @@ func TestCoreToolsRegisterInDeterministicOrder(t *testing.T) {
 	readTool := NewRead(cwd)
 	writeTool := NewWrite(cwd)
 	editTool := NewEdit(cwd)
-	bashTool := NewBash(cwd)
+	bashTool := NewBash(cwd, nil)
 
 	registry, err := NewRegistry([]Tool{readTool, writeTool, editTool, bashTool})
 	if err != nil {

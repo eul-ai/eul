@@ -34,7 +34,6 @@ type Bash struct {
 	workspace        workspace
 	shell            string
 	authorizeNetwork NetworkAuthorizer
-	noSandbox        bool
 	defaultTimeout   time.Duration
 	maxTimeout       time.Duration
 	waitDelay        time.Duration
@@ -46,28 +45,20 @@ type bashArguments struct {
 	Network bool         `json:"network"`
 }
 
-func NewBash(cwd string) *Bash {
-	return NewBashWithNetworkAuthorizer(cwd, nil)
-}
-
-func NewBashWithNetworkAuthorizer(cwd string, authorizeNetwork NetworkAuthorizer) *Bash {
-	return newBash(cwd, authorizeNetwork, false)
-}
-
-func NewBashWithoutSandbox(cwd string) *Bash {
-	return newBash(cwd, nil, true)
-}
-
-func newBash(cwd string, authorizeNetwork NetworkAuthorizer, noSandbox bool) *Bash {
+// NewBash returns an unsandboxed Bash tool when authorizeNetwork is nil.
+func NewBash(cwd string, authorizeNetwork NetworkAuthorizer) *Bash {
 	return &Bash{
 		workspace:        newWorkspace(cwd),
 		shell:            bashToolName,
 		authorizeNetwork: authorizeNetwork,
-		noSandbox:        noSandbox,
 		defaultTimeout:   defaultBashTimeout,
 		maxTimeout:       maximumBashTimeout,
 		waitDelay:        defaultWaitDelay,
 	}
+}
+
+func (b *Bash) sandboxed() bool {
+	return b.authorizeNetwork != nil
 }
 
 func (*Bash) Definition() agent.ToolDefinition {

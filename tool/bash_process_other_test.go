@@ -11,7 +11,7 @@ import (
 func TestBashWithoutNetworkFailsClosedOutsideLinuxAndMacOS(t *testing.T) {
 	cwd := t.TempDir()
 	marker := filepath.Join(cwd, "started")
-	result := executeJSON(t, NewBash(cwd), map[string]any{
+	result := executeJSON(t, newTestBash(cwd), map[string]any{
 		"command": `: > "` + marker + `"`,
 		"network": false,
 	})

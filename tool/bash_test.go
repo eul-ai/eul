@@ -18,7 +18,7 @@ import (
 )
 
 func newTestBash(cwd string) *Bash {
-	return NewBashWithNetworkAuthorizer(cwd, func(context.Context, string) (bool, error) {
+	return NewBash(cwd, func(context.Context, string) (bool, error) {
 		return true, nil
 	})
 }
@@ -29,22 +29,13 @@ func TestBashNetworkAccessRequiresApproval(t *testing.T) {
 	command := `: > "$EUL_NETWORK_MARKER"`
 	t.Setenv("EUL_NETWORK_MARKER", marker)
 
-	for _, test := range []struct {
-		name string
-		bash *Bash
-	}{
-		{name: "unavailable", bash: NewBash(cwd)},
-		{name: "denied", bash: NewBashWithNetworkAuthorizer(cwd, func(context.Context, string) (bool, error) { return false, nil })},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			result := executeJSON(t, test.bash, map[string]any{"command": command, "network": true})
-			if !result.IsError {
-				t.Fatalf("result = %+v", result)
-			}
-			if _, err := os.Stat(marker); !os.IsNotExist(err) {
-				t.Fatalf("command started without approval: %v", err)
-			}
-		})
+	denied := NewBash(cwd, func(context.Context, string) (bool, error) { return false, nil })
+	result := executeJSON(t, denied, map[string]any{"command": command, "network": true})
+	if !result.IsError {
+		t.Fatalf("result = %+v", result)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("command started without approval: %v", err)
 	}
 }
 

@@ -11,7 +11,6 @@ import (
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/terminal"
-	"github.com/eul-ai/eul/tool"
 )
 
 type providerFunction func(context.Context, agent.Request, agent.TextSink) (agent.Response, error)
@@ -111,18 +110,6 @@ func testRuntime(cwd string, stdout, stderr *bytes.Buffer) environment {
 		getwd:       func() (string, error) { return cwd, nil },
 		userHomeDir: func() (string, error) { return filepath.Join(cwd, ".test-home"), nil },
 		backends:    backends,
-		newToolset: func(cwd string, access toolAccess, noSandbox bool, authorizeNetwork tool.NetworkAuthorizer, additional ...tool.Tool) (*tool.Registry, error) {
-			bash := tool.NewBashWithNetworkAuthorizer(cwd, authorizeNetwork)
-			if noSandbox {
-				bash = tool.NewBashWithoutSandbox(cwd)
-			}
-			tools := []tool.Tool{tool.NewRead(cwd), bash}
-			if access == fullToolAccess {
-				tools = append(tools, tool.NewWrite(cwd), tool.NewEdit(cwd))
-			}
-			tools = append(tools, additional...)
-			return tool.NewRegistry(tools)
-		},
 	}
 }
 
