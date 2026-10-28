@@ -26,17 +26,11 @@ func conversationViewport(lines []styledLine, scrollTop, height int) []styledLin
 }
 
 func wrapHardConversationText(text string, width int) []formattedLine {
-	wrapped := wrapText(text, width)
-	lines := make([]formattedLine, len(wrapped))
-	line := 0
-	for _, paragraph := range strings.Split(strings.ReplaceAll(text, "\t", "    "), "\n") {
-		count := len(wrapText(paragraph, width))
-		for offset := range count {
-			lines[line+offset] = formattedLine{
-				text: wrapped[line+offset], breakBefore: lineBreak{continuation: offset > 0},
-			}
+	var lines []formattedLine
+	for _, paragraph := range strings.Split(text, "\n") {
+		for index, wrapped := range wrapText(paragraph, width) {
+			lines = append(lines, formattedLine{text: wrapped, breakBefore: lineBreak{continuation: index > 0}})
 		}
-		line += count
 	}
 	return lines
 }
@@ -136,15 +130,11 @@ func markdownConversationLines(text string, width int, style lineStyle, padding 
 }
 
 func toolConversationLines(block conversationBlock, width int, style lineStyle, padding int) []styledLine {
-	title := block.tool.Title
-	if title == "" {
-		title = block.text
-	}
 	titleForeground := inlineForegroundAccent
 	if block.kind == blockToolError {
 		titleForeground = inlineForegroundError
 	}
-	heading := []inlineSpan{{text: title, style: inlineStyle{bold: true, foreground: titleForeground}}}
+	heading := []inlineSpan{{text: block.tool.Title, style: inlineStyle{bold: true, foreground: titleForeground}}}
 	if block.tool.Arguments != "" {
 		appendInlineSpan(&heading, " "+block.tool.Arguments, inlineStyle{})
 	}

@@ -16,9 +16,9 @@ func TestConversationBlocksUseCurrentTheme(t *testing.T) {
 		{kind: blockUser, text: "user"},
 		{kind: blockAssistant, text: "assistant"},
 		{kind: blockReasoning, text: "summary"},
-		{kind: blockToolPending, text: "pending tool"},
-		{kind: blockTool, text: "successful tool"},
-		{kind: blockToolError, text: "failed tool"},
+		{kind: blockToolPending, tool: agent.ToolPresentation{Title: "pending tool"}},
+		{kind: blockTool, tool: agent.ToolPresentation{Title: "successful tool"}},
+		{kind: blockToolError, tool: agent.ToolPresentation{Title: "failed tool"}},
 		{kind: blockContext, text: "context"},
 		{kind: blockError, text: "error"},
 	}, 40)
@@ -370,7 +370,7 @@ func TestToolDiffLinesUseAddedRemovedAndContextColors(t *testing.T) {
 }
 
 func TestToolBlockHasHorizontalAndVerticalPadding(t *testing.T) {
-	lines := conversationLines([]conversationBlock{{kind: blockTool, text: "tool output"}}, 40)
+	lines := conversationLines([]conversationBlock{{kind: blockTool, tool: agent.ToolPresentation{Title: "tool output"}}}, 40)
 	if len(lines) != 3 {
 		t.Fatalf("lines = %+v", lines)
 	}

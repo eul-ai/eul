@@ -16,7 +16,6 @@ func renderFrame(model *tuiModel) string {
 }
 
 func renderModel(renderer *tuiRenderer, model *tuiModel) string {
-	normalizeViewport(model, renderer)
 	output, next := renderer.renderPending(model, false)
 	renderer.commit(next)
 	return output
@@ -45,9 +44,8 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 		}
 	}
 
-	left, right := renderStatus(model, model.width)
-	spinner, activity := splitActivitySpinner(model, left)
-	status := ansiForeground(currentTheme.accent) + spinner + ansiForeground(currentTheme.muted) + activity + strings.Repeat(" ", model.width-cellWidth(left)-cellWidth(right)) + right
+	spinner, activity, right := renderStatus(model, model.width)
+	status := ansiForeground(currentTheme.accent) + spinner + ansiForeground(currentTheme.muted) + activity + strings.Repeat(" ", model.width-cellWidth(spinner+activity)-cellWidth(right)) + right
 	if !strings.Contains(frame, status) || strings.Count(frame, "\x1b[12;") != 1 {
 		t.Fatalf("status metadata is not independently right-aligned with an accented spinner: %q", frame)
 	}
@@ -148,7 +146,7 @@ func assertCachedConversationMatchesUncached(t *testing.T, renderer *tuiRenderer
 
 func TestRenderStatusSanitizesMetadata(t *testing.T) {
 	model := newTUIModel(80, 8, Options{Config: Config{Model: "safe\x1b[31m", ThinkingLevel: agent.ThinkingLevel("high\a")}})
-	left, right := renderStatus(model, 80)
+	_, left, right := renderStatus(model, 80)
 	status := left + right
 	if strings.ContainsAny(status, "\x1b\a") || !strings.Contains(right, "safe [31m") || !strings.Contains(right, "high") {
 		t.Fatalf("status = %q / %q", left, right)
@@ -160,11 +158,11 @@ func TestRenderStatusPrioritizesActivityAndContext(t *testing.T) {
 	model.contextTokens = 50
 	model.activity = activity{kind: activityCompacting}
 
-	wideLeft, wideRight := renderStatus(model, 80)
+	_, wideLeft, wideRight := renderStatus(model, 80)
 	if model.activity.kind != activityCompacting || wideLeft == "" || !strings.Contains(wideRight, "very-long-model") || !strings.Contains(wideRight, string(agent.ThinkingMax)) || !strings.Contains(wideRight, "50%") {
 		t.Fatalf("wide status = %q / %q", wideLeft, wideRight)
 	}
-	narrowLeft, narrowRight := renderStatus(model, 33)
+	_, narrowLeft, narrowRight := renderStatus(model, 33)
 	if strings.Contains(narrowRight, "very-long-model") || narrowLeft == "" || !strings.Contains(narrowRight, "50%") {
 		t.Fatalf("narrow status = %q / %q", narrowLeft, narrowRight)
 	}
@@ -174,7 +172,7 @@ func TestTUIModelShowsGenerationRetries(t *testing.T) {
 	model := newTUIModel(80, 24, Options{})
 	model.applyAgentEvent(agent.Event{Kind: agent.EventGenerationRetry, Attempt: 2})
 
-	left, _ := renderStatus(model, 80)
+	_, left, _ := renderStatus(model, 80)
 	if model.activity.kind != activityRetrying || !strings.Contains(left, strconv.Itoa(2)) {
 		t.Fatalf("activity = %+v, status = %q", model.activity, left)
 	}

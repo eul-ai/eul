@@ -13,7 +13,6 @@ func BenchmarkTUIResizeTranscript(b *testing.B) {
 				model.appendBlock(blockAssistant, fmt.Sprintf("Response **%d** with `code` and enough text to exercise markdown wrapping across the conversation.", index))
 			}
 			renderer := &tuiRenderer{}
-			normalizeViewport(model, renderer)
 			_, frame := renderer.renderPending(model, false)
 			renderer.commit(frame)
 
@@ -26,7 +25,6 @@ func BenchmarkTUIResizeTranscript(b *testing.B) {
 				default:
 					model.width = 119
 				}
-				normalizeViewport(model, renderer)
 				_, frame = renderer.renderPending(model, false)
 				renderer.commit(frame)
 			}

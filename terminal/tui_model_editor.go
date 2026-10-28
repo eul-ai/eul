@@ -151,15 +151,13 @@ func (m *tuiModel) insertItems(inserted []editorItem) {
 	m.cursor += len(inserted)
 }
 
-func (m *tuiModel) clearInput() []uint64 {
-	pending := m.pendingImageRequests()
+func (m *tuiModel) clearInput() {
 	m.input = nil
 	m.cursor = 0
 	m.historyIndex = -1
 	m.historyDraft = nil
 	m.historyDraftCursor = 0
 	m.clearInputPickers()
-	return pending
 }
 
 func (m *tuiModel) pendingImageRequests() []uint64 {
@@ -198,31 +196,27 @@ func (m *tuiModel) nextThinkingLevel() (agent.ThinkingLevel, error) {
 	return next, nil
 }
 
-func (m *tuiModel) backspace() uint64 {
+func (m *tuiModel) backspace() {
 	if m.cursor == 0 {
-		return 0
+		return
 	}
 
 	m.leaveHistory()
-	requestID := m.input[m.cursor-1].requestID
 	copy(m.input[m.cursor-1:], m.input[m.cursor:])
 	m.input = m.input[:len(m.input)-1]
 	m.cursor--
 	m.refreshInputPickers(true)
-	return requestID
 }
 
-func (m *tuiModel) delete() uint64 {
+func (m *tuiModel) delete() {
 	if m.cursor >= len(m.input) {
-		return 0
+		return
 	}
 
 	m.leaveHistory()
-	requestID := m.input[m.cursor].requestID
 	copy(m.input[m.cursor:], m.input[m.cursor+1:])
 	m.input = m.input[:len(m.input)-1]
 	m.refreshInputPickers(true)
-	return requestID
 }
 
 func (m *tuiModel) moveLeft() {

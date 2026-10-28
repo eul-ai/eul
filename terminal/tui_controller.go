@@ -328,20 +328,14 @@ func sanitizeSubagentStatus(status subagent.Status) subagent.Status {
 		PendingCompletions: make([]subagent.Completion, 0, len(status.PendingCompletions)),
 	}
 	for _, job := range status.Active {
-		switch job.State {
-		case subagent.StateRunning, subagent.StateCanceling:
-			job.ID = singleLine(job.ID, 120)
-			job.Task = singleLine(job.Task, 120)
-			sanitized.Active = append(sanitized.Active, job)
-		}
+		job.ID = singleLine(job.ID, 120)
+		job.Task = singleLine(job.Task, 120)
+		sanitized.Active = append(sanitized.Active, job)
 	}
 	for _, completion := range status.PendingCompletions {
-		switch completion.Status {
-		case subagent.StateComplete, subagent.StateFailed, subagent.StateCanceled, subagent.StateInterrupted:
-			completion.SubagentID = singleLine(completion.SubagentID, 120)
-			completion.Task = singleLine(completion.Task, 120)
-			sanitized.PendingCompletions = append(sanitized.PendingCompletions, completion)
-		}
+		completion.SubagentID = singleLine(completion.SubagentID, 120)
+		completion.Task = singleLine(completion.Task, 120)
+		sanitized.PendingCompletions = append(sanitized.PendingCompletions, completion)
 	}
 	return sanitized
 }
@@ -356,7 +350,7 @@ func (c *tuiController) handleFileSearch(result filesearch.Result) (bool, error)
 }
 
 func (c *tuiController) handleSpinner() (bool, error) {
-	if (c.model.activity.kind == activityReady || c.model.activity.kind == activityPermission || c.model.activity.kind == activityError) && c.model.subagentStatus.Running == 0 {
+	if !c.model.activity.animated() && c.model.subagentStatus.Running == 0 {
 		return false, nil
 	}
 
@@ -380,7 +374,6 @@ func (c *tuiController) handleUsageClock() (bool, error) {
 }
 
 func (c *tuiController) handleRender() (bool, error) {
-	normalizeViewport(c.model, c.renderer)
 	if err := renderIfDirty(c.renderer, c.model, c.output, &c.dirty, c.forceRedraw); err != nil {
 		return false, err
 	}

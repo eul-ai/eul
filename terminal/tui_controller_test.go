@@ -1118,7 +1118,6 @@ func TestTUIControllerAppliesSubagentStatus(t *testing.T) {
 			Running: 2,
 			Active: []subagent.JobStatus{
 				{ID: "subagent-1\nignored", Task: "inspect\nignored", State: subagent.StateRunning},
-				{ID: "subagent-invalid", State: subagent.State("invalid")},
 			},
 			PendingCompletions: []subagent.Completion{
 				{SubagentID: "subagent-2", Task: "finished", Status: subagent.StateComplete},

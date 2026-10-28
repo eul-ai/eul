@@ -6,11 +6,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
-func renderStatus(model *tuiModel, width int) (string, string) {
-	activity := activityText(model)
+func renderStatus(model *tuiModel, width int) (string, string, string) {
+	spinner, activity := activityText(model)
+	left := spinner + activity
 	modelText := model.model + " (" + string(model.thinkingLevel) + ")"
 	if model.fastMode {
 		modelText += " fast"
@@ -41,14 +41,14 @@ func renderStatus(model *tuiModel, width int) (string, string) {
 	}
 	for _, right := range candidates {
 		gap := 0
-		if right != "" && activity != "" {
+		if right != "" && left != "" {
 			gap = 1
 		}
-		if cellWidth(activity)+gap+cellWidth(right) <= width {
-			return activity, right
+		if cellWidth(left)+gap+cellWidth(right) <= width {
+			return spinner, activity, right
 		}
 	}
-	return truncateCells(activity, width, true), ""
+	return spinner, truncateCells(activity, width-cellWidth(spinner), true), ""
 }
 
 func providerUsageText(usage ProviderUsage, now time.Time) (string, string) {
@@ -150,16 +150,7 @@ func usageWindowLabel(duration time.Duration) string {
 	}
 }
 
-func splitActivitySpinner(model *tuiModel, text string) (string, string) {
-	if model.activity.kind == activityReady || model.activity.kind == activityPermission || model.activity.kind == activityError || text == "" {
-		return "", text
-	}
-
-	_, size := utf8.DecodeRuneInString(text)
-	return text[:size], text[size:]
-}
-
-func activityText(model *tuiModel) string {
+func activityText(model *tuiModel) (string, string) {
 	label := "ready"
 	switch model.activity.kind {
 	case activityThinking:
@@ -182,11 +173,11 @@ func activityText(model *tuiModel) string {
 	case activityError:
 		label = "error: " + model.activity.detail
 	}
-	if model.activity.kind == activityReady || model.activity.kind == activityPermission || model.activity.kind == activityError {
-		return label
+	if !model.activity.animated() {
+		return "", label
 	}
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-	return frames[model.spinner%len(frames)] + " " + label
+	return frames[model.spinner%len(frames)], " " + label
 }
 
 func contextText(tokens, window int64) (string, string) {

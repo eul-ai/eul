@@ -37,6 +37,8 @@ type tuiRenderer struct {
 
 func (r *tuiRenderer) renderPending(model *tuiModel, forceRedraw bool) (string, terminalFrame) {
 	prepared := r.prepare(model)
+	model.scrollTop = viewportTop(model, prepared)
+	prepared.scrollTop = model.scrollTop
 	next := projectTerminalFrame(model, prepared)
 	if next.width < 1 || next.height < 1 {
 		return "", next

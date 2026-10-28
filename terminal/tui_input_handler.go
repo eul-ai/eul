@@ -337,7 +337,7 @@ func reduceSubmission(model *tuiModel) tuiAction {
 		setInputError(model, errors.New("commands cannot be queued while the agent is running"))
 	default:
 		model.finishSubmission(content)
-		model.appendBlock(blockError, "Unknown command "+diagnostic(trimmed, 120))
+		model.appendBlock(blockError, "Unknown command "+singleLine(trimmed, 120))
 		model.activity = activity{kind: activityError, detail: "unknown command"}
 	}
 	return tuiAction{}
@@ -353,6 +353,6 @@ func contentHasImage(content []agent.ContentPart) bool {
 }
 
 func setInputError(model *tuiModel, err error) {
-	detail := diagnostic(err.Error(), 200)
+	detail := singleLine(err.Error(), 200)
 	model.activity = activity{kind: activityError, detail: detail}
 }

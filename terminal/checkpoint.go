@@ -90,15 +90,7 @@ func (checkpoint Checkpoint) Description() string {
 			continue
 		}
 		prompt := strings.TrimSpace(block.Text)
-		if prompt == "" {
-			for _, part := range block.Content {
-				if part.Kind == agent.ContentPartText {
-					prompt += part.Text
-				}
-			}
-			prompt = strings.TrimSpace(prompt)
-		}
-		if prompt == "" && checkpointContentHasImage(block.Content) {
+		if prompt == "" && contentHasImage(restoreCheckpointContent(block.Content)) {
 			return "Image attachment"
 		}
 		if prompt == "" {
@@ -108,15 +100,6 @@ func (checkpoint Checkpoint) Description() string {
 		return singleLine(strings.TrimSpace(line), maxSessionDescriptionBytes)
 	}
 	return ""
-}
-
-func checkpointContentHasImage(content []checkpointContentPart) bool {
-	for _, part := range content {
-		if part.Kind == agent.ContentPartImage {
-			return true
-		}
-	}
-	return false
 }
 
 func validateTerminalCheckpointData(data terminalCheckpointData) error {

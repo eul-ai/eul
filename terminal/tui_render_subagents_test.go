@@ -109,13 +109,13 @@ func TestStatusOmitsBackgroundSubagents(t *testing.T) {
 		Active:  []subagent.JobStatus{{ID: "subagent-1", State: subagent.StateRunning}},
 	}
 
-	left, _ := renderStatus(model, model.width)
+	_, left, _ := renderStatus(model, model.width)
 	if strings.Contains(left, "subagent-1") {
 		t.Fatalf("status includes background subagent = %q", left)
 	}
 
 	model.activity = activity{kind: activityThinking}
-	left, _ = renderStatus(model, model.width)
+	_, left, _ = renderStatus(model, model.width)
 	if model.activity.kind != activityThinking || strings.Contains(left, "subagent-1") {
 		t.Fatalf("status includes background subagent = %q", left)
 	}

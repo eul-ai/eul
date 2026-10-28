@@ -254,10 +254,6 @@ func viewportTop(model *tuiModel, prepared renderPreparation) int {
 	return max(0, min(model.scrollTop, bottom))
 }
 
-func normalizeViewport(model *tuiModel, renderer *tuiRenderer) {
-	model.scrollTop = viewportTop(model, renderer.prepare(model))
-}
-
 func projectTerminalFrame(model *tuiModel, prepared renderPreparation) terminalFrame {
 	width := model.width
 	height := model.height
@@ -333,8 +329,7 @@ func composeFrameRows(model *tuiModel, prepared renderPreparation) []styledLine 
 		}
 	}
 	if layout.statusRow > 0 {
-		left, right := renderStatus(model, width)
-		spinner, activity := splitActivitySpinner(model, left)
+		spinner, activity, right := renderStatus(model, width)
 		rows[layout.statusRow-1] = styledLine{
 			prefixText:       spinner,
 			prefixForeground: &currentTheme.accent,

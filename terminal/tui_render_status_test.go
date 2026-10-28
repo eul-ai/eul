@@ -13,7 +13,7 @@ func TestStatusTruncatesSessionID(t *testing.T) {
 		Model: "opaque-model-value", SessionID: "0123456789abcdef0123456789abcdef",
 	}})
 
-	_, status := renderStatus(model, model.width)
+	_, _, status := renderStatus(model, model.width)
 	if !strings.Contains(status, "opaque-model-value") || !strings.Contains(status, string(agent.ThinkingMedium)) || !strings.Contains(status, "01234567") || strings.Contains(status, "0123456789abcdef") {
 		t.Fatalf("status = %q", status)
 	}
@@ -27,7 +27,7 @@ func TestStatusShowsProviderUsageWindows(t *testing.T) {
 		{Duration: 5 * time.Hour, UsedPercent: 42, ResetsAt: now.Add(3*time.Hour + 5*time.Minute)},
 	}}
 
-	_, wide := renderStatus(model, 180)
+	_, _, wide := renderStatus(model, 180)
 	for _, want := range []string{"opaque-model-value", string(agent.ThinkingMedium), "5h", "42%", "3h 5m", "7d", "20%", "3d 5h"} {
 		if !strings.Contains(wide, want) {
 			t.Fatalf("wide status %q omits %q", wide, want)
@@ -37,7 +37,7 @@ func TestStatusShowsProviderUsageWindows(t *testing.T) {
 		t.Fatalf("usage windows are out of order: %q", wide)
 	}
 
-	_, narrow := renderStatus(model, 70)
+	_, _, narrow := renderStatus(model, 70)
 	for _, want := range []string{"5h", "42%", "3h 5m", "7d", "20%", "3d 5h"} {
 		if !strings.Contains(narrow, want) {
 			t.Fatalf("narrow status %q omits %q", narrow, want)
@@ -54,7 +54,7 @@ func TestStatusUsesCompactContextAndSingleUsage(t *testing.T) {
 		Duration: 7 * 24 * time.Hour, UsedPercent: 59, ResetsAt: now.Add(9*time.Hour + 41*time.Minute),
 	}}}
 
-	_, status := renderStatus(model, 120)
+	_, _, status := renderStatus(model, 120)
 	for _, want := range []string{"gpt-5.6-sol", string(agent.ThinkingXHigh), "0%", "59%", "9h 41m"} {
 		if !strings.Contains(status, want) {
 			t.Fatalf("status %q omits %q", status, want)

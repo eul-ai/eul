@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/filesearch"
@@ -90,14 +88,7 @@ func (runner *Runner) Run(ctx context.Context, options Options) (RunOutcome, err
 }
 
 func setTerminalTitle(output io.Writer, workingDirectory string) error {
-	directory := strings.Map(func(character rune) rune {
-		if unicode.IsControl(character) {
-			return ' '
-		}
-		return character
-	}, filepath.Base(workingDirectory))
-
-	return writeOutput(output, "\x1b]2;ℯ - %s\x07", directory)
+	return writeOutput(output, "\x1b]2;ℯ - %s\x07", replaceControls(filepath.Base(workingDirectory)))
 }
 
 func (runner *Runner) Close() error {

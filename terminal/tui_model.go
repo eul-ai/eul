@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/subagent"
@@ -64,6 +63,15 @@ const (
 type activity struct {
 	kind   activityKind
 	detail string
+}
+
+func (a activity) animated() bool {
+	switch a.kind {
+	case activityReady, activityPermission, activityError:
+		return false
+	default:
+		return true
+	}
 }
 
 type conversationModel struct {
@@ -421,18 +429,12 @@ func (m *tuiModel) showPermission(request PermissionRequest, index, total int) {
 	if strings.TrimSpace(title) == "" {
 		title = "Permission requested"
 	}
-	detailPrefix := strings.Map(func(character rune) rune {
-		if unicode.IsControl(character) {
-			return ' '
-		}
-		return character
-	}, request.DetailPrefix)
 	m.permission = permissionModel{
 		title:        title,
 		subject:      singleLine(request.Subject, 120),
 		description:  singleLine(request.Description, 500),
 		detail:       sanitizeAssistantText(request.Detail),
-		detailPrefix: truncateCells(detailPrefix, 20, false),
+		detailPrefix: truncateCells(replaceControls(request.DetailPrefix), 20, false),
 		notice:       singleLine(request.Notice, 500),
 		index:        index,
 		total:        total,
@@ -508,7 +510,7 @@ func (m *tuiModel) finishTurn(runErr error) {
 	}
 
 	m.finishPendingTools("failed")
-	detail := diagnostic(runErr.Error(), 500)
+	detail := singleLine(runErr.Error(), 500)
 	m.appendBlock(blockError, detail)
 	if executedTool {
 		m.appendBlock(blockInfo, "Tool turn interrupted; tool side effects may remain")

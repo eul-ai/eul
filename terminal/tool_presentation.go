@@ -22,9 +22,9 @@ func toolTitle(call agent.ToolCall, presentation agent.ToolPresentation) string 
 
 func toolActivityDetail(call agent.ToolCall, presentation agent.ToolPresentation) string {
 	if call.Name != "" {
-		return diagnostic(call.Name, maxToolPresentationSummaryBytes)
+		return singleLine(call.Name, maxToolPresentationSummaryBytes)
 	}
-	return diagnostic(toolTitle(call, presentation), maxToolPresentationSummaryBytes)
+	return singleLine(toolTitle(call, presentation), maxToolPresentationSummaryBytes)
 }
 
 func toolResultOutcome(result agent.ToolResult, presentation agent.ToolPresentation) string {
@@ -46,9 +46,9 @@ func toolResultOutcome(result agent.ToolResult, presentation agent.ToolPresentat
 
 func sanitizeToolPresentation(call agent.ToolCall, presentation agent.ToolPresentation) agent.ToolPresentation {
 	presentation = presentation.Clone()
-	presentation.Title = diagnostic(toolTitle(call, presentation), maxToolPresentationSummaryBytes)
-	presentation.Arguments = diagnostic(presentation.Arguments, maxToolPresentationSummaryBytes)
-	presentation.Outcome = diagnostic(presentation.Outcome, maxToolPresentationSummaryBytes)
+	presentation.Title = singleLine(toolTitle(call, presentation), maxToolPresentationSummaryBytes)
+	presentation.Arguments = singleLine(presentation.Arguments, maxToolPresentationSummaryBytes)
+	presentation.Outcome = singleLine(presentation.Outcome, maxToolPresentationSummaryBytes)
 	presentation.TailLines = max(0, presentation.TailLines)
 	presentation.Elapsed = max(0, presentation.Elapsed)
 	presentation.Timeout = max(0, presentation.Timeout)
@@ -59,10 +59,6 @@ func sanitizeToolPresentation(call agent.ToolCall, presentation agent.ToolPresen
 		presentation.Diff[index].Text = sanitizeAssistantText(presentation.Diff[index].Text)
 	}
 	return presentation
-}
-
-func diagnostic(value string, maximum int) string {
-	return singleLine(value, maximum)
 }
 
 func sanitizeAssistantText(value string) string {
@@ -77,14 +73,17 @@ func sanitizeAssistantText(value string) string {
 	}, value)
 }
 
-func singleLine(value string, maximum int) string {
-	value = strings.Map(func(character rune) rune {
+func replaceControls(value string) string {
+	return strings.Map(func(character rune) rune {
 		if unicode.IsControl(character) {
 			return ' '
 		}
 		return character
 	}, value)
-	value = strings.Join(strings.Fields(value), " ")
+}
+
+func singleLine(value string, maximum int) string {
+	value = strings.Join(strings.Fields(replaceControls(value)), " ")
 
 	if len(value) <= maximum {
 		return value
