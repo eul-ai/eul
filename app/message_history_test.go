@@ -21,7 +21,9 @@ func TestMessageHistoryStoreLoadsOwnSessionLast(t *testing.T) {
 	}{
 		{sessionID: firstSession, text: "first prompt"},
 		{sessionID: secondSession, text: "second prompt"},
+		{sessionID: secondSession, text: "/compact"},
 		{sessionID: firstSession, text: "third prompt"},
+		{sessionID: firstSession, text: "/goal ship it"},
 	} {
 		if err := store.Append(entry.sessionID, entry.text); err != nil {
 			t.Fatal(err)
@@ -32,7 +34,7 @@ func TestMessageHistoryStoreLoadsOwnSessionLast(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(entries, []string{"second prompt", "first prompt", "third prompt"}) {
+	if !slices.Equal(entries, []string{"second prompt", "first prompt", "third prompt", "/goal ship it"}) {
 		t.Fatalf("entries = %q", entries)
 	}
 

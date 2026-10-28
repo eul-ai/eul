@@ -453,9 +453,6 @@ func (m *tuiModel) rememberPrompt(prompt string) {
 	}
 
 	m.history = append(m.history, prompt)
-	if strings.HasPrefix(trimmed, "/") {
-		return
-	}
 	m.pendingHistory = append(m.pendingHistory, prompt)
 }
 

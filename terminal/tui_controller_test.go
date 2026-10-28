@@ -32,7 +32,7 @@ func TestTUIControllerFlushesMessageHistory(t *testing.T) {
 	if err := controller.flushMessageHistory(); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(entries, []string{"first prompt", "second prompt"}) || len(model.pendingHistory) != 0 {
+	if !slices.Equal(entries, []string{"first prompt", " /resume ", "second prompt"}) || len(model.pendingHistory) != 0 {
 		t.Fatalf("entries = %q, pending = %q", entries, model.pendingHistory)
 	}
 	if !slices.Equal(model.history, []string{"first prompt", " /resume ", "second prompt"}) {

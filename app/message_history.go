@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -24,8 +25,9 @@ func newMessageHistoryStore(home string) *messageHistoryStore {
 	return &messageHistoryStore{path: filepath.Join(home, "history.jsonl")}
 }
 
-// Load returns the entries of other sessions followed by those of sessionID,
-// so the session's own prompts are recalled first.
+// Load returns the prompts of other sessions followed by the entries of
+// sessionID, so the session's own entries are recalled first. Slash commands
+// are only recalled in the session that ran them.
 func (store *messageHistoryStore) Load(sessionID string) ([]string, error) {
 	file, err := os.Open(store.path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -49,6 +51,7 @@ func (store *messageHistoryStore) Load(sessionID string) ([]string, error) {
 		case json.Unmarshal(line, &entry) != nil:
 		case entry.SessionID == sessionID:
 			own = append(own, entry.Text)
+		case strings.HasPrefix(strings.TrimSpace(entry.Text), "/"):
 		default:
 			others = append(others, entry.Text)
 		}
