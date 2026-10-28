@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"os"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -22,16 +20,12 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	model.appendBlock(blockAssistant, "answer")
 	model.running = false
 	model.subagentStatus = subagent.Status{Active: []subagent.JobStatus{{State: subagent.StateRunning}}, PendingCompletions: []subagent.Completion{{Status: subagent.StateComplete}}}
-	model.history = []string{"older prompt"}
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)
 	}
 	queued := [][]agent.ContentPart{testTextContent("accepted"), testTextContent("deferred")}
 
 	checkpoint := checkpointModel(model, queued)
-	if !slices.Equal(checkpoint.data.History, []string{"older prompt"}) {
-		t.Fatalf("checkpoint history = %q", checkpoint.data.History)
-	}
 	if description := checkpoint.Description(); description != "First line of the prompt" {
 		t.Fatalf("description = %q", description)
 	}
@@ -45,7 +39,7 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	}
 
 	restored := newTUIModel(100, 30, Options{
-		Config:         Config{InitialCheckpoint: &decoded},
+		Config:         Config{InitialCheckpoint: &decoded, ContextTokens: 42},
 		MessageHistory: MessageHistory{Entries: []string{"global prompt"}},
 	})
 	if restored.running || restored.streamText.Len() != 0 || restored.activity.kind != activityReady || len(restored.subagentStatus.Active) != 0 {
@@ -57,11 +51,11 @@ func TestTerminalCheckpointRoundTrip(t *testing.T) {
 	if restored.inputText() != "accepted\n\ndeferred\n\ndraft" || restored.cursor != len(restored.input) {
 		t.Fatalf("input=%q cursor=%d", restored.inputText(), restored.cursor)
 	}
-	if len(restored.history) != 1 || restored.history[0] != "older prompt" {
-		t.Fatalf("history = %q", restored.history)
+	if !slices.Equal(restored.globalHistory, []string{"global prompt"}) || len(restored.history) != 0 {
+		t.Fatalf("global history = %q, history = %q", restored.globalHistory, restored.history)
 	}
-	if !slices.Equal(restored.globalHistory, []string{"global prompt"}) {
-		t.Fatalf("global history = %q", restored.globalHistory)
+	if restored.contextTokens != 42 {
+		t.Fatalf("context tokens = %d", restored.contextTokens)
 	}
 }
 
@@ -72,8 +66,8 @@ func TestTerminalCheckpointSnapshotsOpenStream(t *testing.T) {
 	checkpoint := checkpointModel(model, nil)
 
 	model.appendStream(blockAssistant, " third")
-	if checkpoint.data.Blocks[0].Text != "first second" || model.blocks[0].text != "first second third" {
-		t.Fatalf("checkpoint=%q model=%q", checkpoint.data.Blocks[0].Text, model.blocks[0].text)
+	if checkpoint.Blocks[0].Text != "first second" || model.blocks[0].text != "first second third" {
+		t.Fatalf("checkpoint=%q model=%q", checkpoint.Blocks[0].Text, model.blocks[0].text)
 	}
 
 	restored := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint}})
@@ -97,8 +91,8 @@ func TestTerminalCheckpointProjectsDraftImagesOut(t *testing.T) {
 	model.moveLeft()
 
 	checkpoint := checkpointModel(model, nil)
-	if checkpoint.data.Input != "before after" || checkpoint.data.Cursor != len([]rune("before afte")) {
-		t.Fatalf("input = %q, cursor = %d", checkpoint.data.Input, checkpoint.data.Cursor)
+	if checkpoint.Input != "before after" || checkpoint.Cursor != len([]rune("before afte")) {
+		t.Fatalf("input = %q, cursor = %d", checkpoint.Input, checkpoint.Cursor)
 	}
 	encoded, err := json.Marshal(checkpoint)
 	if err != nil {
@@ -120,8 +114,8 @@ func TestTerminalCheckpointProjectsQueuedImagesOut(t *testing.T) {
 	}}
 
 	checkpoint := checkpointModel(model, queued)
-	if len(checkpoint.data.QueuedInputs) != 1 || checkpoint.data.QueuedInputs[0] != "before after" {
-		t.Fatalf("queued inputs = %q", checkpoint.data.QueuedInputs)
+	if len(checkpoint.QueuedInputs) != 1 || checkpoint.QueuedInputs[0] != "before after" {
+		t.Fatalf("queued inputs = %q", checkpoint.QueuedInputs)
 	}
 	encoded, err := json.Marshal(checkpoint)
 	if err != nil {
@@ -140,8 +134,8 @@ func TestTerminalCheckpointPreservesInlineImagePositions(t *testing.T) {
 		{Kind: agent.ContentPartText, Text: " after"},
 	})
 	checkpoint := checkpointModel(model, nil)
-	if len(checkpoint.data.Blocks[0].Content) != 3 || checkpoint.data.Blocks[0].Content[1].Kind != agent.ContentPartImage {
-		t.Fatalf("checkpoint content = %+v", checkpoint.data.Blocks[0].Content)
+	if len(checkpoint.Blocks[0].Content) != 3 || checkpoint.Blocks[0].Content[1].Kind != agent.ContentPartImage {
+		t.Fatalf("checkpoint content = %+v", checkpoint.Blocks[0].Content)
 	}
 
 	restored := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint}})
@@ -151,19 +145,19 @@ func TestTerminalCheckpointPreservesInlineImagePositions(t *testing.T) {
 	}
 }
 
-func TestTerminalCheckpointSanitizesContentText(t *testing.T) {
-	checkpoint := EmptyCheckpoint()
-	checkpoint.data.Blocks = []checkpointBlock{{
-		Kind: blockUser,
-		Content: []checkpointContentPart{{
-			Kind: agent.ContentPartText,
-			Text: "before\x1bafter",
-		}},
-	}}
+func TestTerminalCheckpointRestoreInterruptsPendingToolsAndClampsCursor(t *testing.T) {
+	checkpoint := Checkpoint{
+		Blocks: []Block{{Kind: blockToolPending, ToolCallID: "call", ToolName: "edit"}},
+		Input:  "ab",
+		Cursor: 9,
+	}
 
-	restored := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint}})
-	if got := displayContent(restored.blocks[0].content); got != "before�after" {
-		t.Fatalf("restored content = %q", got)
+	model := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint}})
+	if len(model.blocks) != 1 || model.blocks[0].kind != blockToolError || model.blocks[0].tool.Outcome != "interrupted" {
+		t.Fatalf("restored blocks = %+v", model.blocks)
+	}
+	if model.inputText() != "ab" || model.cursor != 2 {
+		t.Fatalf("input = %q, cursor = %d", model.inputText(), model.cursor)
 	}
 }
 
@@ -175,85 +169,8 @@ func TestImageOnlyCheckpointDescription(t *testing.T) {
 	}
 }
 
-func TestVersionTwoTerminalCheckpointFixture(t *testing.T) {
-	fixture, err := os.ReadFile("testdata/checkpoint-v2.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var checkpoint Checkpoint
-	if err := json.Unmarshal(fixture, &checkpoint); err != nil {
-		t.Fatal(err)
-	}
-
-	wantKinds := []blockKind{
-		blockUser,
-		blockAssistant,
-		blockReasoning,
-		blockToolPending,
-		blockTool,
-		blockToolError,
-		blockContext,
-		blockError,
-		blockInfo,
-	}
-	if len(checkpoint.data.Blocks) != len(wantKinds) {
-		t.Fatalf("blocks = %d, want %d", len(checkpoint.data.Blocks), len(wantKinds))
-	}
-	for index, kind := range wantKinds {
-		if checkpoint.data.Blocks[index].Kind != kind {
-			t.Fatalf("block %d kind = %d, want %d", index, checkpoint.data.Blocks[index].Kind, kind)
-		}
-	}
-	if checkpoint.data.Blocks[3].ToolName != "edit" {
-		t.Fatalf("tool name = %q", checkpoint.data.Blocks[3].ToolName)
-	}
-	diff := checkpoint.data.Blocks[3].Tool.Diff
-	wantDiffKinds := []agent.ToolDiffLineKind{
-		agent.ToolDiffLineContext,
-		agent.ToolDiffLineAdded,
-		agent.ToolDiffLineRemoved,
-		agent.ToolDiffLineOmitted,
-	}
-	if len(diff) != len(wantDiffKinds) {
-		t.Fatalf("diff = %+v", diff)
-	}
-	for index, kind := range wantDiffKinds {
-		if diff[index].Kind != kind {
-			t.Fatalf("diff line %d kind = %d, want %d", index, diff[index].Kind, kind)
-		}
-	}
-
-	model := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint}})
-	if len(model.blocks) != len(wantKinds) || model.blocks[3].kind != blockToolError || model.blocks[3].tool.Outcome != "interrupted" {
-		t.Fatalf("restored blocks = %+v", model.blocks)
-	}
-	if model.inputText() != "queued\n\ndraft" || model.contextTokens != 42 || len(model.history) != 2 {
-		t.Fatalf("input=%q context=%d history=%q", model.inputText(), model.contextTokens, model.history)
-	}
-
-	encoded, err := json.Marshal(checkpoint)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertTerminalCheckpointSemanticJSON(t, encoded, fixture)
-}
-
-func assertTerminalCheckpointSemanticJSON(t *testing.T, got, want []byte) {
-	t.Helper()
-	var gotValue, wantValue any
-	if err := json.Unmarshal(got, &gotValue); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(want, &wantValue); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(gotValue, wantValue) {
-		t.Fatalf("JSON mismatch:\ngot:  %s\nwant: %s", got, want)
-	}
-}
-
 func TestPreviousActiveSessionShowsWarning(t *testing.T) {
-	checkpoint := EmptyCheckpoint()
+	checkpoint := Checkpoint{}
 	model := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint, PreviousTurnActive: true}})
 	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo {
 		t.Fatalf("blocks = %+v", model.blocks)
@@ -261,7 +178,7 @@ func TestPreviousActiveSessionShowsWarning(t *testing.T) {
 }
 
 func TestStartupWarningsAreShownAfterRestoredConversation(t *testing.T) {
-	checkpoint := EmptyCheckpoint()
+	checkpoint := Checkpoint{}
 	warning := "opaque-warning-sentinel"
 	model := newTUIModel(80, 24, Options{Config: Config{InitialCheckpoint: &checkpoint, Warnings: []string{warning}}})
 	if len(model.blocks) != 1 || model.blocks[0].kind != blockInfo || !strings.Contains(model.blocks[0].text, warning) {
@@ -316,7 +233,7 @@ func TestEngineSnapshotWaitsForTerminalState(t *testing.T) {
 		t.Fatalf("operation completed before snapshot: %+v", message)
 	default:
 	}
-	snapshot.snapshot <- EmptyCheckpoint()
+	snapshot.snapshot <- Checkpoint{}
 	completed := <-messages
 	if !completed.done || completed.err != nil {
 		t.Fatalf("completion = %+v", completed)

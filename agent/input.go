@@ -1,10 +1,6 @@
 package agent
 
-import (
-	"errors"
-	"fmt"
-	"strings"
-)
+import "strings"
 
 type InputKind string
 
@@ -41,37 +37,6 @@ type Input struct {
 	IsError bool          `json:"is_error"`
 }
 
-func (input Input) Validate() error {
-	switch input.Kind {
-	case InputUser:
-		if input.Text != "" || input.CallID != "" || input.Tool != "" || input.IsError {
-			return errors.New("user input has invalid metadata")
-		}
-		if len(input.Content) == 0 {
-			return errors.New("user input has no content")
-		}
-		for index, part := range input.Content {
-			if err := part.validate(); err != nil {
-				return fmt.Errorf("user content part %d: %w", index, err)
-			}
-		}
-	case InputToolResult:
-		if input.CallID == "" || input.Tool == "" {
-			return errors.New("tool result has incomplete metadata")
-		}
-		if len(input.Content) > 0 {
-			return errors.New("tool result has user content")
-		}
-	case InputInbox:
-		if input.Text == "" || len(input.Content) > 0 || input.CallID != "" || input.Tool != "" || input.IsError {
-			return errors.New("inbox input has invalid metadata")
-		}
-	default:
-		return fmt.Errorf("unknown input kind %q", input.Kind)
-	}
-	return nil
-}
-
 func NewUserInput(parts ...ContentPart) Input {
 	return Input{Kind: InputUser, Content: parts}
 }
@@ -106,23 +71,4 @@ func (input Input) PlainText() string {
 		}
 	}
 	return text.String()
-}
-
-func (part ContentPart) validate() error {
-	switch part.Kind {
-	case ContentPartText:
-		if part.Image != nil {
-			return errors.New("text content has an image")
-		}
-	case ContentPartImage:
-		if part.Image == nil {
-			return errors.New("image content is missing an image")
-		}
-		if part.Text != "" {
-			return errors.New("image content has text")
-		}
-	default:
-		return fmt.Errorf("unknown content kind %q", part.Kind)
-	}
-	return nil
 }

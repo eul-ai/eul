@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
 )
@@ -45,20 +44,11 @@ func newSessionStore(home string) *sessionStore {
 	return &sessionStore{root: filepath.Join(home, "sessions")}
 }
 
-func (store *sessionStore) Create(
-	provider string,
-	cwd string,
-	models backend.Models,
-	thinkingLevel agent.ThinkingLevel,
-	agentCheckpoint agent.Checkpoint,
-	subagentCheckpoint subagent.Checkpoint,
-	terminalCheckpoint terminal.Checkpoint,
-	fastMode bool,
-) (*sessionHandle, error) {
+func (store *sessionStore) Create(settings sessionSettings) (*sessionHandle, error) {
 	var random [16]byte
 	_, _ = rand.Read(random[:])
 	id := hex.EncodeToString(random[:])
-	path := filepath.Join(store.workspaceDirectory(cwd), id)
+	path := filepath.Join(store.workspaceDirectory(settings.cwd), id)
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return nil, fmt.Errorf("create session directory: %w", err)
 	}
@@ -69,32 +59,18 @@ func (store *sessionStore) Create(
 	}
 
 	now := time.Now().UTC()
-	record := sessionRecord{
-		sessionMetadata: sessionMetadata{
-			ID:               id,
-			CreatedAt:        now,
-			UpdatedAt:        now,
-			Status:           sessionIdle,
-			Provider:         provider,
-			WorkingDirectory: cwd,
-			Models:           models,
-			ThinkingLevel:    thinkingLevel,
-			FastMode:         fastMode,
-			Description:      terminalCheckpoint.Description(),
-		},
-		sessionState: sessionState{
-			Agent:    agentCheckpoint,
-			Subagent: subagentCheckpoint,
-			Terminal: terminalCheckpoint,
-		},
-	}
-	handle := &sessionHandle{store: store, path: path, lock: lock, record: record}
-	if record.Description != "" {
-		if err := handle.commit(record); err != nil {
-			return nil, errors.Join(err, handle.Close())
-		}
-	}
-	return handle, nil
+	record := sessionRecord{sessionMetadata: sessionMetadata{
+		ID:               id,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		Status:           sessionIdle,
+		Provider:         settings.provider,
+		WorkingDirectory: settings.cwd,
+		Models:           settings.models,
+		ThinkingLevel:    settings.thinkingLevel,
+		FastMode:         settings.fastMode,
+	}}
+	return &sessionHandle{store: store, path: path, lock: lock, record: record}, nil
 }
 
 func (store *sessionStore) Open(cwd, id string) (*sessionHandle, error) {

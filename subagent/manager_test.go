@@ -20,7 +20,7 @@ func TestTerminalTransitionQueuesCompletionAndFreesCapacity(t *testing.T) {
 		case <-releases:
 			return "result for " + task.Prompt, nil
 		}
-	})
+	}, Checkpoint{})
 	defer manager.Close()
 
 	if _, err := manager.Start(testTasks(maxActive)); err != nil {
@@ -44,7 +44,7 @@ func TestTerminalTransitionQueuesCompletionAndFreesCapacity(t *testing.T) {
 func TestStartValidatesTasksBeforeMutation(t *testing.T) {
 	manager := NewManager(func(context.Context, Task, func(agent.Usage)) (string, error) {
 		return "", nil
-	})
+	}, Checkpoint{})
 	defer manager.Close()
 
 	tests := []struct {
@@ -62,8 +62,8 @@ func TestStartValidatesTasksBeforeMutation(t *testing.T) {
 				t.Fatal("invalid launch accepted")
 			}
 			checkpoint := manager.Checkpoint()
-			if checkpoint.data.NextID != 0 || len(checkpoint.data.Active) != 0 {
-				t.Fatalf("manager mutated after rejection: %+v", checkpoint.data)
+			if checkpoint.NextID != 0 || len(checkpoint.Completions) != 0 {
+				t.Fatalf("manager mutated after rejection: %+v", checkpoint)
 			}
 		})
 	}
@@ -74,7 +74,7 @@ func TestStartUsesPerTaskPolicy(t *testing.T) {
 	manager := NewManager(func(_ context.Context, task Task, _ func(agent.Usage)) (string, error) {
 		requests <- task
 		return "", nil
-	})
+	}, Checkpoint{})
 	defer manager.Close()
 
 	jobs, err := manager.Start([]Task{
@@ -106,7 +106,7 @@ func TestCancelValidatesIDsAtomically(t *testing.T) {
 	manager := NewManager(func(context.Context, Task, func(agent.Usage)) (string, error) {
 		<-release
 		return "", nil
-	})
+	}, Checkpoint{})
 	defer manager.Close()
 
 	jobs, err := manager.Start(testTasks(2))
@@ -123,7 +123,7 @@ func TestCancelValidatesIDsAtomically(t *testing.T) {
 		if _, err := manager.Cancel(ids); err == nil {
 			t.Fatalf("invalid IDs accepted: %v", ids)
 		}
-		status := manager.Checkpoint().data.Active
+		status := manager.Snapshot().Active
 		if len(status) != 2 || status[0].State != StateRunning || status[1].State != StateRunning {
 			t.Fatalf("cancel partially mutated jobs for %v: %+v", ids, status)
 		}
@@ -145,7 +145,7 @@ func TestCompleteFailedAndCanceledChildrenQueueTerminalNotifications(t *testing.
 			<-ctx.Done()
 			return "", ctx.Err()
 		}
-	})
+	}, Checkpoint{})
 	defer manager.Close()
 	jobs, err := manager.Start([]Task{
 		{Description: "complete", Prompt: "complete"},
@@ -174,7 +174,7 @@ func TestWaitBlocksUntilCompletionAndDoesNotDrainInbox(t *testing.T) {
 	manager := NewManager(func(context.Context, Task, func(agent.Usage)) (string, error) {
 		<-release
 		return "done", nil
-	})
+	}, Checkpoint{})
 	defer manager.Close()
 	if _, err := manager.Start(testTasks(1)); err != nil {
 		t.Fatal(err)
@@ -214,7 +214,7 @@ func TestWaitCancellationDoesNotCancelChild(t *testing.T) {
 		case <-release:
 			return "done", nil
 		}
-	})
+	}, Checkpoint{})
 	defer manager.Close()
 	if _, err := manager.Start(testTasks(1)); err != nil {
 		t.Fatal(err)
@@ -241,7 +241,7 @@ func TestWaitCancellationDoesNotCancelChild(t *testing.T) {
 func TestInboxBoundsDescriptionAndResult(t *testing.T) {
 	manager := NewManager(func(context.Context, Task, func(agent.Usage)) (string, error) {
 		return strings.Repeat("<", maxCompletionBytes) + strings.Repeat("\né", maxCompletionLines+100), nil
-	})
+	}, Checkpoint{})
 	defer manager.Close()
 	if _, err := manager.Start([]Task{{Description: strings.Repeat("description", 1_000), Prompt: "task"}}); err != nil {
 		t.Fatal(err)
@@ -261,7 +261,7 @@ func TestInboxBoundsDescriptionAndResult(t *testing.T) {
 func TestInboxAcknowledgesOnlyExactPrefix(t *testing.T) {
 	manager := NewManager(func(context.Context, Task, func(agent.Usage)) (string, error) {
 		return "done", nil
-	})
+	}, Checkpoint{})
 	defer manager.Close()
 	if _, err := manager.Start(testTasks(2)); err != nil {
 		t.Fatal(err)
@@ -289,7 +289,7 @@ func TestInboxAcknowledgesOnlyExactPrefix(t *testing.T) {
 func TestAcknowledgeCompletionsAfterClose(t *testing.T) {
 	manager := NewManager(func(context.Context, Task, func(agent.Usage)) (string, error) {
 		return "done", nil
-	})
+	}, Checkpoint{})
 	if _, err := manager.Start(testTasks(1)); err != nil {
 		t.Fatal(err)
 	}

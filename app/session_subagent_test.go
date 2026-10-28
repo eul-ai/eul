@@ -220,7 +220,7 @@ func TestSubagentWaitIsInterruptedBySteeringWithoutCancelingChild(t *testing.T) 
 		case <-release:
 			return "done", nil
 		}
-	})
+	}, subagent.Checkpoint{})
 	defer manager.Close()
 
 	thinkingLevels := map[subagent.Profile][]agent.ThinkingLevel{subagent.ProfileMain: agent.ThinkingLevels()}

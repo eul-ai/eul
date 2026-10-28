@@ -17,7 +17,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	launcher := testLauncher(t, cwd, testBackendRuntime(providerFunction(func(_ context.Context, request agent.Request, _ agent.TextSink) (agent.Response, error) {
 		requests = append(requests, request)
 		if len(requests) == 1 {
-			return agent.Response{Text: "first answer", State: []byte("saved-state")}, nil
+			return agent.Response{Text: "first answer", State: []byte("saved-state"), Usage: agent.Usage{TotalTokens: 42}}, nil
 		}
 		return agent.Response{Text: "second answer", State: []byte("next-state")}, nil
 	})))
@@ -26,7 +26,7 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	if _, err := first.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "first prompt"}}, func(agent.Event) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	terminalCheckpoint := sessionStoreTestTerminalCheckpoint(t, "first prompt")
+	terminalCheckpoint := testTerminalCheckpoint("first prompt")
 	if err := first.terminalOptions.StateChanges.Notify(terminalCheckpoint, false); err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +41,9 @@ func TestStoredAgentSessionRestoresProviderAndTerminalState(t *testing.T) {
 	}
 	if second.terminalOptions.Config.InitialCheckpoint == nil || second.terminalOptions.Config.InitialCheckpoint.Description() != "first prompt" {
 		t.Fatalf("terminal checkpoint = %+v", second.terminalOptions.Config.InitialCheckpoint)
+	}
+	if second.terminalOptions.Config.ContextTokens != 42 {
+		t.Fatalf("context tokens = %d", second.terminalOptions.Config.ContextTokens)
 	}
 	summaries, err := second.terminalOptions.Sessions.List(context.Background())
 	if err != nil {
@@ -70,7 +73,7 @@ func TestStoredAgentSessionPersistsCompletionWhileParentIsIdle(t *testing.T) {
 	}}
 	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), sessionSettings{models: backend.Models{Main: "model"}, thinkingLevel: agent.ThinkingHigh, cwd: cwd})
 	defer session.finish(nil)
-	if err := session.terminalOptions.StateChanges.Notify(sessionStoreTestTerminalCheckpoint(t, "prompt"), false); err != nil {
+	if err := session.terminalOptions.StateChanges.Notify(testTerminalCheckpoint("prompt"), false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := caller.call(session, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect"}]}`); err != nil {
@@ -110,7 +113,7 @@ func TestStoredAgentSessionPersistsInterruptedSubagentsAsIdleOnRestore(t *testin
 	if _, err := caller.call(first, "launch_subagents", `{"tasks":[{"description":"running","prompt":"running"}]}`); err != nil {
 		t.Fatal(err)
 	}
-	terminalCheckpoint := sessionStoreTestTerminalCheckpoint(t, "active prompt")
+	terminalCheckpoint := testTerminalCheckpoint("active prompt")
 	if err := first.terminalOptions.StateChanges.Notify(terminalCheckpoint, true); err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +167,7 @@ func TestStoredSessionSelectsPersistedBackend(t *testing.T) {
 	if session.config.provider != "alternate" {
 		t.Fatalf("provider = %q", session.config.provider)
 	}
-	if err := session.terminalOptions.StateChanges.Notify(sessionStoreTestTerminalCheckpoint(t, "saved prompt"), false); err != nil {
+	if err := session.terminalOptions.StateChanges.Notify(testTerminalCheckpoint("saved prompt"), false); err != nil {
 		t.Fatal(err)
 	}
 	sessionID := session.persistence.handle.record.ID

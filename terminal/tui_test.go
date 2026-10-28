@@ -90,7 +90,7 @@ func TestRunTUIRendersSubagentUpdatesWhileIdle(t *testing.T) {
 	manager := subagent.NewManager(func(ctx context.Context, _ subagent.Task, _ func(agent.Usage)) (string, error) {
 		<-ctx.Done()
 		return "", ctx.Err()
-	})
+	}, subagent.Checkpoint{})
 	defer manager.Close()
 	output := newSignalingWriter("subagent-1")
 

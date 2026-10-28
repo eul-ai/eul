@@ -62,9 +62,20 @@ func (job *job) status() JobStatus {
 	}
 }
 
-func NewManager(run func(ctx context.Context, task Task, progress func(agent.Usage)) (string, error)) *Manager {
+func NewManager(run func(ctx context.Context, task Task, progress func(agent.Usage)) (string, error), checkpoint Checkpoint) *Manager {
 	ctx, cancel := context.WithCancelCause(context.Background())
-	return &Manager{run: run, ctx: ctx, cancel: cancel, changes: make(chan struct{})}
+	manager := &Manager{
+		run:     run,
+		ctx:     ctx,
+		cancel:  cancel,
+		changes: make(chan struct{}),
+		inbox:   checkpoint.Completions,
+		nextID:  checkpoint.NextID,
+	}
+	if count := len(manager.inbox); count > 0 {
+		manager.nextMessageID = manager.inbox[count-1].MessageID
+	}
+	return manager
 }
 
 // Changes returns a channel that is closed at the next state change. Call it

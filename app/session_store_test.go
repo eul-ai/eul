@@ -21,17 +21,14 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := newSessionStore(home)
-	agentCheckpoint := sessionStoreTestAgentCheckpoint(t)
+	models := backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"}
 
-	first, err := store.Create("test", cwd, backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"}, agent.ThinkingHigh, agentCheckpoint, subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "first prompt\nmore"), true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := createStoredSession(t, store, sessionSettings{provider: "test", cwd: cwd, models: models, thinkingLevel: agent.ThinkingHigh, fastMode: true}, "first prompt\nmore")
 	firstID := first.record.ID
 	if first.record.Provider != "test" || first.record.Models.Fast != "fast-model" || first.record.Models.Balanced != "balanced-model" || !first.record.FastMode {
 		t.Fatalf("provider and models = %+v", first.record)
 	}
-	if err := first.Save(agentCheckpoint, first.record.Subagent, first.record.Terminal, true, agent.ThinkingHigh, false); err != nil {
+	if err := first.Save(first.record.Agent, first.record.Subagent, first.record.Terminal, true, agent.ThinkingHigh, false); err != nil {
 		t.Fatal(err)
 	}
 	if first.record.FastMode {
@@ -41,10 +38,7 @@ func TestSessionStorePartitionsListsAndResolvesSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	second, err := store.Create("test", cwd, backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"}, agent.ThinkingMedium, agentCheckpoint, subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "second prompt"), false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	second := createStoredSession(t, store, sessionSettings{provider: "test", cwd: cwd, models: models, thinkingLevel: agent.ThinkingMedium}, "second prompt")
 	secondID := second.record.ID
 	if err := second.Close(); err != nil {
 		t.Fatal(err)
@@ -193,7 +187,7 @@ func TestSessionStoreIgnoresAbandonedEmptyDirectory(t *testing.T) {
 func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 	store := newSessionStore(t.TempDir())
 	cwd := t.TempDir()
-	handle, err := store.Create("test", cwd, backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), terminal.EmptyCheckpoint(), false)
+	handle, err := store.Create(sessionSettings{provider: "test", cwd: cwd, models: backend.Models{Main: "model"}, thinkingLevel: agent.ThinkingMedium})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +195,7 @@ func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 	if _, err := os.Stat(lockPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := handle.Save(sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), terminal.EmptyCheckpoint(), false, agent.ThinkingMedium, false); err != nil {
+	if err := handle.Save(agent.Checkpoint{}, subagent.Checkpoint{}, terminal.Checkpoint{}, false, agent.ThinkingMedium, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{sessionMetadataFileName, sessionStateFileName} {
@@ -230,10 +224,7 @@ func TestSessionStoreDoesNotPersistOrListEmptySessions(t *testing.T) {
 func TestSessionStoreListsMetadataWithoutDecodingCheckpoints(t *testing.T) {
 	store := newSessionStore(t.TempDir())
 	cwd := t.TempDir()
-	handle, err := store.Create("test", cwd, backend.Models{Main: "model", Fast: "model", Balanced: "model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	handle := createStoredSession(t, store, sessionSettings{provider: "test", cwd: cwd, models: backend.Models{Main: "model"}}, "prompt")
 	path := filepath.Join(handle.path, sessionStateFileName)
 	id := handle.record.ID
 	if err := handle.Close(); err != nil {
@@ -259,10 +250,7 @@ func TestSessionStoreSkipsCorruptSessions(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
 	store := newSessionStore(home)
-	handle, err := store.Create("test", cwd, backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "prompt"), false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	handle := createStoredSession(t, store, sessionSettings{provider: "test", cwd: cwd, models: backend.Models{Main: "model"}}, "prompt")
 	path := filepath.Join(handle.path, sessionMetadataFileName)
 	id := handle.record.ID
 	if err := handle.Close(); err != nil {
@@ -279,10 +267,7 @@ func TestSessionStoreSkipsCorruptSessions(t *testing.T) {
 		t.Fatalf("most recent corrupt-only error = %v", err)
 	}
 
-	valid, err := store.Create("test", cwd, backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"}, agent.ThinkingMedium, sessionStoreTestAgentCheckpoint(t), subagent.EmptyCheckpoint(), sessionStoreTestTerminalCheckpoint(t, "valid prompt"), false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	valid := createStoredSession(t, store, sessionSettings{provider: "test", cwd: cwd, models: backend.Models{Main: "model"}}, "valid prompt")
 	validID := valid.record.ID
 	if err := valid.Close(); err != nil {
 		t.Fatal(err)

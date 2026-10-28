@@ -558,8 +558,8 @@ func TestTUIControllerActiveCheckpointOmitsUncommittedSubmission(t *testing.T) {
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(&fakeEngine{}), controls: controlsFor(&fakeEngine{}), output: io.Discard,
 		engineMessages: make(chan engineMessage, 1), stopped: make(chan struct{}),
 		stateChanges: StateChanges{Notify: func(terminalCheckpoint Checkpoint, active bool) error {
-			if !active || len(terminalCheckpoint.data.Blocks) != 0 {
-				t.Fatalf("active=%v terminal=%+v", active, terminalCheckpoint.data)
+			if !active || len(terminalCheckpoint.Blocks) != 0 {
+				t.Fatalf("active=%v terminal=%+v", active, terminalCheckpoint)
 			}
 			return errors.New("stop before launch")
 		}},
@@ -588,8 +588,8 @@ func TestTUIControllerSubmitsClipboardImageAfterCheckpoint(t *testing.T) {
 		model: model, renderer: &tuiRenderer{}, operations: operationsFor(engine), controls: controlsFor(engine), output: io.Discard,
 		engineMessages: messages, stopped: make(chan struct{}),
 		stateChanges: StateChanges{Notify: func(checkpoint Checkpoint, active bool) error {
-			if !active || len(checkpoint.data.Blocks) != 0 {
-				t.Fatalf("active=%v checkpoint=%+v", active, checkpoint.data)
+			if !active || len(checkpoint.Blocks) != 0 {
+				t.Fatalf("active=%v checkpoint=%+v", active, checkpoint)
 			}
 			events <- "checkpoint"
 			return nil

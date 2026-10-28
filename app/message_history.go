@@ -32,7 +32,9 @@ func newMessageHistoryStore(home string) *messageHistoryStore {
 	return &messageHistoryStore{path: filepath.Join(home, "history.jsonl")}
 }
 
-func (store *messageHistoryStore) Load(excludedSessionID string) (entries []string, err error) {
+// Load returns the entries of other sessions followed by those of sessionID,
+// so the session's own prompts are recalled first.
+func (store *messageHistoryStore) Load(sessionID string) (entries []string, err error) {
 	file, err := os.Open(store.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -48,6 +50,7 @@ func (store *messageHistoryStore) Load(excludedSessionID string) (entries []stri
 		return nil, fmt.Errorf("lock message history: %w", err)
 	}
 
+	var own []string
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, bufio.MaxScanTokenSize), maxMessageHistoryEntryBytes)
 	for scanner.Scan() {
@@ -55,14 +58,16 @@ func (store *messageHistoryStore) Load(excludedSessionID string) (entries []stri
 		if err != nil {
 			return nil, err
 		}
-		if entry.SessionID != excludedSessionID {
-			entries = append(entries, entry.Text)
+		if entry.SessionID == sessionID {
+			own = append(own, entry.Text)
+			continue
 		}
+		entries = append(entries, entry.Text)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read message history: %w", err)
 	}
-	return entries, nil
+	return append(entries, own...), nil
 }
 
 func (store *messageHistoryStore) Append(sessionID, text string) (err error) {

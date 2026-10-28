@@ -29,6 +29,7 @@ func newSessionTools(
 	settings *agent.Settings,
 	authorizeNetwork tool.NetworkAuthorizer,
 	goal *agent.Goal,
+	checkpoint subagent.Checkpoint,
 ) ([]agent.Tool, *subagent.Manager) {
 	runner := childRunner{
 		provider:         provider,
@@ -37,7 +38,7 @@ func newSessionTools(
 		models:           metadata,
 		settings:         settings,
 	}
-	manager := subagent.NewManager(runner.run)
+	manager := subagent.NewManager(runner.run, checkpoint)
 	thinkingLevels := make(map[subagent.Profile][]agent.ThinkingLevel, len(metadata))
 	for profile, model := range metadata {
 		thinkingLevels[profile] = model.ThinkingLevels
@@ -69,6 +70,7 @@ func resolveModelMetadata(runtime *backend.Runtime, models backend.Models) (map[
 func newAgentSessionComponents(
 	config resolvedConfig,
 	runtime *backend.Runtime,
+	record sessionRecord,
 	noSandbox bool,
 	interrupts <-chan os.Signal,
 ) (*agentSession, terminalOptionsBuilder, error) {
@@ -84,10 +86,12 @@ func newAgentSessionComponents(
 	settings := agent.NewSettings(main.ClampThinkingLevel(config.thinkingLevel), config.fastMode)
 
 	goal := &agent.Goal{}
-	tools, subagents := newSessionTools(config, runtime.Provider, metadata, settings, authorizeNetwork, goal)
+	tools, subagents := newSessionTools(config, runtime.Provider, metadata, settings, authorizeNetwork, goal, record.Subagent)
 	engine := agent.New(runtime.Provider, tools, agent.Options{
 		Model:         config.models.Main,
 		Instructions:  systemPrompt(config),
+		SessionID:     record.ID,
+		Checkpoint:    record.Agent,
 		Checkpointing: true,
 		Inbox:         tool.NewSubagentInbox(subagents),
 		Settings:      settings,

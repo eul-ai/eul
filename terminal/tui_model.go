@@ -222,6 +222,7 @@ func newTUIModel(width, height int, options Options) *tuiModel {
 			fastMode:                   options.Config.FastMode,
 			fastModeAvailable:          fastModeAvailable,
 			contextWindow:              options.Config.ContextWindow,
+			contextTokens:              options.Config.ContextTokens,
 			activity:                   activity{kind: activityReady},
 		},
 	}

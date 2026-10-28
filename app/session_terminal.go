@@ -27,6 +27,7 @@ type terminalOptionsBuilder struct {
 	sessions           terminal.Sessions
 	messageHistory     terminal.MessageHistory
 	initialCheckpoint  *terminal.Checkpoint
+	contextTokens      int64
 	initialPrompt      string
 	sessionID          string
 	previousTurnActive bool
@@ -73,6 +74,7 @@ func (source terminalOptionsBuilder) options() terminal.Options {
 			FastMode:           source.config.fastMode,
 			FastModeAvailable:  source.metadata.FastMode,
 			ContextWindow:      source.metadata.ContextWindow,
+			ContextTokens:      source.contextTokens,
 			Skills:             source.config.skills,
 			Warnings:           source.config.warnings,
 			InitialCheckpoint:  source.initialCheckpoint,

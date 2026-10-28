@@ -16,15 +16,6 @@ const (
 	ProfileMain     Profile = "main"
 )
 
-func (profile Profile) valid() bool {
-	switch profile {
-	case ProfileFast, ProfileBalanced, ProfileMain:
-		return true
-	default:
-		return false
-	}
-}
-
 type State string
 
 const (

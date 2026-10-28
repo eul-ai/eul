@@ -8,7 +8,6 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
-	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal"
 )
 
@@ -65,7 +64,7 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 			if options.Config.Model != "main-model" || options.Config.ThinkingLevel != agent.ThinkingLow || !options.Config.FastMode {
 				t.Fatalf("new options = model %q, thinking %q, fast %v", options.Config.Model, options.Config.ThinkingLevel, options.Config.FastMode)
 			}
-			if err := options.StateChanges.Notify(sessionStoreTestTerminalCheckpoint(t, "new session prompt"), false); err != nil {
+			if err := options.StateChanges.Notify(testTerminalCheckpoint("new session prompt"), false); err != nil {
 				t.Fatal(err)
 			}
 			return terminal.RunOutcome{Action: terminal.RunExit}, nil
@@ -78,7 +77,7 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 	if len(runner.options) != 2 || opened != 1 {
 		t.Fatalf("runner calls = %d, backend opens = %d", len(runner.options), opened)
 	}
-	if err := runner.options[1].StateChanges.Notify(terminal.EmptyCheckpoint(), false); err == nil {
+	if err := runner.options[1].StateChanges.Notify(terminal.Checkpoint{}, false); err == nil {
 		t.Fatalf("save after new session cleanup = %v", err)
 	}
 	newRecord, err := launcher.store.Open(cwd, runner.options[1].Config.SessionID)
@@ -101,8 +100,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 	backendRuntime.Catalog = testCatalog("initial-main", "initial-fast", "initial-balanced", "resume-main", "resume-fast", "resume-balanced")
 	opened := 0
 	launcher := newLifecycleLauncher(t, initialCWD, backendRuntime, &opened)
-	targetTerminal := sessionStoreTestTerminalCheckpoint(t, "resume target prompt")
-	targetID := createTargetSession(t, launcher.store, targetCWD, targetTerminal)
+	targetID := createTargetSession(t, launcher.store, targetCWD, "resume target prompt")
 
 	initialSession := startTestSession(t, launcher, sessionSettings{
 		models:        backend.Models{Main: "initial-main", Fast: "initial-fast", Balanced: "initial-balanced"},
@@ -141,7 +139,7 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 	if len(runner.options) != 2 || opened != 1 {
 		t.Fatalf("runner calls = %d, backend opens = %d", len(runner.options), opened)
 	}
-	if err := runner.options[1].StateChanges.Notify(targetTerminal, false); err == nil {
+	if err := runner.options[1].StateChanges.Notify(testTerminalCheckpoint("resume target prompt"), false); err == nil {
 		t.Fatalf("save after resumed session cleanup = %v", err)
 	}
 
@@ -183,7 +181,7 @@ func TestRunSessionsKeepsNoSandboxAcrossResumeAndNewSession(t *testing.T) {
 	backendRuntime.Catalog = testCatalog("gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra", "resume-main", "resume-fast", "resume-balanced")
 	launcher := testLauncher(t, cwd, backendRuntime)
 	launcher.noSandbox = true
-	targetID := createTargetSession(t, launcher.store, cwd, sessionStoreTestTerminalCheckpoint(t, "resume target prompt"))
+	targetID := createTargetSession(t, launcher.store, cwd, "resume target prompt")
 	initialSession := startTestSession(t, launcher, sessionSettings{cwd: cwd, thinkingLevel: agent.ThinkingHigh})
 
 	unsandboxed := func(options terminal.Options) {
@@ -218,7 +216,7 @@ func TestLaunchResumeKeepsPrompt(t *testing.T) {
 	backendRuntime := testBackendRuntime(emptyProvider())
 	backendRuntime.Catalog = testCatalog("resume-main", "resume-fast", "resume-balanced")
 	launcher := testLauncher(t, cwd, backendRuntime)
-	targetID := createTargetSession(t, launcher.store, cwd, sessionStoreTestTerminalCheckpoint(t, "resume target prompt"))
+	targetID := createTargetSession(t, launcher.store, cwd, "resume target prompt")
 
 	session, err := launcher.launch(context.Background(), Options{Resume: true, SessionID: targetID, Prompt: "continue"})
 	if err != nil {
@@ -255,21 +253,15 @@ func newLifecycleLauncher(t *testing.T, cwd string, runtime *backend.Runtime, op
 	return launcher
 }
 
-func createTargetSession(t *testing.T, store *sessionStore, cwd string, terminalCheckpoint terminal.Checkpoint) string {
+func createTargetSession(t *testing.T, store *sessionStore, cwd string, prompt string) string {
 	t.Helper()
-	target, err := store.Create(
-		"test",
-		cwd,
-		backend.Models{Main: "resume-main", Fast: "resume-fast", Balanced: "resume-balanced"},
-		agent.ThinkingMedium,
-		sessionStoreTestAgentCheckpoint(t),
-		subagent.EmptyCheckpoint(),
-		terminalCheckpoint,
-		true,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	target := createStoredSession(t, store, sessionSettings{
+		provider:      "test",
+		cwd:           cwd,
+		models:        backend.Models{Main: "resume-main", Fast: "resume-fast", Balanced: "resume-balanced"},
+		thinkingLevel: agent.ThinkingMedium,
+		fastMode:      true,
+	}, prompt)
 	if err := target.Close(); err != nil {
 		t.Fatal(err)
 	}

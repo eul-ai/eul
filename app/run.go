@@ -124,7 +124,18 @@ func (launcher *launcher) open(ctx context.Context, settings sessionSettings, ha
 	if err != nil {
 		return nil, err
 	}
-	return newStoredAgentSession(launcher, config, runtime, handle, prompt)
+	if handle == nil {
+		handle, err = launcher.store.Create(config.sessionSettings)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	session, err := newStoredAgentSession(launcher, config, runtime, handle, prompt)
+	if err != nil {
+		return nil, errors.Join(err, handle.Close())
+	}
+	return session, nil
 }
 
 func (launcher *launcher) runtime(ctx context.Context, selected backend.Backend) (*backend.Runtime, error) {

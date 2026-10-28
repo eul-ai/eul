@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestMessageHistoryStoreLoadsOtherSessions(t *testing.T) {
+func TestMessageHistoryStoreLoadsOwnSessionLast(t *testing.T) {
 	const (
 		firstSession  = "11111111111111111111111111111111"
 		secondSession = "22222222222222222222222222222222"
@@ -32,7 +32,7 @@ func TestMessageHistoryStoreLoadsOtherSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(entries, []string{"second prompt"}) {
+	if !slices.Equal(entries, []string{"second prompt", "first prompt", "third prompt"}) {
 		t.Fatalf("entries = %q", entries)
 	}
 

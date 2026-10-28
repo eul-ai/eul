@@ -8,32 +8,6 @@ import (
 	"github.com/eul-ai/eul/agent"
 )
 
-func TestCheckpointRejectsInvalidActivePolicy(t *testing.T) {
-	base := checkpointData{
-		Version: checkpointVersion,
-		NextID:  1,
-		Active: []activeCheckpoint{{
-			ID:            "subagent-1",
-			Description:   "task",
-			ModelProfile:  ProfileBalanced,
-			ThinkingLevel: agent.ThinkingLow,
-			State:         StateRunning,
-		}},
-	}
-
-	invalidProfile := cloneCheckpointData(base)
-	invalidProfile.Active[0].ModelProfile = Profile("unknown")
-	if err := validateCheckpointData(invalidProfile); err == nil {
-		t.Fatal("invalid profile accepted")
-	}
-
-	invalidThinking := cloneCheckpointData(base)
-	invalidThinking.Active[0].ThinkingLevel = agent.ThinkingLevel("invalid")
-	if err := validateCheckpointData(invalidThinking); err == nil {
-		t.Fatal("invalid thinking level accepted")
-	}
-}
-
 func TestCheckpointRoundTripRestoresPendingAndInterruptsActive(t *testing.T) {
 	block := make(chan struct{})
 	manager := NewManager(func(ctx context.Context, task Task, _ func(agent.Usage)) (string, error) {
@@ -46,7 +20,7 @@ func TestCheckpointRoundTripRestoresPendingAndInterruptsActive(t *testing.T) {
 		case <-block:
 			return "", nil
 		}
-	})
+	}, Checkpoint{})
 	if _, err := manager.Start([]Task{
 		{Description: "finished", Prompt: "complete", ModelProfile: ProfileMain, ThinkingLevel: agent.ThinkingMedium},
 		{Description: "running", Prompt: "running", ModelProfile: ProfileFast, ThinkingLevel: agent.ThinkingLow},
@@ -67,13 +41,10 @@ func TestCheckpointRoundTripRestoresPendingAndInterruptsActive(t *testing.T) {
 	}
 	restored := NewManager(func(context.Context, Task, func(agent.Usage)) (string, error) {
 		return "restored", nil
-	})
+	}, decoded)
 	defer restored.Close()
-	if err := restored.RestoreCheckpoint(decoded); err != nil {
-		t.Fatal(err)
-	}
-	status := waitForStatus(t, restored, func(status Status) bool { return len(status.PendingCompletions) == 2 })
-	if status.PendingCompletions[0].Status != StateComplete || status.PendingCompletions[1].Status != StateInterrupted {
+	status := restored.Snapshot()
+	if len(status.PendingCompletions) != 2 || status.PendingCompletions[0].Status != StateComplete || status.PendingCompletions[1].Status != StateInterrupted {
 		t.Fatalf("awaiting = %+v", status.PendingCompletions)
 	}
 	if status.PendingCompletions[1].MessageID <= status.PendingCompletions[0].MessageID {
@@ -85,5 +56,9 @@ func TestCheckpointRoundTripRestoresPendingAndInterruptsActive(t *testing.T) {
 	}
 	if jobs[0].ID != "subagent-3" {
 		t.Fatalf("restored job ID = %q", jobs[0].ID)
+	}
+	completion := waitForStatus(t, restored, func(status Status) bool { return len(status.PendingCompletions) == 3 }).PendingCompletions[2]
+	if completion.MessageID <= status.PendingCompletions[1].MessageID {
+		t.Fatalf("new message ID = %d after %d", completion.MessageID, status.PendingCompletions[1].MessageID)
 	}
 }

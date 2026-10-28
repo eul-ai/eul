@@ -17,7 +17,7 @@ func TestSubagentLaunchUsesPerTaskPolicyDefaultsAndValidation(t *testing.T) {
 	manager := subagent.NewManager(func(_ context.Context, task subagent.Task, _ func(agent.Usage)) (string, error) {
 		requests <- task
 		return "", nil
-	})
+	}, subagent.Checkpoint{})
 	defer manager.Close()
 	launch := NewLaunchSubagents(manager, uniformThinkingLevels(agent.ThinkingMedium), agent.NewSettings(agent.ThinkingHigh, false))
 
@@ -125,7 +125,7 @@ func TestSubagentWaitPresentationShowsProvidedTimeout(t *testing.T) {
 func TestSubagentWaitIsSynchronizationOnly(t *testing.T) {
 	manager := subagent.NewManager(func(context.Context, subagent.Task, func(agent.Usage)) (string, error) {
 		return "research result", nil
-	})
+	}, subagent.Checkpoint{})
 	defer manager.Close()
 	launch := NewLaunchSubagents(manager, uniformThinkingLevels(agent.ThinkingMedium), agent.NewSettings(agent.ThinkingMedium, false))
 	wait := NewWaitForSubagent(manager)
@@ -153,7 +153,7 @@ func TestSubagentWaitTimesOutWithoutCancelingChild(t *testing.T) {
 		case <-release:
 			return "done", nil
 		}
-	})
+	}, subagent.Checkpoint{})
 	defer manager.Close()
 	if _, err := manager.Start([]subagent.Task{{Description: "inspect", Prompt: "inspect"}}); err != nil {
 		t.Fatal(err)
@@ -204,7 +204,7 @@ func uniformThinkingLevels(levels ...agent.ThinkingLevel) map[subagent.Profile][
 func TestSubagentInboxBatchesAndAcknowledgesCompletions(t *testing.T) {
 	manager := subagent.NewManager(func(context.Context, subagent.Task, func(agent.Usage)) (string, error) {
 		return strings.Repeat("x", 32*1024), nil
-	})
+	}, subagent.Checkpoint{})
 	defer manager.Close()
 	if _, err := manager.Start([]subagent.Task{
 		{Description: "first", Prompt: "first"},
@@ -241,7 +241,7 @@ func TestSubagentInboxInstructionsListActiveSubagents(t *testing.T) {
 	manager := subagent.NewManager(func(ctx context.Context, _ subagent.Task, _ func(agent.Usage)) (string, error) {
 		<-ctx.Done()
 		return "", ctx.Err()
-	})
+	}, subagent.Checkpoint{})
 	defer manager.Close()
 	if _, err := manager.Start([]subagent.Task{{Description: "inspect scheduler", Prompt: "inspect"}}); err != nil {
 		t.Fatal(err)

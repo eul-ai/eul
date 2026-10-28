@@ -88,6 +88,7 @@ type Config struct {
 	FastMode           bool
 	FastModeAvailable  bool
 	ContextWindow      int64
+	ContextTokens      int64
 	Skills             []skill.Skill
 	Warnings           []string
 	InitialCheckpoint  *Checkpoint

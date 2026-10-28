@@ -13,6 +13,8 @@ var errEngineBusy = errors.New("agent: engine is busy")
 type Options struct {
 	Model         string
 	Instructions  string
+	SessionID     string
+	Checkpoint    Checkpoint
 	Checkpointing bool
 	Inbox         Inbox
 	Settings      *Settings
@@ -47,6 +49,10 @@ func New(provider Provider, tools []Tool, options Options) *Engine {
 	if goal == nil {
 		goal = &Goal{}
 	}
+	if saved := options.Checkpoint.Goal; saved != nil {
+		restored := *saved
+		goal.restore(&restored)
+	}
 
 	byName := make(map[string]Tool, len(tools))
 	definitions := make([]ToolDefinition, len(tools))
@@ -59,12 +65,18 @@ func New(provider Provider, tools []Tool, options Options) *Engine {
 	})
 
 	return &Engine{
-		provider:      provider,
-		tools:         byName,
-		definitions:   definitions,
-		model:         options.Model,
-		settings:      settings,
-		instructions:  options.Instructions,
+		provider:     provider,
+		tools:        byName,
+		definitions:  definitions,
+		sessionID:    options.SessionID,
+		model:        options.Model,
+		settings:     settings,
+		instructions: options.Instructions,
+		conversation: conversationState{
+			state:  options.Checkpoint.State,
+			usage:  options.Checkpoint.ContextUsage,
+			inputs: options.Checkpoint.PendingInputs,
+		},
 		continuations: continuationArbiter{goal: goal},
 		checkpointing: options.Checkpointing,
 		inbox:         options.Inbox,
@@ -107,13 +119,6 @@ func (e *Engine) Compact(ctx context.Context, sink EventSink) error {
 	t := &turn{engine: e, ctx: ctx, sink: sink, current: e.conversation}
 	defer func() { e.conversation = t.current }()
 	return t.compact()
-}
-
-func (e *Engine) SetSessionID(sessionID string) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	e.sessionID = sessionID
 }
 
 func (e *Engine) Steer(content []ContentPart) bool {

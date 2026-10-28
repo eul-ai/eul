@@ -45,7 +45,6 @@ func newCheckpointCoordinator(
 		agent:     handle.record.Agent,
 		terminal:  handle.record.Terminal,
 		settings:  settings,
-		active:    handle.record.Status == sessionActive,
 	}
 }
 
@@ -56,53 +55,14 @@ func newStoredAgentSession(
 	handle *sessionHandle,
 	prompt string,
 ) (*agentSession, error) {
-	session, options, err := newAgentSessionComponents(config, runtime, launcher.noSandbox, launcher.interrupts)
-	if err != nil {
-		return nil, err
-	}
-
-	restore := handle != nil
-	if handle == nil {
-		agentCheckpoint, checkpointErr := session.engine.Checkpoint()
-		if checkpointErr != nil {
-			return nil, session.finish(checkpointErr)
-		}
-		thinkingLevel, fastMode := session.agentSettings.Snapshot()
-		handle, err = launcher.store.Create(
-			config.provider,
-			config.cwd,
-			config.models,
-			thinkingLevel,
-			agentCheckpoint,
-			session.subagents.Checkpoint(),
-			terminal.EmptyCheckpoint(),
-			fastMode,
-		)
-		if err != nil {
-			return nil, session.finish(err)
-		}
-	}
-
 	record := handle.Record()
-	session.engine.SetSessionID(record.ID)
-	if restore {
-		if err := session.engine.RestoreCheckpoint(record.Agent); err != nil {
-			return nil, session.finish(fmt.Errorf("restore agent session: %w", err))
-		}
-		if err := session.subagents.RestoreCheckpoint(record.Subagent); err != nil {
-			return nil, session.finish(fmt.Errorf("restore subagents: %w", err))
-		}
-	}
-
 	historyEntries, err := launcher.history.Load(record.ID)
 	if err != nil {
-		return nil, errors.Join(session.finish(fmt.Errorf("load message history: %w", err)), handle.Close())
+		return nil, fmt.Errorf("load message history: %w", err)
 	}
-	options.messageHistory = terminal.MessageHistory{
-		Entries: historyEntries,
-		Append: func(entry string) error {
-			return launcher.history.Append(record.ID, entry)
-		},
+	session, options, err := newAgentSessionComponents(config, runtime, record, launcher.noSandbox, launcher.interrupts)
+	if err != nil {
+		return nil, err
 	}
 
 	checkpoints := newCheckpointCoordinator(handle, session.engine, session.subagents, session.agentSettings)
@@ -127,15 +87,16 @@ func newStoredAgentSession(
 		}
 	}()
 
-	if restore {
-		if err := checkpoints.RestoreIdle(record.Agent); err != nil {
-			return nil, session.finish(fmt.Errorf("save restored subagents: %w", err))
-		}
-		checkpoint := record.Terminal
-		options.initialCheckpoint = &checkpoint
-		options.previousTurnActive = record.Status == sessionActive
-	}
 	options.checkpoints = checkpoints
+	options.messageHistory = terminal.MessageHistory{
+		Entries: historyEntries,
+		Append: func(entry string) error {
+			return launcher.history.Append(record.ID, entry)
+		},
+	}
+	options.initialCheckpoint = &record.Terminal
+	options.previousTurnActive = record.Status == sessionActive
+	options.contextTokens = record.Agent.ContextUsage.TotalTokens
 	options.initialPrompt = prompt
 	options.sessionID = record.ID
 	options.sessions.List = sessionList(handle)
@@ -193,14 +154,6 @@ func (coordinator *checkpointCoordinator) SaveIdle() {
 	if err := coordinator.saveLocked(coordinator.agent); err != nil {
 		coordinator.idleErr = errors.Join(coordinator.idleErr, err)
 	}
-}
-
-func (coordinator *checkpointCoordinator) RestoreIdle(agentCheckpoint agent.Checkpoint) error {
-	coordinator.mu.Lock()
-	defer coordinator.mu.Unlock()
-	coordinator.agent = agentCheckpoint
-	coordinator.active = false
-	return coordinator.saveLocked(agentCheckpoint)
 }
 
 func (coordinator *checkpointCoordinator) Stop() {

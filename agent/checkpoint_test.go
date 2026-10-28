@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"reflect"
 	"slices"
 	"testing"
@@ -44,10 +43,7 @@ func TestEngineCheckpointRoundTrip(t *testing.T) {
 	}
 
 	restoredGoal := &Goal{}
-	restored := newTestEngine(t, &scriptedProvider{t: t}, &fakeToolbox{}, Options{Goal: restoredGoal})
-	if err := restored.RestoreCheckpoint(decoded); err != nil {
-		t.Fatal(err)
-	}
+	restored := newTestEngine(t, &scriptedProvider{t: t}, &fakeToolbox{}, Options{Goal: restoredGoal, Checkpoint: decoded})
 	if string(restored.conversation.state) != "provider-state" {
 		t.Fatalf("state = %q", restored.conversation.state)
 	}
@@ -64,68 +60,6 @@ func TestEngineCheckpointRoundTrip(t *testing.T) {
 	state, ok := restoredGoal.State()
 	if !ok || state.Objective != "finish migration" || !state.Complete {
 		t.Fatalf("goal=%+v exists=%v", state, ok)
-	}
-}
-
-func TestCheckpointRejectsContentOnToolResult(t *testing.T) {
-	checkpoint := Checkpoint{data: checkpointData{
-		Version: checkpointVersion,
-		PendingInputs: []Input{{
-			Kind:    InputToolResult,
-			CallID:  "call",
-			Tool:    "read",
-			Content: []ContentPart{{Kind: ContentPartText, Text: "invalid"}},
-		}},
-	}}
-	if _, err := json.Marshal(checkpoint); err == nil {
-		t.Fatal("checkpoint accepted content on a tool result")
-	}
-}
-
-func TestVersionThreeCheckpointFixture(t *testing.T) {
-	fixture, err := os.ReadFile("testdata/checkpoint-v3.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var checkpoint Checkpoint
-	if err := json.Unmarshal(fixture, &checkpoint); err != nil {
-		t.Fatal(err)
-	}
-
-	goal := &Goal{}
-	engine := newTestEngine(t, &scriptedProvider{t: t}, &fakeToolbox{}, Options{Goal: goal})
-	if err := engine.RestoreCheckpoint(checkpoint); err != nil {
-		t.Fatal(err)
-	}
-	if string(engine.conversation.state) != "provider-state-v1" || engine.conversation.usage != (Usage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}) {
-		t.Fatalf("conversation = %+v", engine.conversation)
-	}
-	if len(engine.conversation.inputs) != 2 || engine.conversation.inputs[0].Kind != InputUser || engine.conversation.inputs[1].Kind != InputToolResult || engine.conversation.inputs[1].CallID != "call-1" {
-		t.Fatalf("inputs = %+v", engine.conversation.inputs)
-	}
-	state, ok := goal.State()
-	if !ok || state.Objective != "finish migration" || state.Complete {
-		t.Fatalf("goal = %+v, exists = %t", state, ok)
-	}
-
-	encoded, err := json.Marshal(checkpoint)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertCheckpointSemanticJSON(t, encoded, fixture)
-}
-
-func assertCheckpointSemanticJSON(t *testing.T, got, want []byte) {
-	t.Helper()
-	var gotValue, wantValue any
-	if err := json.Unmarshal(got, &gotValue); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(want, &wantValue); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(gotValue, wantValue) {
-		t.Fatalf("JSON mismatch:\ngot:  %s\nwant: %s", got, want)
 	}
 }
 

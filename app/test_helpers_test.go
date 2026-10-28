@@ -79,37 +79,20 @@ func startTestSession(t *testing.T, launcher *launcher, settings sessionSettings
 	return session
 }
 
-func sessionStoreTestAgentCheckpoint(t testing.TB) agent.Checkpoint {
-	t.Helper()
-	var checkpoint agent.Checkpoint
-	if err := json.Unmarshal([]byte(`{"version":3,"context_usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}`), &checkpoint); err != nil {
-		t.Fatal(err)
-	}
-	return checkpoint
+func testTerminalCheckpoint(prompt string) terminal.Checkpoint {
+	return terminal.Checkpoint{Blocks: []terminal.Block{{Text: prompt}}}
 }
 
-func sessionStoreTestTerminalCheckpoint(t testing.TB, prompt string) terminal.Checkpoint {
+func createStoredSession(t *testing.T, store *sessionStore, settings sessionSettings, prompt string) *sessionHandle {
 	t.Helper()
-	return sessionStoreTestTerminalBlocks(t, []map[string]any{{
-		"kind": 0,
-		"text": prompt,
-	}})
-}
-
-func sessionStoreTestTerminalBlocks(t testing.TB, blocks []map[string]any) terminal.Checkpoint {
-	t.Helper()
-	encoded, err := json.Marshal(map[string]any{
-		"version": 2,
-		"blocks":  blocks,
-	})
+	handle, err := store.Create(settings)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var checkpoint terminal.Checkpoint
-	if err := json.Unmarshal(encoded, &checkpoint); err != nil {
+	if err := handle.Save(agent.Checkpoint{}, subagent.Checkpoint{}, testTerminalCheckpoint(prompt), false, settings.thinkingLevel, settings.fastMode); err != nil {
 		t.Fatal(err)
 	}
-	return checkpoint
+	return handle
 }
 
 func waitForSubagentCompletions(t *testing.T, manager *subagent.Manager, count int) {
