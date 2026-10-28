@@ -9,12 +9,12 @@ import (
 	"syscall"
 )
 
-func newBashProcess(ctx context.Context, shell, source string, network bool) (*exec.Cmd, error) {
+func newBashProcess(ctx context.Context, shell, source string, network bool) *exec.Cmd {
 	command := exec.CommandContext(ctx, shell, "-c", source)
 	attributes := &syscall.SysProcAttr{Setpgid: true}
 	if network {
 		command.SysProcAttr = attributes
-		return command, nil
+		return command
 	}
 
 	uid := os.Getuid()
@@ -24,5 +24,5 @@ func newBashProcess(ctx context.Context, shell, source string, network bool) (*e
 	attributes.GidMappings = []syscall.SysProcIDMap{{ContainerID: gid, HostID: gid, Size: 1}}
 	attributes.GidMappingsEnableSetgroups = false
 	command.SysProcAttr = attributes
-	return command, nil
+	return command
 }

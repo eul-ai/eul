@@ -12,7 +12,7 @@ const bashNetworkSandboxProfile = `(version 1)
 (allow default)
 (deny network*)`
 
-func newBashProcess(ctx context.Context, shell, source string, network bool) (*exec.Cmd, error) {
+func newBashProcess(ctx context.Context, shell, source string, network bool) *exec.Cmd {
 	var command *exec.Cmd
 	if network {
 		command = exec.CommandContext(ctx, shell, "-c", source)
@@ -20,5 +20,5 @@ func newBashProcess(ctx context.Context, shell, source string, network bool) (*e
 		command = exec.CommandContext(ctx, "/usr/bin/sandbox-exec", "-p", bashNetworkSandboxProfile, shell, "-c", source)
 	}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	return command, nil
+	return command
 }

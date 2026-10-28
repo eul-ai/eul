@@ -58,10 +58,7 @@ func (b *Bash) Execute(ctx context.Context, arguments json.RawMessage, updates a
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	command, err := newBashProcess(runCtx, b.shell, args.Command, args.Network)
-	if err != nil {
-		return errorResult(bashToolName, err), nil
-	}
+	command := newBashProcess(runCtx, b.shell, args.Command, args.Network)
 	command.Cancel = func() error {
 		err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 		if errors.Is(err, syscall.ESRCH) {
