@@ -1,7 +1,7 @@
 package terminal
 
 import (
-	"errors"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -181,19 +181,9 @@ func (m *tuiModel) clearInputPickers() {
 	m.dismissResumePicker()
 }
 
-func (m *tuiModel) nextThinkingLevel() (agent.ThinkingLevel, error) {
-	if !m.thinkingSelectionAvailable || len(m.thinkingLevels) == 0 {
-		return "", errors.New("thinking level selection is unavailable")
-	}
-
-	next := m.thinkingLevels[0]
-	for index, level := range m.thinkingLevels {
-		if level == m.thinkingLevel {
-			next = m.thinkingLevels[(index+1)%len(m.thinkingLevels)]
-			break
-		}
-	}
-	return next, nil
+func (m *tuiModel) nextThinkingLevel() agent.ThinkingLevel {
+	index := slices.Index(m.thinkingLevels, m.session.Settings().ThinkingLevel)
+	return m.thinkingLevels[(index+1)%len(m.thinkingLevels)]
 }
 
 func (m *tuiModel) backspace() {

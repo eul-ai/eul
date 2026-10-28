@@ -7,13 +7,15 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/subagent"
 	"github.com/eul-ai/eul/terminal/text"
 )
 
 func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 	started := time.Now().Add(-(time.Minute + 5*time.Second))
-	model := newTestModel(140, 10, Options{})
+	model := newTestModel(140, 10, nil)
 	model.subagentStatus = subagent.Status{Active: []subagent.JobStatus{
 		{
 			ID: "subagent-1", Description: "inspect layout", ModelProfile: "balanced", ThinkingLevel: agent.ThinkingLow,
@@ -51,7 +53,7 @@ func TestRunningSubagentsRenderAboveInput(t *testing.T) {
 func TestSubagentStatusesUseStateColorsAndFreezeCompletedElapsed(t *testing.T) {
 	started := time.Now().Add(-time.Minute)
 	finished := started.Add(5 * time.Second)
-	model := newTestModel(80, 10, Options{})
+	model := newTestModel(80, 10, nil)
 	model.subagentStatus.Active = []subagent.JobStatus{
 		{ID: "running", State: subagent.StateRunning, Started: started},
 		{ID: "canceling", State: subagent.StateCanceling, Started: started},
@@ -91,7 +93,7 @@ func TestSubagentStatusesUseStateColorsAndFreezeCompletedElapsed(t *testing.T) {
 }
 
 func TestSubagentPanelIsCappedOnSmallTerminals(t *testing.T) {
-	model := newTestModel(40, 8, Options{})
+	model := newTestModel(40, 8, nil)
 	model.subagentStatus.Active = make([]subagent.JobStatus, 4)
 	for index := range model.subagentStatus.Active {
 		model.subagentStatus.Active[index] = subagent.JobStatus{ID: "subagent-" + strconv.Itoa(index+1), State: subagent.StateRunning}
@@ -104,7 +106,7 @@ func TestSubagentPanelIsCappedOnSmallTerminals(t *testing.T) {
 }
 
 func TestStatusOmitsBackgroundSubagents(t *testing.T) {
-	model := newTestModel(120, 12, Options{Config: Config{Model: "model"}})
+	model := newTestModel(120, 12, &fakeSession{settings: session.Settings{Models: backend.Models{Main: "model"}}})
 	model.subagentStatus = subagent.Status{
 		Active: []subagent.JobStatus{{ID: "subagent-1", State: subagent.StateRunning}},
 	}

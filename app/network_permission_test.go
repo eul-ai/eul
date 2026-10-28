@@ -19,7 +19,7 @@ type toolOutcome struct {
 	err    error
 }
 
-func callToolAsync(caller *toolCaller, opened *agentSession, name, arguments string) <-chan toolOutcome {
+func callToolAsync(caller *toolCaller, opened *testSession, name, arguments string) <-chan toolOutcome {
 	done := make(chan toolOutcome, 1)
 	go func() {
 		result, err := caller.call(opened, name, arguments)
@@ -45,13 +45,13 @@ func TestAgentSessionAsksForNetworkApproval(t *testing.T) {
 	caller := &toolCaller{}
 	cwd := t.TempDir()
 	opened := startTestSession(t, testLauncher(t, cwd, caller.runtime()), session.Settings{Models: backend.Models{Main: "model"}, WorkingDirectory: cwd})
-	defer opened.finish(nil)
+	defer opened.Close()
 
 	done := callToolAsync(caller, opened, "bash", `{"command":"printf approved","timeout":null,"network":true}`)
-	if request := awaitPermission(t, opened.conversation); request.Subject != "bash" || request.Detail != "printf approved" {
+	if request := awaitPermission(t, opened.Session); request.Subject != "bash" || request.Detail != "printf approved" {
 		t.Fatalf("request = %+v", request)
 	}
-	opened.conversation.ResolvePermission(session.PermissionAllowOnce)
+	opened.ResolvePermission(session.PermissionAllowOnce)
 	select {
 	case completed := <-done:
 		if completed.err != nil || completed.result.IsError || !strings.Contains(completed.result.PlainText(), "approved") {
@@ -66,23 +66,23 @@ func TestAgentSessionAsksForSubagentNetworkApproval(t *testing.T) {
 	caller := &toolCaller{child: networkBashChildProvider("child approved", nil)}
 	cwd := t.TempDir()
 	opened := startTestSession(t, testLauncher(t, cwd, caller.runtime()), session.Settings{Models: backend.Models{Main: "model"}, WorkingDirectory: cwd})
-	defer opened.finish(nil)
+	defer opened.Close()
 
 	result, err := caller.call(opened, "launch_subagents", `{"tasks":[{"description":"inspect network","prompt":"inspect network"}]}`)
 	if err != nil || result.IsError {
 		t.Fatalf("launch result = %+v, error = %v", result, err)
 	}
 
-	if request := awaitPermission(t, opened.conversation); request.Subject != "bash" || request.Detail != "printf child" {
+	if request := awaitPermission(t, opened.Session); request.Subject != "bash" || request.Detail != "printf child" {
 		t.Fatalf("request = %+v", request)
 	}
-	if status := opened.subagents.Snapshot(); len(status.Active) != 1 || len(status.PendingCompletions) != 0 {
+	if status := opened.waitSubagents(t, func(status subagent.Status) bool { return len(status.Active) == 1 }); len(status.PendingCompletions) != 0 {
 		t.Fatalf("subagent did not wait for permission: %+v", status)
 	}
-	opened.conversation.ResolvePermission(session.PermissionAllowOnce)
+	opened.ResolvePermission(session.PermissionAllowOnce)
 
-	waitForSubagentCompletions(t, opened.subagents, 1)
-	completion := opened.subagents.Snapshot().PendingCompletions[0]
+	waitForSubagentCompletions(t, opened, 1)
+	completion := opened.subagents.PendingCompletions[0]
 	if completion.Status != subagent.StateComplete || completion.Result != "child approved" {
 		t.Fatalf("completion = %+v", completion)
 	}
@@ -93,11 +93,11 @@ func TestAgentSessionSharesNetworkSessionApprovalWithSubagents(t *testing.T) {
 	caller := &toolCaller{child: networkBashChildProvider("child approved", childCompleted)}
 	cwd := t.TempDir()
 	opened := startTestSession(t, testLauncher(t, cwd, caller.runtime()), session.Settings{Models: backend.Models{Main: "model"}, WorkingDirectory: cwd})
-	defer opened.finish(nil)
+	defer opened.Close()
 
 	parentDone := callToolAsync(caller, opened, "bash", `{"command":"printf parent","timeout":null,"network":true}`)
-	awaitPermission(t, opened.conversation)
-	opened.conversation.ResolvePermission(session.PermissionAllowSession)
+	awaitPermission(t, opened.Session)
+	opened.ResolvePermission(session.PermissionAllowSession)
 	select {
 	case completed := <-parentDone:
 		if completed.err != nil || completed.result.IsError {
@@ -117,10 +117,9 @@ func TestAgentSessionSharesNetworkSessionApprovalWithSubagents(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("subagent Bash did not inherit session approval")
 	}
-	if requests := opened.conversation.Permissions(); len(requests) != 0 {
+	if requests := opened.Permissions(); len(requests) != 0 {
 		t.Fatalf("subagent requested permission after session approval: %+v", requests)
 	}
-	waitForSubagentCompletions(t, opened.subagents, 1)
 }
 
 func TestUnsandboxedSessionRunsNetworkCommandsWithoutAsking(t *testing.T) {
@@ -129,11 +128,11 @@ func TestUnsandboxedSessionRunsNetworkCommandsWithoutAsking(t *testing.T) {
 	launcher := testLauncher(t, cwd, caller.runtime())
 	launcher.noSandbox = true
 	opened := startTestSession(t, launcher, session.Settings{Models: backend.Models{Main: "model"}, WorkingDirectory: cwd})
-	defer opened.finish(nil)
+	defer opened.Close()
 
 	result, err := caller.call(opened, "bash", `{"command":"printf open","timeout":null,"network":true}`)
-	if err != nil || result.IsError || !strings.Contains(result.PlainText(), "open") || len(opened.conversation.Permissions()) != 0 {
-		t.Fatalf("result = %+v, error = %v, permissions = %d", result, err, len(opened.conversation.Permissions()))
+	if err != nil || result.IsError || !strings.Contains(result.PlainText(), "open") || len(opened.Permissions()) != 0 {
+		t.Fatalf("result = %+v, error = %v, permissions = %d", result, err, len(opened.Permissions()))
 	}
 }
 

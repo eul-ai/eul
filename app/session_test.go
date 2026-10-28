@@ -76,27 +76,24 @@ func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	wired := startTestSession(t, testLauncher(t, cwd, backendRuntime), session.Settings{Models: backend.Models{Main: "model", Fast: "model", Balanced: "model"}, ThinkingLevel: agent.ThinkingMedium, WorkingDirectory: cwd})
-	defer wired.finish(nil)
-	if wired.terminalOptions.Services.LoadUsage == nil {
-		t.Fatal("backend usage was not wired to the terminal")
-	}
-	usage, err := wired.terminalOptions.Services.LoadUsage(context.Background())
+	defer wired.Close()
+	usage, err := wired.Usage(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if usageCalls != 1 || len(usage.Windows) != 1 || usage.MonthlyUsageUSD == nil || *usage.MonthlyUsageUSD != monthlyUsage || usage.LimitRemainingUSD == nil || *usage.LimitRemainingUSD != limitRemaining {
 		t.Fatalf("usage calls=%d result=%+v", usageCalls, usage)
 	}
-	if wired.terminalOptions.Config.WorkingDirectory != cwd {
-		t.Fatalf("terminal working directory = %q, want %q", wired.terminalOptions.Config.WorkingDirectory, cwd)
+	if wired.Settings().WorkingDirectory != cwd {
+		t.Fatalf("terminal working directory = %q, want %q", wired.Settings().WorkingDirectory, cwd)
 	}
-	if wired.terminalOptions.Config.ContextWindow != 123_000 || wired.terminalOptions.Config.ThinkingLevel != agent.ThinkingHigh || !wired.terminalOptions.Config.FastModeAvailable {
-		t.Fatalf("terminal metadata = %+v", wired.terminalOptions)
+	if wired.Info().Model.ContextWindow != 123_000 || wired.Settings().ThinkingLevel != agent.ThinkingHigh || !wired.Info().Model.FastMode {
+		t.Fatalf("info = %+v, settings = %+v", wired.Info(), wired.Settings())
 	}
-	if len(wired.terminalOptions.Config.Skills) != 1 || wired.terminalOptions.Config.Skills[0].Name != "review" {
-		t.Fatalf("terminal skills = %+v", wired.terminalOptions.Config.Skills)
+	if len(wired.Info().Skills) != 1 || wired.Info().Skills[0].Name != "review" {
+		t.Fatalf("terminal skills = %+v", wired.Info().Skills)
 	}
-	if !transcriptHas(wired.terminalOptions, session.EntryNotice, filepath.ToSlash(brokenSkill)) {
+	if !transcriptHas(wired, session.EntryNotice, filepath.ToSlash(brokenSkill)) {
 		t.Fatal("skill warning was not shown")
 	}
 }
@@ -110,15 +107,15 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 		return agent.Response{Text: "child result"}, nil
 	}}
 	cwd := t.TempDir()
-	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), session.Settings{Models: backend.Models{Main: "model"}, WorkingDirectory: cwd})
+	opened := startTestSession(t, testLauncher(t, cwd, caller.runtime()), session.Settings{Models: backend.Models{Main: "model"}, WorkingDirectory: cwd})
 	defer func() {
 		close(releaseChild)
-		if err := session.finish(nil); err != nil {
+		if err := opened.Close(); err != nil {
 			t.Error(err)
 		}
 	}()
 
-	result, err := caller.call(session, "launch_subagents", `{"tasks":[{"description":"inspect scheduler","prompt":"child prompt"}]}`)
+	result, err := caller.call(opened, "launch_subagents", `{"tasks":[{"description":"inspect scheduler","prompt":"child prompt"}]}`)
 	if err != nil || result.IsError {
 		t.Fatalf("launch result = %+v, error = %v", result, err)
 	}
@@ -127,12 +124,8 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for child request")
 	}
-	status := session.subagents.Snapshot()
-	if len(status.Active) != 1 {
-		t.Fatalf("active subagents = %+v", status.Active)
-	}
-
-	if _, err := session.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "inspect parent"}}, func(agent.Event) error { return nil }); err != nil {
+	status := opened.waitSubagents(t, func(status subagent.Status) bool { return len(status.Active) == 1 })
+	if err := opened.run("inspect parent"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(caller.request.Instructions, status.Active[0].ID) || !strings.Contains(caller.request.Instructions, status.Active[0].Description) {
@@ -142,13 +135,13 @@ func TestNewAgentSessionWiresSubagentInstructionsExplicitly(t *testing.T) {
 
 func TestNewAgentSessionRejectsUnsupportedFastMode(t *testing.T) {
 	backendRuntime := &backend.Runtime{Provider: emptyProvider(), Catalog: map[string]backend.ModelMetadata{"model": {}}}
-	session, err := testLauncher(t, t.TempDir(), backendRuntime).start(context.Background(), session.Settings{
+	opened, err := testLauncher(t, t.TempDir(), backendRuntime).start(context.Background(), session.Settings{
 		Models:           backend.Models{Main: "model", Fast: "model", Balanced: "model"},
 		FastMode:         true,
 		WorkingDirectory: t.TempDir(),
 	}, "")
-	if session != nil || err == nil {
-		t.Fatalf("session=%v error=%v", session, err)
+	if opened != nil || err == nil {
+		t.Fatalf("session=%v error=%v", opened, err)
 	}
 }
 
@@ -163,21 +156,21 @@ func TestNewAgentSessionUsesMetadataForEachModelProfile(t *testing.T) {
 		"balanced": {ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingHigh}},
 	}
 	cwd := t.TempDir()
-	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), session.Settings{
+	opened := startTestSession(t, testLauncher(t, cwd, backendRuntime), session.Settings{
 		Models:           backend.Models{Main: "main", Fast: "fast", Balanced: "balanced"},
 		ThinkingLevel:    agent.ThinkingHigh,
 		WorkingDirectory: cwd,
 	})
 
-	result, err := caller.call(session, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"fast","thinking_level":"high"}]}`)
+	result, err := caller.call(opened, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"fast","thinking_level":"high"}]}`)
 	if err != nil || !result.IsError {
 		t.Fatalf("fast result = %+v, error = %v", result, err)
 	}
-	result, err = caller.call(session, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"balanced","thinking_level":"high"}]}`)
+	result, err = caller.call(opened, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect","model_profile":"balanced","thinking_level":"high"}]}`)
 	if err != nil || result.IsError {
 		t.Fatalf("balanced result = %+v, error = %v", result, err)
 	}
-	if err := session.finish(nil); err != nil {
+	if err := opened.Close(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -191,15 +184,15 @@ func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 	backendRuntime := caller.runtime()
 	backendRuntime.Catalog = testCatalog("main", "fast", "balanced")
 	cwd := t.TempDir()
-	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), session.Settings{
+	opened := startTestSession(t, testLauncher(t, cwd, backendRuntime), session.Settings{
 		Models:           backend.Models{Main: "main", Fast: "fast", Balanced: "balanced"},
 		ThinkingLevel:    agent.ThinkingHigh,
 		WorkingDirectory: cwd,
 	})
-	defer session.finish(nil)
+	defer opened.Close()
 
 	launch := func() agent.Request {
-		result, err := caller.call(session, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect"}]}`)
+		result, err := caller.call(opened, "launch_subagents", `{"tasks":[{"description":"inspect","prompt":"inspect"}]}`)
 		if err != nil || result.IsError {
 			t.Fatalf("launch result = %+v, error = %v", result, err)
 		}
@@ -216,7 +209,7 @@ func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 	if request.Model != "main" || request.ThinkingLevel != agent.ThinkingHigh {
 		t.Fatalf("high request = %+v", request)
 	}
-	if err := session.agentSettings.SetThinkingLevel(agent.ThinkingMinimal); err != nil {
+	if err := opened.SetThinkingLevel(agent.ThinkingMinimal); err != nil {
 		t.Fatal(err)
 	}
 	request = launch()
@@ -228,25 +221,25 @@ func TestNewAgentSessionSubagentDefaultsFollowMainSettings(t *testing.T) {
 func TestNewAgentSessionWiresUpdateGoalToEngine(t *testing.T) {
 	caller := &toolCaller{}
 	cwd := t.TempDir()
-	session := startTestSession(t, testLauncher(t, cwd, caller.runtime()), session.Settings{Models: backend.Models{Main: "model"}, WorkingDirectory: cwd})
-	defer session.finish(nil)
+	opened := startTestSession(t, testLauncher(t, cwd, caller.runtime()), session.Settings{Models: backend.Models{Main: "model"}, WorkingDirectory: cwd})
+	defer opened.Close()
 
-	result, err := caller.call(session, "update_goal", `{"status":"complete"}`)
+	result, err := caller.call(opened, "update_goal", `{"status":"complete"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.IsError {
 		t.Fatalf("inactive completion result = %+v", result)
 	}
-	if err := session.terminalOptions.Controls.SetGoal("finish"); err != nil {
+	if err := opened.SetGoal("finish"); err != nil {
 		t.Fatal(err)
 	}
 
-	result, err = caller.call(session, "update_goal", `{"status":"complete"}`)
+	result, err = caller.call(opened, "update_goal", `{"status":"complete"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	goal, ok := session.terminalOptions.Controls.Goal()
+	goal, ok := opened.Goal()
 	if result.IsError || !ok || !goal.Complete {
 		t.Fatalf("result=%+v goal=%+v exists=%v", result, goal, ok)
 	}

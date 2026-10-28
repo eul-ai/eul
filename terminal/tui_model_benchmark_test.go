@@ -12,7 +12,7 @@ func BenchmarkTUIAppendStream(b *testing.B) {
 
 			b.ReportAllocs()
 			for b.Loop() {
-				model = newTestModel(120, 40, Options{})
+				model = newTestModel(120, 40, nil)
 				for range chunks {
 					streamAssistantText(model, "word ")
 				}

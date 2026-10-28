@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/skill"
 	"github.com/eul-ai/eul/terminal/keys"
@@ -35,7 +36,7 @@ func TestCommandReferenceRequiresCommandPositionAndTracksReplacement(t *testing.
 }
 
 func TestFastCommandOnlyAppearsWhenAvailable(t *testing.T) {
-	unavailable := newTestModel(80, 24, Options{})
+	unavailable := newTestModel(80, 24, nil)
 	if err := unavailable.insertInput("/fast"); err != nil {
 		t.Fatal(err)
 	}
@@ -43,18 +44,7 @@ func TestFastCommandOnlyAppearsWhenAvailable(t *testing.T) {
 		t.Fatalf("unavailable picker = %+v", unavailable.commandPicker)
 	}
 
-	missingSetter := newTestModel(80, 24, Options{Config: Config{FastModeAvailable: true}})
-	if err := missingSetter.insertInput("/fast"); err != nil {
-		t.Fatal(err)
-	}
-	if missingSetter.commandPickerVisible() {
-		t.Fatalf("missing setter picker = %+v", missingSetter.commandPicker)
-	}
-
-	available := newTestModel(80, 24, Options{
-		Config:   Config{FastModeAvailable: true},
-		Controls: Controls{SetFastMode: func(bool) {}},
-	})
+	available := newTestModel(80, 24, &fakeSession{info: session.Info{Model: backend.ModelMetadata{FastMode: true}}})
 	if err := available.insertInput("/fast"); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +55,7 @@ func TestFastCommandOnlyAppearsWhenAvailable(t *testing.T) {
 }
 
 func TestCommandPickerFiltersCommandsAndSkills(t *testing.T) {
-	model := newTestModel(80, 24, Options{Config: Config{Skills: []skill.Skill{
+	model := newTestModel(80, 24, &fakeSession{info: session.Info{Skills: []skill.Skill{
 		{Name: "review", Description: "Review code"},
 		{Name: "Invalid Name", Description: "Cannot be invoked"},
 	}}})
@@ -83,7 +73,7 @@ func TestCommandPickerFiltersCommandsAndSkills(t *testing.T) {
 }
 
 func TestCommandPickerEnterCompletesAndSubmits(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	if err := model.insertInput("/he"); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +95,7 @@ func TestCommandPickerEnterCompletesAndSubmits(t *testing.T) {
 }
 
 func TestCommandPickerLetsExactCommandSubmit(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	if err := model.insertInput("/new"); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +110,7 @@ func TestCommandPickerLetsExactCommandSubmit(t *testing.T) {
 }
 
 func TestCommandPickerEnterExecutesArrowSelection(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	if err := model.insertInput("/c"); err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +128,7 @@ func TestCommandPickerEnterExecutesArrowSelection(t *testing.T) {
 }
 
 func TestCommandPickerNavigationAndTabReplaceCommandFragment(t *testing.T) {
-	model := newTestModel(80, 24, Options{Config: Config{Skills: []skill.Skill{{Name: "review"}, {Name: "refactor"}}}})
+	model := newTestModel(80, 24, &fakeSession{info: session.Info{Skills: []skill.Skill{{Name: "review"}, {Name: "refactor"}}}})
 	if err := model.insertInput("/skXX existing"); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +147,7 @@ func TestCommandPickerNavigationAndTabReplaceCommandFragment(t *testing.T) {
 }
 
 func TestCommandPickerReplacementStopsBeforeImage(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	if err := model.insertInput("/he"); err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +167,7 @@ func TestCommandPickerReplacementStopsBeforeImage(t *testing.T) {
 }
 
 func TestCommandPickerEscapeDismissesUntilEdit(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	if err := model.insertInput("/"); err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +191,7 @@ func TestCommandPickerEscapeDismissesUntilEdit(t *testing.T) {
 }
 
 func TestHiddenCommandPickerDoesNotInterceptEscape(t *testing.T) {
-	model := newTestModel(80, 5, Options{})
+	model := newTestModel(80, 5, nil)
 	setRunning(model)
 	if err := model.insertInput("/"); err != nil {
 		t.Fatal(err)
@@ -217,7 +207,7 @@ func TestHiddenCommandPickerDoesNotInterceptEscape(t *testing.T) {
 }
 
 func TestCommandPickerOnlySuggestsRunnableCommandsDuringTurn(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	setRunning(model)
 	if err := model.insertInput("/"); err != nil {
 		t.Fatal(err)
@@ -233,7 +223,7 @@ func TestCommandPickerOnlySuggestsRunnableCommandsDuringTurn(t *testing.T) {
 }
 
 func TestCommandPickerSuggestsRunnableCommandDuringTurn(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	setRunning(model)
 	if err := model.insertInput("/he"); err != nil {
 		t.Fatal(err)
@@ -244,7 +234,7 @@ func TestCommandPickerSuggestsRunnableCommandDuringTurn(t *testing.T) {
 }
 
 func TestFilePickerCanOpenInCommandArguments(t *testing.T) {
-	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("/goal inspect @"); err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +245,7 @@ func TestFilePickerCanOpenInCommandArguments(t *testing.T) {
 }
 
 func TestRenderCommandPickerShowsSelectionAndDescription(t *testing.T) {
-	model := newTestModel(40, 12, Options{})
+	model := newTestModel(40, 12, nil)
 	if err := model.insertInput("/he"); err != nil {
 		t.Fatal(err)
 	}

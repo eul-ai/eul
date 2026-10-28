@@ -2,7 +2,6 @@ package terminal
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"strings"
 	"unicode"
@@ -126,12 +125,8 @@ func (c *tuiController) showHelp(context.Context, string) (bool, error) {
 	return false, nil
 }
 
-func (c *tuiController) openResume(ctx context.Context, _ string) (bool, error) {
-	if c.sessions.List == nil {
-		setInputError(c.model, errors.New("session resumption is unavailable"))
-		return false, nil
-	}
-	summaries, err := c.sessions.List(ctx)
+func (c *tuiController) openResume(context.Context, string) (bool, error) {
+	summaries, err := c.model.session.Sessions()
 	if err != nil {
 		setInputError(c.model, err)
 		return false, nil
@@ -151,10 +146,10 @@ func (c *tuiController) compact(context.Context, string) (bool, error) {
 }
 
 func (c *tuiController) toggleFastMode(context.Context, string) (bool, error) {
-	c.model.fastMode = !c.model.fastMode
-	c.controls.SetFastMode(c.model.fastMode)
+	enabled := !c.model.session.Settings().FastMode
+	c.model.session.SetFastMode(enabled)
 	state := "off"
-	if c.model.fastMode {
+	if enabled {
 		state = "on"
 	}
 	c.model.appendEntry(session.EntryInfo, "Fast mode "+state)
@@ -176,11 +171,7 @@ func (c *tuiController) goal(_ context.Context, objective string) (bool, error) 
 		return false, nil
 	}
 
-	if c.controls.SetGoal == nil {
-		setInputError(c.model, errors.New("goal updates are unavailable"))
-		return false, nil
-	}
-	if err := c.controls.SetGoal(objective); err != nil {
+	if err := c.model.session.SetGoal(objective); err != nil {
 		setInputError(c.model, err)
 		return false, nil
 	}
@@ -192,11 +183,7 @@ func (c *tuiController) goal(_ context.Context, objective string) (bool, error) 
 }
 
 func (c *tuiController) showGoal() {
-	if c.controls.Goal == nil {
-		setInputError(c.model, errors.New("goal inspection is unavailable"))
-		return
-	}
-	goal, ok := c.controls.Goal()
+	goal, ok := c.model.session.Goal()
 	switch {
 	case !ok:
 		c.model.appendEntry(session.EntryInfo, "No goal is set")
@@ -208,12 +195,8 @@ func (c *tuiController) showGoal() {
 }
 
 func (c *tuiController) clearGoal() {
-	if c.controls.Goal == nil || c.controls.ClearGoal == nil {
-		setInputError(c.model, errors.New("goal updates are unavailable"))
-		return
-	}
-	_, hadGoal := c.controls.Goal()
-	c.controls.ClearGoal()
+	_, hadGoal := c.model.session.Goal()
+	c.model.session.ClearGoal()
 	if hadGoal {
 		c.model.appendEntry(session.EntryInfo, "Goal cleared")
 		return

@@ -11,7 +11,7 @@ import (
 )
 
 func TestMultilineInputExpandsEditorAndMovesCursor(t *testing.T) {
-	model := newTestModel(20, 8, Options{})
+	model := newTestModel(20, 8, nil)
 	if err := model.insertInput("first"); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestMultilineInputExpandsEditorAndMovesCursor(t *testing.T) {
 }
 
 func TestFilePickerExpandsBetweenInputAndStatus(t *testing.T) {
-	model := newTestModel(30, 12, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(30, 12, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@"); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestFilePickerExpandsBetweenInputAndStatus(t *testing.T) {
 }
 
 func TestFilePickerShowsLoadingRow(t *testing.T) {
-	model := newTestModel(30, 8, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(30, 8, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@"); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestFilePickerShowsLoadingRow(t *testing.T) {
 }
 
 func TestFilePickerKeepsStableHeightWhileSearching(t *testing.T) {
-	model := newTestModel(30, 12, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(30, 12, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@"); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestFilePickerKeepsStableHeightWhileSearching(t *testing.T) {
 }
 
 func TestInputRendersImagesInline(t *testing.T) {
-	model := newTestModel(120, 8, Options{})
+	model := newTestModel(120, 8, nil)
 	if err := model.insertInput("Hey checkout this image: "); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestInputRendersImagesInline(t *testing.T) {
 }
 
 func TestInputWrapsInlineImageAsUnit(t *testing.T) {
-	model := newTestModel(20, 8, Options{})
+	model := newTestModel(20, 8, nil)
 	if err := model.insertInput("12345"); err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestInputWrapsInlineImageAsUnit(t *testing.T) {
 }
 
 func TestInputKeepsNarrowImageCursorPositionsDistinct(t *testing.T) {
-	model := newTestModel(3, 8, Options{})
+	model := newTestModel(3, 8, nil)
 	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("png")}); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestSubmittedImageMarkerWrapsAtomically(t *testing.T) {
 }
 
 func TestInputCursorMovesAcrossInlineImage(t *testing.T) {
-	model := newTestModel(40, 8, Options{})
+	model := newTestModel(40, 8, nil)
 	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("png")}); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestSubmittedImagesRenderInline(t *testing.T) {
 }
 
 func TestInputPreservesBlankPastedLines(t *testing.T) {
-	model := newTestModel(20, 8, Options{})
+	model := newTestModel(20, 8, nil)
 	if err := model.insertInput("abc\n\ndef"); err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestInputPreservesBlankPastedLines(t *testing.T) {
 }
 
 func TestInputWrapsAndKeepsCursorVisible(t *testing.T) {
-	model := newTestModel(8, 6, Options{})
+	model := newTestModel(8, 6, nil)
 	if err := model.insertInput("1234567"); err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestInputWrapsAndKeepsCursorVisible(t *testing.T) {
 }
 
 func TestInputWrapsCursorAfterExactWidthText(t *testing.T) {
-	model := newTestModel(8, 6, Options{})
+	model := newTestModel(8, 6, nil)
 	if err := model.insertInput("123456"); err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestInputWrapsCursorAfterExactWidthText(t *testing.T) {
 }
 
 func TestInputWrapsAtWordBoundaries(t *testing.T) {
-	model := newTestModel(10, 6, Options{})
+	model := newTestModel(10, 6, nil)
 	if err := model.insertInput("hello world"); err != nil {
 		t.Fatal(err)
 	}

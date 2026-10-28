@@ -3,11 +3,11 @@ package session
 import (
 	"context"
 	"errors"
-	"slices"
-	"strings"
+	"fmt"
 	"sync"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/skill"
 	"github.com/eul-ai/eul/subagent"
 )
@@ -33,33 +33,54 @@ type Update struct {
 }
 
 type Config struct {
-	Handle   *Handle
-	Settings *agent.Settings
-	Skills   []skill.Skill
-	Warnings []string
+	Handle        *Handle
+	Store         *Store
+	History       *History
+	AgentSettings *agent.Settings
+	Goal          *agent.Goal
+	Model         backend.ModelMetadata
+	Usage         func(context.Context) (backend.AccountUsage, error)
+	Skills        []skill.Skill
+	Warnings      []string
+	Prompt        string
 }
 
-type operation func(context.Context, agent.EventSink) error
+// Info describes the session as it was opened.
+type Info struct {
+	ID            string
+	Model         backend.ModelMetadata
+	ContextTokens int64
+	Skills        []skill.Skill
+	History       []string
+	Draft         Draft
+	Prompt        string
+}
 
 // Session owns a conversation: it runs its turns, queues the prompts sent
 // while a turn runs, and saves the transcript with the agent and subagent
 // state. mu guards the transcript, the draft, the turn and the permission
-// requests. saveMu serializes
-// saves so that they reach the disk in the order they were taken, without
-// holding mu while writing. Updates are never sent while holding either.
+// requests. saveMu serializes saves so that they reach the disk in the
+// order they were taken, without holding mu while writing. Updates are
+// never sent while holding either.
 //
 // queue holds the prompts sent during a turn that the model has not
 // received. Its first steered prompts were handed to the engine, which
 // delivers them in order.
 type Session struct {
-	handle    *Handle
-	engine    *agent.Engine
-	subagents *subagent.Manager
-	settings  *agent.Settings
-	skills    []skill.Skill
-	updates   chan Update
-	closing   chan struct{}
-	workers   sync.WaitGroup
+	info          Info
+	settings      Settings
+	handle        *Handle
+	store         *Store
+	history       *History
+	agentSettings *agent.Settings
+	goal          *agent.Goal
+	usage         func(context.Context) (backend.AccountUsage, error)
+	skills        []skill.Skill
+	engine        *agent.Engine
+	subagents     *subagent.Manager
+	updates       chan Update
+	closing       chan struct{}
+	workers       sync.WaitGroup
 
 	saveMu sync.Mutex
 
@@ -78,16 +99,35 @@ type Session struct {
 // New opens a session around a stored conversation. Its tools may use
 // AuthorizeNetwork before Start hands it the engine and subagents that run
 // them.
-func New(config Config) *Session {
+func New(config Config) (*Session, error) {
 	record := config.Handle.Record()
+	history, err := config.History.Load(record.ID)
+	if err != nil {
+		return nil, fmt.Errorf("load message history: %w", err)
+	}
+
 	s := &Session{
-		handle:     config.Handle,
-		settings:   config.Settings,
-		skills:     config.Skills,
-		updates:    make(chan Update, 256),
-		closing:    make(chan struct{}),
-		transcript: restoreTranscript(record.Transcript),
-		draft:      record.Draft,
+		info: Info{
+			ID:            record.ID,
+			Model:         config.Model,
+			ContextTokens: record.Agent.ContextUsage.TotalTokens,
+			Skills:        config.Skills,
+			History:       history,
+			Draft:         record.Draft,
+			Prompt:        config.Prompt,
+		},
+		settings:      record.Settings,
+		handle:        config.Handle,
+		store:         config.Store,
+		history:       config.History,
+		agentSettings: config.AgentSettings,
+		goal:          config.Goal,
+		usage:         config.Usage,
+		skills:        config.Skills,
+		updates:       make(chan Update, 256),
+		closing:       make(chan struct{}),
+		transcript:    restoreTranscript(record.Transcript),
+		draft:         record.Draft,
 	}
 	if record.Active {
 		s.transcript.Append(EntryNotice, previousTurnNotice)
@@ -95,7 +135,7 @@ func New(config Config) *Session {
 	for _, warning := range config.Warnings {
 		s.transcript.Append(EntryNotice, warning)
 	}
-	return s
+	return s, nil
 }
 
 func (s *Session) Start(engine *agent.Engine, subagents *subagent.Manager) {
@@ -104,67 +144,52 @@ func (s *Session) Start(engine *agent.Engine, subagents *subagent.Manager) {
 	s.workers.Go(s.watchSubagents)
 }
 
+func (s *Session) Info() Info {
+	return s.info
+}
+
+func (s *Session) Settings() Settings {
+	settings := s.settings
+	settings.ThinkingLevel, settings.FastMode = s.agentSettings.Snapshot()
+	return settings
+}
+
+func (s *Session) SetThinkingLevel(level agent.ThinkingLevel) error {
+	return s.agentSettings.SetThinkingLevel(level)
+}
+
+func (s *Session) SetFastMode(enabled bool) {
+	s.agentSettings.SetFastMode(enabled)
+}
+
+func (s *Session) Goal() (agent.GoalState, bool) {
+	return s.goal.State()
+}
+
+func (s *Session) SetGoal(objective string) error {
+	return s.goal.Set(objective)
+}
+
+func (s *Session) ClearGoal() {
+	s.goal.Clear()
+}
+
+// Remember adds a prompt to the message history.
+func (s *Session) Remember(prompt string) error {
+	return s.history.Append(s.info.ID, prompt)
+}
+
+// Sessions lists the other sessions in the working directory.
+func (s *Session) Sessions() ([]Summary, error) {
+	return s.store.List(s.settings.WorkingDirectory)
+}
+
+func (s *Session) Usage(ctx context.Context) (backend.AccountUsage, error) {
+	return s.usage(ctx)
+}
+
 func (s *Session) Updates() <-chan Update {
 	return s.updates
-}
-
-// Send starts a turn with content, or queues it when a turn is running.
-func (s *Session) Send(content []agent.ContentPart) error {
-	if s.enqueue(content) {
-		return nil
-	}
-	if err := s.saveActive(); err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.transcript.AppendUser(content)
-	s.startLocked(s.prompt(content))
-	return nil
-}
-
-func (s *Session) Compact() error {
-	if err := s.saveActive(); err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.startLocked(s.engine.Compact)
-	return nil
-}
-
-// Interrupt cancels the running turn, denies the pending permission
-// requests and returns the queued prompts.
-func (s *Session) Interrupt() [][]agent.ContentPart {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.running {
-		s.interrupted = true
-		s.cancel()
-	}
-	s.answerLocked(len(s.permissions), false)
-	return s.takeQueuedLocked()
-}
-
-// TakeQueued removes and returns the prompts the model has not received.
-func (s *Session) TakeQueued() [][]agent.ContentPart {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.takeQueuedLocked()
-}
-
-func (s *Session) Queued() [][]agent.ContentPart {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return slices.Clone(s.queue)
-}
-
-func (s *Session) Running() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.running
 }
 
 func (s *Session) Sync(entries []Entry) ([]Entry, bool) {
@@ -203,118 +228,13 @@ func (s *Session) Close() error {
 	s.mu.Unlock()
 	close(s.closing)
 	s.workers.Wait()
+	s.subagents.Close()
 
 	agentCheckpoint, err := s.engine.Checkpoint()
 	if err == nil {
 		err = s.save(agentCheckpoint, false)
 	}
 	return errors.Join(err, s.handle.Close())
-}
-
-func (s *Session) enqueue(content []agent.ContentPart) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.running {
-		return false
-	}
-
-	if s.steered == len(s.queue) && !s.interrupted && s.engine.Steer(content) {
-		s.steered++
-	}
-	s.queue = append(s.queue, content)
-	return true
-}
-
-// takeQueuedLocked trusts the engine about the steered prompts it has not
-// delivered. The others it already took from its queue, and the sink drops
-// them from s.queue when their delivery events arrive.
-func (s *Session) takeQueuedLocked() [][]agent.ContentPart {
-	undelivered := s.engine.ClearSteering()
-	delivering := s.steered - len(undelivered)
-	taken := append(undelivered, s.queue[s.steered:]...)
-	s.queue = s.queue[:delivering]
-	s.steered = delivering
-	return taken
-}
-
-func (s *Session) startLocked(run operation) {
-	ctx, cancel := context.WithCancel(context.Background())
-	s.running, s.interrupted, s.cancel = true, false, cancel
-	s.workers.Go(func() { s.run(ctx, run) })
-}
-
-func (s *Session) run(ctx context.Context, run operation) {
-	for {
-		var ok bool
-		if ctx, run, ok = s.settle(run(ctx, s.sink)); !ok {
-			return
-		}
-	}
-}
-
-// settle finishes a turn. When it succeeded and prompts are queued, settle
-// returns the next turn, which runs the first of them.
-func (s *Session) settle(err error) (context.Context, operation, bool) {
-	agentCheckpoint, checkpointErr := s.engine.Checkpoint()
-
-	s.mu.Lock()
-	s.cancel()
-	s.transcript.FinishTurn(s.interrupted, err)
-	s.steered = 0
-	if !s.interrupted && err == nil && len(s.queue) > 0 {
-		next := s.queue[0]
-		s.queue = slices.Delete(s.queue, 0, 1)
-		s.transcript.AppendUser(next)
-		ctx, cancel := context.WithCancel(context.Background())
-		s.cancel = cancel
-		s.mu.Unlock()
-
-		s.publish(Update{Kind: UpdateEvent, Event: agent.Event{Kind: agent.EventSteering, Content: next}})
-		return ctx, func(ctx context.Context, sink agent.EventSink) error {
-			if err := s.saveActive(); err != nil {
-				return err
-			}
-			return s.prompt(next)(ctx, sink)
-		}, true
-	}
-	if s.interrupted {
-		err = nil
-	}
-	s.running, s.interrupted = false, false
-	s.mu.Unlock()
-
-	if checkpointErr == nil {
-		checkpointErr = s.save(agentCheckpoint, false)
-	}
-	s.publish(Update{Kind: UpdateSettled, Err: errors.Join(err, checkpointErr)})
-	return nil, nil, false
-}
-
-func (s *Session) prompt(content []agent.ContentPart) operation {
-	return func(ctx context.Context, sink agent.EventSink) error {
-		content, err := expandSkill(content, s.skills)
-		if err != nil {
-			return err
-		}
-		_, err = s.engine.Run(ctx, content, sink)
-		return err
-	}
-}
-
-func (s *Session) sink(event agent.Event) error {
-	if event.Kind == agent.EventCheckpoint {
-		return s.save(*event.Checkpoint, true)
-	}
-
-	s.mu.Lock()
-	s.transcript.Apply(event)
-	if event.Kind == agent.EventSteering {
-		s.queue = slices.Delete(s.queue, 0, 1)
-		s.steered--
-	}
-	s.mu.Unlock()
-	s.publish(Update{Kind: UpdateEvent, Event: event})
-	return nil
 }
 
 func (s *Session) publish(update Update) {
@@ -374,36 +294,6 @@ func (s *Session) saveLocked(agentCheckpoint agent.Checkpoint, active bool) erro
 	s.mu.Unlock()
 
 	next.Subagent = s.subagents.Checkpoint()
-	thinkingLevel, fastMode := s.settings.Snapshot()
+	thinkingLevel, fastMode := s.agentSettings.Snapshot()
 	return s.handle.save(next, active, thinkingLevel, fastMode)
-}
-
-func queuedInputs(queue [][]agent.ContentPart) []string {
-	var inputs []string
-	for _, content := range queue {
-		if text := contentText(content); strings.TrimSpace(text) != "" {
-			inputs = append(inputs, text)
-		}
-	}
-	return inputs
-}
-
-func expandSkill(content []agent.ContentPart, skills []skill.Skill) ([]agent.ContentPart, error) {
-	for index, part := range content {
-		switch {
-		case part.Kind == agent.ContentPartImage:
-			return content, nil
-		case strings.TrimSpace(part.Text) == "":
-			continue
-		}
-
-		expanded, err := skill.Expand(part.Text, skills)
-		if err != nil {
-			return nil, err
-		}
-		content = slices.Clone(content)
-		content[index].Text = expanded
-		return content, nil
-	}
-	return content, nil
 }

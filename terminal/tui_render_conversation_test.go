@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/terminal/keys"
 	"github.com/eul-ai/eul/terminal/text"
@@ -388,7 +389,7 @@ func TestToolBlockHasHorizontalAndVerticalPadding(t *testing.T) {
 }
 
 func TestConversationWindowHasVerticalPadding(t *testing.T) {
-	model := newTestModel(40, 8, Options{})
+	model := newTestModel(40, 8, nil)
 	model.appendEntry(session.EntryUser, "message")
 	lines := modelConversationLines(model, 40)
 
@@ -398,7 +399,7 @@ func TestConversationWindowHasVerticalPadding(t *testing.T) {
 }
 
 func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
-	model := newTestModel(48, 12, Options{Config: Config{Model: "model"}})
+	model := newTestModel(48, 12, &fakeSession{settings: session.Settings{Models: backend.Models{Main: "model"}}})
 	model.appendEntry(session.EntryUser, "Use **bold** text")
 	applyEvent(model, agent.Event{Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "read-1", Name: "read"}, Presentation: agent.ToolPresentation{
 		Arguments: "README.md", Lines: []string{"before"},
@@ -471,7 +472,7 @@ func TestRendererConversationBlockCacheMatchesUncachedProjection(t *testing.T) {
 }
 
 func TestPendingSteeringRendersAndDeliversInTranscriptOrder(t *testing.T) {
-	model := newTestModel(40, 8, Options{})
+	model := newTestModel(40, 8, nil)
 	appendUser(model, textContent("initial"))
 	setRunning(model)
 	streamAssistantText(model, "answer")
@@ -503,7 +504,7 @@ func TestPendingImageSteeringRendersAndDelivers(t *testing.T) {
 		{Kind: agent.ContentPartText, Text: "describe "},
 		{Kind: agent.ContentPartImage, Image: &agent.Image{MediaType: "image/png", Data: []byte("png")}},
 	}
-	model := newTestModel(40, 8, Options{})
+	model := newTestModel(40, 8, nil)
 	setQueue(model, content)
 
 	lines := modelConversationLines(model, 40)
@@ -517,7 +518,7 @@ func TestPendingImageSteeringRendersAndDelivers(t *testing.T) {
 }
 
 func TestGoalContinuationHasDistinctTranscriptBlock(t *testing.T) {
-	model := newTestModel(40, 8, Options{})
+	model := newTestModel(40, 8, nil)
 	appendUser(model, textContent("initial"))
 	setRunning(model)
 	streamAssistantText(model, "first response")
@@ -548,7 +549,7 @@ func TestReasoningSummaryHasBalancedVerticalSpace(t *testing.T) {
 }
 
 func TestRenderFrameSanitizesConversationText(t *testing.T) {
-	model := newTestModel(40, 8, Options{})
+	model := newTestModel(40, 8, nil)
 	streamAssistantText(model, "safe\x1b[31m\rrewrite")
 	frame := renderFrame(model)
 	if strings.Contains(frame, "safe\x1b[31m") || !strings.Contains(frame, "safe�[31m�rewrite") {
@@ -557,7 +558,7 @@ func TestRenderFrameSanitizesConversationText(t *testing.T) {
 }
 
 func TestTUIModelCorrelatesAndSanitizesStreamingToolBlocks(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	applyEvent(model, agent.Event{
 		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "one", Name: "write"},
 		Presentation: agent.ToolPresentation{Lines: []string{"partial"}},
@@ -598,7 +599,7 @@ func TestTUIModelCorrelatesAndSanitizesStreamingToolBlocks(t *testing.T) {
 }
 
 func TestCanceledTurnKeepsCancelingActivity(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	model.activity = activity{kind: activityCanceling}
 	applyEvent(model, agent.Event{Kind: agent.EventAssistantText, Text: "late text"})
 	if model.activity.kind != activityCanceling {
@@ -607,7 +608,7 @@ func TestCanceledTurnKeepsCancelingActivity(t *testing.T) {
 }
 
 func TestTUIToolActivityOmitsArguments(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	applyEvent(model, agent.Event{
 		Kind: agent.EventToolStart, Call: agent.ToolCall{ID: "read-1", Name: "read"},
 		Presentation: agent.ToolPresentation{Arguments: "first\n" + strings.Repeat("x", 1_000)},
@@ -619,7 +620,7 @@ func TestTUIToolActivityOmitsArguments(t *testing.T) {
 }
 
 func TestConversationDividerIndicatesTextBelow(t *testing.T) {
-	model := newTestModel(20, 8, Options{})
+	model := newTestModel(20, 8, nil)
 	for index := 0; index < 8; index++ {
 		model.appendEntry(session.EntryInfo, strings.Repeat(string(rune('a'+index)), 20))
 	}
@@ -647,7 +648,7 @@ func TestConversationDividerIndicatesTextBelow(t *testing.T) {
 }
 
 func TestAltDownJumpsConversationToBottom(t *testing.T) {
-	model := newTestModel(20, 8, Options{})
+	model := newTestModel(20, 8, nil)
 	for index := 0; index < 8; index++ {
 		model.appendEntry(session.EntryInfo, strings.Repeat(string(rune('a'+index)), 20))
 	}
@@ -675,7 +676,7 @@ func TestAltDownJumpsConversationToBottom(t *testing.T) {
 }
 
 func TestConversationScrollingStopsAndResumesFollowing(t *testing.T) {
-	model := newTestModel(20, 8, Options{})
+	model := newTestModel(20, 8, nil)
 	for index := 0; index < 8; index++ {
 		model.appendEntry(session.EntryInfo, strings.Repeat(string(rune('a'+index)), 20))
 	}

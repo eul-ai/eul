@@ -1,60 +1,60 @@
 package app
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"os"
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/subagent"
-	"github.com/eul-ai/eul/terminal"
 	"github.com/eul-ai/eul/tool"
 )
 
-type agentSession struct {
-	config          session.Settings
-	engine          *agent.Engine
-	subagents       *subagent.Manager
-	terminalOptions terminal.Options
-	agentSettings   *agent.Settings
-	conversation    *session.Session
-}
-
-func newStoredAgentSession(
-	launcher *launcher,
-	config resolvedConfig,
-	runtime *backend.Runtime,
-	handle *session.Handle,
-	prompt string,
-) (*agentSession, error) {
-	record := handle.Record()
-	historyEntries, err := launcher.history.Load(record.ID)
+func (launcher *launcher) newSession(config resolvedConfig, runtime *backend.Runtime, handle *session.Handle, prompt string) (*session.Session, error) {
+	metadata, err := resolveModelMetadata(runtime, config.Models)
 	if err != nil {
-		return nil, fmt.Errorf("load message history: %w", err)
+		return nil, err
 	}
-	stored, options, err := newAgentSessionComponents(config, runtime, handle, launcher.noSandbox, launcher.interrupts)
+	main := metadata[subagent.ProfileMain]
+	if config.FastMode && !main.FastMode {
+		return nil, fmt.Errorf("fast mode is unavailable for model %q", config.Models.Main)
+	}
+
+	settings := agent.NewSettings(main.ClampThinkingLevel(config.ThinkingLevel), config.FastMode)
+	goal := &agent.Goal{}
+	conversation, err := session.New(session.Config{
+		Handle:        handle,
+		Store:         launcher.store,
+		History:       launcher.history,
+		AgentSettings: settings,
+		Goal:          goal,
+		Model:         main,
+		Usage:         runtime.Usage,
+		Skills:        config.skills,
+		Warnings:      config.warnings,
+		Prompt:        prompt,
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	options.messageHistory = terminal.MessageHistory{
-		Entries: historyEntries,
-		Append: func(entry string) error {
-			return launcher.history.Append(record.ID, entry)
-		},
+	var authorizeNetwork tool.NetworkAuthorizer
+	if !launcher.noSandbox {
+		authorizeNetwork = conversation.AuthorizeNetwork
 	}
-	options.draft = record.Draft
-	options.contextTokens = record.Agent.ContextUsage.TotalTokens
-	options.initialPrompt = prompt
-	options.sessionID = record.ID
-	options.sessions.List = func(context.Context) ([]session.Summary, error) {
-		return launcher.store.List(record.WorkingDirectory)
-	}
-	stored.terminalOptions = options.options()
-	return stored, nil
+	record := handle.Record()
+	tools, subagents := newSessionTools(config, runtime.Provider, metadata, settings, authorizeNetwork, goal, record.Subagent)
+	conversation.Start(agent.New(runtime.Provider, tools, agent.Options{
+		Model:         config.Models.Main,
+		Instructions:  systemPrompt(config),
+		SessionID:     record.ID,
+		Checkpoint:    record.Agent,
+		Checkpointing: true,
+		Inbox:         tool.NewSubagentInbox(subagents),
+		Settings:      settings,
+		Goal:          goal,
+	}), subagents)
+	return conversation, nil
 }
 
 func newSessionTools(
@@ -100,80 +100,4 @@ func resolveModelMetadata(runtime *backend.Runtime, models backend.Models) (map[
 		metadata[profile] = model
 	}
 	return metadata, nil
-}
-
-func newAgentSessionComponents(
-	config resolvedConfig,
-	runtime *backend.Runtime,
-	handle *session.Handle,
-	noSandbox bool,
-	interrupts <-chan os.Signal,
-) (*agentSession, terminalOptionsBuilder, error) {
-	record := handle.Record()
-	metadata, err := resolveModelMetadata(runtime, config.Models)
-	if err != nil {
-		return nil, terminalOptionsBuilder{}, err
-	}
-	main := metadata[subagent.ProfileMain]
-	if config.FastMode && !main.FastMode {
-		return nil, terminalOptionsBuilder{}, fmt.Errorf("fast mode is unavailable for model %q", config.Models.Main)
-	}
-	settings := agent.NewSettings(main.ClampThinkingLevel(config.ThinkingLevel), config.FastMode)
-	goal := &agent.Goal{}
-	conversation := session.New(session.Config{
-		Handle:   handle,
-		Settings: settings,
-		Skills:   config.skills,
-		Warnings: config.warnings,
-	})
-	var authorizeNetwork tool.NetworkAuthorizer
-	if !noSandbox {
-		authorizeNetwork = conversation.AuthorizeNetwork
-	}
-
-	tools, subagents := newSessionTools(config, runtime.Provider, metadata, settings, authorizeNetwork, goal, record.Subagent)
-	engine := agent.New(runtime.Provider, tools, agent.Options{
-		Model:         config.Models.Main,
-		Instructions:  systemPrompt(config),
-		SessionID:     record.ID,
-		Checkpoint:    record.Agent,
-		Checkpointing: true,
-		Inbox:         tool.NewSubagentInbox(subagents),
-		Settings:      settings,
-		Goal:          goal,
-	})
-	conversation.Start(engine, subagents)
-	session := &agentSession{
-		config:        config.Settings,
-		engine:        engine,
-		subagents:     subagents,
-		agentSettings: settings,
-		conversation:  conversation,
-	}
-	terminalOptions := terminalOptionsBuilder{
-		config:       config,
-		interrupts:   interrupts,
-		metadata:     main,
-		loadUsage:    runtime.Usage,
-		settings:     settings,
-		goal:         goal,
-		conversation: conversation,
-	}
-	return session, terminalOptions, nil
-}
-
-func (session *agentSession) settings() session.Settings {
-	settings := session.config
-	settings.ThinkingLevel, settings.FastMode = session.agentSettings.Snapshot()
-	return settings
-}
-
-func (session *agentSession) run(ctx context.Context, run func(context.Context, terminal.Options) (terminal.RunOutcome, error)) (terminal.RunOutcome, error) {
-	outcome, runErr := run(ctx, session.terminalOptions)
-	return outcome, session.finish(runErr)
-}
-
-func (session *agentSession) finish(runErr error) error {
-	session.subagents.Close()
-	return errors.Join(runErr, session.conversation.Close())
 }

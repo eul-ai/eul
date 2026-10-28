@@ -7,12 +7,11 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/session"
 )
 
 func TestStatusTruncatesSessionID(t *testing.T) {
-	model := newTestModel(120, 12, Options{Config: Config{
-		Model: "opaque-model-value", SessionID: "0123456789abcdef0123456789abcdef",
-	}})
+	model := newTestModel(120, 12, &fakeSession{settings: session.Settings{Models: backend.Models{Main: "opaque-model-value"}}, info: session.Info{ID: "0123456789abcdef0123456789abcdef"}})
 
 	_, _, status := renderStatus(model, model.width)
 	if !strings.Contains(status, "opaque-model-value") || !strings.Contains(status, string(agent.ThinkingMedium)) || !strings.Contains(status, "01234567") || strings.Contains(status, "0123456789abcdef") {
@@ -22,7 +21,7 @@ func TestStatusTruncatesSessionID(t *testing.T) {
 
 func TestStatusShowsProviderUsageWindows(t *testing.T) {
 	now := time.Now()
-	model := newTestModel(180, 12, Options{Config: Config{Model: "opaque-model-value"}})
+	model := newTestModel(180, 12, &fakeSession{settings: session.Settings{Models: backend.Models{Main: "opaque-model-value"}}})
 	model.providerUsage = backend.AccountUsage{Windows: []backend.UsageWindow{
 		{Duration: 7 * 24 * time.Hour, UsedPercent: 20, ResetsAt: now.Add(3*24*time.Hour + 5*time.Hour)},
 		{Duration: 5 * time.Hour, UsedPercent: 42, ResetsAt: now.Add(3*time.Hour + 5*time.Minute)},
@@ -48,9 +47,7 @@ func TestStatusShowsProviderUsageWindows(t *testing.T) {
 
 func TestStatusUsesCompactContextAndSingleUsage(t *testing.T) {
 	now := time.Now()
-	model := newTestModel(120, 12, Options{Config: Config{
-		Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, ContextWindow: 272_000,
-	}})
+	model := newTestModel(120, 12, &fakeSession{settings: session.Settings{Models: backend.Models{Main: "gpt-5.6-sol"}, ThinkingLevel: agent.ThinkingXHigh}, info: session.Info{Model: backend.ModelMetadata{ContextWindow: 272_000}}})
 	model.providerUsage = backend.AccountUsage{Windows: []backend.UsageWindow{{
 		Duration: 7 * 24 * time.Hour, UsedPercent: 59, ResetsAt: now.Add(9*time.Hour + 41*time.Minute),
 	}}}

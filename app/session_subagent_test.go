@@ -34,21 +34,24 @@ func TestAgentSessionWiresModelAndTools(t *testing.T) {
 		return agent.Response{Text: "answer"}, nil
 	}))
 
-	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), session.Settings{
+	opened := startTestSession(t, testLauncher(t, cwd, backendRuntime), session.Settings{
 		ThinkingLevel:    agent.ThinkingXHigh,
 		FastMode:         true,
 		WorkingDirectory: cwd,
 	})
-	result, runErr := session.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "test prompt"}}, func(agent.Event) error { return nil })
-	if err := session.finish(runErr); err != nil {
+	if err := opened.run("test prompt"); err != nil {
+		t.Fatal(err)
+	}
+	answered := transcriptHas(opened, session.EntryAssistant, "answer")
+	if err := opened.Close(); err != nil {
 		t.Fatal(err)
 	}
 
 	if gotRequest.Model != "gpt-5.6-sol" || gotRequest.ThinkingLevel != agent.ThinkingXHigh || !gotRequest.FastMode || len(gotRequest.Inputs) != 1 || gotRequest.Inputs[0].PlainText() != "test prompt" {
 		t.Fatalf("request = %+v", gotRequest)
 	}
-	if result.Text != "answer" {
-		t.Fatalf("result = %+v", result)
+	if !answered {
+		t.Fatal("transcript omits the answer")
 	}
 	if !strings.Contains(gotRequest.Instructions, projectInstructions) || !strings.Contains(gotRequest.Instructions, filepath.ToSlash(filepath.Join(cwd, "AGENTS.md"))) || strings.Count(gotRequest.Instructions, filepath.ToSlash(cwd)) < 2 {
 		t.Fatalf("instructions omit project context:\n%s", gotRequest.Instructions)
@@ -157,18 +160,21 @@ func TestAgentSessionLaunchesAndWaitsForConcurrentSubagents(t *testing.T) {
 		return childProvider(ctx, request, sink)
 	}))
 
-	session := startTestSession(t, testLauncher(t, cwd, backendRuntime), session.Settings{
+	opened := startTestSession(t, testLauncher(t, cwd, backendRuntime), session.Settings{
 		Models:           backend.Models{Main: "model", Fast: "fast-model", Balanced: "balanced-model"},
 		ThinkingLevel:    agent.ThinkingHigh,
 		FastMode:         true,
 		WorkingDirectory: cwd,
 	})
-	result, runErr := session.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "review in parallel"}}, func(agent.Event) error { return nil })
-	if err := session.finish(runErr); err != nil {
+	if err := opened.run("review in parallel"); err != nil {
 		t.Fatal(err)
 	}
-	if result.Text != "combined answer" || mainCalls < 4 || mainCalls > 5 {
-		t.Fatalf("result = %+v, main calls = %d", result, mainCalls)
+	answered := transcriptHas(opened, session.EntryAssistant, "combined answer")
+	if err := opened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !answered || mainCalls < 4 || mainCalls > 5 {
+		t.Fatalf("answered = %v, main calls = %d", answered, mainCalls)
 	}
 
 	mu.Lock()

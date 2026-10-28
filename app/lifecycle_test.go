@@ -36,50 +36,50 @@ func TestRunSessionsStartsNewSessionAfterClosingOldSession(t *testing.T) {
 		ThinkingLevel:    agent.ThinkingHigh,
 		WorkingDirectory: cwd,
 	})
-	initialID := initialSession.terminalOptions.Config.SessionID
+	initialID := initialSession.Info().ID
 
 	runner := &scriptedSessionRunner{steps: []func(context.Context, terminal.Options) (terminal.RunOutcome, error){
 		func(_ context.Context, options terminal.Options) (terminal.RunOutcome, error) {
-			if options.Config.SessionID != initialID || options.Config.Model != "main-model" || options.Config.ThinkingLevel != agent.ThinkingHigh {
-				t.Fatalf("initial options = session %q, model %q, thinking %q", options.Config.SessionID, options.Config.Model, options.Config.ThinkingLevel)
+			if options.Session.Info().ID != initialID || options.Session.Settings().Models.Main != "main-model" || options.Session.Settings().ThinkingLevel != agent.ThinkingHigh {
+				t.Fatalf("initial options = session %q, model %q, thinking %q", options.Session.Info().ID, options.Session.Settings().Models.Main, options.Session.Settings().ThinkingLevel)
 			}
-			if err := options.MessageHistory.Append("initial session prompt"); err != nil {
+			if err := options.Session.Remember("initial session prompt"); err != nil {
 				t.Fatal(err)
 			}
-			if err := options.Controls.SetThinkingLevel(agent.ThinkingLow); err != nil {
+			if err := options.Session.SetThinkingLevel(agent.ThinkingLow); err != nil {
 				t.Fatal(err)
 			}
-			options.Controls.SetFastMode(true)
+			options.Session.SetFastMode(true)
 			return terminal.RunOutcome{Action: terminal.RunNewSession}, nil
 		},
 		func(_ context.Context, options terminal.Options) (terminal.RunOutcome, error) {
-			if !sessionClosed(initialSession.terminalOptions) {
+			if !sessionClosed(initialSession) {
 				t.Fatal("old session was not closed before the new session started")
 			}
-			if options.Config.SessionID == "" || options.Config.SessionID == initialID {
-				t.Fatalf("new session ID = %q, initial = %q", options.Config.SessionID, initialID)
+			if options.Session.Info().ID == "" || options.Session.Info().ID == initialID {
+				t.Fatalf("new session ID = %q, initial = %q", options.Session.Info().ID, initialID)
 			}
-			if !slices.Equal(options.MessageHistory.Entries, []string{"initial session prompt"}) {
-				t.Fatalf("message history = %q", options.MessageHistory.Entries)
+			if !slices.Equal(options.Session.Info().History, []string{"initial session prompt"}) {
+				t.Fatalf("message history = %q", options.Session.Info().History)
 			}
-			if options.Config.Model != "main-model" || options.Config.ThinkingLevel != agent.ThinkingLow || !options.Config.FastMode {
-				t.Fatalf("new options = model %q, thinking %q, fast %v", options.Config.Model, options.Config.ThinkingLevel, options.Config.FastMode)
+			if options.Session.Settings().Models.Main != "main-model" || options.Session.Settings().ThinkingLevel != agent.ThinkingLow || !options.Session.Settings().FastMode {
+				t.Fatalf("new options = model %q, thinking %q, fast %v", options.Session.Settings().Models.Main, options.Session.Settings().ThinkingLevel, options.Session.Settings().FastMode)
 			}
-			savePrompt(t, options, "new session prompt")
+			savePrompt(t, options.Session, "new session prompt")
 			return terminal.RunOutcome{Action: terminal.RunExit}, nil
 		},
 	}}
 
-	if err := runSessions(ctx, runner.Run, initialSession, launcher); err != nil {
+	if err := runSessions(ctx, runner.Run, initialSession.Session, launcher); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.options) != 2 || opened != 1 {
 		t.Fatalf("runner calls = %d, backend opens = %d", len(runner.options), opened)
 	}
-	if !sessionClosed(runner.options[1]) {
+	if !sessionClosed(runner.options[1].Session) {
 		t.Fatal("new session was not closed")
 	}
-	newRecord, err := launcher.store.Open(cwd, runner.options[1].Config.SessionID)
+	newRecord, err := launcher.store.Open(cwd, runner.options[1].Session.Info().ID)
 	if err != nil {
 		t.Fatalf("open new session record: %v", err)
 	}
@@ -106,39 +106,39 @@ func TestRunSessionsResumesStoredSessionAfterClosingOldSession(t *testing.T) {
 		ThinkingLevel:    agent.ThinkingHigh,
 		WorkingDirectory: initialCWD,
 	})
-	initialID := initialSession.terminalOptions.Config.SessionID
+	initialID := initialSession.Info().ID
 
 	runner := &scriptedSessionRunner{steps: []func(context.Context, terminal.Options) (terminal.RunOutcome, error){
 		func(_ context.Context, options terminal.Options) (terminal.RunOutcome, error) {
-			if options.Config.SessionID != initialID || options.Config.Model != "initial-main" || options.Config.ThinkingLevel != agent.ThinkingHigh {
-				t.Fatalf("initial options = session %q, model %q, thinking %q", options.Config.SessionID, options.Config.Model, options.Config.ThinkingLevel)
+			if options.Session.Info().ID != initialID || options.Session.Settings().Models.Main != "initial-main" || options.Session.Settings().ThinkingLevel != agent.ThinkingHigh {
+				t.Fatalf("initial options = session %q, model %q, thinking %q", options.Session.Info().ID, options.Session.Settings().Models.Main, options.Session.Settings().ThinkingLevel)
 			}
 			return terminal.RunOutcome{Action: terminal.RunResumeSession, SessionID: targetID}, nil
 		},
 		func(_ context.Context, options terminal.Options) (terminal.RunOutcome, error) {
-			if !sessionClosed(initialSession.terminalOptions) {
+			if !sessionClosed(initialSession) {
 				t.Fatal("old session was not closed before the resumed session started")
 			}
-			if options.Config.SessionID != targetID {
-				t.Fatalf("resumed session ID = %q, want %q", options.Config.SessionID, targetID)
+			if options.Session.Info().ID != targetID {
+				t.Fatalf("resumed session ID = %q, want %q", options.Session.Info().ID, targetID)
 			}
-			if options.Config.Model != "resume-main" || options.Config.ThinkingLevel != agent.ThinkingMedium || !options.Config.FastMode || options.Config.WorkingDirectory != targetCWD {
-				t.Fatalf("resumed options = model %q, thinking %q, fast %v, cwd %q", options.Config.Model, options.Config.ThinkingLevel, options.Config.FastMode, options.Config.WorkingDirectory)
+			if options.Session.Settings().Models.Main != "resume-main" || options.Session.Settings().ThinkingLevel != agent.ThinkingMedium || !options.Session.Settings().FastMode || options.Session.Settings().WorkingDirectory != targetCWD {
+				t.Fatalf("resumed options = model %q, thinking %q, fast %v, cwd %q", options.Session.Settings().Models.Main, options.Session.Settings().ThinkingLevel, options.Session.Settings().FastMode, options.Session.Settings().WorkingDirectory)
 			}
-			if !transcriptHas(options, session.EntryUser, "resume target prompt") {
+			if !transcriptHas(options.Session, session.EntryUser, "resume target prompt") {
 				t.Fatal("resumed transcript omits the target prompt")
 			}
 			return terminal.RunOutcome{Action: terminal.RunExit}, nil
 		},
 	}}
 
-	if err := runSessions(ctx, runner.Run, initialSession, launcher); err != nil {
+	if err := runSessions(ctx, runner.Run, initialSession.Session, launcher); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.options) != 2 || opened != 1 {
 		t.Fatalf("runner calls = %d, backend opens = %d", len(runner.options), opened)
 	}
-	if !sessionClosed(runner.options[1]) {
+	if !sessionClosed(runner.options[1].Session) {
 		t.Fatal("resumed session was not closed")
 	}
 
@@ -165,10 +165,10 @@ func TestRunSessionsExitClosesSession(t *testing.T) {
 		},
 	}}
 
-	if err := runSessions(ctx, runner.Run, initialSession, launcher); err != nil {
+	if err := runSessions(ctx, runner.Run, initialSession.Session, launcher); err != nil {
 		t.Fatal(err)
 	}
-	if !sessionClosed(initialSession.terminalOptions) {
+	if !sessionClosed(initialSession) {
 		t.Fatal("session was not closed")
 	}
 }
@@ -184,21 +184,22 @@ func TestLaunchResumeKeepsPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.finish(nil)
-	if session.terminalOptions.Config.SessionID != targetID || session.terminalOptions.Config.InitialPrompt != "continue" {
-		t.Fatalf("resumed session = %q, prompt = %q", session.terminalOptions.Config.SessionID, session.terminalOptions.Config.InitialPrompt)
+	defer session.Close()
+	if session.Info().ID != targetID || session.Info().Prompt != "continue" {
+		t.Fatalf("resumed session = %q, prompt = %q", session.Info().ID, session.Info().Prompt)
 	}
 }
 
 func TestRunSessionsFinishesSessionAfterRunFailure(t *testing.T) {
 	runFailure := errors.New("run failed")
 	cwd := t.TempDir()
-	failing := startTestSession(t, testLauncher(t, cwd, testBackendRuntime(emptyProvider())), session.Settings{WorkingDirectory: cwd, ThinkingLevel: agent.ThinkingHigh})
+	launcher := testLauncher(t, cwd, testBackendRuntime(emptyProvider()))
+	failing := startTestSession(t, launcher, session.Settings{WorkingDirectory: cwd, ThinkingLevel: agent.ThinkingHigh})
 
 	err := runSessions(context.Background(), func(context.Context, terminal.Options) (terminal.RunOutcome, error) {
 		return terminal.RunOutcome{}, runFailure
-	}, failing, nil)
-	if closed := sessionClosed(failing.terminalOptions); !errors.Is(err, runFailure) || !closed {
+	}, failing.Session, launcher)
+	if closed := sessionClosed(failing); !errors.Is(err, runFailure) || !closed {
 		t.Fatalf("run error = %v, session closed = %v", err, closed)
 	}
 }
@@ -224,9 +225,9 @@ func createTargetSession(t *testing.T, launcher *launcher, cwd string, prompt st
 		ThinkingLevel:    agent.ThinkingMedium,
 		FastMode:         true,
 	})
-	savePrompt(t, target.terminalOptions, prompt)
-	if err := target.finish(nil); err != nil {
+	savePrompt(t, target, prompt)
+	if err := target.Close(); err != nil {
 		t.Fatal(err)
 	}
-	return target.terminalOptions.Config.SessionID
+	return target.Info().ID
 }

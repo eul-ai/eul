@@ -75,7 +75,7 @@ func (runner *Runner) Run(ctx context.Context, options Options) (RunOutcome, err
 	if err != nil {
 		return RunOutcome{}, fmt.Errorf("terminal: get size: %w", err)
 	}
-	if err := setTerminalTitle(runner.output, options.Config.WorkingDirectory); err != nil {
+	if err := setTerminalTitle(runner.output, options.Session.Settings().WorkingDirectory); err != nil {
 		return RunOutcome{}, err
 	}
 	return runner.run(ctx, options, width, height)
@@ -106,8 +106,8 @@ func wrapRestoreError(err error) error {
 }
 
 func (runner *Runner) run(ctx context.Context, options Options, width, height int) (RunOutcome, error) {
-	model := newTUIModel(width, height, options)
-	fileSearch := filesearch.New(options.Config.WorkingDirectory)
+	model := newTUIModel(width, height, options.Session)
+	fileSearch := filesearch.New(options.Session.Settings().WorkingDirectory)
 	defer fileSearch.Close()
 	fileSearchResults := fileSearch.Results()
 	clipboardImages := make(chan tuiEvent, maxAttachedImages)
@@ -123,12 +123,8 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 
 	spinnerTicker := time.NewTicker(80 * time.Millisecond)
 	defer spinnerTicker.Stop()
-	var usageClock <-chan time.Time
-	if options.Services.LoadUsage != nil {
-		usageTicker := time.NewTicker(time.Minute)
-		defer usageTicker.Stop()
-		usageClock = usageTicker.C
-	}
+	usageTicker := time.NewTicker(time.Minute)
+	defer usageTicker.Stop()
 
 	controller := newTUIController(controllerOptions{
 		model:           model,
@@ -136,12 +132,8 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 		outputFD:        runner.outputFD,
 		stopped:         runner.stopped,
 		fileSearch:      fileSearch,
-		loadUsage:       options.Services.LoadUsage,
 		usageResults:    usageResults,
 		clipboardImages: clipboardImages,
-		controls:        options.Controls,
-		sessions:        options.Sessions,
-		messageHistory:  options.MessageHistory,
 	})
 	defer controller.cancelClipboardRequests()
 	defer controller.usageLoads.Wait()
@@ -152,8 +144,8 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 	if _, err := controller.transition(ctx, tuiEvent{kind: tuiEventRender}); err != nil {
 		return RunOutcome{}, err
 	}
-	if options.Config.InitialPrompt != "" {
-		done, err := submitInitialPrompt(ctx, controller, model, options.Config.InitialPrompt)
+	if prompt := options.Session.Info().Prompt; prompt != "" {
+		done, err := submitInitialPrompt(ctx, controller, model, prompt)
 		if err != nil {
 			return RunOutcome{}, err
 		}
@@ -162,7 +154,7 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 		}
 	}
 
-	interrupts := options.Events.Interrupts
+	interrupts := options.Interrupts
 	updates := options.Session.Updates()
 	parentDone := ctx.Done()
 	for {
@@ -190,7 +182,7 @@ func (runner *Runner) run(ctx context.Context, options Options, width, height in
 			event = tuiEvent{kind: tuiEventFileSearch, fileSearch: result}
 		case <-spinnerTicker.C:
 			event = tuiEvent{kind: tuiEventSpinner}
-		case <-usageClock:
+		case <-usageTicker.C:
 			event = tuiEvent{kind: tuiEventUsageClock}
 		case <-renderClock:
 			renderClock = nil

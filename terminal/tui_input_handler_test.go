@@ -25,7 +25,7 @@ func TestPermissionKeysTakePriority(t *testing.T) {
 		{name: "cancel", key: keys.Event{Code: keys.CtrlC}, want: tuiActionCancel},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			model := newTestModel(80, 24, Options{})
+			model := newTestModel(80, 24, nil)
 			setRunning(model)
 			model.permission.queue = []*session.PermissionRequest{{Title: "Network access", Detail: "git push"}}
 			if err := model.insertInput("queued steering"); err != nil {
@@ -44,7 +44,7 @@ func TestPermissionKeysTakePriority(t *testing.T) {
 }
 
 func TestIdlePermissionCtrlCDeniesRequest(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	model.permission.queue = []*session.PermissionRequest{{Title: "Network access"}}
 
 	action, err := reduceKey(model, keys.Event{Code: keys.CtrlC})
@@ -54,7 +54,7 @@ func TestIdlePermissionCtrlCDeniesRequest(t *testing.T) {
 }
 
 func TestPermissionSelectionAndScrolling(t *testing.T) {
-	model := newTestModel(40, 12, Options{})
+	model := newTestModel(40, 12, nil)
 	setRunning(model)
 	model.permission.queue = []*session.PermissionRequest{{
 		Title:  "Permission requested",
@@ -82,7 +82,7 @@ func TestPermissionSelectionAndScrolling(t *testing.T) {
 }
 
 func TestFilePickerKeysTakePriorityOverEditorActions(t *testing.T) {
-	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "@"}); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestFilePickerKeysTakePriorityOverEditorActions(t *testing.T) {
 }
 
 func TestFilePickerRemainsUsableWhileRunning(t *testing.T) {
-	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	setRunning(model)
 	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "@"}); err != nil {
 		t.Fatal(err)
@@ -138,7 +138,7 @@ func TestFilePickerRemainsUsableWhileRunning(t *testing.T) {
 }
 
 func TestFilePickerKeepsCurrentResultsSelectableDuringRefresh(t *testing.T) {
-	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "@"}); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestFilePickerKeepsCurrentResultsSelectableDuringRefresh(t *testing.T) {
 }
 
 func TestFilePickerDoesNotApplyPreviousQueryResults(t *testing.T) {
-	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "@"}); err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestFilePickerDoesNotApplyPreviousQueryResults(t *testing.T) {
 }
 
 func TestFilePickerShowsEmptyResultsUpdatingWhileRescoring(t *testing.T) {
-	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if _, err := reduceKey(model, keys.Event{Code: keys.Text, Text: "@missing"}); err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestFilePickerShowsEmptyResultsUpdatingWhileRescoring(t *testing.T) {
 }
 
 func TestHiddenFilePickerDoesNotInterceptEditorKeys(t *testing.T) {
-	model := newTestModel(80, 5, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 5, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@"); err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,6 @@ func TestHiddenFilePickerDoesNotInterceptEditorKeys(t *testing.T) {
 func TestReduceKeyActions(t *testing.T) {
 	tests := []struct {
 		name        string
-		options     Options
 		setup       func(*testing.T, *tuiModel)
 		key         keys.Event
 		wantKind    tuiActionKind
@@ -361,19 +360,13 @@ func TestReduceKeyActions(t *testing.T) {
 			},
 		},
 		{
-			name: "set thinking",
-			options: Options{
-				Config: Config{ThinkingLevel: agent.ThinkingMedium},
-				Controls: Controls{SetThinkingLevel: func(agent.ThinkingLevel) error {
-					panic("reducer invoked external thinking setter")
-				}},
-			},
+			name:      "set thinking",
 			key:       keys.Event{Code: keys.ShiftTab},
 			wantKind:  tuiActionSetThinking,
 			wantLevel: agent.ThinkingHigh,
 			check: func(t *testing.T, model *tuiModel) {
-				if model.thinkingLevel != agent.ThinkingMedium {
-					t.Fatalf("thinking level = %q", model.thinkingLevel)
+				if level := testSession(model).Settings().ThinkingLevel; level != agent.ThinkingMedium {
+					t.Fatalf("thinking level = %q", level)
 				}
 			},
 		},
@@ -522,12 +515,6 @@ func TestReduceKeyActions(t *testing.T) {
 		},
 		{
 			name: "running changes thinking",
-			options: Options{
-				Config: Config{ThinkingLevel: agent.ThinkingMedium},
-				Controls: Controls{SetThinkingLevel: func(agent.ThinkingLevel) error {
-					panic("reducer invoked external thinking setter")
-				}},
-			},
 			setup: func(t *testing.T, model *tuiModel) {
 				setRunning(model)
 				model.activity = activity{kind: activityThinking}
@@ -536,8 +523,8 @@ func TestReduceKeyActions(t *testing.T) {
 			wantKind:  tuiActionSetThinking,
 			wantLevel: agent.ThinkingHigh,
 			check: func(t *testing.T, model *tuiModel) {
-				if model.thinkingLevel != agent.ThinkingMedium || model.activity.kind != activityThinking {
-					t.Fatalf("thinking=%q activity=%+v", model.thinkingLevel, model.activity)
+				if level := testSession(model).Settings().ThinkingLevel; level != agent.ThinkingMedium || model.activity.kind != activityThinking {
+					t.Fatalf("thinking=%q activity=%+v", level, model.activity)
 				}
 			},
 		},
@@ -550,7 +537,7 @@ func TestReduceKeyActions(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			model := newTestModel(80, 24, test.options)
+			model := newTestModel(80, 24, nil)
 			if test.setup != nil {
 				test.setup(t, model)
 			}
@@ -571,7 +558,7 @@ func TestReduceKeyActions(t *testing.T) {
 }
 
 func TestImageTerminatesFilePickerToken(t *testing.T) {
-	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@"); err != nil {
 		t.Fatal(err)
 	}
@@ -584,7 +571,7 @@ func TestImageTerminatesFilePickerToken(t *testing.T) {
 }
 
 func TestImageTerminatesSlashCommand(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	if err := model.insertInput("/help"); err != nil {
 		t.Fatal(err)
 	}
@@ -602,7 +589,7 @@ func TestImageTerminatesSlashCommand(t *testing.T) {
 }
 
 func TestImageAttachmentCanBeSubmittedWithoutText(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	if err := model.attachImage(agent.Image{MediaType: "image/png", Data: []byte("png")}); err != nil {
 		t.Fatal(err)
 	}

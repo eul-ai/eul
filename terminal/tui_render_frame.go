@@ -304,7 +304,7 @@ func composeFrameRows(model *tuiModel, prepared renderPreparation) []styledLine 
 	}
 
 	rule := strings.Repeat("─", width)
-	ruleStyle := lineStyle{foreground: currentTheme.thinkingColor(model.thinkingLevel)}
+	ruleStyle := lineStyle{foreground: currentTheme.thinkingColor(model.session.Settings().ThinkingLevel)}
 	if model.permission.active() {
 		ruleStyle.foreground = currentTheme.orange
 	}

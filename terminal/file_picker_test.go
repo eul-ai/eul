@@ -7,11 +7,12 @@ import (
 
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/filesearch"
+	"github.com/eul-ai/eul/session"
 )
 
 func TestFilePickerKeepsSearchQueriesLiteral(t *testing.T) {
 	for _, query := range []string{"~", "~/Code", "/var/log", "../other"} {
-		model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+		model := newTestModel(80, 24, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 		if err := model.insertInput("@" + query); err != nil {
 			t.Fatal(err)
 		}
@@ -49,7 +50,7 @@ func TestFileReferenceTokenParsesCompleteAndQuotedToken(t *testing.T) {
 }
 
 func TestFilePickerRequestsNavigatesAndAppliesSelection(t *testing.T) {
-	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("inspect @tui"); err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +76,7 @@ func TestFilePickerRequestsNavigatesAndAppliesSelection(t *testing.T) {
 }
 
 func TestFilePickerPreservesSelectionAcrossSearchUpdates(t *testing.T) {
-	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@"); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +92,7 @@ func TestFilePickerPreservesSelectionAcrossSearchUpdates(t *testing.T) {
 }
 
 func TestFilePickerReplacesWholeTokenFromMiddle(t *testing.T) {
-	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("inspect @foo.go next"); err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +109,7 @@ func TestFilePickerReplacesWholeTokenFromMiddle(t *testing.T) {
 }
 
 func TestFilePickerDrillsIntoDirectory(t *testing.T) {
-	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@../ot"); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +134,7 @@ func TestFilePickerRemovesStaleSelection(t *testing.T) {
 	cwd := t.TempDir()
 	path := filepath.Join(cwd, "gone.go")
 	writePickerFile(t, path, "package gone")
-	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: cwd}})
+	model := newTestModel(80, 24, &fakeSession{settings: session.Settings{WorkingDirectory: cwd}})
 	if err := model.insertInput("@gone"); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +155,7 @@ func TestFilePickerRemovesStaleSelection(t *testing.T) {
 }
 
 func TestFilePickerReplacementStopsBeforeImage(t *testing.T) {
-	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@tu"); err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +177,7 @@ func TestFilePickerReplacementStopsBeforeImage(t *testing.T) {
 }
 
 func TestFilePickerRejectsStaleSearchResults(t *testing.T) {
-	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@"); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +211,7 @@ func TestFormatFileReferenceQuotesUnicodeWhitespaceAndBackslashes(t *testing.T) 
 }
 
 func TestFilePickerQuotesSpacesAndCanBeDismissed(t *testing.T) {
-	model := newTestModel(80, 24, Options{Config: Config{WorkingDirectory: t.TempDir()}})
+	model := newTestModel(80, 24, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@"); err != nil {
 		t.Fatal(err)
 	}

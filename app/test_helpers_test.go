@@ -73,19 +73,69 @@ func testLauncher(t *testing.T, cwd string, runtime *backend.Runtime) *launcher 
 	return newLauncher(t.TempDir(), backend.Registry{testBackend("test", runtime)}, false, nil)
 }
 
-func startTestSession(t *testing.T, launcher *launcher, settings session.Settings) *agentSession {
+// testSession stands in for the terminal: it runs prompts on an opened
+// session and follows its updates.
+type testSession struct {
+	*session.Session
+	subagents subagent.Status
+}
+
+func startTestSession(t *testing.T, launcher *launcher, settings session.Settings) *testSession {
 	t.Helper()
-	session, err := launcher.start(context.Background(), settings, "")
+	opened, err := launcher.start(context.Background(), settings, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return session
+	return &testSession{Session: opened}
 }
 
-func savePrompt(t *testing.T, options terminal.Options, prompt string) {
+func (s *testSession) next() (session.Update, error) {
+	select {
+	case update := <-s.Updates():
+		if update.Kind == session.UpdateSubagents {
+			s.subagents = update.Subagents
+		}
+		return update, nil
+	case <-time.After(5 * time.Second):
+		return session.Update{}, errors.New("session sent no update")
+	}
+}
+
+// run sends prompt and waits for its turn to settle.
+func (s *testSession) run(prompt string) error {
+	if err := s.Send([]agent.ContentPart{{Kind: agent.ContentPartText, Text: prompt}}); err != nil {
+		return err
+	}
+	for {
+		update, err := s.next()
+		switch {
+		case err != nil:
+			return err
+		case update.Kind == session.UpdateSettled:
+			return update.Err
+		}
+	}
+}
+
+func (s *testSession) waitSubagents(t *testing.T, done func(subagent.Status) bool) subagent.Status {
 	t.Helper()
-	options.Session.Append(session.EntryUser, prompt)
-	if err := options.Session.SaveDraft(session.Draft{}); err != nil {
+	for !done(s.subagents) {
+		if _, err := s.next(); err != nil {
+			t.Fatalf("%v; subagents = %+v", err, s.subagents)
+		}
+	}
+	return s.subagents
+}
+
+func waitForSubagentCompletions(t *testing.T, s *testSession, count int) {
+	t.Helper()
+	s.waitSubagents(t, func(status subagent.Status) bool { return len(status.PendingCompletions) == count })
+}
+
+func savePrompt(t *testing.T, conversation terminal.Session, prompt string) {
+	t.Helper()
+	conversation.Append(session.EntryUser, prompt)
+	if err := conversation.SaveDraft(session.Draft{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -105,12 +155,12 @@ func markActive(t *testing.T, encoded []byte) []byte {
 	return encoded
 }
 
-func sessionClosed(options terminal.Options) bool {
-	return options.Session.SaveDraft(session.Draft{}) != nil
+func sessionClosed(conversation terminal.Session) bool {
+	return conversation.SaveDraft(session.Draft{}) != nil
 }
 
-func transcriptHas(options terminal.Options, kind session.EntryKind, text string) bool {
-	entries, _ := options.Session.Sync(nil)
+func transcriptHas(conversation terminal.Session, kind session.EntryKind, text string) bool {
+	entries, _ := conversation.Sync(nil)
 	return slices.ContainsFunc(entries, func(entry session.Entry) bool {
 		return entry.Kind == kind && strings.Contains(entry.Text, text)
 	})
@@ -123,18 +173,6 @@ func sessionDirectory(t *testing.T, launcher *launcher, id string) string {
 		t.Fatalf("session %s directories = %v, error = %v", id, paths, err)
 	}
 	return paths[0]
-}
-
-func waitForSubagentCompletions(t *testing.T, manager *subagent.Manager, count int) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(manager.Snapshot().PendingCompletions) == count {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatalf("pending completions = %d, want %d", len(manager.Snapshot().PendingCompletions), count)
 }
 
 // toolCaller is a provider for driving session tools. A main agent prompt of the
@@ -170,7 +208,7 @@ func (caller *toolCaller) runtime() *backend.Runtime {
 	return testBackendRuntime(providerFunction(caller.generate))
 }
 
-func (caller *toolCaller) call(session *agentSession, name, arguments string) (agent.Input, error) {
-	_, err := session.engine.Run(context.Background(), []agent.ContentPart{{Kind: agent.ContentPartText, Text: "call " + name + " " + arguments}}, func(agent.Event) error { return nil })
+func (caller *toolCaller) call(s *testSession, name, arguments string) (agent.Input, error) {
+	err := s.run("call " + name + " " + arguments)
 	return caller.result, err
 }

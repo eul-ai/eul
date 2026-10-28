@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"slices"
 	"strings"
@@ -9,52 +10,16 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/session"
 )
-
-type fakeEngine struct {
-	mu         sync.Mutex
-	setGoalErr error
-	goal       *agent.GoalState
-}
-
-func (e *fakeEngine) SetGoal(objective string) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.setGoalErr != nil {
-		return e.setGoalErr
-	}
-	e.goal = &agent.GoalState{Objective: objective}
-	return nil
-}
-
-func (e *fakeEngine) Goal() (agent.GoalState, bool) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.goal == nil {
-		return agent.GoalState{}, false
-	}
-	return *e.goal, true
-}
-
-func (e *fakeEngine) ClearGoal() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.goal = nil
-}
-
-func controlsFor(engine *fakeEngine) Controls {
-	return Controls{
-		SetGoal:   engine.SetGoal,
-		Goal:      engine.Goal,
-		ClearGoal: engine.ClearGoal,
-	}
-}
 
 // fakeSession records what the terminal asks of a session. Tests play the
 // session's side by sending the updates that event and settle return.
 type fakeSession struct {
 	mu          sync.Mutex
+	info        session.Info
+	settings    session.Settings
 	transcript  session.Transcript
 	updates     chan session.Update
 	calls       chan string
@@ -67,10 +32,70 @@ type fakeSession struct {
 	save        func(session.Draft) error
 	permissions []*session.PermissionRequest
 	decisions   []session.PermissionDecision
+	thinkingErr error
+	goal        *agent.GoalState
+	goalErr     error
+	remembered  []string
+	summaries   []session.Summary
+	usage       func(context.Context) (backend.AccountUsage, error)
 }
 
 func newFakeSession() *fakeSession {
-	return &fakeSession{updates: make(chan session.Update, 64)}
+	return &fakeSession{
+		settings: session.Settings{ThinkingLevel: agent.DefaultThinkingLevel},
+		updates:  make(chan session.Update, 64),
+	}
+}
+
+func (s *fakeSession) Info() session.Info {
+	return s.info
+}
+
+func (s *fakeSession) Settings() session.Settings {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.settings
+}
+
+func (s *fakeSession) SetThinkingLevel(level agent.ThinkingLevel) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.thinkingErr != nil {
+		return s.thinkingErr
+	}
+	s.settings.ThinkingLevel = level
+	return nil
+}
+
+func (s *fakeSession) SetFastMode(enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.settings.FastMode = enabled
+}
+
+func (s *fakeSession) Goal() (agent.GoalState, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.goal == nil {
+		return agent.GoalState{}, false
+	}
+	return *s.goal, true
+}
+
+func (s *fakeSession) SetGoal(objective string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.goalErr != nil {
+		return s.goalErr
+	}
+	s.goal = &agent.GoalState{Objective: objective}
+	return nil
+}
+
+func (s *fakeSession) ClearGoal() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.goal = nil
 }
 
 func (s *fakeSession) Updates() <-chan session.Update {
@@ -149,6 +174,23 @@ func (s *fakeSession) Running() bool {
 	return s.running
 }
 
+func (s *fakeSession) Permissions() []*session.PermissionRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.permissions)
+}
+
+func (s *fakeSession) ResolvePermission(decision session.PermissionDecision) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.decisions = append(s.decisions, decision)
+	count := min(1, len(s.permissions))
+	if decision == session.PermissionAllowSession {
+		count = len(s.permissions)
+	}
+	s.permissions = slices.Delete(s.permissions, 0, count)
+}
+
 func (s *fakeSession) Sync(entries []session.Entry) ([]session.Entry, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -170,21 +212,22 @@ func (s *fakeSession) SaveDraft(draft session.Draft) error {
 	return s.save(draft)
 }
 
-func (s *fakeSession) Permissions() []*session.PermissionRequest {
+func (s *fakeSession) Remember(prompt string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return slices.Clone(s.permissions)
+	s.remembered = append(s.remembered, prompt)
+	return nil
 }
 
-func (s *fakeSession) ResolvePermission(decision session.PermissionDecision) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.decisions = append(s.decisions, decision)
-	count := min(1, len(s.permissions))
-	if decision == session.PermissionAllowSession {
-		count = len(s.permissions)
+func (s *fakeSession) Sessions() ([]session.Summary, error) {
+	return s.summaries, nil
+}
+
+func (s *fakeSession) Usage(ctx context.Context) (backend.AccountUsage, error) {
+	if s.usage == nil {
+		return backend.AccountUsage{}, nil
 	}
-	s.permissions = slices.Delete(s.permissions, 0, count)
+	return s.usage(ctx)
 }
 
 func (s *fakeSession) request(requests ...*session.PermissionRequest) session.Update {
@@ -219,11 +262,18 @@ func sessionEvent(update session.Update) tuiEvent {
 	return tuiEvent{kind: tuiEventSession, update: update}
 }
 
-func newTestModel(width, height int, options Options) *tuiModel {
-	if options.Session == nil {
-		options.Session = newFakeSession()
+// newTestModel shows fake, or an empty session when fake is nil.
+func newTestModel(width, height int, fake *fakeSession) *tuiModel {
+	if fake == nil {
+		fake = newFakeSession()
 	}
-	return newTUIModel(width, height, options)
+	if fake.updates == nil {
+		fake.updates = make(chan session.Update, 64)
+	}
+	if fake.settings.ThinkingLevel == "" {
+		fake.settings.ThinkingLevel = agent.DefaultThinkingLevel
+	}
+	return newTUIModel(width, height, fake)
 }
 
 func testSession(model *tuiModel) *fakeSession {

@@ -2,7 +2,6 @@ package terminal
 
 import (
 	"context"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +16,7 @@ func TestResumePickerUsesNewestSessionAndReturnsSelection(t *testing.T) {
 		newID = "fedcba9876543210fedcba9876543210"
 	)
 	now := time.Now()
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	model.openResumePicker([]session.Summary{
 		{ID: oldID, Description: "old prompt", UpdatedAt: now.Add(-time.Hour)},
 		{ID: newID, Description: "new prompt", UpdatedAt: now, Active: true},
@@ -41,20 +40,11 @@ func TestResumePickerUsesNewestSessionAndReturnsSelection(t *testing.T) {
 }
 
 func TestResumeCommandListsSessionsWithoutStoreDependency(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, &fakeSession{summaries: []session.Summary{{ID: "session", Description: "prompt"}}})
 	if err := model.insertInput("/resume"); err != nil {
 		t.Fatal(err)
 	}
-	controller := tuiController{
-		model:    model,
-		renderer: &tuiRenderer{},
-		controls: controlsFor(&fakeEngine{}),
-		output:   io.Discard,
-		stopped:  make(chan struct{}),
-		sessions: Sessions{List: func(context.Context) ([]session.Summary, error) {
-			return []session.Summary{{ID: "session", Description: "prompt"}}, nil
-		}},
-	}
+	controller := newTestController(model)
 
 	if _, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.Enter}}); err != nil {
 		t.Fatal(err)

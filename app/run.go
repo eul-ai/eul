@@ -36,38 +36,39 @@ func newLauncher(home string, backends backend.Registry, noSandbox bool, interru
 
 func Run(ctx context.Context, options Options, dependencies Dependencies) error {
 	launcher := newLauncher(dependencies.Home, dependencies.Backends, options.NoSandbox, dependencies.Interrupts)
-	session, err := launcher.launch(ctx, options)
+	conversation, err := launcher.launch(ctx, options)
 	if err != nil {
 		return err
 	}
 
 	runner, err := terminal.NewRunner(dependencies.Input, dependencies.Output)
 	if err != nil {
-		return session.finish(err)
+		return errors.Join(err, conversation.Close())
 	}
-	runErr := runSessions(ctx, runner.Run, session, launcher)
+	runErr := runSessions(ctx, runner.Run, conversation, launcher)
 	return errors.Join(runErr, runner.Close())
 }
 
 func runSessions(
 	ctx context.Context,
 	run func(context.Context, terminal.Options) (terminal.RunOutcome, error),
-	session *agentSession,
+	conversation *session.Session,
 	launcher *launcher,
 ) error {
 	for {
-		outcome, err := session.run(ctx, run)
-		if err != nil {
+		outcome, err := run(ctx, terminal.Options{Session: conversation, Interrupts: launcher.interrupts})
+		if err := errors.Join(err, conversation.Close()); err != nil {
 			return err
 		}
 
+		settings := conversation.Settings()
 		switch outcome.Action {
 		case terminal.RunExit:
 			return nil
 		case terminal.RunNewSession:
-			session, err = launcher.start(ctx, session.settings(), "")
+			conversation, err = launcher.start(ctx, settings, "")
 		case terminal.RunResumeSession:
-			session, err = launcher.resume(ctx, session.config.WorkingDirectory, outcome.SessionID, "")
+			conversation, err = launcher.resume(ctx, settings.WorkingDirectory, outcome.SessionID, "")
 		default:
 			return fmt.Errorf("session: unknown terminal run action %d", outcome.Action)
 		}
@@ -77,7 +78,7 @@ func runSessions(
 	}
 }
 
-func (launcher *launcher) launch(ctx context.Context, options Options) (*agentSession, error) {
+func (launcher *launcher) launch(ctx context.Context, options Options) (*session.Session, error) {
 	if options.Resume {
 		return launcher.resume(ctx, "", options.SessionID, options.Prompt)
 	}
@@ -90,11 +91,11 @@ func (launcher *launcher) launch(ctx context.Context, options Options) (*agentSe
 	}, options.Prompt)
 }
 
-func (launcher *launcher) start(ctx context.Context, settings session.Settings, prompt string) (*agentSession, error) {
+func (launcher *launcher) start(ctx context.Context, settings session.Settings, prompt string) (*session.Session, error) {
 	return launcher.open(ctx, settings, nil, prompt)
 }
 
-func (launcher *launcher) resume(ctx context.Context, cwd, id, prompt string) (*agentSession, error) {
+func (launcher *launcher) resume(ctx context.Context, cwd, id, prompt string) (*session.Session, error) {
 	cwd, err := resolveCWD(cwd)
 	if err != nil {
 		return nil, err
@@ -111,7 +112,7 @@ func (launcher *launcher) resume(ctx context.Context, cwd, id, prompt string) (*
 	return resumed, nil
 }
 
-func (launcher *launcher) open(ctx context.Context, settings session.Settings, handle *session.Handle, prompt string) (*agentSession, error) {
+func (launcher *launcher) open(ctx context.Context, settings session.Settings, handle *session.Handle, prompt string) (*session.Session, error) {
 	selected, err := launcher.backends.Lookup(settings.Provider)
 	if err != nil {
 		return nil, err
@@ -132,7 +133,7 @@ func (launcher *launcher) open(ctx context.Context, settings session.Settings, h
 		}
 	}
 
-	opened, err := newStoredAgentSession(launcher, config, runtime, handle, prompt)
+	opened, err := launcher.newSession(config, runtime, handle, prompt)
 	if err != nil {
 		return nil, errors.Join(err, handle.Close())
 	}

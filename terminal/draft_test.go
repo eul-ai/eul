@@ -11,7 +11,7 @@ import (
 )
 
 func TestDraftRoundTrip(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)
 	}
@@ -29,11 +29,8 @@ func TestDraftRoundTrip(t *testing.T) {
 
 	conversation := newFakeSession()
 	conversation.transcript.AppendUser(textContent("prompt"))
-	restored := newTestModel(100, 30, Options{
-		Session:        conversation,
-		Config:         Config{Draft: decoded, ContextTokens: 42},
-		MessageHistory: MessageHistory{Entries: []string{"global prompt"}},
-	})
+	conversation.info = session.Info{Draft: decoded, ContextTokens: 42, History: []string{"global prompt"}}
+	restored := newTestModel(100, 30, conversation)
 	if restored.running || restored.activity.kind != activityReady {
 		t.Fatalf("runtime state was restored: %+v", restored)
 	}
@@ -52,7 +49,7 @@ func TestDraftRoundTrip(t *testing.T) {
 }
 
 func TestDraftProjectsImagesOut(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	if err := model.insertInput("before "); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +75,7 @@ func TestDraftProjectsImagesOut(t *testing.T) {
 }
 
 func TestDraftRestoreClampsCursor(t *testing.T) {
-	model := newTestModel(80, 24, Options{Config: Config{Draft: session.Draft{Input: "ab", Cursor: 9}}})
+	model := newTestModel(80, 24, &fakeSession{info: session.Info{Draft: session.Draft{Input: "ab", Cursor: 9}}})
 	if model.inputText() != "ab" || model.cursor != 2 {
 		t.Fatalf("input = %q, cursor = %d", model.inputText(), model.cursor)
 	}

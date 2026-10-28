@@ -1,16 +1,18 @@
 package terminal
 
 import (
+	"context"
 	"errors"
-	"slices"
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
+	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/terminal/keys"
 )
 
 func TestTUIModelEditsAndNavigatesHistory(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	if err := model.insertInput("ab"); err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +44,7 @@ func TestTUIModelEditsAndNavigatesHistory(t *testing.T) {
 }
 
 func TestTUIModelNavigatesSessionThenGlobalHistory(t *testing.T) {
-	model := newTestModel(80, 24, Options{MessageHistory: MessageHistory{Entries: []string{"global old", "global new"}}})
+	model := newTestModel(80, 24, &fakeSession{info: session.Info{History: []string{"global old", "global new"}}})
 	model.rememberPrompt("session old")
 	model.rememberPrompt("session new")
 
@@ -55,7 +57,7 @@ func TestTUIModelNavigatesSessionThenGlobalHistory(t *testing.T) {
 }
 
 func TestTUIModelEditsInlineImages(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	if err := model.insertInput("before after"); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +98,7 @@ func TestTUIModelEditsInlineImages(t *testing.T) {
 }
 
 func TestTUIModelInsertsNewlineAndPreservesItInPrompt(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	if err := model.insertInput("firstsecond"); err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +114,7 @@ func TestTUIModelInsertsNewlineAndPreservesItInPrompt(t *testing.T) {
 }
 
 func TestTUIModelNavigatesLinesWithImages(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	if err := model.insertInput("ab"); err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +142,7 @@ func TestTUIModelNavigatesLinesWithImages(t *testing.T) {
 }
 
 func TestTUIModelHistoryRestoresInlineDraft(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	model.history = []string{"old prompt"}
 	if err := model.insertInput("draft "); err != nil {
 		t.Fatal(err)
@@ -161,7 +163,7 @@ func TestTUIModelHistoryRestoresInlineDraft(t *testing.T) {
 }
 
 func TestArrowUpMovesToPreviousInputLineBeforeHistory(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	model.history = []string{"old prompt"}
 	if err := model.insertInput("first\nsecond"); err != nil {
 		t.Fatal(err)
@@ -183,7 +185,7 @@ func TestArrowUpMovesToPreviousInputLineBeforeHistory(t *testing.T) {
 }
 
 func TestArrowDownMovesToNextInputLineBeforeHistory(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	model.history = []string{"first\nsecond"}
 	model.historyDraft = editorItemsFromText("draft")
 	model.historyDraftCursor = len(model.historyDraft)
@@ -207,7 +209,7 @@ func TestArrowDownMovesToNextInputLineBeforeHistory(t *testing.T) {
 }
 
 func TestHomeAndEndMoveWithinCurrentInputLine(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	model.setInput("first\nsecond\nthird")
 	model.cursor = len([]rune("first\nsec"))
 
@@ -226,53 +228,27 @@ func TestHomeAndEndMoveWithinCurrentInputLine(t *testing.T) {
 	}
 }
 
-func TestTUIModelDefaultsToMediumThinking(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
-	if model.thinkingLevel != agent.DefaultThinkingLevel {
-		t.Fatalf("thinking level = %q", model.thinkingLevel)
-	}
-}
-
 func TestTUIModelCyclesSupportedThinkingLevels(t *testing.T) {
-	var configured []agent.ThinkingLevel
-	setThinkingLevel := func(level agent.ThinkingLevel) error {
-		configured = append(configured, level)
-		return nil
-	}
-	model := newTestModel(80, 24, Options{
-		Config: Config{
-			ThinkingLevel:  agent.ThinkingHigh,
-			ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh},
-		},
-		Controls: Controls{SetThinkingLevel: setThinkingLevel},
-	})
+	model := newTestModel(80, 24, &fakeSession{settings: session.Settings{ThinkingLevel: agent.ThinkingHigh}, info: session.Info{Model: backend.ModelMetadata{ThinkingLevels: []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh}}}})
 	for _, want := range []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh} {
-		exit, err := handleModelKey(model, keys.Event{Code: keys.ShiftTab}, setThinkingLevel)
+		exit, err := handleKey(context.Background(), model, keys.Event{Code: keys.ShiftTab})
 		if err != nil || exit {
 			t.Fatalf("handleKey() exit=%v error=%v", exit, err)
 		}
-		if model.thinkingLevel != want {
-			t.Fatalf("thinking level = %q, want %q", model.thinkingLevel, want)
+		if level := testSession(model).Settings().ThinkingLevel; level != want {
+			t.Fatalf("thinking level = %q, want %q", level, want)
 		}
-	}
-	wantConfigured := []agent.ThinkingLevel{agent.ThinkingOff, agent.ThinkingLow, agent.ThinkingHigh}
-	if !slices.Equal(configured, wantConfigured) {
-		t.Fatalf("configured = %q, want %q", configured, wantConfigured)
 	}
 }
 
 func TestTUIModelKeepsThinkingLevelWhenUpdateFails(t *testing.T) {
-	setThinkingLevel := func(agent.ThinkingLevel) error { return errors.New("update failed") }
-	model := newTestModel(80, 24, Options{
-		Config:   Config{ThinkingLevel: agent.ThinkingMedium},
-		Controls: Controls{SetThinkingLevel: setThinkingLevel},
-	})
-	exit, err := handleModelKey(model, keys.Event{Code: keys.ShiftTab}, setThinkingLevel)
+	model := newTestModel(80, 24, &fakeSession{thinkingErr: errors.New("update failed")})
+	exit, err := handleKey(context.Background(), model, keys.Event{Code: keys.ShiftTab})
 	if err != nil || exit {
 		t.Fatalf("handleKey() exit=%v error=%v", exit, err)
 	}
-	if model.thinkingLevel != agent.ThinkingMedium {
-		t.Fatalf("thinking level = %q", model.thinkingLevel)
+	if level := testSession(model).Settings().ThinkingLevel; level != agent.ThinkingMedium {
+		t.Fatalf("thinking level = %q", level)
 	}
 	if model.activity.kind != activityError || model.activity.detail != "update failed" {
 		t.Fatalf("activity = %+v", model.activity)
@@ -280,7 +256,7 @@ func TestTUIModelKeepsThinkingLevelWhenUpdateFails(t *testing.T) {
 }
 
 func TestTUIModelPreservesPastedNewlinesAndRejectsNUL(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	if err := model.insertInput("one\r\n\r\ntwo\tthree\x1b"); err != nil {
 		t.Fatal(err)
 	}

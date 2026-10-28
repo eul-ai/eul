@@ -106,12 +106,7 @@ func handleKeyInput(model *tuiModel, key keys.Event, frame terminalFrame) (tuiAc
 			setInputError(model, err)
 		}
 	case keys.ShiftTab:
-		level, err := model.nextThinkingLevel()
-		if err != nil {
-			setInputError(model, err)
-			return tuiAction{}, nil
-		}
-		return tuiAction{kind: tuiActionSetThinking, thinkingLevel: level}, nil
+		return tuiAction{kind: tuiActionSetThinking, thinkingLevel: model.nextThinkingLevel()}, nil
 	case keys.Left:
 		model.moveLeft()
 	case keys.Right:

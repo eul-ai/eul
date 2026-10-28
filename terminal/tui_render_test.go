@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eul-ai/eul/agent"
+	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/terminal/text"
 )
@@ -31,9 +32,7 @@ func buildTerminalFrame(model *tuiModel) terminalFrame {
 }
 
 func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
-	model := newTestModel(72, 12, Options{Config: Config{
-		Model: "gpt-5.6-sol", ThinkingLevel: agent.ThinkingXHigh, FastMode: true, ContextWindow: 272_000,
-	}})
+	model := newTestModel(72, 12, &fakeSession{settings: session.Settings{Models: backend.Models{Main: "gpt-5.6-sol"}, ThinkingLevel: agent.ThinkingXHigh, FastMode: true}, info: session.Info{Model: backend.ModelMetadata{ContextWindow: 272_000}}})
 	model.contextTokens = 84_320
 	model.appendEntry(session.EntryUser, "hello")
 	streamAssistantText(model, "answer")
@@ -63,7 +62,7 @@ func TestRenderFrameShowsRuledInputAndStatus(t *testing.T) {
 }
 
 func TestRenderFrameShowsPermission(t *testing.T) {
-	model := newTestModel(72, 12, Options{})
+	model := newTestModel(72, 12, nil)
 	setRunning(model)
 	model.permission.queue = []*session.PermissionRequest{{
 		Title:        "Network access requested",
@@ -148,7 +147,7 @@ func assertCachedConversationMatchesUncached(t *testing.T, renderer *tuiRenderer
 }
 
 func TestRenderStatusSanitizesMetadata(t *testing.T) {
-	model := newTestModel(80, 8, Options{Config: Config{Model: "safe\x1b[31m", ThinkingLevel: agent.ThinkingLevel("high\a")}})
+	model := newTestModel(80, 8, &fakeSession{settings: session.Settings{Models: backend.Models{Main: "safe\x1b[31m"}, ThinkingLevel: agent.ThinkingLevel("high\a")}})
 	_, left, right := renderStatus(model, 80)
 	status := left + right
 	if strings.ContainsAny(status, "\x1b\a") || !strings.Contains(right, "safe [31m") || !strings.Contains(right, "high") {
@@ -157,7 +156,7 @@ func TestRenderStatusSanitizesMetadata(t *testing.T) {
 }
 
 func TestRenderStatusPrioritizesActivityAndContext(t *testing.T) {
-	model := newTestModel(80, 20, Options{Config: Config{Model: "very-long-model", ThinkingLevel: agent.ThinkingMax, ContextWindow: 100}})
+	model := newTestModel(80, 20, &fakeSession{settings: session.Settings{Models: backend.Models{Main: "very-long-model"}, ThinkingLevel: agent.ThinkingMax}, info: session.Info{Model: backend.ModelMetadata{ContextWindow: 100}}})
 	model.contextTokens = 50
 	model.activity = activity{kind: activityCompacting}
 
@@ -172,7 +171,7 @@ func TestRenderStatusPrioritizesActivityAndContext(t *testing.T) {
 }
 
 func TestTUIModelShowsGenerationRetries(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	applyEvent(model, agent.Event{Kind: agent.EventGenerationRetry, Attempt: 2})
 
 	_, left, _ := renderStatus(model, 80)
@@ -182,7 +181,7 @@ func TestTUIModelShowsGenerationRetries(t *testing.T) {
 }
 
 func TestTUIModelTracksActivityAndContext(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	model.contextTokens = 100
 	applyEvent(model, agent.Event{Kind: agent.EventCompactionStart})
 	if model.activity.kind != activityCompacting || len(model.entries) != 0 {

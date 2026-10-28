@@ -16,7 +16,7 @@ func TestClipboardImageLimitFitsRequestLimit(t *testing.T) {
 }
 
 func TestAttachImageEnforcesLimits(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	for range maxAttachedImages {
 		if err := model.attachImage(agent.Image{Data: []byte("png")}); err != nil {
 			t.Fatal(err)

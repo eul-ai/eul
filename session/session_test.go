@@ -50,15 +50,17 @@ func createTestHandle(t *testing.T) *Handle {
 
 func openTestSession(t *testing.T, handle *Handle, provider agent.Provider, warnings ...string) *Session {
 	t.Helper()
-	engine := agent.New(provider, nil, agent.Options{Checkpoint: handle.Record().Agent})
-	subagents := subagent.NewManager(nil, handle.Record().Subagent)
-	t.Cleanup(subagents.Close)
-	conversation := New(Config{
-		Handle:   handle,
-		Settings: agent.NewSettings(agent.ThinkingMedium, false),
-		Warnings: warnings,
+	conversation, err := New(Config{
+		Handle:        handle,
+		History:       NewHistory(t.TempDir()),
+		AgentSettings: agent.NewSettings(agent.ThinkingMedium, false),
+		Warnings:      warnings,
 	})
-	conversation.Start(engine, subagents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := handle.Record()
+	conversation.Start(agent.New(provider, nil, agent.Options{Checkpoint: record.Agent}), subagent.NewManager(nil, record.Subagent))
 	return conversation
 }
 

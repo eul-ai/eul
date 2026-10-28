@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -151,21 +152,17 @@ type operationModel struct {
 }
 
 type statusModel struct {
-	width                      int
-	height                     int
-	model                      string
-	sessionID                  string
-	thinkingLevel              agent.ThinkingLevel
-	thinkingLevels             []agent.ThinkingLevel
-	thinkingSelectionAvailable bool
-	fastMode                   bool
-	fastModeAvailable          bool
-	contextWindow              int64
-	contextTokens              int64
-	providerUsage              backend.AccountUsage
-	subagentStatus             subagent.Status
-	activity                   activity
-	spinner                    int
+	width          int
+	height         int
+	model          string
+	sessionID      string
+	thinkingLevels []agent.ThinkingLevel
+	contextWindow  int64
+	contextTokens  int64
+	providerUsage  backend.AccountUsage
+	subagentStatus subagent.Status
+	activity       activity
+	spinner        int
 }
 
 type tuiModel struct {
@@ -175,48 +172,45 @@ type tuiModel struct {
 	statusModel
 }
 
-func newTUIModel(width, height int, options Options) *tuiModel {
-	thinkingLevel := options.Config.ThinkingLevel
-	if thinkingLevel == "" {
-		thinkingLevel = agent.DefaultThinkingLevel
-	}
-	thinkingLevels := append([]agent.ThinkingLevel(nil), options.Config.ThinkingLevels...)
+func newTUIModel(width, height int, session Session) *tuiModel {
+	info := session.Info()
+	settings := session.Settings()
+	thinkingLevels := slices.Clone(info.Model.ThinkingLevels)
 	if len(thinkingLevels) == 0 {
 		thinkingLevels = agent.ThinkingLevels()
 	}
-	fastModeAvailable := options.Config.FastModeAvailable && options.Controls.SetFastMode != nil
-	commands := availableCommands(fastModeAvailable)
+	commands := availableCommands(info.Model.FastMode)
 
 	model := &tuiModel{
 		conversationModel: conversationModel{
-			session:   options.Session,
+			session:   session,
 			following: true,
 		},
 		editorModel: editorModel{
 			commands:           commands,
-			commandCompletions: commandCompletions(commands, options.Config.Skills),
-			filePicker:         filePickerState{enabled: options.Config.WorkingDirectory != ""},
-			globalHistory:      append([]string(nil), options.MessageHistory.Entries...),
+			commandCompletions: commandCompletions(commands, info.Skills),
+			filePicker:         filePickerState{enabled: settings.WorkingDirectory != ""},
+			globalHistory:      slices.Clone(info.History),
 			historyIndex:       -1,
 		},
 		statusModel: statusModel{
-			width:                      width,
-			height:                     height,
-			model:                      singleLine(options.Config.Model, 120),
-			sessionID:                  singleLine(options.Config.SessionID, 120),
-			thinkingLevel:              agent.ThinkingLevel(singleLine(string(thinkingLevel), 40)),
-			thinkingLevels:             thinkingLevels,
-			thinkingSelectionAvailable: options.Controls.SetThinkingLevel != nil,
-			fastMode:                   options.Config.FastMode,
-			fastModeAvailable:          fastModeAvailable,
-			contextWindow:              options.Config.ContextWindow,
-			contextTokens:              options.Config.ContextTokens,
-			activity:                   activity{kind: activityReady},
+			width:          width,
+			height:         height,
+			model:          singleLine(settings.Models.Main, 120),
+			sessionID:      singleLine(info.ID, 120),
+			thinkingLevels: thinkingLevels,
+			contextWindow:  info.Model.ContextWindow,
+			contextTokens:  info.ContextTokens,
+			activity:       activity{kind: activityReady},
 		},
 	}
 	model.syncConversation()
-	model.restoreDraft(options.Config.Draft)
+	model.restoreDraft(info.Draft)
 	return model
+}
+
+func (m *tuiModel) thinkingLevel() agent.ThinkingLevel {
+	return agent.ThinkingLevel(singleLine(string(m.session.Settings().ThinkingLevel), 40))
 }
 
 func (m *tuiModel) syncConversation() {

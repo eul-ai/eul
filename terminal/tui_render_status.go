@@ -14,8 +14,8 @@ import (
 func renderStatus(model *tuiModel, width int) (string, string, string) {
 	spinner, activity := activityText(model)
 	left := spinner + activity
-	modelText := model.model + " (" + string(model.thinkingLevel) + ")"
-	if model.fastMode {
+	modelText := model.model + " (" + string(model.thinkingLevel()) + ")"
+	if model.session.Settings().FastMode {
 		modelText += " fast"
 	}
 	if model.sessionID != "" {

@@ -30,9 +30,9 @@ func newTestController(model *tuiModel) *tuiController {
 	return &tuiController{
 		model:             model,
 		renderer:          &tuiRenderer{},
-		controls:          controlsFor(&fakeEngine{}),
 		output:            io.Discard,
 		stopped:           make(chan struct{}),
+		usageResults:      make(chan providerUsageMessage, 1),
 		clipboardRequests: map[uint64]context.CancelFunc{},
 	}
 }
@@ -40,14 +40,5 @@ func newTestController(model *tuiModel) *tuiController {
 func handleKey(ctx context.Context, model *tuiModel, key keys.Event) (bool, error) {
 	controller := newTestController(model)
 	_ = renderModel(controller.renderer, model)
-	if model.thinkingSelectionAvailable {
-		controller.controls.SetThinkingLevel = func(agent.ThinkingLevel) error { return nil }
-	}
 	return controller.transition(ctx, tuiEvent{kind: tuiEventKey, key: key})
-}
-
-func handleModelKey(model *tuiModel, key keys.Event, setThinkingLevel func(agent.ThinkingLevel) error) (bool, error) {
-	controller := newTestController(model)
-	controller.controls = Controls{SetThinkingLevel: setThinkingLevel}
-	return controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: key})
 }

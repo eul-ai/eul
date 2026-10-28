@@ -46,11 +46,10 @@ func (c *tuiController) runAction(ctx context.Context, action tuiAction) (bool, 
 	case tuiActionDequeue:
 		c.model.restoreQueued(c.model.session.TakeQueued())
 	case tuiActionSetThinking:
-		if err := c.controls.SetThinkingLevel(action.thinkingLevel); err != nil {
+		if err := c.model.session.SetThinkingLevel(action.thinkingLevel); err != nil {
 			setInputError(c.model, err)
 			return false, nil
 		}
-		c.model.thinkingLevel = action.thinkingLevel
 	case tuiActionAttachImage:
 		if c.model.imageCount()+len(c.clipboardRequests) >= maxAttachedImages {
 			setInputError(c.model, errTooManyImages)

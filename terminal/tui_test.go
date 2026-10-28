@@ -123,13 +123,11 @@ func TestRunTUILoadsProviderUsageAtStartupAndAfterTurn(t *testing.T) {
 	output := newSignalingWriter("usage 25%")
 	fake := newFakeSession()
 	fake.calls = make(chan string, 1)
-	options := Options{
-		Session: fake,
-		Services: Services{LoadUsage: func(context.Context) (backend.AccountUsage, error) {
-			calls <- struct{}{}
-			return backend.AccountUsage{Windows: []backend.UsageWindow{{Duration: 5 * time.Hour, UsedPercent: 25}}}, nil
-		}},
+	fake.usage = func(context.Context) (backend.AccountUsage, error) {
+		calls <- struct{}{}
+		return backend.AccountUsage{Windows: []backend.UsageWindow{{Duration: 5 * time.Hour, UsedPercent: 25}}}, nil
 	}
+	options := Options{Session: fake}
 
 	done := make(chan error, 1)
 	go func() {
@@ -186,15 +184,15 @@ func TestRunTUIWaitsForProviderUsageCleanup(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := runTest(context.Background(), reader, io.Discard, Options{
-			Services: Services{LoadUsage: func(ctx context.Context) (backend.AccountUsage, error) {
-				close(started)
-				<-ctx.Done()
-				close(canceled)
-				<-release
-				return backend.AccountUsage{}, ctx.Err()
-			}},
-		})
+		fake := newFakeSession()
+		fake.usage = func(ctx context.Context) (backend.AccountUsage, error) {
+			close(started)
+			<-ctx.Done()
+			close(canceled)
+			<-release
+			return backend.AccountUsage{}, ctx.Err()
+		}
+		_, err := runTest(context.Background(), reader, io.Discard, Options{Session: fake})
 		done <- err
 	}()
 
@@ -237,7 +235,7 @@ func TestRunTUIReturnsInputReadFailure(t *testing.T) {
 }
 
 func TestHandleKeyRunsTurnAndAppliesOrderedEvents(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	if err := model.insertInput("hello"); err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +266,7 @@ func TestHandleKeyRunsTurnAndAppliesOrderedEvents(t *testing.T) {
 }
 
 func TestHandleKeyCancelsIncompleteToolTurnWithoutResettingConversation(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	model.contextTokens = 123
 	if err := model.insertInput("wait"); err != nil {
 		t.Fatal(err)
@@ -347,7 +345,7 @@ func (r terminalErrorReader) Read([]byte) (int, error) {
 }
 
 func TestHandleKeyCtrlCClearsInputBeforeExiting(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	if err := model.insertInput("draft"); err != nil {
 		t.Fatal(err)
 	}
@@ -363,27 +361,10 @@ func TestHandleKeyCtrlCClearsInputBeforeExiting(t *testing.T) {
 }
 
 func TestHandleKeyShiftTabCyclesThinkingLevel(t *testing.T) {
-	var configured agent.ThinkingLevel
-	model := newTestModel(80, 24, Options{
-		Config: Config{ThinkingLevel: agent.ThinkingMedium},
-		Controls: Controls{SetThinkingLevel: func(level agent.ThinkingLevel) error {
-			configured = level
-			return nil
-		}},
-	})
-	stopped := make(chan struct{})
-	defer close(stopped)
-
-	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, controls: Controls{SetThinkingLevel: func(level agent.ThinkingLevel) error {
-			configured = level
-			return nil
-		}}, output: io.Discard,
-		stopped: stopped,
-	}
-	exit, err := controller.transition(context.Background(), tuiEvent{kind: tuiEventKey, key: keys.Event{Code: keys.ShiftTab}})
-	if err != nil || exit || model.thinkingLevel != agent.ThinkingHigh || configured != agent.ThinkingHigh {
-		t.Fatalf("exit=%v err=%v thinking=%q configured=%q", exit, err, model.thinkingLevel, configured)
+	model := newTestModel(80, 24, nil)
+	exit, err := handleKey(context.Background(), model, keys.Event{Code: keys.ShiftTab})
+	if level := testSession(model).Settings().ThinkingLevel; err != nil || exit || level != agent.ThinkingHigh {
+		t.Fatalf("exit=%v err=%v thinking=%q", exit, err, level)
 	}
 	if frame := renderFrame(model); !strings.Contains(frame, ansiColors(currentTheme.thinkingColor(agent.ThinkingHigh), terminalColor{}, false)) {
 		t.Fatalf("cycled thinking color missing from frame: %q", frame)
@@ -391,11 +372,11 @@ func TestHandleKeyShiftTabCyclesThinkingLevel(t *testing.T) {
 }
 
 func TestHandleKeyCtrlLRequestsFullRedraw(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	stopped := make(chan struct{})
 	defer close(stopped)
 	controller := tuiController{
-		model: model, renderer: &tuiRenderer{}, controls: controlsFor(&fakeEngine{}), output: io.Discard,
+		model: model, renderer: &tuiRenderer{}, output: io.Discard,
 		stopped: stopped,
 	}
 
@@ -406,7 +387,7 @@ func TestHandleKeyCtrlLRequestsFullRedraw(t *testing.T) {
 }
 
 func TestHandleKeyCommands(t *testing.T) {
-	model := newTestModel(80, 24, Options{})
+	model := newTestModel(80, 24, nil)
 	for _, command := range []string{"/help", "/unknown"} {
 		if err := model.insertInput(command); err != nil {
 			t.Fatal(err)
@@ -441,8 +422,8 @@ func TestHandleKeyCommands(t *testing.T) {
 func TestRunTUISubmitsInitialPrompt(t *testing.T) {
 	fake := newFakeSession()
 	fake.calls = make(chan string, 2)
+	fake.info.Prompt = "investigate the store"
 	options := Options{Session: fake}
-	options.Config.InitialPrompt = "investigate the store"
 	done := make(chan error, 1)
 	go func() {
 		_, err := runTest(context.Background(), strings.NewReader(""), io.Discard, options)

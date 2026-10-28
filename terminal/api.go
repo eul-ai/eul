@@ -10,7 +10,6 @@ import (
 	"github.com/eul-ai/eul/agent"
 	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/session"
-	"github.com/eul-ai/eul/skill"
 	"github.com/eul-ai/eul/terminal/keys"
 )
 
@@ -22,7 +21,17 @@ var (
 	errOutput      = errors.New("terminal: write output")
 )
 
+// Session is the conversation the terminal shows. *session.Session
+// implements it.
 type Session interface {
+	Info() session.Info
+	Settings() session.Settings
+	SetThinkingLevel(agent.ThinkingLevel) error
+	SetFastMode(bool)
+	Goal() (agent.GoalState, bool)
+	SetGoal(string) error
+	ClearGoal()
+
 	Updates() <-chan session.Update
 	Send([]agent.ContentPart) error
 	Compact() error
@@ -30,20 +39,17 @@ type Session interface {
 	TakeQueued() [][]agent.ContentPart
 	Queued() [][]agent.ContentPart
 	Running() bool
+	Permissions() []*session.PermissionRequest
+	ResolvePermission(session.PermissionDecision)
+
 	Sync([]session.Entry) ([]session.Entry, bool)
 	Append(session.EntryKind, string)
 	SetDraft(session.Draft)
 	SaveDraft(session.Draft) error
-	Permissions() []*session.PermissionRequest
-	ResolvePermission(session.PermissionDecision)
-}
 
-type Controls struct {
-	SetGoal          func(string) error
-	Goal             func() (agent.GoalState, bool)
-	ClearGoal        func()
-	SetThinkingLevel func(agent.ThinkingLevel) error
-	SetFastMode      func(bool)
+	Remember(string) error
+	Sessions() ([]session.Summary, error)
+	Usage(context.Context) (backend.AccountUsage, error)
 }
 
 type RunAction uint8
@@ -59,46 +65,9 @@ type RunOutcome struct {
 	SessionID string
 }
 
-type Config struct {
-	Model             string
-	WorkingDirectory  string
-	ThinkingLevel     agent.ThinkingLevel
-	ThinkingLevels    []agent.ThinkingLevel
-	FastMode          bool
-	FastModeAvailable bool
-	ContextWindow     int64
-	ContextTokens     int64
-	Skills            []skill.Skill
-	Draft             session.Draft
-	SessionID         string
-	InitialPrompt     string
-}
-
-type Sessions struct {
-	List func(context.Context) ([]session.Summary, error)
-}
-
-type MessageHistory struct {
-	Entries []string
-	Append  func(string) error
-}
-
-type Events struct {
-	Interrupts <-chan os.Signal
-}
-
-type Services struct {
-	LoadUsage func(context.Context) (backend.AccountUsage, error)
-}
-
 type Options struct {
-	Config         Config
-	Controls       Controls
-	Session        Session
-	Sessions       Sessions
-	MessageHistory MessageHistory
-	Events         Events
-	Services       Services
+	Session    Session
+	Interrupts <-chan os.Signal
 }
 
 type fileDescriptor interface {

@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/backend"
 	"github.com/eul-ai/eul/filesearch"
 	"github.com/eul-ai/eul/session"
 	"github.com/eul-ai/eul/subagent"
@@ -48,27 +47,19 @@ type controllerOptions struct {
 	outputFD        int
 	stopped         <-chan struct{}
 	fileSearch      *filesearch.Searcher
-	loadUsage       func(context.Context) (backend.AccountUsage, error)
 	usageResults    chan<- providerUsageMessage
 	clipboardImages chan<- tuiEvent
-	controls        Controls
-	sessions        Sessions
-	messageHistory  MessageHistory
 }
 
 func newTUIController(config controllerOptions) *tuiController {
 	return &tuiController{
 		model:              config.model,
 		renderer:           &tuiRenderer{},
-		controls:           config.controls,
 		output:             config.output,
 		outputFD:           config.outputFD,
 		stopped:            config.stopped,
 		fileSearch:         config.fileSearch,
-		loadUsage:          config.loadUsage,
 		usageResults:       config.usageResults,
-		sessions:           config.sessions,
-		messageHistory:     config.messageHistory,
 		readClipboardImage: clipboard.ReadImage,
 		clipboardImages:    config.clipboardImages,
 		clipboardRequests:  make(map[uint64]context.CancelFunc),
@@ -79,17 +70,13 @@ func newTUIController(config controllerOptions) *tuiController {
 type tuiController struct {
 	model              *tuiModel
 	renderer           *tuiRenderer
-	controls           Controls
 	output             io.Writer
 	outputFD           int
 	stopped            <-chan struct{}
 	fileSearch         *filesearch.Searcher
-	loadUsage          func(context.Context) (backend.AccountUsage, error)
 	usageResults       chan<- providerUsageMessage
 	usageLoading       bool
 	usageLoads         sync.WaitGroup
-	sessions           Sessions
-	messageHistory     MessageHistory
 	readClipboardImage func(context.Context) (agent.Image, error)
 	clipboardImages    chan<- tuiEvent
 	clipboardRequests  map[uint64]context.CancelFunc
@@ -229,13 +216,9 @@ func (c *tuiController) handleKey(ctx context.Context, key keys.Event) (bool, er
 }
 
 func (c *tuiController) flushMessageHistory() error {
-	if c.messageHistory.Append == nil {
-		c.model.pendingHistory = nil
-		return nil
-	}
 	for len(c.model.pendingHistory) > 0 {
 		prompt := c.model.pendingHistory[0]
-		if err := c.messageHistory.Append(prompt); err != nil {
+		if err := c.model.session.Remember(prompt); err != nil {
 			return fmt.Errorf("save message history: %w", err)
 		}
 		c.model.pendingHistory[0] = ""
@@ -276,12 +259,12 @@ func (c *tuiController) handleSettled(ctx context.Context, runErr error) (bool, 
 }
 
 func (c *tuiController) requestUsage(ctx context.Context) {
-	if c.loadUsage == nil || c.usageLoading {
+	if c.usageLoading {
 		return
 	}
 
 	c.usageLoading = true
-	load, results := c.loadUsage, c.usageResults
+	load, results := c.model.session.Usage, c.usageResults
 	c.usageLoads.Go(func() {
 		loadContext, cancel := context.WithTimeout(ctx, providerUsageTimeout)
 		defer cancel()
