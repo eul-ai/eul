@@ -211,9 +211,9 @@ func scoreFileSearchPath(query string, queryRunes []rune, candidatePath, basenam
 	}
 
 	switch {
-	case runesEqual(pathRunes, queryRunes):
+	case slices.Equal(pathRunes, queryRunes):
 		return 700_000 - len(pathRunes) + exactCaseBonus(candidatePath), runeRange(0, len(pathRunes)), true
-	case runesEqual(baseRunes, queryRunes):
+	case slices.Equal(baseRunes, queryRunes):
 		return 650_000 - len(pathRunes) + exactCaseBonus(basename), runeRange(baseOffset, len(baseRunes)), true
 	case runesHasPrefix(baseRunes, queryRunes):
 		return 600_000 - len(pathRunes), runeRange(baseOffset, len(queryRunes)), true
@@ -261,10 +261,6 @@ func foldedRunes(value string) []rune {
 		result[index] = unicode.ToLower(character)
 	}
 	return result
-}
-
-func runesEqual(left, right []rune) bool {
-	return slices.Equal(left, right)
 }
 
 func runesHasPrefix(value, prefix []rune) bool {

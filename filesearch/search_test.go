@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -255,13 +254,14 @@ func TestRankFileCandidatesMakesCWDDirectoryNavigationExplicit(t *testing.T) {
 
 func TestSearcherSearchesCWDAndBrowsesExternalDirectoriesShallowly(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("HOME", home)
 	cwd := filepath.Join(home, "Code", "eul")
 	other := filepath.Join(home, "Code", "other")
 	writeSearchFile(t, filepath.Join(cwd, "terminal", "tui.go"), "package terminal")
 	writeSearchFile(t, filepath.Join(other, "README.md"), "other")
 	writeSearchFile(t, filepath.Join(other, "nested", "deep.txt"), "deep")
 
-	runner := newConfiguredSearcher(cwd, home, resolveFileSearchSpec, discoverFiles)
+	runner := New(cwd)
 	defer runner.Close()
 	output := runner.Results()
 
@@ -304,7 +304,7 @@ func TestSearcherSearchesSymlinkCWD(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runner := newConfiguredSearcher(linkedCWD, "", resolveFileSearchSpec, discoverFiles)
+	runner := New(linkedCWD)
 	defer runner.Close()
 	output := runner.Results()
 	runner.Search(context.Background(), Request{ID: 1, Query: "file", Refresh: true})
@@ -318,7 +318,8 @@ func TestSearcherSearchesSymlinkCWD(t *testing.T) {
 
 func TestSearcherReportsInvalidBrowseRoot(t *testing.T) {
 	home := t.TempDir()
-	runner := newConfiguredSearcher(home, home, resolveFileSearchSpec, discoverFiles)
+	t.Setenv("HOME", home)
+	runner := New(home)
 	defer runner.Close()
 	output := runner.Results()
 
@@ -333,72 +334,43 @@ func TestSearcherReportsInvalidBrowseRoot(t *testing.T) {
 
 func TestSearcherReusesDiscoveryAcrossQueryEdits(t *testing.T) {
 	cwd := t.TempDir()
-	started := make(chan struct{})
-	var calls atomic.Int32
-	var resolveCalls atomic.Int32
-	resolve := func(cwd, canonicalCWD, home, query string) (fileSearchSpec, error) {
-		resolveCalls.Add(1)
-		return resolveFileSearchSpec(cwd, canonicalCWD, home, query)
-	}
-	discover := func(ctx context.Context, spec fileSearchSpec, emit func([]fileCandidate) error) (bool, error) {
-		if calls.Add(1) == 1 {
-			close(started)
-		}
-		if err := emit([]fileCandidate{
-			{path: filepath.Join(spec.directory, "first.go"), name: "first.go"},
-			{path: filepath.Join(spec.directory, "second.go"), name: "second.go"},
-		}); err != nil {
-			return false, err
-		}
-		<-ctx.Done()
-		return false, ctx.Err()
-	}
-	runner := newConfiguredSearcher(cwd, "", resolve, discover)
+	writeSearchFile(t, filepath.Join(cwd, "first.go"), "first")
+	runner := New(cwd)
 	defer runner.Close()
 	output := runner.Results()
 
 	runner.Search(context.Background(), Request{ID: 1, Query: "first", Refresh: true})
-	select {
-	case <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("discovery did not start")
-	}
 	waitForFileSearchResult(t, output, 1, func(result Result) bool {
-		return len(result.Matches) == 1 && result.Matches[0].Name == "first.go"
+		return result.State == StateComplete && len(result.Matches) == 1 && result.Matches[0].Name == "first.go"
 	})
+	writeSearchFile(t, filepath.Join(cwd, "second.go"), "second")
 
 	runner.Search(context.Background(), Request{ID: 2, Query: "second"})
-	waitForFileSearchResult(t, output, 2, func(result Result) bool {
-		return len(result.Matches) == 1 && result.Matches[0].Name == "second.go"
+	result := waitForFileSearchResult(t, output, 2, func(result Result) bool {
+		return result.State == StateComplete
 	})
-	if got := calls.Load(); got != 1 {
-		t.Fatalf("discovery calls = %d, want 1", got)
-	}
-	if got := resolveCalls.Load(); got != 1 {
-		t.Fatalf("scope resolutions = %d, want 1", got)
+	if len(result.Matches) != 0 {
+		t.Fatalf("query edit rediscovered files: %+v", result.Matches)
 	}
 }
 
 func TestSearcherRefreshReplacesStaleEntries(t *testing.T) {
 	cwd := t.TempDir()
-	var calls atomic.Int32
-	discover := func(_ context.Context, spec fileSearchSpec, emit func([]fileCandidate) error) (bool, error) {
-		name := "old.go"
-		if calls.Add(1) > 1 {
-			name = "new.go"
-		}
-		return false, emit([]fileCandidate{{path: filepath.Join(spec.directory, name), name: name}})
-	}
-	runner := newConfiguredSearcher(cwd, "", resolveFileSearchSpec, discover)
+	writeSearchFile(t, filepath.Join(cwd, "old.go"), "old")
+	runner := New(cwd)
 	defer runner.Close()
 	output := runner.Results()
 
-	runner.Search(context.Background(), Request{ID: 1, Refresh: true})
+	runner.Search(context.Background(), Request{ID: 1, Query: ".go", Refresh: true})
 	waitForFileSearchResult(t, output, 1, func(result Result) bool {
 		return result.State == StateComplete && len(result.Matches) == 1 && result.Matches[0].Name == "old.go"
 	})
+	if err := os.Remove(filepath.Join(cwd, "old.go")); err != nil {
+		t.Fatal(err)
+	}
+	writeSearchFile(t, filepath.Join(cwd, "new.go"), "new")
 
-	runner.Search(context.Background(), Request{ID: 2, Refresh: true})
+	runner.Search(context.Background(), Request{ID: 2, Query: ".go", Refresh: true})
 	result := waitForFileSearchResult(t, output, 2, func(result Result) bool {
 		return result.State == StateComplete
 	})
@@ -407,218 +379,42 @@ func TestSearcherRefreshReplacesStaleEntries(t *testing.T) {
 	}
 }
 
-func TestSearcherCancelsDiscoveryWhenScopeChanges(t *testing.T) {
-	cwd := t.TempDir()
-	first := filepath.Join(cwd, "first")
-	second := filepath.Join(cwd, "second")
-	if err := os.MkdirAll(first, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(second, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	first, err := filepath.EvalSymlinks(first)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err = filepath.EvalSymlinks(second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	firstStarted := make(chan struct{})
-	firstCanceled := make(chan struct{})
-	resolve := func(_, _, _, query string) (fileSearchSpec, error) {
-		directory := first
-		if query == "second" {
-			directory = second
-		}
-		return fileSearchSpec{directory: directory, query: query, recursive: true}, nil
-	}
-	discover := func(ctx context.Context, spec fileSearchSpec, emit func([]fileCandidate) error) (bool, error) {
-		if spec.directory == first {
-			close(firstStarted)
-			<-ctx.Done()
-			close(firstCanceled)
-			return false, ctx.Err()
-		}
-		return false, emit([]fileCandidate{{path: filepath.Join(second, "second.go"), name: "second.go"}})
-	}
-	runner := newConfiguredSearcher(cwd, "", resolve, discover)
-	defer runner.Close()
-	output := runner.Results()
-
-	runner.Search(context.Background(), Request{ID: 1, Query: "first", Refresh: true})
-	select {
-	case <-firstStarted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("first discovery did not start")
-	}
-	runner.Search(context.Background(), Request{ID: 2, Query: "second"})
-	select {
-	case <-firstCanceled:
-	case <-time.After(2 * time.Second):
-		t.Fatal("first discovery was not canceled")
-	}
-	waitForFileSearchResult(t, output, 2, func(result Result) bool {
-		return result.State == StateComplete && len(result.Matches) == 1
-	})
-}
-
-func TestSearcherCancelStopsActiveDiscovery(t *testing.T) {
-	cwd := t.TempDir()
-	started := make(chan struct{})
-	canceled := make(chan struct{})
-	discover := func(ctx context.Context, _ fileSearchSpec, _ func([]fileCandidate) error) (bool, error) {
-		close(started)
-		<-ctx.Done()
-		close(canceled)
-		return false, ctx.Err()
-	}
-	searcher := newConfiguredSearcher(cwd, "", resolveFileSearchSpec, discover)
-	defer searcher.Close()
-
-	searcher.Search(context.Background(), Request{ID: 1, Refresh: true})
-	select {
-	case <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("discovery did not start")
-	}
-
-	searcher.Cancel()
-	select {
-	case <-canceled:
-	case <-time.After(2 * time.Second):
-		t.Fatal("discovery was not canceled")
-	}
-}
-
-func TestSearcherEvictsCatalogsOverEntryBudget(t *testing.T) {
-	cwd := t.TempDir()
-	directories := []string{
-		filepath.Join(cwd, "first"),
-		filepath.Join(cwd, "second"),
-	}
-	resolve := func(_, _, _, query string) (fileSearchSpec, error) {
-		var index int
-		if _, err := fmt.Sscanf(query, "%d", &index); err != nil {
-			return fileSearchSpec{}, err
-		}
-		return fileSearchSpec{directory: directories[index], query: query}, nil
-	}
-	var discoveries atomic.Int32
-	discover := func(_ context.Context, spec fileSearchSpec, emit func([]fileCandidate) error) (bool, error) {
-		discoveries.Add(1)
-		return false, emit([]fileCandidate{
-			{path: filepath.Join(spec.directory, "file-0.go"), name: "file-0.go"},
-			{path: filepath.Join(spec.directory, "file-1.go"), name: "file-1.go"},
-		})
-	}
-	runner := newConfiguredSearcherWithLimits(cwd, "", resolve, discover, cacheLimits{
-		maxCatalogs: 10,
-		maxEntries:  3,
-	})
-	defer runner.Close()
-	output := runner.Results()
-
-	for id, query := range []string{"0", "1", "0"} {
-		requestID := uint64(id + 1)
-		runner.Search(context.Background(), Request{ID: requestID, Query: query})
-		waitForFileSearchResult(t, output, requestID, func(result Result) bool {
-			return result.State == StateComplete
-		})
-	}
-	if got, want := discoveries.Load(), int32(3); got != want {
-		t.Fatalf("discoveries = %d, want %d", got, want)
-	}
-}
-
-func TestSearcherCancelsCompletedDiscoveryContext(t *testing.T) {
-	cwd := t.TempDir()
-	discoveryContexts := make(chan context.Context, 1)
-	discover := func(ctx context.Context, _ fileSearchSpec, _ func([]fileCandidate) error) (bool, error) {
-		discoveryContexts <- ctx
-		return false, nil
-	}
-	runner := newConfiguredSearcher(cwd, "", resolveFileSearchSpec, discover)
-	defer runner.Close()
-	output := runner.Results()
-	parent, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	runner.Search(parent, Request{ID: 1, Refresh: true})
-	var discoveryContext context.Context
-	select {
-	case discoveryContext = <-discoveryContexts:
-	case <-time.After(2 * time.Second):
-		t.Fatal("discovery did not start")
-	}
-	waitForFileSearchResult(t, output, 1, func(result Result) bool {
-		return result.State == StateComplete
-	})
-	select {
-	case <-discoveryContext.Done():
-	case <-time.After(2 * time.Second):
-		t.Fatal("completed discovery context was not canceled")
-	}
-	if err := parent.Err(); err != nil {
-		t.Fatalf("parent context was canceled: %v", err)
-	}
-}
-
 func TestSearcherEvictsOldCatalogs(t *testing.T) {
 	cwd := t.TempDir()
-	directories := make([]string, maxCatalogs+1)
-	for index := range directories {
-		directory := filepath.Join(cwd, fmt.Sprintf("directory-%02d", index))
-		if err := os.Mkdir(directory, 0o755); err != nil {
+	for index := range maxCatalogs + 1 {
+		if err := os.Mkdir(filepath.Join(cwd, fmt.Sprintf("directory-%02d", index)), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		canonical, err := filepath.EvalSymlinks(directory)
-		if err != nil {
-			t.Fatal(err)
-		}
-		directories[index] = canonical
 	}
-	resolve := func(_, _, _, query string) (fileSearchSpec, error) {
-		var index int
-		if _, err := fmt.Sscanf(query, "%d", &index); err != nil {
-			return fileSearchSpec{}, err
-		}
-		return fileSearchSpec{directory: directories[index], query: query}, nil
-	}
-	var discoveries atomic.Int32
-	discover := func(_ context.Context, _ fileSearchSpec, _ func([]fileCandidate) error) (bool, error) {
-		discoveries.Add(1)
-		return false, nil
-	}
-	runner := newConfiguredSearcher(cwd, "", resolve, discover)
+	runner := New(cwd)
 	defer runner.Close()
 	output := runner.Results()
-
 	var id uint64
-	for index := range directories {
+	search := func(query string) Result {
 		id++
-		runner.Search(context.Background(), Request{ID: id, Query: fmt.Sprint(index)})
-		waitForFileSearchResult(t, output, id, func(result Result) bool {
+		runner.Search(context.Background(), Request{ID: id, Query: query})
+		return waitForFileSearchResult(t, output, id, func(result Result) bool {
 			return result.State == StateComplete
 		})
 	}
-	id++
-	runner.Search(context.Background(), Request{ID: id, Query: "0"})
-	waitForFileSearchResult(t, output, id, func(result Result) bool {
-		return result.State == StateComplete
-	})
-	if got, want := discoveries.Load(), int32(len(directories)+1); got != want {
-		t.Fatalf("discoveries = %d, want %d", got, want)
+
+	search("./directory-00/")
+	writeSearchFile(t, filepath.Join(cwd, "directory-00", "late.go"), "late")
+	if result := search("./directory-00/late"); len(result.Matches) != 0 {
+		t.Fatalf("cached catalog matches = %+v", result.Matches)
+	}
+	for index := 1; index <= maxCatalogs; index++ {
+		search(fmt.Sprintf("./directory-%02d/", index))
+	}
+	if result := search("./directory-00/late"); len(result.Matches) != 1 || result.Matches[0].Name != "late.go" {
+		t.Fatalf("evicted catalog matches = %+v", result.Matches)
 	}
 }
 
 func TestSearcherDoesNotBlockUpdatesOnUnreadResults(t *testing.T) {
 	cwd := t.TempDir()
-	discover := func(_ context.Context, spec fileSearchSpec, emit func([]fileCandidate) error) (bool, error) {
-		return false, emit([]fileCandidate{{path: filepath.Join(spec.directory, "file.go"), name: "file.go"}})
-	}
-	runner := newConfiguredSearcher(cwd, "", resolveFileSearchSpec, discover)
+	writeSearchFile(t, filepath.Join(cwd, "file.go"), "file")
+	runner := New(cwd)
 
 	updated := make(chan struct{})
 	go func() {
@@ -642,49 +438,6 @@ func TestSearcherDoesNotBlockUpdatesOnUnreadResults(t *testing.T) {
 	case <-closed:
 	case <-time.After(2 * time.Second):
 		t.Fatal("close blocked behind unread search results")
-	}
-}
-
-func TestSearcherCloseJoinsCanceledDiscovery(t *testing.T) {
-	cwd := t.TempDir()
-	started := make(chan struct{})
-	canceled := make(chan struct{})
-	release := make(chan struct{})
-	discover := func(ctx context.Context, _ fileSearchSpec, _ func([]fileCandidate) error) (bool, error) {
-		close(started)
-		<-ctx.Done()
-		close(canceled)
-		<-release
-		return false, ctx.Err()
-	}
-	runner := newConfiguredSearcher(cwd, "", resolveFileSearchSpec, discover)
-	runner.Search(context.Background(), Request{ID: 1, Refresh: true})
-	select {
-	case <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("discovery did not start")
-	}
-
-	closed := make(chan struct{})
-	go func() {
-		runner.Close()
-		close(closed)
-	}()
-	select {
-	case <-canceled:
-	case <-time.After(2 * time.Second):
-		t.Fatal("discovery was not canceled")
-	}
-	select {
-	case <-closed:
-		t.Fatal("close returned before discovery exited")
-	case <-time.After(50 * time.Millisecond):
-	}
-	close(release)
-	select {
-	case <-closed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("close did not join discovery")
 	}
 }
 

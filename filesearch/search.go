@@ -3,8 +3,10 @@ package filesearch
 import (
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 )
 
@@ -41,20 +43,10 @@ type searchCommand struct {
 	cancel  bool
 }
 
-type resolveFileSearchFunc func(string, string, string, string) (fileSearchSpec, error)
-
-type cacheLimits struct {
-	maxCatalogs int
-	maxEntries  int
-}
-
 type Searcher struct {
 	cwd          string
 	canonicalCWD string
 	home         string
-	resolve      resolveFileSearchFunc
-	discover     discoverFilesFunc
-	cacheLimits  cacheLimits
 	commands     chan searcherUpdate
 	discoveries  chan fileDiscoveryUpdate
 	matches      chan fileMatchUpdate
@@ -88,16 +80,16 @@ type fileMatchUpdate struct {
 }
 
 type fileSearchCatalog struct {
-	entries        map[string]fileCandidate
-	visible        map[string]fileCandidate
-	refresh        map[string]fileCandidate
-	state          State
-	committedState State
-	err            error
-	initialized    bool
-	generation     uint64
-	lastUsed       uint64
-	cancel         context.CancelFunc
+	entries     map[string]fileCandidate
+	visible     map[string]fileCandidate
+	refresh     map[string]fileCandidate
+	state       State
+	err         error
+	initialized bool
+	limited     bool
+	generation  uint64
+	lastUsed    uint64
+	cancel      context.CancelFunc
 }
 
 type activeFileSearch struct {
@@ -108,22 +100,11 @@ type activeFileSearch struct {
 }
 
 func New(cwd string) *Searcher {
-	home, _ := os.UserHomeDir()
-	return newConfiguredSearcher(cwd, home, resolveFileSearchSpec, discoverFiles)
-}
-
-func newConfiguredSearcher(cwd, home string, resolve resolveFileSearchFunc, discover discoverFilesFunc) *Searcher {
-	return newConfiguredSearcherWithLimits(cwd, home, resolve, discover, cacheLimits{
-		maxCatalogs: maxCatalogs,
-		maxEntries:  maxCachedEntries,
-	})
-}
-
-func newConfiguredSearcherWithLimits(cwd, home string, resolve resolveFileSearchFunc, discover discoverFilesFunc, limits cacheLimits) *Searcher {
 	canonicalCWD, err := filepath.EvalSymlinks(cwd)
 	if err != nil {
-		canonicalCWD = filepath.Clean(cwd)
+		canonicalCWD = cwd
 	}
+	home, _ := os.UserHomeDir()
 	if home != "" {
 		home = filepath.Clean(home)
 	}
@@ -131,9 +112,6 @@ func newConfiguredSearcherWithLimits(cwd, home string, resolve resolveFileSearch
 		cwd:          filepath.Clean(cwd),
 		canonicalCWD: filepath.Clean(canonicalCWD),
 		home:         home,
-		resolve:      resolve,
-		discover:     discover,
-		cacheLimits:  limits,
 		commands:     make(chan searcherUpdate, 1),
 		discoveries:  make(chan fileDiscoveryUpdate, 64),
 		matches:      make(chan fileMatchUpdate, 64),
@@ -189,321 +167,294 @@ func (s *Searcher) Close() {
 	})
 }
 
+type searchLoop struct {
+	searcher            *Searcher
+	catalogs            map[fileSearchKey]*fileSearchCatalog
+	active              *activeFileSearch
+	matchCancel         context.CancelFunc
+	matchGeneration     uint64
+	discoveryGeneration uint64
+	catalogClock        uint64
+	catalogEntries      int
+	pendingOutput       chan<- Result
+	pendingResult       Result
+	pendingDone         <-chan struct{}
+}
+
 func (s *Searcher) run() {
 	defer close(s.done)
 	defer close(s.results)
 
-	catalogs := make(map[fileSearchKey]*fileSearchCatalog)
-	var active *activeFileSearch
-	var matchCancel context.CancelFunc
-	var matchGeneration uint64
-	var discoveryGeneration uint64
-	var catalogClock uint64
-	var catalogEntries int
-	var pendingOutput chan<- Result
-	var pendingResult Result
-	var pendingDone <-chan struct{}
-
-	clearPending := func() {
-		pendingOutput = nil
-		pendingDone = nil
-	}
-	publish := func(ctx context.Context, result Result) {
-		if ctx.Err() != nil {
-			return
-		}
-		pendingOutput = s.results
-		pendingResult = result
-		pendingDone = ctx.Done()
-	}
-
-	cancelMatch := func() {
-		if matchCancel != nil {
-			matchCancel()
-			matchCancel = nil
-		}
-	}
-	cancelCatalog := func(catalog *fileSearchCatalog) {
-		if catalog == nil || catalog.cancel == nil {
-			return
-		}
-		catalog.cancel()
-		catalog.cancel = nil
-		discoveryGeneration++
-		catalog.generation = discoveryGeneration
-		catalog.refresh = nil
-		catalog.visible = catalog.entries
-		catalog.err = nil
-		if catalog.initialized {
-			catalog.state = catalog.committedState
-		} else {
-			catalog.state = StateDiscovering
-		}
-	}
-	trimCatalogs := func() {
-		for len(catalogs) > s.cacheLimits.maxCatalogs || catalogEntries > s.cacheLimits.maxEntries {
-			var oldestKey fileSearchKey
-			var oldest *fileSearchCatalog
-			for key, catalog := range catalogs {
-				if active != nil && key == active.key {
-					continue
-				}
-				if oldest != nil && catalog.lastUsed >= oldest.lastUsed {
-					continue
-				}
-				oldestKey = key
-				oldest = catalog
-			}
-			if oldest == nil {
-				return
-			}
-			cancelCatalog(oldest)
-			catalogEntries -= len(oldest.entries)
-			delete(catalogs, oldestKey)
-		}
-	}
-	cancelActive := func() {
-		cancelMatch()
-		if active != nil {
-			cancelCatalog(catalogs[active.key])
-		}
-		active = nil
-		trimCatalogs()
-	}
-	startMatch := func() {
-		cancelMatch()
-		if active == nil {
-			return
-		}
-		catalog := catalogs[active.key]
-		candidates := fileCandidateValues(catalog.visible)
-		state := catalog.state
-		errText := catalog.err
-		requestID := active.request.ID
-		spec := active.spec
-		matchGeneration++
-		generation := matchGeneration
-		matchContext, cancel := context.WithCancel(active.ctx)
-		matchCancel = cancel
-
-		s.wait.Add(1)
-		go func() {
-			defer s.wait.Done()
-			defer cancel()
-
-			matches := rankFileCandidates(matchContext, s.canonicalCWD, spec, candidates)
-			if matchContext.Err() != nil {
-				return
-			}
-			update := fileMatchUpdate{
-				generation: generation,
-				requestID:  requestID,
-				matches:    matches,
-				state:      state,
-				err:        errText,
-			}
-			select {
-			case s.matches <- update:
-			case <-matchContext.Done():
-			case <-s.stop:
-			}
-		}()
-	}
-	startDiscovery := func(ctx context.Context, key fileSearchKey, spec fileSearchSpec, catalog *fileSearchCatalog) {
-		cancelCatalog(catalog)
-		discoveryGeneration++
-		catalog.generation = discoveryGeneration
-		generation := catalog.generation
-		catalog.refresh = make(map[string]fileCandidate)
-		catalog.visible = cloneFileCandidates(catalog.entries)
-		catalog.state = StateDiscovering
-		catalog.err = nil
-		discoveryContext, cancel := context.WithCancel(ctx)
-		catalog.cancel = cancel
-
-		s.wait.Add(1)
-		go func() {
-			defer s.wait.Done()
-			defer cancel()
-
-			emit := func(batch []fileCandidate) error {
-				update := fileDiscoveryUpdate{key: key, generation: generation, batch: batch}
-				select {
-				case s.discoveries <- update:
-					return nil
-				case <-discoveryContext.Done():
-					return discoveryContext.Err()
-				case <-s.stop:
-					return context.Canceled
-				}
-			}
-			limited, err := s.discover(discoveryContext, spec, emit)
-			update := fileDiscoveryUpdate{key: key, generation: generation, done: true, limited: limited, err: err}
-			select {
-			case s.discoveries <- update:
-			case <-s.stop:
-			}
-		}()
-	}
-	applyDiscoveryUpdate := func(update fileDiscoveryUpdate) bool {
-		catalog := catalogs[update.key]
-		if catalog == nil || catalog.generation != update.generation {
-			return false
-		}
-		for _, candidate := range update.batch {
-			catalog.refresh[candidate.path] = candidate
-			catalog.visible[candidate.path] = candidate
-		}
-
-		if update.done {
-			catalog.cancel = nil
-			previousEntries := len(catalog.entries)
-			switch {
-			case update.err != nil && !errors.Is(update.err, context.Canceled):
-				catalog.refresh = nil
-				catalog.visible = catalog.entries
-				catalog.state = StateFailed
-				catalog.err = update.err
-			case update.err != nil:
-				catalog.refresh = nil
-				catalog.visible = catalog.entries
-				catalog.err = nil
-				if catalog.initialized {
-					catalog.state = catalog.committedState
-				} else {
-					catalog.state = StateDiscovering
-				}
-			case update.limited:
-				catalog.entries = catalog.refresh
-				catalog.visible = catalog.entries
-				catalog.refresh = nil
-				catalog.initialized = true
-				catalog.state = StateLimited
-				catalog.committedState = StateLimited
-			default:
-				catalog.entries = catalog.refresh
-				catalog.visible = catalog.entries
-				catalog.refresh = nil
-				catalog.initialized = true
-				catalog.state = StateComplete
-				catalog.committedState = StateComplete
-				catalog.err = nil
-			}
-			if update.err == nil {
-				catalogEntries += len(catalog.entries) - previousEntries
-				trimCatalogs()
-			}
-		}
-		return active != nil && active.key == update.key
-	}
-
+	loop := &searchLoop{searcher: s, catalogs: make(map[fileSearchKey]*fileSearchCatalog)}
 	for {
 		select {
 		case update := <-s.commands:
-			clearPending()
-			command := update.command
-			if command.cancel {
-				cancelActive()
-			}
-			if command.request == nil {
-				continue
-			}
-
-			var spec fileSearchSpec
-			var err error
-			resolved := false
-			if active != nil {
-				spec, resolved = rescoreFileSearchSpec(active.spec, command.request.Query)
-			}
-			if !resolved {
-				spec, err = s.resolve(s.cwd, s.canonicalCWD, s.home, command.request.Query)
-			}
-			if err != nil {
-				cancelActive()
-				publish(update.ctx, Result{ID: command.request.ID, State: StateFailed, Err: err})
-				continue
-			}
-
-			key := spec.key()
-			if active != nil && active.key != key {
-				cancelCatalog(catalogs[active.key])
-			}
-			cancelMatch()
-			active = &activeFileSearch{
-				ctx:     update.ctx,
-				request: *command.request,
-				spec:    spec,
-				key:     key,
-			}
-
-			catalog := catalogs[key]
-			if catalog == nil {
-				catalog = &fileSearchCatalog{
-					entries:        make(map[string]fileCandidate),
-					visible:        make(map[string]fileCandidate),
-					state:          StateDiscovering,
-					committedState: StateComplete,
-				}
-				catalogs[key] = catalog
-			}
-			catalogClock++
-			catalog.lastUsed = catalogClock
-			trimCatalogs()
-			if command.request.Refresh || !catalog.initialized && catalog.cancel == nil {
-				startDiscovery(update.ctx, key, spec, catalog)
-			}
-			startMatch()
+			loop.clearPending()
+			loop.handleCommand(update)
 
 		case update := <-s.discoveries:
-			rematch := applyDiscoveryUpdate(update)
+			rematch := loop.applyDiscovery(update)
 			for range len(s.discoveries) {
-				if applyDiscoveryUpdate(<-s.discoveries) {
+				if loop.applyDiscovery(<-s.discoveries) {
 					rematch = true
 				}
 			}
 			if rematch {
-				startMatch()
+				loop.startMatch()
 			}
 
 		case update := <-s.matches:
-			if active == nil || update.generation != matchGeneration || update.requestID != active.request.ID {
-				continue
-			}
-			publish(active.ctx, Result{
-				ID:      update.requestID,
-				Matches: update.matches,
-				State:   update.state,
-				Err:     update.err,
-			})
+			loop.applyMatch(update)
 
-		case pendingOutput <- pendingResult:
-			clearPending()
+		case loop.pendingOutput <- loop.pendingResult:
+			loop.clearPending()
 
-		case <-pendingDone:
-			clearPending()
+		case <-loop.pendingDone:
+			loop.clearPending()
 
 		case <-s.stop:
-			cancelActive()
-			for _, catalog := range catalogs {
-				cancelCatalog(catalog)
+			loop.cancelActive()
+			for _, catalog := range loop.catalogs {
+				loop.cancelCatalog(catalog)
 			}
 			return
 		}
 	}
 }
 
-func cloneFileCandidates(source map[string]fileCandidate) map[string]fileCandidate {
-	cloned := make(map[string]fileCandidate, len(source))
-	for path, candidate := range source {
-		cloned[path] = candidate
+func (l *searchLoop) handleCommand(update searcherUpdate) {
+	command := update.command
+	if command.cancel {
+		l.cancelActive()
 	}
-	return cloned
+	if command.request == nil {
+		return
+	}
+
+	spec, err := l.resolve(command.request.Query)
+	if err != nil {
+		l.cancelActive()
+		l.publish(update.ctx, Result{ID: command.request.ID, State: StateFailed, Err: err})
+		return
+	}
+
+	key := spec.key()
+	if l.active != nil && l.active.key != key {
+		l.cancelCatalog(l.catalogs[l.active.key])
+	}
+	l.cancelMatch()
+	l.active = &activeFileSearch{ctx: update.ctx, request: *command.request, spec: spec, key: key}
+
+	catalog := l.catalogs[key]
+	if catalog == nil {
+		catalog = &fileSearchCatalog{
+			entries: make(map[string]fileCandidate),
+			visible: make(map[string]fileCandidate),
+			state:   StateDiscovering,
+		}
+		l.catalogs[key] = catalog
+	}
+	l.catalogClock++
+	catalog.lastUsed = l.catalogClock
+	l.evict()
+	if command.request.Refresh || !catalog.initialized && catalog.cancel == nil {
+		l.startDiscovery(update.ctx, key, spec, catalog)
+	}
+	l.startMatch()
 }
 
-func fileCandidateValues(source map[string]fileCandidate) []fileCandidate {
-	values := make([]fileCandidate, 0, len(source))
-	for _, candidate := range source {
-		values = append(values, candidate)
+func (l *searchLoop) resolve(query string) (fileSearchSpec, error) {
+	if l.active != nil {
+		if spec, ok := rescoreFileSearchSpec(l.active.spec, query); ok {
+			return spec, nil
+		}
 	}
-	return values
+	return resolveFileSearchSpec(l.searcher.cwd, l.searcher.canonicalCWD, l.searcher.home, query)
+}
+
+func (l *searchLoop) startDiscovery(ctx context.Context, key fileSearchKey, spec fileSearchSpec, catalog *fileSearchCatalog) {
+	l.cancelCatalog(catalog)
+	l.discoveryGeneration++
+	catalog.generation = l.discoveryGeneration
+	generation := catalog.generation
+	catalog.refresh = make(map[string]fileCandidate)
+	catalog.visible = maps.Clone(catalog.entries)
+	catalog.state = StateDiscovering
+	catalog.err = nil
+	discoveryContext, cancel := context.WithCancel(ctx)
+	catalog.cancel = cancel
+
+	s := l.searcher
+	s.wait.Go(func() {
+		defer cancel()
+
+		emit := func(batch []fileCandidate) error {
+			update := fileDiscoveryUpdate{key: key, generation: generation, batch: batch}
+			select {
+			case s.discoveries <- update:
+				return nil
+			case <-discoveryContext.Done():
+				return discoveryContext.Err()
+			case <-s.stop:
+				return context.Canceled
+			}
+		}
+		limited, err := discoverFiles(discoveryContext, spec, emit)
+		update := fileDiscoveryUpdate{key: key, generation: generation, done: true, limited: limited, err: err}
+		select {
+		case s.discoveries <- update:
+		case <-s.stop:
+		}
+	})
+}
+
+func (l *searchLoop) applyDiscovery(update fileDiscoveryUpdate) bool {
+	catalog := l.catalogs[update.key]
+	if catalog == nil || catalog.generation != update.generation {
+		return false
+	}
+	for _, candidate := range update.batch {
+		catalog.refresh[candidate.path] = candidate
+		catalog.visible[candidate.path] = candidate
+	}
+
+	if update.done {
+		catalog.cancel = nil
+		switch {
+		case errors.Is(update.err, context.Canceled):
+			catalog.showEntries()
+		case update.err != nil:
+			catalog.showEntries()
+			catalog.state = StateFailed
+			catalog.err = update.err
+		default:
+			previousEntries := len(catalog.entries)
+			catalog.entries = catalog.refresh
+			catalog.initialized = true
+			catalog.limited = update.limited
+			catalog.showEntries()
+			l.catalogEntries += len(catalog.entries) - previousEntries
+			l.evict()
+		}
+	}
+	return l.active != nil && l.active.key == update.key
+}
+
+func (l *searchLoop) startMatch() {
+	l.cancelMatch()
+	if l.active == nil {
+		return
+	}
+
+	catalog := l.catalogs[l.active.key]
+	candidates := slices.Collect(maps.Values(catalog.visible))
+	state := catalog.state
+	catalogErr := catalog.err
+	requestID := l.active.request.ID
+	spec := l.active.spec
+	l.matchGeneration++
+	generation := l.matchGeneration
+	matchContext, cancel := context.WithCancel(l.active.ctx)
+	l.matchCancel = cancel
+
+	s := l.searcher
+	s.wait.Go(func() {
+		defer cancel()
+
+		matches := rankFileCandidates(matchContext, s.canonicalCWD, spec, candidates)
+		if matchContext.Err() != nil {
+			return
+		}
+		update := fileMatchUpdate{generation: generation, requestID: requestID, matches: matches, state: state, err: catalogErr}
+		select {
+		case s.matches <- update:
+		case <-matchContext.Done():
+		case <-s.stop:
+		}
+	})
+}
+
+func (l *searchLoop) applyMatch(update fileMatchUpdate) {
+	if l.active == nil || update.generation != l.matchGeneration || update.requestID != l.active.request.ID {
+		return
+	}
+	l.publish(l.active.ctx, Result{ID: update.requestID, Matches: update.matches, State: update.state, Err: update.err})
+}
+
+func (l *searchLoop) publish(ctx context.Context, result Result) {
+	if ctx.Err() != nil {
+		return
+	}
+	l.pendingOutput = l.searcher.results
+	l.pendingResult = result
+	l.pendingDone = ctx.Done()
+}
+
+func (l *searchLoop) clearPending() {
+	l.pendingOutput = nil
+	l.pendingDone = nil
+}
+
+func (l *searchLoop) cancelMatch() {
+	if l.matchCancel != nil {
+		l.matchCancel()
+		l.matchCancel = nil
+	}
+}
+
+func (l *searchLoop) cancelActive() {
+	l.cancelMatch()
+	if l.active != nil {
+		l.cancelCatalog(l.catalogs[l.active.key])
+	}
+	l.active = nil
+	l.evict()
+}
+
+func (l *searchLoop) cancelCatalog(catalog *fileSearchCatalog) {
+	if catalog == nil || catalog.cancel == nil {
+		return
+	}
+	catalog.cancel()
+	catalog.cancel = nil
+	l.discoveryGeneration++
+	catalog.generation = l.discoveryGeneration
+	catalog.showEntries()
+}
+
+func (l *searchLoop) evict() {
+	for len(l.catalogs) > maxCatalogs || l.catalogEntries > maxCachedEntries {
+		var oldestKey fileSearchKey
+		var oldest *fileSearchCatalog
+		for key, catalog := range l.catalogs {
+			if l.active != nil && key == l.active.key {
+				continue
+			}
+			if oldest != nil && catalog.lastUsed >= oldest.lastUsed {
+				continue
+			}
+			oldestKey = key
+			oldest = catalog
+		}
+		if oldest == nil {
+			return
+		}
+		l.cancelCatalog(oldest)
+		l.catalogEntries -= len(oldest.entries)
+		delete(l.catalogs, oldestKey)
+	}
+}
+
+func (c *fileSearchCatalog) showEntries() {
+	c.refresh = nil
+	c.visible = c.entries
+	c.err = nil
+	switch {
+	case !c.initialized:
+		c.state = StateDiscovering
+	case c.limited:
+		c.state = StateLimited
+	default:
+		c.state = StateComplete
+	}
 }

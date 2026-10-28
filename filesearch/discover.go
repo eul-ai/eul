@@ -28,8 +28,6 @@ type fileCandidate struct {
 	hidden    bool
 }
 
-type discoverFilesFunc func(context.Context, fileSearchSpec, func([]fileCandidate) error) (bool, error)
-
 func discoverFiles(ctx context.Context, spec fileSearchSpec, emit func([]fileCandidate) error) (bool, error) {
 	if pathContainsDotGit(spec.directory) {
 		return false, nil
