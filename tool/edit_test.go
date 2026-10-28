@@ -3,10 +3,12 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -55,6 +57,39 @@ func TestEditDefaultsToSingleAndCanReplaceAll(t *testing.T) {
 	result = executeJSON(t, editTool, map[string]any{"path": "sample.txt", "old_text": "same", "new_text": "new", "all": true})
 	if result.IsError || mustReadFile(t, path) != "new new" {
 		t.Fatalf("replace all = %+v, content = %q", result, mustReadFile(t, path))
+	}
+}
+
+func TestParallelEditsToSameFileAllApply(t *testing.T) {
+	cwd := t.TempDir()
+	path := filepath.Join(cwd, "sample.txt")
+	words := []string{"alpha", "beta", "gamma", "delta"}
+	mustWriteFile(t, path, strings.Join(words, " "), 0o644)
+	editTool := NewEdit(cwd)
+
+	type outcome struct {
+		result agent.ToolResult
+		err    error
+	}
+	var edits sync.WaitGroup
+	outcomes := make(chan outcome, len(words))
+	for _, word := range words {
+		arguments := fmt.Sprintf(`{"path":"sample.txt","old_text":%q,"new_text":%q,"all":false}`, word, strings.ToUpper(word))
+		edits.Go(func() {
+			result, err := editTool.Execute(context.Background(), json.RawMessage(arguments), discardUpdates)
+			outcomes <- outcome{result: result, err: err}
+		})
+	}
+	edits.Wait()
+	close(outcomes)
+
+	for outcome := range outcomes {
+		if outcome.err != nil || outcome.result.IsError {
+			t.Fatalf("parallel edit = %+v, error = %v", outcome.result, outcome.err)
+		}
+	}
+	if got := mustReadFile(t, path); got != "ALPHA BETA GAMMA DELTA" {
+		t.Fatalf("content = %q", got)
 	}
 }
 

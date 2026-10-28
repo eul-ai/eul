@@ -121,6 +121,9 @@ func (w workspace) write(ctx context.Context, args writeArguments, _ agent.ToolU
 		return agent.ToolResult{}, err
 	}
 
+	fileMutation.Lock()
+	defer fileMutation.Unlock()
+
 	info, statErr := os.Stat(path)
 	if statErr == nil && !info.Mode().IsRegular() {
 		return agent.ToolResult{}, fmt.Errorf("%s is not a regular file", w.display(path))

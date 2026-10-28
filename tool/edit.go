@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/eul-ai/eul/agent"
-	"github.com/eul-ai/eul/tool/textfile"
 )
 
 const editToolName = "edit"
@@ -56,14 +55,15 @@ func (w workspace) edit(ctx context.Context, args editArguments, updates agent.T
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
-	snapshot, err := textfile.Load(requestedPath)
+
+	fileMutation.Lock()
+	defer fileMutation.Unlock()
+
+	snapshot, err := loadText(requestedPath)
 	if err != nil {
 		return agent.ToolResult{}, fmt.Errorf("%s: %w", w.display(requestedPath), err)
 	}
-	original := snapshot.Data
-	if err := ctx.Err(); err != nil {
-		return agent.ToolResult{}, err
-	}
+	original := snapshot.data
 
 	oldBytes := []byte(*args.OldText)
 	matches := bytes.Count(original, oldBytes)
@@ -85,7 +85,7 @@ func (w workspace) edit(ctx context.Context, args editArguments, updates agent.T
 	if err := ctx.Err(); err != nil {
 		return agent.ToolResult{}, err
 	}
-	if err := textfile.Replace(snapshot, replacement); err != nil {
+	if err := replaceText(snapshot, replacement); err != nil {
 		return agent.ToolResult{}, err
 	}
 	presentation := editPresentation(args.Path)
