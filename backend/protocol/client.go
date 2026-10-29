@@ -28,6 +28,7 @@ type Result struct {
 	ToolCalls []agent.ToolCall
 	Output    []json.RawMessage
 	Usage     agent.Usage
+	CostUSD   float64
 }
 
 type Options struct {
@@ -77,7 +78,7 @@ func (client *Client) Generate(ctx context.Context, request agent.Request, obser
 	if err != nil {
 		return agent.Response{}, client.errorf("%v", err)
 	}
-	return agent.Response{Text: result.Text, ToolCalls: result.ToolCalls, State: state, Usage: result.Usage}, nil
+	return agent.Response{Text: result.Text, ToolCalls: result.ToolCalls, State: state, Usage: result.Usage, CostUSD: result.CostUSD}, nil
 }
 
 func (client *Client) Compact(ctx context.Context, request agent.Request) (agent.CompactResponse, error) {
@@ -104,7 +105,7 @@ func (client *Client) Compact(ctx context.Context, request agent.Request) (agent
 	if err != nil {
 		return agent.CompactResponse{}, client.errorf("encode summary state: %v", err)
 	}
-	return agent.CompactResponse{State: state, Usage: result.Usage}, nil
+	return agent.CompactResponse{State: state, Usage: result.Usage, CostUSD: result.CostUSD}, nil
 }
 
 func (client *Client) build(request agent.Request) (Wire, []json.RawMessage, error) {

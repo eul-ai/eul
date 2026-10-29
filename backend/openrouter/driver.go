@@ -56,9 +56,10 @@ func (driver driver) open(ctx context.Context, _ string) (*backend.Runtime, erro
 		metadata[id] = model.backendMetadata()
 	}
 	return &backend.Runtime{
-		Provider: newClient(apiKey, driver.baseURL+"/responses", generationClient, models),
-		Usage:    account.usage,
-		Catalog:  metadata,
+		Provider:    newClient(apiKey, driver.baseURL+"/responses", generationClient, models),
+		Usage:       account.usage,
+		Catalog:     metadata,
+		ReportsCost: true,
 	}, nil
 }
 

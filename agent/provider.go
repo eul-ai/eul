@@ -41,11 +41,13 @@ type Response struct {
 	ToolCalls []ToolCall
 	State     []byte
 	Usage     Usage
+	CostUSD   float64
 }
 
 type CompactResponse struct {
-	State []byte
-	Usage Usage
+	State   []byte
+	Usage   Usage
+	CostUSD float64
 }
 
 type TextSink func(text string) error

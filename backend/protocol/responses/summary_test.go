@@ -34,7 +34,7 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 				"type": "message", "role": "assistant",
 				"content": []any{map[string]any{"type": "output_text", "text": "  concise handoff  "}},
 			}},
-			"usage": map[string]any{"input_tokens": 80, "output_tokens": 10, "total_tokens": 90},
+			"usage": map[string]any{"input_tokens": 80, "output_tokens": 10, "total_tokens": 90, "cost": 0.125},
 		})
 	}))
 
@@ -55,8 +55,8 @@ func TestClientCompactsBySummarizing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if compacted.Usage != (agent.Usage{InputTokens: 80, OutputTokens: 10, TotalTokens: 90}) {
-		t.Fatalf("usage = %+v", compacted.Usage)
+	if compacted.Usage != (agent.Usage{InputTokens: 80, OutputTokens: 10, TotalTokens: 90}) || compacted.CostUSD != 0.125 {
+		t.Fatalf("usage = %+v, cost = %v", compacted.Usage, compacted.CostUSD)
 	}
 
 	items, err := protocol.DecodeState(compacted.State)

@@ -46,6 +46,40 @@ func TestNewAgentSessionRejectsUnsupportedModel(t *testing.T) {
 	}
 }
 
+func TestSessionsSharingRuntimeMeterOnlyTheirOwnCost(t *testing.T) {
+	runtime := testBackendRuntime(providerFunction(func(context.Context, agent.Request, agent.TextSink) (agent.Response, error) {
+		return agent.Response{CostUSD: 0.25}, nil
+	}))
+	runtime.ReportsCost = true
+	runtime.Usage = func(context.Context) (backend.AccountUsage, error) {
+		return backend.AccountUsage{}, nil
+	}
+
+	firstProvider, firstUsage := meterSession(runtime)
+	_, secondUsage := meterSession(runtime)
+	for range 2 {
+		if _, err := firstProvider.Generate(context.Background(), agent.Request{}, agent.StreamObserver{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, test := range []struct {
+		usage func(context.Context) (backend.AccountUsage, error)
+		want  float64
+	}{
+		{usage: firstUsage, want: 0.5},
+		{usage: secondUsage, want: 0},
+	} {
+		usage, err := test.usage(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if usage.SessionUsageUSD == nil || *usage.SessionUsageUSD != test.want {
+			t.Fatalf("session usage = %v, want %v", usage.SessionUsageUSD, test.want)
+		}
+	}
+}
+
 func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 	usageCalls := 0
 	monthlyUsage := 12.34
@@ -81,7 +115,7 @@ func TestNewAgentSessionWiresRuntimeUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if usageCalls != 1 || len(usage.Windows) != 1 || usage.MonthlyUsageUSD == nil || *usage.MonthlyUsageUSD != monthlyUsage || usage.LimitRemainingUSD == nil || *usage.LimitRemainingUSD != limitRemaining {
+	if usageCalls != 1 || len(usage.Windows) != 1 || usage.MonthlyUsageUSD == nil || *usage.MonthlyUsageUSD != monthlyUsage || usage.LimitRemainingUSD == nil || *usage.LimitRemainingUSD != limitRemaining || usage.SessionUsageUSD != nil {
 		t.Fatalf("usage calls=%d result=%+v", usageCalls, usage)
 	}
 	if wired.Settings().WorkingDirectory != cwd {

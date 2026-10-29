@@ -25,9 +25,10 @@ type incompleteResponseDetails struct {
 }
 
 type responseUsage struct {
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
-	TotalTokens  int64 `json:"total_tokens"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	TotalTokens  int64   `json:"total_tokens"`
+	Cost         float64 `json:"cost"`
 }
 
 type outputItem struct {
@@ -86,7 +87,11 @@ func normalizeResponse(response createResponseEnvelope) (protocol.Result, error)
 		return protocol.Result{}, err
 	}
 
-	return protocol.Result{Text: text, ToolCalls: calls, Output: response.Output, Usage: normalizeUsage(response.Usage)}, nil
+	result := protocol.Result{Text: text, ToolCalls: calls, Output: response.Output, Usage: normalizeUsage(response.Usage)}
+	if response.Usage != nil {
+		result.CostUSD = response.Usage.Cost
+	}
+	return result, nil
 }
 
 func validateCompletedResponse(response createResponseEnvelope) error {

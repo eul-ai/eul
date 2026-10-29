@@ -111,7 +111,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 				"output": []any{
 					map[string]any{"id": "msg_2", "type": "message", "role": "assistant", "phase": "final_answer", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": "Fixed."}}},
 				},
-				"usage": map[string]any{"input_tokens": 20, "output_tokens": 3, "total_tokens": 23},
+				"usage": map[string]any{"input_tokens": 20, "output_tokens": 3, "total_tokens": 23, "cost": 0.25},
 			})
 		case 3:
 			if len(wire.Input) != 10 {
@@ -173,7 +173,7 @@ func TestClientResponsesRoundTripAndRawReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Generate() error = %v", err)
 	}
-	if second.Text != "Fixed." || second.Usage != (agent.Usage{InputTokens: 20, OutputTokens: 3, TotalTokens: 23}) {
+	if second.Text != "Fixed." || second.Usage != (agent.Usage{InputTokens: 20, OutputTokens: 3, TotalTokens: 23}) || second.CostUSD != 0.25 {
 		t.Fatalf("second response = %+v", second)
 	}
 
