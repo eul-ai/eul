@@ -60,17 +60,19 @@ func TestStatusUsesCompactContextAndSingleUsage(t *testing.T) {
 	}
 }
 
-func TestStatusShowsMonthlyUsageAndLimitRemaining(t *testing.T) {
+func TestStatusShowsSessionAndMonthlyUsageAndLimitRemaining(t *testing.T) {
+	sessionUsage := 0.42
 	monthlyUsage := 12.34
 	limitRemaining := 87.66
 	usage := backend.AccountUsage{
+		SessionUsageUSD:   &sessionUsage,
 		MonthlyUsageUSD:   &monthlyUsage,
 		LimitRemainingUSD: &limitRemaining,
 	}
 
 	long, short := providerUsageText(usage, time.Time{})
 	for _, text := range []string{long, short} {
-		if !strings.Contains(text, "$12.34") || !strings.Contains(text, "$87.66") {
+		if !strings.Contains(text, "$0.42") || !strings.Contains(text, "$12.34") || !strings.Contains(text, "$87.66") {
 			t.Fatalf("provider usage = %q", text)
 		}
 	}

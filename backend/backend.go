@@ -27,6 +27,8 @@ type Runtime struct {
 	Provider agent.Provider
 	Usage    func(context.Context) (AccountUsage, error)
 	Catalog  map[string]ModelMetadata
+	// ReportsCost is true when the provider's responses carry their cost.
+	ReportsCost bool
 }
 
 func (runtime *Runtime) Model(name string) (ModelMetadata, error) {
@@ -50,6 +52,7 @@ type DeviceCode struct {
 
 type AccountUsage struct {
 	Windows           []UsageWindow
+	SessionUsageUSD   *float64
 	MonthlyUsageUSD   *float64
 	LimitRemainingUSD *float64
 }

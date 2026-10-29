@@ -95,6 +95,11 @@ func providerUsageText(usage backend.AccountUsage, now time.Time) (string, strin
 		long = append(long, longText)
 		short = append(short, shortText)
 	}
+	if usage.SessionUsageUSD != nil {
+		amount := formatUSD(*usage.SessionUsageUSD) + " session"
+		long = append(long, amount)
+		short = append(short, amount)
+	}
 	if usage.MonthlyUsageUSD != nil {
 		amount := formatUSD(*usage.MonthlyUsageUSD) + "/mo"
 		long = append(long, amount)

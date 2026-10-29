@@ -22,6 +22,7 @@ func (launcher *launcher) newSession(config resolvedConfig, runtime *backend.Run
 
 	settings := agent.NewSettings(main.ClampThinkingLevel(config.ThinkingLevel), config.FastMode)
 	goal := &agent.Goal{}
+	provider, usage := meterSession(runtime)
 	conversation, err := session.New(session.Config{
 		Handle:        handle,
 		Store:         launcher.store,
@@ -29,7 +30,7 @@ func (launcher *launcher) newSession(config resolvedConfig, runtime *backend.Run
 		AgentSettings: settings,
 		Goal:          goal,
 		Model:         main,
-		Usage:         runtime.Usage,
+		Usage:         usage,
 		Skills:        config.skills,
 		Warnings:      config.warnings,
 		Prompt:        prompt,
@@ -43,8 +44,8 @@ func (launcher *launcher) newSession(config resolvedConfig, runtime *backend.Run
 		authorizeNetwork = conversation.AuthorizeNetwork
 	}
 	record := handle.Record()
-	tools, subagents := newSessionTools(config, runtime.Provider, metadata, settings, authorizeNetwork, goal, record.Subagent)
-	conversation.Start(agent.New(runtime.Provider, tools, agent.Options{
+	tools, subagents := newSessionTools(config, provider, metadata, settings, authorizeNetwork, goal, record.Subagent)
+	conversation.Start(agent.New(provider, tools, agent.Options{
 		Model:         config.Models.Main,
 		Instructions:  systemPrompt(config),
 		SessionID:     record.ID,
