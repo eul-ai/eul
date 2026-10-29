@@ -39,6 +39,18 @@ func TestMultilineInputExpandsEditorAndMovesCursor(t *testing.T) {
 	}
 }
 
+func TestInputHeightIsAtMostHalfTheTerminal(t *testing.T) {
+	model := newTestModel(40, 20, nil)
+	if err := model.insertInput(strings.Repeat("line\n", 30)); err != nil {
+		t.Fatal(err)
+	}
+
+	input, layout := modelInputLayout(model)
+	if layout.inputHeight != 10 || len(input.lines) != 10 || input.cursorRow != 9 {
+		t.Fatalf("input height = %d, lines = %d, cursor row = %d", layout.inputHeight, len(input.lines), input.cursorRow)
+	}
+}
+
 func TestFilePickerExpandsBetweenInputAndStatus(t *testing.T) {
 	model := newTestModel(30, 12, &fakeSession{settings: session.Settings{WorkingDirectory: t.TempDir()}})
 	if err := model.insertInput("@"); err != nil {

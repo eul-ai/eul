@@ -113,7 +113,7 @@ func modelInputLayout(model *tuiModel) (renderedInput, tuiLayout) {
 	subagentHeight := model.subagentHeight()
 	pickerHeight := min(model.pickerHeight(), max(0, maximumPickerHeight(model.height)-subagentHeight))
 	availableHeight := model.height - subagentHeight
-	maximumHeight := maximumInputHeight(availableHeight, pickerHeight)
+	maximumHeight := min(maximumInputHeight(availableHeight, pickerHeight), model.height/2)
 	if model.permission.active() {
 		maximumHeight = maximumPermissionInputHeight(availableHeight)
 	}
